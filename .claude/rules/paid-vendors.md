@@ -9,56 +9,41 @@ paths:
   - "backend/.env*"
 ---
 
-# Paid vendor usage — price it before you run it
+# Paid vendors — price a render before running it
 
-Moved verbatim from AGENTS.md (2026-09-30), which keeps the actionable summary.
+AGENTS.md carries the summary; this is the detail behind it.
 
+## The Azure Speech resource is F0
 
-**The Speech resource is F0 (free tier).** Read from the field, not inferred:
-`az cognitiveservices account list --query "[].{name:name,sku:sku.name}"` →
-`TunaTale / F0 / SpeechServices / eastus`, and the `AZURE_SPEECH_KEY` in
-`backend/.env` matches `key2` of that resource (compared by hash — never print
-the key; one was leaked to a transcript on 2026-09-12 and had to be rotated).
-It is the only Speech account in the subscription.
+`az cognitiveservices account list --query "[].{name:name,sku:sku.name}"` returns
+`TunaTale / F0 / SpeechServices / eastus`, the only Speech account in the
+subscription. The `AZURE_SPEECH_KEY` in `backend/.env` is `key2` of that
+resource. Compare keys by hash and never print one — a key that reaches a
+transcript has to be rotated.
 
-**So standard/Multilingual Neural characters do NOT bill — they consume a
-500K/month allowance, and the failure mode is a THROTTLE, not an invoice.**
+On F0, standard and Multilingual Neural characters draw on a 500K/month
+allowance. Going over it throttles; it does not bill.
 
-⚠️ **This paragraph replaced a confident wrong claim, and how it got wrong is
-the reusable part.** It read "this resource behaves like S0, where characters
-bill", inferred from two real measurements: TTS sustained **49 requests in a
-60-second window** where F0 documents 20/60s, and Dragon HD answered 200 where
-F0 is not supposed to serve it. Both observations still stand and are still
-unexplained. They were an inference from *behaviour* to *configuration*, and
-`sku.name` outranks them. **Nobody had read the field.** When a claim about
-configuration can be settled by reading configuration, read it.
+Two observed behaviours don't fit F0 and remain unexplained: TTS sustained 49
+requests in a 60-second window (F0 documents 20/60s), and a Dragon HD request
+returned 200. They don't change the tier. `sku.name` is the configuration and
+behaviour is only indirect evidence about it — when a configuration question
+can be settled by reading the configuration, read it.
 
-**Azure Neural HD (Dragon) voices are still RULED OUT** (user's call,
-2026-09-12), and the F0 finding does not soften it: HD is a separate billing
-line at $22/1M **excluded from the F0 allowance**, so it bills from the first
-character even here. Enforced by
-`test_languages.py::test_no_voice_map_names_a_paid_hd_voice` (an HD id is the
-only voice id containing a colon). Not a quality judgement — Andrew-HD had the
-best measured WER and was the ear-test favourite — and it is also the one voice
-family that cannot be regression-tested, being nondeterministic by design.
+## Azure Neural HD (Dragon) voices are ruled out
 
-**Price a render before running it, in characters, and put the number in the
-report.** Compute cache misses with the adapter's own `_cache_path` against the
-real `tts_cache_dir`; that is not merely the cheapest way, it is the ONLY way:
+This is the user's decision. HD is a separate billing line ($22 per 1M
+characters) outside the F0 allowance, so it bills from the first character, and
+it is the one voice family that cannot be regression-tested because its output
+is nondeterministic. It is not a quality judgement: Andrew-HD had the best
+measured WER and won the ear test. Enforced by
+`test_languages.py::test_no_voice_map_names_a_paid_hd_voice` (an HD voice id is
+the only kind that contains a colon).
 
-⚠️ **There is no usable Azure-side character meter.** `SynthesizedCharacters`
-appears in `az monitor metrics list-definitions` and is **not queryable** — the
-error enumerates what is (`TotalCalls, SuccessfulCalls, TotalErrors,
-BlockedCalls, ServerErrors, ClientErrors, SuccessRate, Ratelimit`). And the
-queryable ones are not trustworthy for this: measured 2026-09-13, `TotalCalls`
-returned **0 for a day in which hundreds of syntheses demonstrably happened**,
-and `Ratelimit` returned no data at all. **So a `BlockedCalls` of 0 proves
-nothing** — zero is also what a lagging or broken meter returns, the same
-clean-negative trap `.claude/rules/tdd.md` is about. Nothing cloud-side will
-catch an error in your local estimate; the local estimate is the instrument.
+## Price every render in billable characters before running it
 
-**Price it with the tracked instrument, not from a remembered number**
-(`backend/scripts/report_render_cost.py`, shipped 2026-09-15):
+Put the number in your report, and get it from the tracked instrument rather
+than a remembered figure:
 
 ```bash
 cd backend
@@ -67,23 +52,26 @@ uv run python scripts/report_render_cost.py --language no --all \
     --cache-dir "$(mktemp -d)"                                    # cold, from empty
 ```
 
-Quote the **incremental** number for "what will this run cost" and the cold one
-only for "what does this cost from empty". They have differed by ~7x, which is
-the whole reason to say which one you are quoting.
+Quote the incremental number for "what will this run cost?" and the cold number
+only for "what does this cost from empty?", and say which one you are quoting —
+the two have differed by about 7x.
 
-⚠️ **This replaced two hardcoded figures, and how they were wrong is the
-reusable part.** It read *"a cold render of the whole stored Norwegian
-curriculum is ~69k characters"* beside a `263 clips (~11k chars)` incremental
-figure. Both were **text counts, not billable counts** — the cold figure is
-really **157,196** billable characters, because markup counts while `<speak>`
-and `<voice>` do not. The gap is not rounding: `sum(len(text))` over that corpus
-is 80,489, and its ~2,019 distinct requests each add ~36 characters of
-`<prosody>` wrapper. In a corpus of thousands of short utterances **the markup
-dominates**, so a text count understates by ~2x.
+The script decides cache hits with the adapter's own `_cache_path` against the
+real `tts_cache_dir`, and it counts the billable body rather than the text. Those
+differ a lot: SSML markup counts toward billing (the `<speak>` and `<voice>`
+elements do not), and across thousands of short utterances the ~36-character
+`<prosody>` wrapper on each request roughly doubles the total. A text-length
+estimate understates by about 2x.
 
-That anchor sat three paragraphs below "the billable unit is NOT `len(text)`"
-and modelled the exact error this section exists to prevent. It was stale by
-construction too — it said "all nine lessons" and there are now eleven. A number
-measured against a living corpus rots the way a bare `file:line` citation does,
-and the fix is the one this file already prescribes there: cite the thing that
-regenerates the answer, not the answer.
+Don't write measured figures into docs. A number measured against the curriculum
+goes stale as lessons are added; cite the command that regenerates it instead.
+
+## There is no usable Azure-side meter
+
+`SynthesizedCharacters` is listed by `az monitor metrics list-definitions` but is
+not queryable (the error lists what is: `TotalCalls, SuccessfulCalls,
+TotalErrors, BlockedCalls, ServerErrors, ClientErrors, SuccessRate, Ratelimit`).
+The queryable metrics are unreliable for this: `TotalCalls` has returned 0 for a
+day with hundreds of syntheses, and `Ratelimit` returned no data. A
+`BlockedCalls` of 0 therefore proves nothing, and nothing cloud-side will catch a
+mistake in your local estimate — the local estimate is the instrument.
