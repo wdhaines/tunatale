@@ -48,8 +48,8 @@ local/CI asymmetries are in `testing.md` § "What a green gate means".
   the log tail as the sole evidence. Never trust a reported exit code, your own
   `echo`, or a log's size alone.
   **Rules, for every agent and every gate run:** absolute path always; never `cd`
-  away from the repo in a session that will run the gate; keep `echo $?` in its own
-  statement or omit it; and treat the log tail as the sole evidence — an exit code
+  away from the repo in a session that will run the gate; put nothing after the gate
+  command; and treat the log tail as the sole evidence — an exit code
   from a compound statement proves nothing. Same failure class the pipe guard was
   built for, reached from a different direction. The commit gate is the backstop
   (it prompts when no fingerprint matches the tree) — do not click past that

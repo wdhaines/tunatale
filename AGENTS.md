@@ -1,6 +1,6 @@
 # AGENTS.md — TunaTale
 
-AI-generated audio language curricula — Pimsleur-style listening with content adapted to the learner's vocabulary. Slovene and Norwegian are wired end-to-end (Slovene most completely); the architecture is language-plugin based. Integrates bidirectionally with the user's Anki deck rather than replacing it. See `README.md` for the product pitch and `docs/walkthrough.md` for the system tour.
+AI-generated audio language curricula — Pimsleur-style listening with content adapted to the learner's vocabulary. The architecture is language-plugin based: Slovene and Norwegian are wired end-to-end (Slovene most completely), and Tagalog and Cebuano have plugins under `backend/app/plugins/languages/`. Integrates bidirectionally with the user's Anki deck rather than replacing it. See `README.md` for the product pitch and `docs/walkthrough.md` for the system tour.
 
 ## Developer Commands
 
