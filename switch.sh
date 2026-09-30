@@ -93,9 +93,10 @@ build() {  # $1 = commit. Check out and build it in the instance's worktree, onc
   # instance must NOT share with dev is overridden in start().
   ln -sfn "$REPO/backend/.env" "$APP/backend/.env"
   ln -sfn "$REPO/certs" "$APP/certs"
-  # The same dependency set as the prod image (Dockerfile), plus its lemma table.
+  # The same dependency set as the prod image (Dockerfile), plus its built data
+  # (lemma tables AND the NST lexicon — app.build_data, tunatale-ip8q).
   (cd "$APP/backend" && uv sync -q --frozen --no-dev --no-group slovene --no-group norwegian --no-group alignment \
-    && .venv/bin/python -m app.srs.lemma_table >/dev/null)
+    && .venv/bin/python -m app.build_data >/dev/null)
   (cd "$APP/frontend" && bun install --frozen-lockfile >/dev/null && bun run build >/dev/null)
   echo "$head" > "$RUN/built"
 }
@@ -131,6 +132,11 @@ start() {
   # through), so $! is the server's pid. Backgrounding a `cd && ...` list
   # instead records a wrapper shell, and `stop` then leaves the server running.
   cd "$APP/backend"
+  # Every built data file must be present and current. Without the NST lexicon
+  # compound splitting degraded SILENTLY on this instance (tunatale-ip8q), so a
+  # missing one refuses the start rather than rendering worse lessons.
+  .venv/bin/python -m app.build_data --check \
+    || die "built data missing or stale in $APP/backend — rebuild: (cd $APP/backend && .venv/bin/python -m app.build_data)"
   # The lemmatizer must be the lemma table. This venv has no Stanza, so any
   # other setting silently lowercases every word — which is what a lowercase
   # `lemmatizer_type=` in the linked dev .env did on 2026-09-21, overriding

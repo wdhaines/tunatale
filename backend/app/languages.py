@@ -69,6 +69,25 @@ class LexiconOutcome(enum.StrEnum):
 
 
 @dataclass(frozen=True)
+class BuiltData:
+    """A data file a plugin needs at runtime that is BUILT, not committed.
+
+    ``extract`` is the committed source (a gzipped TSV); ``db`` is the gitignored
+    build beside it; ``build(extract, db)`` produces it. Core builds every
+    registered one through ``python -m app.build_data`` (the Dockerfile and
+    ``switch.sh`` both run it) and can verify them with ``--check``.
+
+    It exists because the NST lexicon had no such registration: its builder
+    lived in ``scripts/``, nothing that ships ran it, and the lexicon's absence
+    degraded compound splitting silently (tunatale-ip8q).
+    """
+
+    extract: Path
+    db: Path
+    build: Callable[[Path, Path], None]
+
+
+@dataclass(frozen=True)
 class LexiconResolution:
     """The typed result of a pronunciation-lexicon lookup.
 
@@ -347,6 +366,10 @@ class LanguageConfig:
     # ``app.srs.lemma_table``). Served when ``settings.lemmatizer_type == "table"``
     # — production. ``None`` for languages without one: they stay lowercase there.
     lemma_table_path: Path | None = None
+    # Data files this plugin needs built from a committed extract (see
+    # ``BuiltData``). Lemma tables stay on ``lemma_table_path``, which predates
+    # this and carries its own staleness check.
+    built_data: tuple[BuiltData, ...] = ()
 
 
 _CONFIGS: dict[str, LanguageConfig] = {}
@@ -997,6 +1020,17 @@ def cloze_answer_spelling(code: str, text: str) -> str:
 def get_lemma_table_path(code: str) -> Path | None:
     """Return *code*'s shipped lemma-table extract, or ``None`` when it has none."""
     return _facet(code, "lemma_table_path", None)
+
+
+def get_built_data(code: str) -> tuple[BuiltData, ...]:
+    """Return *code*'s built data artifacts; ``()`` for a language with none."""
+    return _facet(code, "built_data", ())
+
+
+def all_built_data() -> list[BuiltData]:
+    """Every registered language's built data artifacts, in registration order."""
+    discover()
+    return [art for c in _CONFIGS.values() for art in c.built_data]
 
 
 def all_lemma_table_paths() -> list[Path]:

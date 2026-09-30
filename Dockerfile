@@ -19,9 +19,11 @@ RUN uv sync --frozen --no-dev --no-group slovene --no-group norwegian --no-group
 
 COPY backend/app ./app
 
-# Build the lemma tables' SQLite indexes now, so the running container never
-# writes into /app (appuser does not own it) and the first request is not slow.
-RUN /app/.venv/bin/python -m app.srs.lemma_table
+# Build every built-not-committed data file now (the lemma tables' SQLite
+# indexes AND the NST lexicon), so the running container never writes into /app
+# (appuser does not own it) and the first request is not slow. The lexicon was
+# missing from every image before app.build_data existed (tunatale-ip8q).
+RUN /app/.venv/bin/python -m app.build_data
 
 RUN useradd --home-dir /data --no-create-home appuser \
     && chown appuser:appuser /app
