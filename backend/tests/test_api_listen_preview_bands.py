@@ -150,3 +150,52 @@ class TestPreviewRowsCarryBothSides:
         assert _sides(rows["hage"]) == ("none", None, "none", None)
         assert rows["god dag"]["kind"] == "kp"
         assert _sides(rows["god dag"]) == ("weeks", 10.0, "new", None)
+
+
+class TestProductionUnpractised:
+    async def test_note_only_on_a_deferred_row_whose_production_is_not_known(self, monkeypatch, language_no):
+        """A listen defers a word whose RECOGNITION is known; whether its
+        PRODUCTION ever was is a separate question, and the row must say so.
+
+        `hage` is the control: its production is equally unpractised, but nothing
+        about it is deferred, so the note would be a lie there.
+        """
+        db = _setup(monkeypatch, language_no)
+        # hund — well known on BOTH sides: nothing left to practise.
+        _add(db, "hund")
+        _set(db, "hund", Direction.RECOGNITION, 200.0, days_until_due=200)
+        _set(db, "hund", Direction.PRODUCTION, 200.0, days_until_due=200)
+        # katt — recognition known, production studied but not well known.
+        _add(db, "katt")
+        _set(db, "katt", Direction.RECOGNITION, 200.0, days_until_due=200)
+        _set(db, "katt", Direction.PRODUCTION, 5.0, days_until_due=2)
+        # fisk — recognition known, no production card at all.
+        _add(db, "fisk")
+        _set(db, "fisk", Direction.RECOGNITION, 200.0, days_until_due=200)
+        _drop_production(db, "fisk")
+        # hage — not deferred: recognition due soon, production untouched.
+        _add(db, "hage")
+        _set(db, "hage", Direction.RECOGNITION, 5.0, days_until_due=2)
+
+        rows = await _rows()
+
+        assert rows["hund"]["deferred_reason"] == "known"
+        assert rows["hund"]["production_unpractised"] is False
+        assert rows["katt"]["deferred_reason"] == "known"
+        assert rows["katt"]["production_unpractised"] is True
+        assert rows["fisk"]["deferred_reason"] == "known"
+        assert rows["fisk"]["production_unpractised"] is True
+        assert rows["hage"]["deferred_reason"] is None
+        assert rows["hage"]["production_unpractised"] is False
+
+    async def test_key_phrase_row_carries_the_note_too(self, monkeypatch, language_no):
+        db = _setup(monkeypatch, language_no)
+        _add(db, "god dag", word_count=2)
+        _set(db, "god dag", Direction.RECOGNITION, 200.0, days_until_due=200)
+        _drop_production(db, "god dag")
+
+        rows = await _rows()
+
+        assert rows["god dag"]["kind"] == "kp"
+        assert rows["god dag"]["deferred_reason"] == "known"
+        assert rows["god dag"]["production_unpractised"] is True

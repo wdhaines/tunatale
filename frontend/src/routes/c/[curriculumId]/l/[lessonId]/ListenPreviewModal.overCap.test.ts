@@ -78,6 +78,7 @@ const createCandidate = (text: string, willCreate: boolean): ListenPreviewCandid
   well_known: false,
   due_at: null,
   will_create: willCreate,
+  production_unpractised: false,
 });
 
 /** A carded-but-never-introduced word — the population that really does spend
@@ -93,6 +94,7 @@ const newStateCandidate = (text: string, willCreate: boolean): ListenPreviewCand
   well_known: false,
   due_at: null,
   will_create: willCreate,
+  production_unpractised: false,
 });
 
 const kpCandidate = (text: string, willCreate: boolean): ListenPreviewCandidate => ({
@@ -106,6 +108,7 @@ const kpCandidate = (text: string, willCreate: boolean): ListenPreviewCandidate 
   well_known: false,
   due_at: null,
   will_create: willCreate,
+  production_unpractised: false,
 });
 
 /** Budget = 2, tail = 3 — the same shape the creationTail oracle uses. */

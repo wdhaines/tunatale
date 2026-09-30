@@ -1022,6 +1022,7 @@ test("listen preview: expanding well recognized group keeps modal and footer in 
 		understand_stability: 10 as number | null,
 		produce_band: "new" as string | null,
 		produce_stability: null as number | null,
+		production_unpractised: false,
 	}));
 
 	const wellKnownRows = Array.from({ length: 40 }, (_, i) => ({
@@ -1040,6 +1041,7 @@ test("listen preview: expanding well recognized group keeps modal and footer in 
 		understand_stability: 200 as number | null,
 		produce_band: "new" as string | null,
 		produce_stability: null as number | null,
+		production_unpractised: false,
 	}));
 
 	const fakePreview = { candidates: [...liveRows, ...wellKnownRows] };
@@ -1234,4 +1236,72 @@ test("listen preview: the Ignore link sits under the pill and on the gloss's bas
 		`link centre drifts up to ${report.linkGlossCentreDev.toFixed(2)}px from the gloss's centre`,
 	).toBeLessThanOrEqual(1);
 	expect(report.overlaps, "the Ignore link overlaps the gloss, the grade control, or the due pill").toBe(false);
+});
+
+/**
+ * The production note (bd tunatale-dvdm.2) is the longest string a row can
+ * carry, and `.tag` is `white-space: nowrap` — inherited, a 62-character note
+ * ran past its row at phone width. It must wrap inside the word column: its
+ * right edge stays within the row, and nothing scrolls sideways.
+ */
+test("listen preview: the production note wraps inside its row on a phone", async ({ page, request }) => {
+	test.skip(!(await backendAvailable(request)), "Backend not available");
+
+	const rows = Array.from({ length: 3 }, (_, i) => ({
+		kind: "word" as const,
+		grade_class: "ahead" as const,
+		deferred_reason: "known" as const,
+		well_known: true,
+		will_create: true,
+		due_at: "2126-01-01T04:00:00+00:00",
+		text: `etterforskningsteam${i}`,
+		item_id: 500 + i,
+		rating: "good" as const,
+		translation: `investigation team ${i}`,
+		progress: 0.9,
+		understand_band: "solid" as string | null,
+		understand_stability: 200 as number | null,
+		produce_band: "new" as string | null,
+		produce_stability: null as number | null,
+		production_unpractised: true,
+	}));
+
+	const cid = await curriculumId(request);
+	const failures: string[] = [];
+
+	for (const [width, fontPx] of [
+		[PHONE.width, 16],
+		[360, 20],
+	] as const) {
+		await page.route("**/listen-preview", (route) => route.fulfill({ json: { candidates: rows } }));
+		await page.setViewportSize({ width, height: PHONE.height });
+		await page.goto(lessonURL(cid));
+		await page.evaluate((px) => (document.documentElement.style.fontSize = `${px}px`), fontPx);
+		await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+		const modal = page.locator(".overlay .modal");
+		await expect(modal).toBeVisible({ timeout: 10000 });
+		await modal.locator(".well-known-group summary").click();
+		await expect(modal.locator(".production-note").first()).toBeVisible();
+
+		const m = await page.evaluate(() => {
+			const notes = [...document.querySelectorAll(".production-note")] as HTMLElement[];
+			return {
+				spill: notes.map((n) => {
+					const row = n.closest("li.candidate") as HTMLElement;
+					return n.getBoundingClientRect().right - row.getBoundingClientRect().right;
+				}),
+				docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			};
+		});
+		const label = `${width}px @ ${fontPx}px`;
+		m.spill.forEach((s, i) => {
+			if (s > 0.5) failures.push(`${label}: note ${i} spills ${s.toFixed(1)}px past its row`);
+		});
+		if (m.docOverflow > 0) failures.push(`${label}: page scrolls sideways by ${m.docOverflow}px`);
+
+		await page.unroute("**/listen-preview");
+	}
+
+	expect(failures, failures.join("\n")).toEqual([]);
 });

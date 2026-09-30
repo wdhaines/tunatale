@@ -85,6 +85,14 @@ class ListenPreviewCandidate(BaseModel):
     # Never maintain the two in parallel: two fields that can disagree is the
     # failure the single-field shape exists to prevent.
     well_known: bool = False
+    # True only on a `deferred_reason == "known"` row whose PRODUCTION direction
+    # is absent or not itself well known. A listen defers on RECOGNITION, which
+    # says nothing about whether the word was ever practised the other way
+    # round; without this the row reads as "nothing left here" for a word the
+    # user cannot yet produce. So the preview says where production is actually
+    # practised — the review queue — rather than implying a listen covers it
+    # (bd tunatale-dvdm.2).
+    production_unpractised: bool = False
     # True for every row this listen will actually act on; False for rows past
     # the shared introduction budget, which the modal renders as a read-only
     # "next listen" tail. Two populations can be False: create rows beyond the

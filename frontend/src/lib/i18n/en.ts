@@ -152,6 +152,8 @@ export const en = {
     one: "{count} well recognized word",
     other: "{count} well recognized words",
   },
+  "listenPreview.productionNotPractised":
+    "recognition solid — production is practised in the review queue",
   "listenPreview.cancel": "Cancel",
   "listenPreview.syncing": "Syncing...",
   "listenPreview.markListened": "Mark as listened",

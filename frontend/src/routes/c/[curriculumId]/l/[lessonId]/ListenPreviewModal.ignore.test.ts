@@ -79,6 +79,7 @@ const createCandidate = (
   due_at: null,
   will_create: opts.willCreate,
   lemma: opts.lemma ?? null,
+  production_unpractised: false,
 });
 
 const wordCandidate = (text: string): ListenPreviewCandidate => ({
@@ -93,6 +94,7 @@ const wordCandidate = (text: string): ListenPreviewCandidate => ({
   due_at: null,
   will_create: true,
   lemma: null,
+  production_unpractised: false,
 });
 
 const ignoreBtn = (container: HTMLElement, key: string) =>

@@ -2198,6 +2198,11 @@
             ],
             "title": "Produce Stability"
           },
+          "production_unpractised": {
+            "default": false,
+            "title": "Production Unpractised",
+            "type": "boolean"
+          },
           "progress": {
             "anyOf": [
               {

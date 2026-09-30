@@ -76,6 +76,7 @@ const base = {
   understand_stability: null as number | null,
   produce_band: null as string | null,
   produce_stability: null as number | null,
+  production_unpractised: false,
 };
 
 // Today at the 04:00 rollover convention, so `dueLabel` reads "today". A

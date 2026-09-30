@@ -79,6 +79,7 @@ const createCandidate = (text: string) => ({
   understand_stability: null,
   produce_band: "none",
   produce_stability: null,
+  production_unpractised: false,
 });
 
 /** An ordinary gradeable row — what most tests in this file mean by "a row".
@@ -121,6 +122,7 @@ const wordCandidate = (
   understand_stability: opts?.understand_stability ?? null,
   produce_band: opts?.produce_band ?? null,
   produce_stability: opts?.produce_stability ?? null,
+  production_unpractised: false,
 });
 
 /** A carded-but-never-introduced word: the row this 2026-08 change surfaces. */
@@ -145,6 +147,7 @@ const kpCandidate = (text: string, opts?: { translation?: string; progress?: num
   well_known: false,
   due_at: null,
   will_create: true,
+  production_unpractised: false,
 });
 
 const gradeBtn = (container: HTMLElement, key: string, grade: string) =>

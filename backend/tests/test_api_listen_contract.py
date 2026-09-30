@@ -56,6 +56,7 @@ class TestListenPreviewContract:
             "progress",
             "deferred_reason",
             "well_known",
+            "production_unpractised",
             "will_create",
             "due_at",
             "understand_band",

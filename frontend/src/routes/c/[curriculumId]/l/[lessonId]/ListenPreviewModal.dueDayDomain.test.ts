@@ -68,6 +68,7 @@ const base = {
   understand_stability: null as number | null,
   produce_band: null as string | null,
   produce_stability: null as number | null,
+  production_unpractised: false,
 };
 
 // Day-level due_at in the due_at_rollover_utc convention: 04:00 UTC on the
