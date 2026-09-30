@@ -89,6 +89,63 @@ describe("TunaTaleAPI", () => {
     vi.unstubAllGlobals();
   });
 
+  describe("re-render audio (tunatale-9paa)", () => {
+    const body = () => {
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      return JSON.parse(init.body as string);
+    };
+    const url = () => (vi.mocked(fetch).mock.calls[0] as [string, RequestInit])[0];
+    const estimate = {
+      billable_chars: 65,
+      new_clips: 1,
+      cached_clips: 0,
+      gemini_usd: 0,
+      monthly_allowance: 500000,
+    };
+
+    it("renderAudio names the lesson as lesson_id, the field the route declares", async () => {
+      // It sent content_id from 8a4520c (2026-09-02) on, and the route answered
+      // 422 "Field required: lesson_id" to every Render Audio click.
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ audio_id: "a1" })));
+      await api.renderAudio("l1");
+      expect(body()).toEqual({ lesson_id: "l1" });
+    });
+
+    it("estimateLessonRerender posts the lesson and the chosen sections", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(estimate)));
+      const result = await api.estimateLessonRerender("l1", ["slow_speed"]);
+      expect(url()).toBe(`${BASE}/api/audio/render-estimate`);
+      expect(body()).toEqual({ lesson_id: "l1", section_types: ["slow_speed"] });
+      expect(result.billable_chars).toBe(65);
+    });
+
+    it("rerenderLesson sends null for the whole lesson", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ audio_id: "a2" })));
+      await api.rerenderLesson("l1", null);
+      expect(url()).toBe(`${BASE}/api/audio/rerender`);
+      expect(body()).toEqual({ lesson_id: "l1", section_types: null });
+    });
+
+    it("the review-session pair posts to the session's own paths", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(mockOk(estimate))
+        .mockResolvedValueOnce(mockOk({ audio_id: "a3" }));
+      vi.stubGlobal("fetch", fetchMock);
+      await api.estimateReviewSessionRerender("s1", ["natural_speed"]);
+      await api.rerenderReviewSession("s1", ["natural_speed"]);
+      const calls = fetchMock.mock.calls as [string, RequestInit][];
+      expect(calls.map(([u]) => u)).toEqual([
+        `${BASE}/api/review-sessions/s1/render-estimate`,
+        `${BASE}/api/review-sessions/s1/rerender`,
+      ]);
+      expect(calls.map(([, i]) => JSON.parse(i.body as string))).toEqual([
+        { section_types: ["natural_speed"] },
+        { section_types: ["natural_speed"] },
+      ]);
+    });
+  });
+
   describe("review sessions", () => {
     it("createReviewSessionFromPaste sends the idempotency key as a header", async () => {
       // A header, not a body field: the create body is extra="forbid" server

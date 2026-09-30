@@ -78,6 +78,12 @@ def renderer(request: Request) -> LessonRenderer | None:
     return _optional(request, "renderer")
 
 
+def tts(request: Request) -> Any:
+    """The TTS service the renderer speaks through; a re-render of chosen
+    sections needs it for the lesson title (``reassemble_lesson_audio``)."""
+    return _optional(request, "tts")
+
+
 def user_dbs(request: Request) -> Any:
     return _optional(request, "user_dbs")
 
@@ -104,6 +110,20 @@ def review_renders(app: Any) -> set[str]:
     if renders is None:
         renders = set()
         app.state.review_renders = renders
+    return renders
+
+
+def lesson_renders(app: Any) -> set[str]:
+    """The ids of lessons currently re-rendering from the tools menu (tunatale-9paa).
+
+    In memory for the reason ``review_renders`` gives: the marker lives exactly
+    as long as the render, which lives in this process. Review sessions keep
+    their own set, shared with their render route.
+    """
+    renders = getattr(app.state, "lesson_renders", None)
+    if renders is None:
+        renders = set()
+        app.state.lesson_renders = renders
     return renders
 
 
