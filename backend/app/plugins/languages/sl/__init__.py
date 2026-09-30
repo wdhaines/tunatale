@@ -56,6 +56,21 @@ register(
                 "female": "sl-SI-PetraNeural",
                 "male": "sl-SI-RokNeural",
             },
+            # Who reads each role's English (tunatale-ucpg, 2026-09-29), the
+            # Norwegian rule: Emma and Florian are Multilingual and read their
+            # own (Florian with a German accent, as Giuseppe's is Italian in
+            # nb); Petra and Rok speak only sl-SI and get stand-ins. Median F0
+            # on 6 Slovene lines: Petra 185.7, Emma 166.9, Florian 122.5,
+            # Rok 91.0 — Petra above Emma, so Amanda (234.0 in English) above
+            # Emma (204.1); Rok -> Adam 105.9, below Florian's English 135.1.
+            tts_en_voice_map={
+                "female-1": "en-US-AmandaMultilingualNeural",
+                "female-2": "en-US-EmmaMultilingualNeural",
+                "male-1": "en-US-AdamMultilingualNeural",
+                "male-2": "de-DE-FlorianMultilingualNeural",
+                "female": "en-US-AmandaMultilingualNeural",
+                "male": "en-US-AdamMultilingualNeural",
+            },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS — derived from rag.4's final comment (Petra −17.6, Rok −18.8,
             # Emma −18.1, Florian −19.4), one sentence set. Petra and Rok are

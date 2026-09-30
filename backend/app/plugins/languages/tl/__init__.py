@@ -67,6 +67,21 @@ register(
                 # sound-merge check on her cannot compare single-render hashes.
                 "key-phrases": "de-DE-SeraphinaMultilingualNeural",
             },
+            # Who reads each dialogue role's English (tunatale-ucpg, 2026-09-29),
+            # the Norwegian rule: Emma and Samuel are Multilingual and read their
+            # own; Blessica and Angelo speak only fil-PH and get stand-ins.
+            # Blessica sits above Emma in Tagalog (210.2 vs 170.7 Hz), so her
+            # stand-in sits above Emma in English too: Amanda 234.0 vs Emma
+            # 204.1. Angelo -> Adam 105.9 (Samuel reads English at 148.0).
+            # key-phrases is not a dialogue role: its gloss is the narrator's.
+            tts_en_voice_map={
+                "female-1": "en-US-AmandaMultilingualNeural",
+                "female-2": "en-US-EmmaMultilingualNeural",
+                "male-1": "en-US-AdamMultilingualNeural",
+                "male-2": "en-US-SamuelMultilingualNeural",
+                "female": "en-US-AmandaMultilingualNeural",
+                "male": "en-US-AdamMultilingualNeural",
+            },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS: integrated loudness of the same 10 clips per voice
             # (ffmpeg ebur128), 2026-09-22. Control: Emma measures -18.1 here,

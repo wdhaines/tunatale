@@ -51,6 +51,21 @@ register(
                 "female": "ceb-PH-KoreGemini",
                 "male": "ceb-PH-CharonGemini",
             },
+            # Who reads each role's English (tunatale-ucpg, the user's option 2,
+            # 2026-09-29): pitch-matched Azure stand-ins for all four Gemini
+            # voices, not the Gemini voices themselves, so the English bills
+            # against the free Azure allowance and renders deterministically.
+            # English median F0 on one dialogue line: Emma 204.1, Nancy 175.8,
+            # Adam 105.9, Dustin 141.0 (vs Kore 209.4, Despina 185.5,
+            # Charon 107.2, Orus 139.2 above).
+            tts_en_voice_map={
+                "female-1": "en-US-EmmaMultilingualNeural",
+                "female-2": "en-US-NancyMultilingualNeural",
+                "male-1": "en-US-AdamMultilingualNeural",
+                "male-2": "en-US-DustinMultilingualNeural",
+                "female": "en-US-EmmaMultilingualNeural",
+                "male": "en-US-AdamMultilingualNeural",
+            },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS: integrated loudness of the same 8 Cebuano sentences per
             # voice (ffmpeg ebur128), 2026-09-25. Gemini renders run loud
