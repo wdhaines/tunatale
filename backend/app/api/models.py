@@ -281,6 +281,10 @@ class CreateBaseCardRequest(BaseModel):
     sentence: str
     language_code: str
     translation: str = ""
+    # The lesson or review session the sentence was read in: where a cloze's
+    # sentence translation is looked up (tunatale-0ycs). Optional, so a caller
+    # without one still creates the card, with an empty translation.
+    lesson_id: str | None = None
 
 
 # ── Auth models ─────────────────────────────────────────────────────────────

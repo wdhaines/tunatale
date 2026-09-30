@@ -2269,6 +2269,8 @@ export interface components {
       language_code: string;
       /** Lemma */
       lemma: string;
+      /** Lesson Id */
+      lesson_id?: string | null;
       /** Sentence */
       sentence: string;
       /** Surface */
