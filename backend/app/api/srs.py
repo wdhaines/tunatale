@@ -2337,6 +2337,7 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
                         "recognition_reviewable": w.recognition_reviewable,
                         "recognition_state": w.recognition_state,
                         "recognition_is_due": w.recognition_is_due,
+                        "production_due": w.production_due,
                         "well_known": w.well_known,
                         "understand_band": w.understand_band,
                         "produce_band": w.produce_band,

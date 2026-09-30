@@ -7,6 +7,8 @@
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { railPropsFor } from '$lib/masteryBands';
+	import { onMount } from 'svelte';
+	import { readerProductionPref } from '$lib/stores/readerProductionPref.svelte';
 
 	// The legend's rail swatches are painted by the SAME function that paints
 	// the words, so a swatch cannot drift from the rail it explains. (The old
@@ -84,6 +86,11 @@
 	// Interlinear: the whole-line L1 translation under each L2 line (BDT-style,
 	// cover-one-side reading). Distinct from per-word Gloss.
 	let showInterlinear = $state(false);
+
+	// "Produce": the blur-as-cloze reader (bd tunatale-dvdm.3). Unlike the two
+	// toggles above it is a SETTING, not a per-visit disclosure, so it persists;
+	// off by default. Read at mount because the store touches localStorage.
+	onMount(() => readerProductionPref.init());
 
 	// "?" disclosure for the dialogue usage instructions + mastery-color legend.
 	// Default closed, no persistence.
@@ -494,6 +501,14 @@
 						aria-pressed={showInterlinear}
 						onclick={() => (showInterlinear = !showInterlinear)}
 					>{t('transcript.interlinear')}</button>
+					<button
+						type="button"
+						class="toggle-pill"
+						class:active={readerProductionPref.enabled}
+						aria-pressed={readerProductionPref.enabled}
+						title={t('transcript.practiseProductionHint')}
+						onclick={() => readerProductionPref.set(!readerProductionPref.enabled)}
+					>{t('transcript.practiseProduction')}</button>
 				</div>
 			</div>
 
@@ -647,6 +662,7 @@
 												sentence={lineSentence}
 												tooltipActions={tooltipActions}
 												{showGloss}
+												blurProduction={readerProductionPref.enabled}
 											/>
 										</span>
 									{/if}

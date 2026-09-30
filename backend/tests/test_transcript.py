@@ -2391,6 +2391,130 @@ class TestRecognitionState:
         assert word.recognition_is_due is False
 
 
+class TestProductionDue:
+    """``production_due``: the blur-as-cloze reader's own direction lookup (bd tunatale-dvdm.3).
+
+    True exactly when the word's OWN card has a PRODUCTION direction that is a
+    due REVIEW-ramp card (learning / review / relearning, due today) — the same
+    ``_is_due`` rule recognition bolding uses, applied to production. A
+    production-NEW card never qualifies: the reader never introduces a
+    production card, that stays with the review queue's new-card budget.
+
+    Deliberately independent of ``resolve_active_direction``: the reader stays
+    recognition-based (``is_due``/``active_direction`` do not move), and the
+    blur gets its own lookup.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+        self.today = date(2026, 6, 1)
+
+    def _vocab(self, text: str) -> None:
+        unit = SyntacticUnit(text=text, translation=f"t-{text}", word_count=1, difficulty=1, source="llm", lemma=text)
+        self.db.add_collocation(unit, language_code="no")
+
+    def _set(self, text: str, direction: Direction, state: SRSState, due: datetime) -> None:
+        item = self.db.get_collocation(text)
+        ds = item.directions[direction]
+        ds.state = state
+        ds.due_at = due
+        ds.stability = 5.0
+        ds.last_review = datetime(2026, 5, 1, tzinfo=UTC)
+        self.db.update_direction(item.guid, direction, ds)
+
+    def _word(self, text: str) -> WordToken:
+        lesson = _make_lesson([("female-1", text)], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        return result.dialogue_lines[0].words[0]
+
+    PAST = datetime(2026, 5, 30, 4, 0, tzinfo=UTC)
+    FUTURE = datetime(2026, 7, 1, 4, 0, tzinfo=UTC)
+
+    def test_production_review_due_with_recognition_not_due(self):
+        """The population the blur exists for: production due, recognition not.
+
+        Recognition-based fields must not move — the word is NOT bold, its
+        active direction stays recognition."""
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.FUTURE)
+        self._set("hus", Direction.PRODUCTION, SRSState.REVIEW, self.PAST)
+        word = self._word("hus")
+        assert word.production_due is True
+        assert word.is_due is False
+        assert word.active_direction == "recognition"
+
+    def test_both_directions_due(self):
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.PAST)
+        self._set("hus", Direction.PRODUCTION, SRSState.REVIEW, self.PAST)
+        word = self._word("hus")
+        assert word.production_due is True
+        assert word.is_due is True
+
+    @pytest.mark.parametrize("state", [SRSState.LEARNING, SRSState.RELEARNING])
+    def test_production_learning_steps_due(self, state):
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.FUTURE)
+        self._set("hus", Direction.PRODUCTION, state, self.PAST)
+        assert self._word("hus").production_due is True
+
+    def test_production_new_never_blurs(self):
+        """User's call: an introduction is not a review; the reader never introduces."""
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.PAST)
+        # production left at its default NEW
+        word = self._word("hus")
+        assert word.production_due is False
+        assert word.is_due is True  # recognition still bolds
+
+    def test_production_review_not_yet_due(self):
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.FUTURE)
+        self._set("hus", Direction.PRODUCTION, SRSState.REVIEW, self.FUTURE)
+        assert self._word("hus").production_due is False
+
+    @pytest.mark.parametrize("state", [SRSState.SUSPENDED, SRSState.BURIED, SRSState.KNOWN])
+    def test_off_ramp_production_never_blurs(self, state):
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.FUTURE)
+        self._set("hus", Direction.PRODUCTION, state, self.PAST)
+        assert self._word("hus").production_due is False
+
+    def test_untracked_word(self):
+        assert self._word("hus").production_due is False
+
+    def test_no_production_direction(self):
+        """The Norwegian import shape: recognition only."""
+        self._vocab("hus")
+        self._set("hus", Direction.RECOGNITION, SRSState.REVIEW, self.PAST)
+        with self.db._get_conn() as conn:
+            conn.execute("DELETE FROM collocation_directions WHERE direction = 'production'")
+            conn.commit()
+        assert self._word("hus").production_due is False
+
+    def test_due_cloze_is_production_due(self):
+        """A cloze is production-only, so a due cloze is production-due too (and
+        still ``is_due``: with the setting off it bolds exactly as today)."""
+        unit = SyntacticUnit(
+            text="hver",
+            translation="every",
+            word_count=1,
+            difficulty=1,
+            source="cloze",
+            lemma="hver",
+            source_sentence="Det er åpent hver dag",
+            card_type="cloze",
+        )
+        self.db.add_collocation(unit, language_code="no")
+        self._set("hver", Direction.PRODUCTION, SRSState.REVIEW, self.PAST)
+        lesson = _make_lesson([("female-1", "Det er åpent hver dag")], lang="no")
+        result = extract_transcript(lesson, self.db, self.lemmatizer, today=self.today)
+        hver = next(w for w in result.dialogue_lines[0].words if w.lemma == "hver")
+        assert hver.production_due is True
+        assert hver.is_due is True
+
+
 class TestExtractTranscriptCaching:
     """extract_transcript populates the persistent cache and reuses it on subsequent calls."""
 

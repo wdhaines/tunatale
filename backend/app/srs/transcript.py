@@ -85,6 +85,14 @@ class WordToken:
     # roll-up's per-side percent. None for untracked words and suspended sides.
     understand_progress: float | None = None
     produce_progress: float | None = None
+    # The blur-as-cloze reader's own direction lookup (bd tunatale-dvdm.3): the
+    # word's OWN card has a PRODUCTION direction that is a due review-ramp card
+    # (learning/review/relearning, due today — `_is_due`). Production-NEW never
+    # qualifies: the reader never introduces a production card. Independent of
+    # `resolve_active_direction` on purpose — the reader stays recognition-based
+    # and this flag does not move `is_due`. The frontend blurs on it only when
+    # the "practise production" setting is on.
+    production_due: bool = False
     # Days past due over the ACTIVE direction's stability (_overdue_ratio);
     # None unless is_due. The reader's heavier-bold for overdue words.
     overdue_ratio: float | None = None
@@ -658,6 +666,7 @@ def extract_transcript(
                 understand_progress: float | None = None
                 produce_progress: float | None = None
                 overdue_ratio_val: float | None = None
+                production_due_flag: bool = False
 
                 # Step 3b: Check card-less ignore list (inside the Step-3 unknown branch only)
                 if resolved_item is None and lemma.lower() in ignored_lemmas:
@@ -703,6 +712,7 @@ def extract_transcript(
                     else:
                         rail_rec = item.directions.get(Direction.RECOGNITION)
                         rail_prod = item.directions.get(Direction.PRODUCTION)
+                    production_due_flag = rail_prod is not None and _is_due(rail_prod, today)
                     understand_band = direction_band(rail_rec)
                     produce_band = direction_band(rail_prod)
                     understand_stability = band_stability(understand_band, rail_rec)
@@ -793,6 +803,7 @@ def extract_transcript(
                         recognition_reviewable=recognition_reviewable_flag,
                         recognition_state=recognition_state_val,
                         recognition_is_due=recognition_is_due_flag,
+                        production_due=production_due_flag,
                         well_known=well_known_flag,
                         understand_band=understand_band,
                         produce_band=produce_band,

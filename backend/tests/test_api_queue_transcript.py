@@ -225,6 +225,7 @@ class TestTranscriptEndpoint:
             "recognition_reviewable",
             "recognition_state",
             "recognition_is_due",
+            "production_due",
             "well_known",
             "understand_band",
             "produce_band",
