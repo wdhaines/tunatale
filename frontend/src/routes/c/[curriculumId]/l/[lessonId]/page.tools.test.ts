@@ -807,6 +807,19 @@ describe("repairing a lesson that lost its glosses", () => {
     expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy();
   });
 
+  it("offers it IN a warning banner, not tucked into the tools card", () => {
+    // 2026-09-29: the notice was a muted grey line under the title and the fix
+    // lived in the collapsed tools card, so a lesson could go a month with no
+    // hovers unnoticed. One shared banner (the LLM-failure one's look) carries
+    // both the message and the repair.
+    const { getByRole, container } = render(Page, { props: { data: withCount(0) } });
+    const banner = getByRole("status");
+    expect(banner.classList.contains("banner-warning")).toBe(true);
+    expect(banner.textContent).toMatch(/no hover translations/i);
+    expect(banner.contains(getByRole("button", { name: /restore glosses/i }))).toBe(true);
+    expect(container.querySelector(".tools-card")!.textContent).not.toMatch(/restore glosses/i);
+  });
+
   it("does not offer it when the count was never measured", () => {
     const { queryByRole } = render(Page, { props: { data: withCount(null) } });
     expect(queryByRole("button", { name: /restore glosses/i })).toBeNull();

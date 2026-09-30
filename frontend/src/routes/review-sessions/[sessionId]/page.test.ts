@@ -1386,6 +1386,17 @@ describe("repairing a session that lost its glosses", () => {
     expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy();
   });
 
+  it("offers it IN a warning banner, not tucked into the tools card", () => {
+    // Same shared Banner as the lesson page (2026-09-29): the message and the
+    // repair together, where the reader will see them.
+    const { getByRole, container } = render(Page, { props: { data: withCount(0) } });
+    const banner = getByRole("status");
+    expect(banner.classList.contains("banner-warning")).toBe(true);
+    expect(banner.textContent).toMatch(/no hover translations/i);
+    expect(banner.contains(getByRole("button", { name: /restore glosses/i }))).toBe(true);
+    expect(container.querySelector(".tools-card")!.textContent).not.toMatch(/restore glosses/i);
+  });
+
   it("does not offer it when the count was never measured", () => {
     const { queryByRole } = render(Page, { props: { data: withCount(null) } });
     expect(queryByRole("button", { name: /restore glosses/i })).toBeNull();

@@ -5,6 +5,7 @@
 	// range. That was tunatale-xzp6 — Slovene at a median of 7.06 where ~1.5 was
 	// expected — and it was invisible until the line reached sync.log. This is
 	// that line, on screen.
+	import Banner from '$lib/components/Banner.svelte';
 	import { api } from '$lib/api';
 	import type { PresetChange } from '$lib/api';
 	import { languageStore } from '$lib/stores/language.svelte';
@@ -79,56 +80,11 @@
 </script>
 
 {#if change}
-	<div class="preset-banner" role="alert">
-		<span class="banner-text">
-			<strong>{t('presetChangeBanner.heading')}</strong>
-			<span class="line">{deckLine}</span>
-			<span class="line">{retentionLine}</span>
-			<span class="line">{ratioLine}</span>
-			<span class="line">{t('presetChangeBanner.body')}</span>
-		</span>
-		<button class="dismiss-btn" onclick={dismiss}>{t('presetChangeBanner.dismiss')}</button>
-	</div>
+	<Banner tone="danger" actionLabel={t('presetChangeBanner.dismiss')} onaction={dismiss}>
+		<strong>{t('presetChangeBanner.heading')}</strong>
+		<span class="line">{deckLine}</span>
+		<span class="line">{retentionLine}</span>
+		<span class="line">{ratioLine}</span>
+		<span class="line">{t('presetChangeBanner.body')}</span>
+	</Banner>
 {/if}
-
-<style>
-	/* Sits below the header rather than inside it, so the brand/pill/Settings/Sync
-	   row stays one row at 360px; flex-wrap keeps the text from squeezing the
-	   button off the edge. */
-	.preset-banner {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		padding: 0.55rem 0.75rem;
-		background: color-mix(in srgb, var(--color-danger) 14%, transparent);
-		border-bottom: 1px solid var(--color-danger);
-		font-size: 0.85rem;
-		color: var(--color-danger);
-	}
-	.banner-text {
-		display: flex;
-		flex: 1;
-		min-width: 0;
-		flex-direction: column;
-		gap: 0.15rem;
-		line-height: 1.4;
-	}
-	.dismiss-btn {
-		flex-shrink: 0;
-		padding: 0.3rem 0.7rem;
-		border: 1px solid var(--color-danger);
-		border-radius: var(--radius-pill);
-		background: transparent;
-		color: var(--color-danger);
-		font-size: 0.82rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease, color 0.15s ease;
-	}
-	.dismiss-btn:hover {
-		background: var(--color-danger);
-		color: var(--color-on-primary);
-	}
-</style>

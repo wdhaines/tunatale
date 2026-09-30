@@ -26,6 +26,7 @@ from app.generation.story import (
     StoryGenerationError,
     build_lesson_from_story,
     build_story_prompts,
+    with_glosses_from,
 )
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
@@ -267,7 +268,8 @@ async def regloss_lesson_story(lesson_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
 
-    lesson = Lesson.from_json(row["data_json"])
+    stored = Lesson.from_json(row["data_json"])
+    lesson = stored
     story = lesson.generation_metadata.get("story")
     if story is None:
         raise HTTPException(
@@ -283,7 +285,7 @@ async def regloss_lesson_story(lesson_id: str, request: Request):
         validate_story(story, language=language)
         curriculum = store.get_curriculum(row["curriculum_id"])
         review_words = curriculum.review_request(row["day"]) if curriculum is not None else ()
-        lesson = build_lesson_from_story(story, language=language, review_words=review_words)
+        lesson = with_glosses_from(stored, build_lesson_from_story(story, language=language, review_words=review_words))
     except (StoryGenerationError, ValueError) as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 

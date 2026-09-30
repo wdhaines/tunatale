@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Banner from '$lib/components/Banner.svelte';
 	import { onMount, untrack } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { api } from '$lib/api';
@@ -451,6 +452,29 @@
 <svelte:window onresize={measureNav} />
 
 <main>
+	<!-- A lesson whose gloss pass came back empty. The pass degrades silently on
+	     purpose (it keeps a story already paid for rather than 502ing), so this
+	     banner is the only trace of a total loss, and it carries the repair.
+
+	     ⚠️ `=== 0` and NOT a falsy check: null means a lesson stored before the
+	     count existed; claiming its glosses are missing, or offering an LLM call
+	     to "restore" them, would be a fabrication about every such lesson.
+
+	     Was a muted line under the title plus a button in the collapsed tools
+	     card, easy to miss for weeks (2026-09-29); now the shared Banner, like
+	     the LLM-failure and preset-change banners. -->
+	{#if data.lesson.gloss_entry_count === 0}
+		<Banner
+			tone="warning"
+			actionLabel={t('lessonPage.restoreGlosses')}
+			busyLabel={t('lessonPage.restoring')}
+			busy={reglossing}
+			onaction={handleRegloss}
+		>
+			<span>{t('lessonPage.glossNotice')}</span>
+			<span>{t('lessonPage.keepsDialogue')}</span>
+		</Banner>
+	{/if}
 	<LessonReader
 		title={data.lesson.title}
 		content={data.lesson}
@@ -488,20 +512,6 @@
 					{/if}
 					{#if error}
 						<p class="error">{error}</p>
-					{/if}
-					<!-- The gloss pass degrades silently on purpose — it keeps a story that is
-					     already paid for rather than 502ing — so without this the only trace of
-					     a total loss is a log line on a terminal with no file sink.
-
-					     ⚠️ `=== 0` and NOT a falsy check: null means a lesson stored before the
-					     count existed, and telling its reader the glosses are missing would be a
-					     fabrication about every lesson in the store. Same measured-zero versus
-					     never-measured distinction the reused figure above already makes.
-
-					     Costs a row only in the failure case, so it does not undo the header
-					     compaction in 4293cd3. -->
-					{#if data.lesson.gloss_entry_count === 0}
-						<p class="gloss-notice">{t('lessonPage.glossNotice')}</p>
 					{/if}
 				</div>
 		{/snippet}
@@ -541,18 +551,6 @@
 			<p class="review-coverage" data-testid="review-coverage">
 				{t('lessonPage.reusedCoverage', { used: reviewUsed.length, total: reviewRequested.length })}{#if reviewUsed.length > 0}: <span class="review-words">{reviewUsed.join(', ')}</span>{/if}
 			</p>
-		{/if}
-		<!-- Shown ONLY on a measured zero. `=== 0`, never falsiness: null means a
-		     lesson stored before the count existed, and offering to "restore"
-		     glosses nobody established were missing would put a pointless LLM call
-		     in front of every pre-existing lesson. -->
-		{#if data.lesson.gloss_entry_count === 0}
-			<div class="regen-row">
-				<button class="regen-btn" onclick={handleRegloss} disabled={reglossing}>
-					{reglossing ? t('lessonPage.restoring') : t('lessonPage.restoreGlosses')}
-				</button>
-				<span class="muted">{t('lessonPage.keepsDialogue')}</span>
-			</div>
 		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
@@ -676,11 +674,6 @@
 	/* Muted, not danger-red: the lesson plays and reads fine, it is one
 	   enrichment that is missing. Styling it as an error would teach the reader
 	   to dismiss the row, which is the opposite of what it is for. */
-	.gloss-notice {
-		color: var(--color-muted);
-		margin: 0;
-		font-size: 0.85rem;
-	}
 	.sync-status {
 		color: var(--color-muted);
 		font-size: 0.85rem;

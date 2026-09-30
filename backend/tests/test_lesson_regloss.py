@@ -236,3 +236,55 @@ def _raw_row(store: ContentStore, lesson_id: str) -> dict:
         ).fetchone()
     assert row is not None
     return dict(row)
+
+
+class TestReglossKeepsTheStoredLesson:
+    """A re-gloss changes glosses and nothing else (2026-09-29).
+
+    It used to store the lesson REBUILT by today's builders. Glosses feed no
+    section, so that swapped in whatever the builders now emit: today's voice
+    cast (Davis and the English cast over audio that still speaks Guy) and
+    re-derived key-phrase drills (the live day-11 rebuild changed 67 of them,
+    170 -> 172), neither re-rendered — a transcript out of step with its own
+    audio, reached by pressing a button labelled as a gloss repair.
+    """
+
+    def _seed(self, stored) -> Lesson:
+        _seed_curriculum(stored)
+        lesson = _lesson(story=_story())
+        lesson.narrator_voice = "en-US-GuyNeural"
+        lesson.generation_metadata["rendered_note"] = "written after the build"
+        stored.save_lesson("l1", "c1", 1, lesson)
+        app.state.llm = _mock_llm()
+        return stored.get_lesson("l1")
+
+    async def test_the_sections_are_the_stored_ones(self, stored):
+        before = self._seed(stored)
+
+        await _post("/api/story/l1/regloss")
+
+        after = stored.get_lesson("l1")
+        assert after.sections == before.sections
+
+    async def test_the_narrator_is_the_stored_one(self, stored):
+        self._seed(stored)
+
+        await _post("/api/story/l1/regloss")
+
+        assert stored.get_lesson("l1").narrator_voice == "en-US-GuyNeural"
+
+    async def test_the_glosses_are_new(self, stored):
+        self._seed(stored)
+
+        await _post("/api/story/l1/regloss")
+
+        meta = stored.get_lesson("l1").generation_metadata
+        assert meta["gloss_entry_count"] == 2
+        assert meta["token_glosses"]["hei"] == "hi"
+
+    async def test_metadata_written_after_the_build_survives(self, stored):
+        self._seed(stored)
+
+        await _post("/api/story/l1/regloss")
+
+        assert stored.get_lesson("l1").generation_metadata["rendered_note"] == "written after the build"
