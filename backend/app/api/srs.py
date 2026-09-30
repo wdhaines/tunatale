@@ -2830,6 +2830,46 @@ async def _persist_new_card(
     }
 
 
+def _lesson_sentence_translation(lesson, sentence: str) -> str:
+    """The English of *sentence* as *lesson* records it, or "".
+
+    Shared by the two card-creating endpoints that mint clozes from a reader
+    tap (``/items/base`` and ``/inflection-clozes``), so they cannot disagree
+    about which line a sentence is.
+    """
+    from app.models.lesson import extract_sentence_translations_from_translated
+
+    sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))
+    for k, v in extract_sentence_translations_from_translated(lesson).items():
+        sentence_translations.setdefault(k, v)
+    found = sentence_translations.get(sentence, "")
+    if not found:
+        # The transcript passes a sentence reconstructed from surfaces, which
+        # drops the lesson key's internal punctuation. Fall back to a
+        # punctuation/case-insensitive match.
+        match_index = {normalize_sentence_key(k): v for k, v in sentence_translations.items()}
+        found = match_index.get(normalize_sentence_key(sentence), "")
+    return found
+
+
+def _backfill_sentence_translation(
+    db, unit: SyntacticUnit, language_code: str, sentence_translation: str, result: dict
+) -> None:
+    """Self-healing backfill (mirrors /listen, srs.py:461). add_collocation is
+    idempotent by guid and does NOT update an existing row, so a cloze first
+    minted without lesson context (empty sentence_translation) would strand
+    permanently — no Anki Back Extra <span class="st">. When a translation was
+    resolved and the add re-hit an existing row that lacks one, stamp it dirty
+    so the next sync rewrites Back Extra. (A freshly-created row already carries
+    the translation from `unit`, so only the idempotent path needs this.)
+    """
+    if sentence_translation and not result["was_created"]:
+        guid = compute_guid(unit.text, language_code, unit.disambig_key or "")
+        stored = db.get_collocation_by_guid(guid)
+        if not stored.syntactic_unit.source_sentence_translation:
+            db.set_sentence_translation_dirty(guid, sentence_translation)
+
+
 @router.post(
     "/items/base",
     status_code=200,
@@ -2904,6 +2944,16 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
             if gloss:
                 translation = gloss
 
+    # A cloze shows its sentence, so it carries the sentence's English (Anki's
+    # Back Extra). Before tunatale-0ycs this endpoint dropped it, and every
+    # reader-added function-word cloze reached Anki with no translation. A vocab
+    # card shows no sentence and takes none.
+    sentence_translation = ""
+    if card_type == "cloze" and body.lesson_id:
+        lesson = request.state.content_store.get_readable_content(body.lesson_id)
+        if lesson is not None:
+            sentence_translation = _lesson_sentence_translation(lesson, body.sentence)
+
     unit = SyntacticUnit(
         text=front,
         translation=translation,
@@ -2913,11 +2963,12 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         lemma=headword,
         card_type=card_type,
         source_sentence=source_sentence,
+        source_sentence_translation=sentence_translation,
         # The tagger's in-context gender wins; a blank one (prod's table
         # lemmatizer) falls back to the lemma lookup (tunatale-vvb6).
         article=get_gender_article(lang, gender, lemma=headword) if upos == "NOUN" else "",
     )
-    return await _persist_new_card(
+    result = await _persist_new_card(
         db,
         unit,
         lang,
@@ -2927,6 +2978,8 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         llm=app_state.llm(request),
         media_word=headword,
     )
+    _backfill_sentence_translation(db, unit, lang, sentence_translation, result)
+    return result
 
 
 @router.get("/items", status_code=200, response_model=ListItemsResponse)
@@ -3201,21 +3254,10 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     word_translation = body.translation
     sentence_translation = ""
     if body.lesson_id:
-        from app.models.lesson import extract_sentence_translations_from_translated
-
         lesson = request.state.content_store.get_readable_content(body.lesson_id)
         if lesson is not None:
             token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
-            sentence_translations: dict[str, str] = dict(lesson.generation_metadata.get("sentence_translations", {}))
-            for k, v in extract_sentence_translations_from_translated(lesson).items():
-                sentence_translations.setdefault(k, v)
-            sentence_translation = sentence_translations.get(body.sentence, "")
-            if not sentence_translation:
-                # The transcript passes a sentence reconstructed from surfaces,
-                # which drops the lesson key's internal punctuation. Fall back to
-                # a punctuation/case-insensitive match.
-                match_index = {normalize_sentence_key(k): v for k, v in sentence_translations.items()}
-                sentence_translation = match_index.get(normalize_sentence_key(body.sentence), "")
+            sentence_translation = _lesson_sentence_translation(lesson, body.sentence)
             if not word_translation:
                 word_translation = token_glosses.get(body.surface.lower()) or token_glosses.get(body.lemma) or ""
 
@@ -3259,18 +3301,8 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
         db, unit, language_code, synthesize=True, audio_sentence=body.sentence, audio_word=body.surface
     )
 
-    # 6. Self-healing backfill (mirrors /listen, srs.py:461). add_collocation is
-    #    idempotent by guid and does NOT update an existing row, so a cloze first
-    #    minted without lesson context (empty sentence_translation) would strand
-    #    permanently — no Anki Back Extra <span class="st">. When we resolved a
-    #    translation and re-hit an existing row that lacks one, stamp it dirty so
-    #    the next sync rewrites Back Extra. (A freshly-created row already carries
-    #    the translation from `unit`, so only the idempotent path needs this.)
-    if sentence_translation and not result["was_created"]:
-        guid = compute_guid(unit.text, language_code, unit.disambig_key or "")
-        stored = db.get_collocation_by_guid(guid)
-        if not stored.syntactic_unit.source_sentence_translation:
-            db.set_sentence_translation_dirty(guid, sentence_translation)
+    # 6. Self-healing backfill: see _backfill_sentence_translation.
+    _backfill_sentence_translation(db, unit, language_code, sentence_translation, result)
     return result
 
 

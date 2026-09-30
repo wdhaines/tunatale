@@ -98,6 +98,10 @@ _TABLES: dict[str, dict[str, str]] = {
         "ikaw": "you_one",
         "siya": "third_one",
         "kita": "we_incl",
+        # The short form of `kita`, listed although ko/mo/ka are not: in the
+        # user's deck `kita` is glossed 'see', so `ta` is the only card that can
+        # carry the inclusive-we picture (the user, 2026-09-29).
+        "ta": "we_incl",
         "kami": "we_excl",
         "kamo": "you_many",
         "sila": "they_many",
@@ -390,6 +394,7 @@ class TestDispatch:
             ("siya", "tl", "he or she", "third_one"),
             ("kami", "tl", "we, but not you", "we_excl"),
             ("kita", "ceb", "we, including you", "we_incl"),
+            ("ta", "ceb", "we", "we_incl"),
             ("sila", "ceb", "they", "they_many"),
             ("AKO", "ceb", "I", "i"),
             # The possessives, in both languages. `niya` and `siya` are the pair

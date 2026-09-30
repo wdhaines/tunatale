@@ -1385,6 +1385,7 @@ export class TunaTaleAPI {
     sentence: string;
     language_code: string;
     translation?: string;
+    lesson_id?: string;
   }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
     return this.request("/api/srs/items/base", {
       method: "POST",

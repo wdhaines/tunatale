@@ -362,7 +362,9 @@ describe("the reader", () => {
 
     await vi.waitFor(() =>
       expect(api.createBaseCard).toHaveBeenCalledWith(
-        expect.objectContaining({ language_code: "no", surface: "Toget" }),
+        // lesson_id is the SESSION id: /items/base resolves a cloze's sentence
+        // translation through get_readable_content, which takes either (0ycs).
+        expect.objectContaining({ language_code: "no", surface: "Toget", lesson_id: "sess-1" }),
       ),
     );
   });

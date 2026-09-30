@@ -85,6 +85,8 @@ export function createReadingActions(opts: ReadingActionsOptions) {
           sentence,
           language_code: opts.languageCode,
           translation: word.translation ?? "",
+          // Where a cloze's sentence translation is looked up (tunatale-0ycs).
+          lesson_id: opts.contentId,
         });
         // A function word's base card is a production-only cloze: there is no
         // recognition card to grade, and grading one 500s (Tagalog "ba", live

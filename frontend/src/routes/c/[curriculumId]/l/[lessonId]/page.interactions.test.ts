@@ -1107,6 +1107,8 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
           sentence: "Zdravo kako si",
           language_code: "sl",
           translation: "",
+          // Where a cloze's sentence translation is looked up (tunatale-0ycs).
+          lesson_id: "l1",
         });
         // Introduced + reviewed: the newly created card id is graded recognition.
         expect(mockSubmitDrill).toHaveBeenCalledWith(1, "recognition", "good");

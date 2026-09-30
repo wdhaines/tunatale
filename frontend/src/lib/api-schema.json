@@ -248,6 +248,17 @@
             "title": "Lemma",
             "type": "string"
           },
+          "lesson_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lesson Id"
+          },
           "sentence": {
             "title": "Sentence",
             "type": "string"

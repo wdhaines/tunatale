@@ -498,6 +498,100 @@ class TestCreateBaseCard:
         assert coll.syntactic_unit.source_sentence == "Ona {{c1::ga}} vidi"
         assert coll.directions[Direction.PRODUCTION].state == SRSState.NEW
 
+    @staticmethod
+    def _save_lesson_with_translation(sentence: str, translation: str) -> None:
+        from app.models.lesson import Lesson
+
+        lesson = Lesson(title="Day 1", language_code="sl", sections=[], key_phrases=[])
+        lesson.generation_metadata = {"sentence_translations": {sentence: translation}}
+        app.state.content_store.save_lesson("lesson-1", "curriculum-1", 1, lesson)
+
+    async def test_function_word_cloze_carries_its_sentence_translation(self, api_app_state):
+        """tunatale-0ycs: a reader-added cloze gets the line's English from the
+        lesson. Before the fix /items/base dropped it, so Anki's Back Extra had
+        no sentence translation ('Asa man ang libro {{c1::ko}}?', live 09-29).
+
+        The sentence arrives punctuation-stripped, as the reader reconstructs it
+        from surfaces, so this also pins the normalised lookup.
+        """
+        self._save_lesson_with_translation("Kava na mizi.", "Coffee on the table.")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "na",
+                    "lemma": "na",
+                    "sentence": "Kava na mizi",
+                    "language_code": "sl",
+                    "translation": "on",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("na", "sl", ""))
+        assert coll.syntactic_unit.card_type == "cloze"
+        assert coll.syntactic_unit.source_sentence_translation == "Coffee on the table."
+
+    async def test_readding_a_cloze_backfills_a_missing_sentence_translation(self, api_app_state):
+        """A cloze minted with no translation (the pre-fix shape) is healed on the
+        next add with a lesson: the translation is stored AND marked dirty, so the
+        next sync rewrites Back Extra in Anki rather than leaving it stale."""
+        body = {"surface": "na", "lemma": "na", "sentence": "Kava na mizi.", "language_code": "sl", "translation": "on"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            first = await client.post("/api/srs/items/base", json=body)
+            guid = compute_guid("na", "sl", "")
+            assert api_app_state.get_collocation_by_guid(guid).syntactic_unit.source_sentence_translation == ""
+
+            self._save_lesson_with_translation("Kava na mizi.", "Coffee on the table.")
+            again = await client.post("/api/srs/items/base", json={**body, "lesson_id": "lesson-1"})
+
+        assert first.json()["was_created"] is True
+        assert again.json()["was_created"] is False
+        coll = api_app_state.get_collocation_by_guid(guid)
+        assert coll.syntactic_unit.source_sentence_translation == "Coffee on the table."
+        with api_app_state._get_conn() as conn:
+            dirty = conn.execute("SELECT dirty_fields FROM collocations WHERE guid = ?", (guid,)).fetchone()[0]
+        assert "sentence_translation" in dirty.split(",")
+
+    async def test_cloze_with_an_unknown_lesson_is_still_created(self, api_app_state):
+        """A lesson_id naming no lesson (deleted, or another learner's) must not
+        block the card: it is created, with no sentence translation."""
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "na",
+                    "lemma": "na",
+                    "sentence": "Kava na mizi.",
+                    "language_code": "sl",
+                    "lesson_id": "no-such-lesson",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["was_created"] is True
+        coll = api_app_state.get_collocation_by_guid(compute_guid("na", "sl", ""))
+        assert coll.syntactic_unit.source_sentence_translation == ""
+
+    async def test_vocab_card_takes_no_sentence_translation(self, api_app_state):
+        """Scope guard: only a cloze has a sentence on its card, so only a cloze
+        takes the line's English. A vocab base stays as it was."""
+        self._save_lesson_with_translation("To je hotel.", "This is a hotel.")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "hotel",
+                    "lemma": "hotel",
+                    "sentence": "To je hotel.",
+                    "language_code": "sl",
+                    "lesson_id": "lesson-1",
+                },
+            )
+        assert resp.status_code == 200
+        coll = api_app_state.get_collocation_by_guid(compute_guid("hotel", "sl", ""))
+        assert coll.syntactic_unit.card_type == "vocab"
+        assert coll.syntactic_unit.source_sentence_translation == ""
+
     async def test_idempotent_returns_existing(self, api_app_state):
         """POST twice → one row; second call was_created False, same id."""
         body = {
