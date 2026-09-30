@@ -81,6 +81,7 @@ const base = {
   well_known: false,
   due_at: null,
   will_create: true,
+  production_unpractised: false,
 };
 
 const liveCreate = (text: string): ListenPreviewCandidate => ({

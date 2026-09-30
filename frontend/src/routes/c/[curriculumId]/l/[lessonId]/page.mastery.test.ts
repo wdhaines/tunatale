@@ -153,6 +153,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             well_known: false,
             due_at: null,
             will_create: true,
+            production_unpractised: false,
           },
         ],
       });
@@ -199,6 +200,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             well_known: false,
             due_at: null,
             will_create: true,
+            production_unpractised: false,
           },
         ],
       });
@@ -265,6 +267,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             well_known: false,
             due_at: null,
             will_create: true,
+            production_unpractised: false,
           },
         ],
       });
@@ -570,6 +573,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             well_known: false,
             due_at: null,
             will_create: true,
+            production_unpractised: false,
           },
         ],
       });
@@ -933,6 +937,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
             well_known: false,
             due_at: null,
             will_create: true,
+            production_unpractised: false,
           },
         ],
       });

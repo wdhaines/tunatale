@@ -83,6 +83,7 @@ const dueCandidate = (text: string): ListenPreviewCandidate => ({
   well_known: false,
   due_at: "2026-08-04T04:00:00+00:00",
   will_create: true,
+  production_unpractised: false,
 });
 
 /** A well-known row: scheduled far beyond the horizon, starts 'skip', and
@@ -99,6 +100,7 @@ const knownCandidate = (text: string): ListenPreviewCandidate => ({
   well_known: true,
   due_at: "2126-01-01T04:00:00+00:00",
   will_create: true,
+  production_unpractised: false,
 });
 
 /** Two ordinary rows and two known ones — enough that a bulk action which

@@ -3130,6 +3130,11 @@ export interface components {
       produce_band?: string | null;
       /** Produce Stability */
       produce_stability?: number | null;
+      /**
+       * Production Unpractised
+       * @default false
+       */
+      production_unpractised: boolean;
       /** Progress */
       progress: number | null;
       /**

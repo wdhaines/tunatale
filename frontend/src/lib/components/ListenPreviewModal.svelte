@@ -802,6 +802,12 @@
 							{:else}
 								<span class="gloss empty" aria-label={t('listenPreview.noGloss')}>&mdash;</span>
 							{/if}
+							<!-- A deferred row is deferred on RECOGNITION; production is a
+							     separate direction, so "well recognized" alone reads as
+							     "nothing left here" for a word the user cannot yet produce. -->
+							{#if c.production_unpractised}
+								<span class="tag production-note">{t('listenPreview.productionNotPractised')}</span>
+							{/if}
 						</div>
 
 						{@render dayTag(c)}
@@ -1396,6 +1402,16 @@
 		background: color-mix(in srgb, var(--color-warning) 18%, transparent);
 		color: var(--color-warning);
 		flex-shrink: 0;
+	}
+	/* The longest string a row carries. `.tag` is nowrap, which let it run
+	   100px past its row at 360px with 20px text; it wraps inside the word
+	   column instead (pinned by listen-preview-layout.spec.ts). */
+	.tag.production-note {
+		background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+		color: var(--color-warning);
+		white-space: normal;
+		min-width: 0;
+		flex: 1 1 auto;
 	}
 
 	.grade {

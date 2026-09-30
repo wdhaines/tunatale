@@ -64,6 +64,7 @@ const createCandidate = (text: string) => ({
   well_known: false,
   due_at: null,
   will_create: true,
+  production_unpractised: false,
 });
 
 const gradeBtn = (container: HTMLElement, key: string, grade: string) =>

@@ -2134,6 +2134,11 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
                 "progress": None if grade_cls == "new" else progress,
                 "deferred_reason": deferred,
                 "well_known": deferred == "known",
+                # `deferred` is about RECOGNITION; production is a separate
+                # direction with its own schedule, so "well known" here says
+                # nothing about whether the word can be produced.
+                "production_unpractised": deferred == "known"
+                and not is_well_known(existing.directions.get(Direction.PRODUCTION), today),
                 "due_at": None if grade_cls == "new" else due_at_str,
                 **_sides(existing.directions),
                 "_group_rank": _GROUP_RANK.get(grade_cls, 3),
@@ -2183,6 +2188,10 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             "progress": None if grade_cls == "new" else progress,
             "deferred_reason": deferred,
             "well_known": deferred == "known",
+            # Same predicate as the word rows above, over the key phrase's own
+            # production direction.
+            "production_unpractised": deferred == "known"
+            and not is_well_known(item.directions.get(Direction.PRODUCTION), today),
             "due_at": None if grade_cls == "new" else due_at_str,
             **_sides(item.directions),
             "_group_rank": _GROUP_RANK.get(grade_cls, 3),
@@ -2255,6 +2264,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             # A create is the most-wanted row in the list; it is never deferred.
             "deferred_reason": None,
             "well_known": False,
+            "production_unpractised": False,
             "will_create": lemma in live_create_set,
             "due_at": None,
             **_sides({}),

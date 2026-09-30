@@ -48,6 +48,7 @@ const createCandidate = (text: string, willCreate: boolean): ListenPreviewCandid
   well_known: false,
   due_at: null,
   will_create: willCreate,
+  production_unpractised: false,
 });
 
 describe("ListenPreviewModal — over-budget creation tail gloss", () => {
