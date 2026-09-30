@@ -4152,7 +4152,7 @@ export interface components {
      * TranscriptWord
      * @description One element of TranscriptDialogueLine.words.
      *
-     *     The 31 fields the handler projects out of ``transcript.WordToken``. Note
+     *     The 32 fields the handler projects out of ``transcript.WordToken``. Note
      *     that ``WordToken.collocation_is_due`` is deliberately NOT among them — it is
      *     computed but never serialized, and adding it here would not surface it (the
      *     model can only filter, never invent).
@@ -4200,6 +4200,8 @@ export interface components {
       produce_progress: number | null;
       /** Produce Stability */
       produce_stability: number | null;
+      /** Production Due */
+      production_due: boolean;
       /** Progress */
       progress: number | null;
       /** Recognition Is Due */

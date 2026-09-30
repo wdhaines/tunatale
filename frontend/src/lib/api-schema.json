@@ -4543,7 +4543,7 @@
         "type": "object"
       },
       "TranscriptWord": {
-        "description": "One element of TranscriptDialogueLine.words.\n\nThe 31 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
+        "description": "One element of TranscriptDialogueLine.words.\n\nThe 32 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
         "properties": {
           "active_direction": {
             "anyOf": [
@@ -4727,6 +4727,10 @@
             ],
             "title": "Produce Stability"
           },
+          "production_due": {
+            "title": "Production Due",
+            "type": "boolean"
+          },
           "progress": {
             "anyOf": [
               {
@@ -4854,6 +4858,7 @@
           "recognition_reviewable",
           "recognition_state",
           "recognition_is_due",
+          "production_due",
           "well_known",
           "understand_band",
           "produce_band",

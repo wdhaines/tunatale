@@ -17,6 +17,9 @@
 		// the backend's one snapshot).
 		isGradeUndoable?: (word: WordToken) => boolean;
 		onUndoGrade?: (word: WordToken) => Promise<void>;
+		// Blur-as-cloze reader (bd tunatale-dvdm.3): grade the word's PRODUCTION
+		// direction, through the review queue's own endpoint.
+		onProductionGrade?: (word: WordToken, rating: 'again' | 'good') => Promise<void>;
 	}
 
 	interface Props {
@@ -38,6 +41,9 @@
 		// schedule rather than the card the SRS is asking for).
 		gradeVariant?: 'primary' | 'ahead';
 		onGrade?: (() => void) | null;
+		// A revealed blur-as-cloze word (bd tunatale-dvdm.3): Again / Good grade its
+		// PRODUCTION direction. Replaces the single grade button while present.
+		productionGrade?: { onAgain: () => void; onGood: () => void } | null;
 		// "Words…" — the touch path into a phrase's individual words (what
 		// Alt+hover does on desktop). Only collocation popovers pass this.
 		onDrillIn?: (() => void) | null;
@@ -58,6 +64,7 @@
 		gradeLabel = null,
 		gradeVariant = 'primary',
 		onGrade = null,
+		productionGrade = null,
 		onDrillIn = null,
 		masteryLabel = null,
 		masterySides = null
@@ -309,7 +316,8 @@
 		)
 	);
 
-	const showGrade = $derived(Boolean(gradeLabel && onGrade));
+	const showGrade = $derived(Boolean(gradeLabel && onGrade) && productionGrade == null);
+	const showProductionGrade = $derived(productionGrade != null);
 	const showDrillIn = $derived(Boolean(onDrillIn));
 
 	// Counted, not just OR-ed, because the action row's LAYOUT depends on how many
@@ -318,6 +326,8 @@
 	const actionCount = $derived(
 		[
 			showGrade,
+			showProductionGrade,
+			showProductionGrade,
 			showDrillIn,
 			showCreateInflection,
 			showIgnore,
@@ -373,6 +383,18 @@
 							class:tt-btn-review-ahead={gradeVariant === 'ahead'}
 							onclick={() => onGrade!()}
 						>{gradeLabel}</button>
+					{/if}
+					{#if showProductionGrade}
+						<button
+							type="button"
+							class="tt-btn tt-btn-again"
+							onclick={() => productionGrade!.onAgain()}
+						>{t('tooltip.again')}</button>
+						<button
+							type="button"
+							class="tt-btn tt-btn-grade"
+							onclick={() => productionGrade!.onGood()}
+						>{t('tooltip.good')}</button>
 					{/if}
 					{#if showDrillIn}
 						<button

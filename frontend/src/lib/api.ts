@@ -345,6 +345,11 @@ export interface WordToken {
   // Days past due over the active direction's stability; null unless due.
   // Drives the reader's heavier bold for overdue words (bd tunatale-yh47.3).
   overdue_ratio?: number | null;
+  // The word's own PRODUCTION direction is a due review (learning/review/
+  // relearning, due today; never NEW). The blur-as-cloze reader blurs on it
+  // when its setting is on (bd tunatale-dvdm.3). Optional, same rationale as
+  // the siblings.
+  production_due?: boolean;
   understand_progress?: number | null;
   produce_progress?: number | null;
   understand_band?: string | null;

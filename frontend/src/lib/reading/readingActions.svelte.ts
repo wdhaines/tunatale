@@ -220,6 +220,23 @@ export function createReadingActions(opts: ReadingActionsOptions) {
     onUndoGrade: async (_word: WordToken) => {
       if (undoable != null) await onUndoGrade(undoable.itemId, undoable.direction);
     },
+    // Blur-as-cloze reader (bd tunatale-dvdm.3): grade the word's PRODUCTION
+    // direction through the review queue's own endpoint — the same
+    // drill_feedback that writes the revlog row, marks the card dirty for the
+    // sync push and advances the learning cutoff. Never a second grading path.
+    // `lesson_review` stays false: this is a real review and is charged like one.
+    onProductionGrade: async (word: WordToken, rating: "again" | "good") => {
+      const itemId = word.srs_item_id;
+      if (itemId == null || wordActionInFlight) return;
+      wordActionInFlight = true;
+      await guarded(async () => {
+        await api.submitDrill(itemId, "production", rating);
+        undoable = { itemId, direction: "production" };
+        await refetch();
+        queueStatsStore.refresh();
+      });
+      wordActionInFlight = false;
+    },
   };
 
   // A collocation undo is always a RECOGNITION undo — collocations have no

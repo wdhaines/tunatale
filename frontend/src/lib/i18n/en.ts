@@ -49,6 +49,9 @@ export const en = {
   "transcript.showVariations": "Show variations",
   "transcript.gloss": "Gloss",
   "transcript.interlinear": "Interlinear",
+  "transcript.practiseProduction": "Produce",
+  "transcript.practiseProductionHint":
+    "Blur words due for production: recall each, then tap to check",
   "transcript.helpInstructions":
     "Tap or hover a word/phrase to open its popover — grading and all other actions live there. Alt+hover a phrase for its individual words. Drag to create a phrase, or tap '+ New phrase' on mobile.",
   "transcript.legend.wordsLabel": "Words:",
@@ -86,6 +89,9 @@ export const en = {
   "tooltip.known": "Known",
   "tooltip.unmarkKnown": "Un-mark known",
   "tooltip.reset": "Reset",
+  "tooltip.again": "Again",
+  "tooltip.good": "Good",
+  "wordSpan.hiddenWord": "Hidden word, due for production — tap to reveal",
 
   // DrillCard.svelte
   "drillCard.playAudio": "Play audio",

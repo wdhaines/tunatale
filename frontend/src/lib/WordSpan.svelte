@@ -3,6 +3,7 @@
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
 	import { railPropsFor, isUnstarted, masterySides as masterySidesFn } from '$lib/masteryBands';
+	import { t } from '$lib/i18n/i18n.svelte';
 
 	interface Props {
 		word: WordToken;
@@ -16,6 +17,9 @@
 		tooltipActions?: TooltipActions;
 		showGloss?: boolean;
 		hideRails?: boolean;
+		// "Practise production" is on (bd tunatale-dvdm.3). Off by default, and
+		// with it off nothing below changes a byte of the render.
+		blurProduction?: boolean;
 	}
 
 	let {
@@ -29,8 +33,27 @@
 		sentence,
 		tooltipActions,
 		showGloss = false,
-		hideRails = false
+		hideRails = false,
+		blurProduction = false
 	}: Props = $props();
+
+	// Blur-as-cloze (bd tunatale-dvdm.3). A word whose PRODUCTION direction is a
+	// due review is blurred instead of bolded: recall it from the sentence and
+	// the gloss, then tap to check. The reveal is local and grades nothing; only
+	// Again / Good in the popover write, and they grade PRODUCTION through the
+	// review queue's own endpoint. A blur never touched grades nothing.
+	// `productionCloze` stays true after the reveal, until the refetch that
+	// follows a grade clears `production_due` — so a revealed word neither
+	// bolds nor offers the recognition grade in the meantime.
+	let revealed = $state(false);
+	const productionCloze = $derived(
+		blurProduction && Boolean(word.production_due) && word.srs_item_id != null
+	);
+	const blurred = $derived(productionCloze && !revealed);
+
+	function reveal() {
+		if (blurred) revealed = true;
+	}
 
 	function fire() {
 		onWordClick?.(word, lineIndex ?? 0);
@@ -43,6 +66,11 @@
 	// press can't happen by accident the way a touch tap can.
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key !== 'Enter' && e.key !== ' ') return;
+		if (blurred) {
+			e.preventDefault();
+			reveal();
+			return;
+		}
 		if (requireModifier && !(e.altKey || e.shiftKey)) return;
 		e.preventDefault();
 		if (requireModifier) e.stopPropagation();
@@ -137,7 +165,9 @@
 	// unknown → create a base card; due+tracked → grade Good; not-due but readable
 	// → review ahead; otherwise the click was a no-op, so no button.
 	const gradeLabel = $derived(
-		undoable
+		productionCloze && !undoable
+			? null
+			: undoable
 			? 'Undo ↩'
 			: onWordClick == null
 				? null
@@ -155,6 +185,17 @@
 	// Style the read-ahead grade subtler than the due "Got it ✓" so the user can
 	// see it's ahead of schedule (not the card the SRS is asking for).
 	const gradeVariant = $derived(!undoable && readAheadApplies ? 'ahead' : 'primary');
+
+	// Again / Good for a REVEALED production cloze; nothing while it is still
+	// blurred (the reveal comes first).
+	const productionGrade = $derived(
+		productionCloze && revealed && tooltipActions?.onProductionGrade
+			? {
+					onAgain: () => void tooltipActions!.onProductionGrade!(word, 'again'),
+					onGood: () => void tooltipActions!.onProductionGrade!(word, 'good')
+				}
+			: null
+	);
 
 	const onGrade = $derived(
 		undoable
@@ -174,6 +215,7 @@
 	{gradeLabel}
 	{gradeVariant}
 	{onGrade}
+	{productionGrade}
 	{masteryLabel}
 	{masterySides}
 >
@@ -185,14 +227,17 @@
 			class="word {colorClass}"
 			class:paint-rails={paintsRails}
 			class:word-selected={selected}
-			class:word-due={word.is_due}
-			class:word-overdue={overdueRatio >= 1 && overdueRatio < 3}
-			class:word-overdue-far={overdueRatio >= 3}
+			class:word-due={word.is_due && !productionCloze}
+			class:word-overdue={!productionCloze && overdueRatio >= 1 && overdueRatio < 3}
+			class:word-overdue-far={!productionCloze && overdueRatio >= 3}
+			class:word-blurred={blurred}
 			style={railProps ?? undefined}
 			role="button"
 			tabindex="0"
 			data-line-index={lineIndex}
 			data-word-index={wordIndex}
+			aria-label={blurred ? t('wordSpan.hiddenWord') : undefined}
+			onclick={blurred ? reveal : undefined}
 			onkeydown={handleKeydown}
 		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
 		{#if showGloss && word.translation}
@@ -237,6 +282,13 @@
 	}
 	.word-overdue-far {
 		font-weight: 900;
+	}
+	.word-blurred {
+		/* Enough to hide the letters, not the word's length: the gap in the
+		   sentence is part of the cue. user-select keeps a long-press from
+		   copying out the answer. */
+		filter: blur(5px);
+		user-select: none;
 	}
 	.word-selected {
 		background-color: rgba(99, 102, 241, 0.2);
