@@ -90,5 +90,9 @@ class Language:
                 "it-IT-GiuseppeMultilingualNeural": 0.9,
                 "en-US-DustinMultilingualNeural": 0.7,
                 "en-US-GuyNeural": -0.5,
+                # Tagalog / Slovene male-2 read their own English. Same 8-line
+                # set and -0.5 anchor, 2026-09-29; raw -20.33 / -19.46 LUFS.
+                "en-US-SamuelMultilingualNeural": -0.2,
+                "de-DE-FlorianMultilingualNeural": -1.0,
             },
         )

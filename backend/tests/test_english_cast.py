@@ -350,3 +350,90 @@ def test_the_renderer_factory_knows_the_english_locale():
 
     renderer = build_lesson_renderer(AsyncMock(), ["no"], settings)
     assert renderer._tts_locales["en"] == "en-US"
+
+
+# ── every language (tunatale-ucpg, extended 2026-09-29) ──────────────────
+#
+# Cebuano: the user chose option 2 — pitch-matched Azure English stand-ins for
+# all four Gemini voices (free allowance, deterministic, regression-testable),
+# over the Gemini voices reading their own English. Tagalog and Slovene follow
+# the Norwegian rule: a Multilingual cast member reads its own English; a
+# native-only voice gets a stand-in. The stand-ins are one repertoire across
+# languages (Emma, Nancy, Amanda, Adam, Dustin), each already gain-measured.
+
+_EN_CASTS = {
+    "ceb": {
+        "female-1": "en-US-EmmaMultilingualNeural",  # Kore 209.4 Hz
+        "female-2": "en-US-NancyMultilingualNeural",  # Despina 185.5
+        "male-1": "en-US-AdamMultilingualNeural",  # Charon 107.2
+        "male-2": "en-US-DustinMultilingualNeural",  # Orus 139.2
+        "female": "en-US-EmmaMultilingualNeural",
+        "male": "en-US-AdamMultilingualNeural",
+    },
+    "tl": {
+        "female-1": "en-US-AmandaMultilingualNeural",  # Blessica, above Emma in tl too
+        "female-2": "en-US-EmmaMultilingualNeural",
+        "male-1": "en-US-AdamMultilingualNeural",  # Angelo
+        "male-2": "en-US-SamuelMultilingualNeural",
+        "female": "en-US-AmandaMultilingualNeural",
+        "male": "en-US-AdamMultilingualNeural",
+    },
+    "sl": {
+        "female-1": "en-US-AmandaMultilingualNeural",  # Petra 185.7, above Emma's 166.9 in sl
+        "female-2": "en-US-EmmaMultilingualNeural",
+        "male-1": "en-US-AdamMultilingualNeural",  # Rok 91.0
+        "male-2": "de-DE-FlorianMultilingualNeural",
+        "female": "en-US-AmandaMultilingualNeural",
+        "male": "en-US-AdamMultilingualNeural",
+    },
+}
+
+
+@pytest.mark.parametrize("code", sorted(_EN_CASTS))
+def test_each_languages_english_cast_is_the_approved_one(code):
+    assert get_language(code).tts_en_voice_map == _EN_CASTS[code]
+
+
+@pytest.mark.parametrize("code", ["sl", "no", "tl", "ceb"])
+def test_every_dialogue_role_has_an_english_voice(code):
+    """A role missing from the English map falls back to the narrator silently.
+
+    ``key-phrases`` (tl) is not a dialogue role: the key-phrase translation is
+    always the narrator's, so it has no English voice to declare.
+    """
+    lang = get_language(code)
+    roles = set(lang.tts_voice_map) - {"narrator", "key-phrases"}
+    assert set(lang.tts_en_voice_map) == roles
+
+
+@pytest.mark.parametrize("code", ["sl", "no", "tl", "ceb"])
+def test_every_voice_that_reads_english_has_an_english_gain(code):
+    lang = get_language(code)
+    readers = {lang.tts_voice_map["narrator"], *lang.tts_en_voice_map.values()}
+    assert not readers - set(get_language("en").tts_voice_gain_db)
+
+
+@pytest.mark.parametrize("code", ["sl", "tl"])
+def test_multilingual_cast_members_read_their_own_english(code):
+    lang = get_language(code)
+    for role, voice in lang.tts_voice_map.items():
+        if role in lang.tts_en_voice_map and "Multilingual" in voice:
+            assert lang.tts_en_voice_map[role] == voice, (code, role)
+
+
+def test_no_gemini_voice_reads_english():
+    """Option 2: Cebuano's English is Azure, so it bills against the free allowance."""
+    assert not [v for v in get_language("ceb").tts_en_voice_map.values() if v.endswith("Gemini")]
+
+
+@pytest.mark.parametrize(
+    ("voice_id", "expected"),
+    [
+        # Same 8-line set and the same -0.5 anchor as the table above.
+        # Raw means: Samuel -20.33, Florian -19.46 LUFS.
+        ("en-US-SamuelMultilingualNeural", -0.2),
+        ("de-DE-FlorianMultilingualNeural", -1.0),
+    ],
+)
+def test_english_gain_for_the_tagalog_and_slovene_readers(voice_id, expected):
+    assert get_tts_voice_gain_db("en", voice_id) == expected
