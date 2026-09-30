@@ -27,6 +27,11 @@ register(
             tts_locale="fil-PH",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
+                # Narration lines in the dialogue (description no character says
+                # aloud) are the narrator's in BOTH languages, so they sound like
+                # the titles (user, 2026-09-30, tunatale-fx5n). Davis reads the
+                # L2 text under this language's <lang> tag.
+                "narration": NARRATOR_VOICE,
                 # Azure serves fil-PH with exactly two standard voices, Blessica
                 # and Angelo, so the second woman and second man are Multilingual
                 # voices under a <lang xml:lang="fil-PH"> wrapper. Chosen by
@@ -75,6 +80,7 @@ register(
             # 204.1. Angelo -> Adam 105.9 (Samuel reads English at 148.0).
             # key-phrases is not a dialogue role: its gloss is the narrator's.
             tts_en_voice_map={
+                "narration": NARRATOR_VOICE,
                 "female-1": "en-US-AmandaMultilingualNeural",
                 "female-2": "en-US-EmmaMultilingualNeural",
                 "male-1": "en-US-AdamMultilingualNeural",
@@ -92,6 +98,11 @@ register(
             # (the renderer keys on the text's language), so the narrator has
             # no entry here.
             tts_voice_gain_db={
+                # The narrator reading tl narration (tunatale-fx5n), measured
+                # 2026-09-30 against Emma on the same 8 lines of 'Paying Respects at a Wake in Jimenez', same
+                # synthesize() SSML, ebur128 mean: Davis -22.32 vs Emma -18.11 LUFS,
+                # so Emma's -1.9 + (-18.11 - (-22.32)) = +2.3.
+                NARRATOR_VOICE: 2.3,
                 "fil-PH-BlessicaNeural": 1.8,
                 "fil-PH-AngeloNeural": -0.6,
                 "en-US-EmmaMultilingualNeural": -1.9,

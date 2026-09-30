@@ -100,12 +100,15 @@
 
 	// Map each distinct line.role to a letter (A, B, C, ...) in order of first
 	// appearance, so dialogue lines show a compact "speaker" chip instead of a
-	// raw voice id like "female-1" / "male-1".
+	// raw voice id like "female-1" / "male-1". Narration is the narrator's, not
+	// a speaker's, so it takes no letter: A is always the first CHARACTER (the
+	// user read "A" as the narrator when narration opened a lesson, 2026-09-30).
+	const NARRATION = 'narration';
 	const speakerLetters = $derived.by(() => {
 		const map: Record<string, string> = {};
 		let count = 0;
 		for (const line of transcript.dialogue_lines) {
-			if (!(line.role in map)) {
+			if (line.role !== NARRATION && !(line.role in map)) {
 				map[line.role] = SPEAKER_LETTERS[count % SPEAKER_LETTERS.length];
 				count += 1;
 			}
@@ -575,10 +578,18 @@
 					{@const seekCue = controller?.findPlayableCue({ kind: 'line', target_index: lineIndex }) ?? null}
 					<div class="dialogue-line" class:active-line={isActiveLine}>
 						<span class="dialogue-role">
-							<span
-								class="dialogue-role-chip speaker-{speakerIndex(line.role) % 4}"
-								title={line.role}
-							>{speakerLetters[line.role]}</span>
+							{#if line.role === NARRATION}
+								<span
+									class="dialogue-role-chip narration"
+									title={t('transcript.narrator')}
+									aria-label={t('transcript.narrator')}
+								>{t('transcript.narratorChip')}</span>
+							{:else}
+								<span
+									class="dialogue-role-chip speaker-{speakerIndex(line.role) % 4}"
+									title={line.role}
+								>{speakerLetters[line.role]}</span>
+							{/if}
 						</span>
 						<div class="dialogue-line-body">
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1044,6 +1055,14 @@
 	.dialogue-role-chip.speaker-3 {
 		background: color-mix(in srgb, var(--color-secondary) 18%, transparent);
 		color: var(--color-secondary);
+	}
+	/* The narrator is not a speaker: an outline in the muted text colour, so it
+	   never reads as a fifth accent. */
+	.dialogue-role-chip.narration {
+		background: transparent;
+		border: 1px solid color-mix(in srgb, var(--color-muted) 60%, transparent);
+		color: var(--color-muted);
+		font-style: italic;
 	}
 	.dialogue-words {
 		display: block;

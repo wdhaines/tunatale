@@ -44,6 +44,8 @@ export const en = {
   "transcript.cancel": "Cancel",
   "transcript.keyPhrases": "Key Phrases",
   "transcript.dialogue": "Dialogue",
+  "transcript.narratorChip": "N",
+  "transcript.narrator": "Narrator",
   "transcript.howToUse": "How to use the transcript",
   "transcript.selectionHint": "Tap first word, then last word to set phrase range.",
   "transcript.showVariations": "Show variations",
