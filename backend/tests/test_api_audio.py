@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -49,8 +50,13 @@ def _make_mock_lesson_with_sections() -> Lesson:
 
 
 def _fake_render(lesson, full_path, section_paths=None, *, on_progress=None):
-    """Fake renderer.render: writes minimal audio bytes and returns mock cues."""
-    full_path.write_bytes(b"audio")
+    """Fake renderer.render: writes minimal audio bytes and returns mock cues.
+
+    Mirrors the real signature, including ``full_path=None`` for a render that
+    produces section files only.
+    """
+    if full_path is not None:
+        full_path.write_bytes(b"audio")
     if section_paths:
         for sp in section_paths:
             sp.write_bytes(b"section audio")
@@ -124,6 +130,83 @@ class TestAudioEndpoints:
         data = response.json()
         assert "audio_id" in data
         assert store.get_audio_file_row(data["audio_id"]) is not None
+
+    async def test_render_writes_no_full_lesson_file(self, tmp_path):
+        """A render produces the section files only; the full row keeps the timeline.
+
+        The full-lesson concatenation is ~140s of a ~345s render and nothing
+        plays it, so it is not encoded. The row is NOT deleted — ``GET
+        /api/audio/lesson/{id}`` 404s the whole payload without it, and the
+        player needs its full-timeline cues — so what changes is one column.
+        """
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-no-full-file"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert response.status_code == 200
+            data = response.json()
+
+            # The full row is still there, with the cues the player navigates by.
+            full_row = store.get_audio_file_row(data["audio_id"])
+            assert full_row is not None
+            assert full_row["section_index"] is None
+            assert full_row["file_path"] is None, f"a full file was still written: {full_row}"
+            assert json.loads(full_row["cues_json"]) == data["cues"]
+
+            # Exactly the section files, each one named for its row's audio_id.
+            section_ids = {s["audio_id"] for s in data["sections"]}
+            written = sorted(p.name for p in tmp_path.iterdir() if p.is_file())
+            assert len(written) == len(section_ids), f"audio_dir holds {written}"
+            assert all(any(name.startswith(sid) for sid in section_ids) for name in written), written
+
+            # And the lesson payload is served exactly as before.
+            got = await client.get(f"/api/audio/lesson/{lesson_id}")
+            assert got.status_code == 200
+            served = got.json()
+            assert served["audio_id"] == data["audio_id"]
+            assert served["cues"] == data["cues"]
+            assert [s["audio_id"] for s in served["sections"]] == [s["audio_id"] for s in data["sections"]]
+
+    async def test_rerender_after_a_fileless_full_row_succeeds(self, tmp_path):
+        """A second render must not trip over the first one's NULL file_path.
+
+        The re-render path reads every existing row to unlink its files, and
+        ``Path(None)`` is a TypeError — so this is the first thing that breaks
+        if a NULL is not skipped where the rows are read.
+        """
+        from app.storage.store import ContentStore
+
+        mock_renderer = AsyncMock()
+        mock_renderer.render = AsyncMock(side_effect=_fake_render)
+
+        mock_lesson = _make_mock_lesson_with_sections()
+        store = ContentStore(":memory:")
+        lesson_id = "lesson-rerender-null"
+        store.save_lesson(lesson_id, "some-curriculum-id", 1, mock_lesson)
+
+        app.state.renderer = mock_renderer
+        app.state.audio_dir = tmp_path
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            first = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert first.status_code == 200
+            second = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
+            assert second.status_code == 200, second.text
+            assert second.json()["audio_id"] != first.json()["audio_id"]
+            assert store.get_audio_file_row(second.json()["audio_id"])["file_path"] is None
 
     async def test_render_returns_sections_in_response(self, tmp_path):
         """POST /api/audio/render response includes a sections array."""
@@ -255,11 +338,14 @@ class TestAudioEndpoints:
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             await client.post("/api/audio/render", json={"lesson_id": lesson_id})
-            old_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id)]
+            # The file-less rows are excluded on purpose: this test is about
+            # files leaking on disk, and the full-lesson row now has no file to
+            # leak (tunatale-guzo.3). `resolve_audio_path(None)` is a TypeError.
+            old_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id) if r["file_path"]]
             assert old_paths and all(resolve_audio_path(p).exists() for p in old_paths)
 
             await client.post("/api/audio/render", json={"lesson_id": lesson_id})
-            new_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id)]
+            new_paths = [r["file_path"] for r in store.list_audio_files_for_lesson(lesson_id) if r["file_path"]]
 
             assert all(not resolve_audio_path(p).exists() for p in old_paths), "old cohort files were not unlinked"
             assert all(resolve_audio_path(p).exists() for p in new_paths), "new cohort files should be on disk"
@@ -552,9 +638,12 @@ class TestAudioEndpoints:
             render_resp = await client.post("/api/audio/render", json={"lesson_id": lesson_id})
             data = render_resp.json()
 
-            # Check full lesson download filename
-            full_audio_id = data["audio_id"]
-            response = await client.get(f"/api/audio/{full_audio_id}")
+            # A section id, not the full one: a render no longer encodes the
+            # full lesson, so the full row is the one id with no file behind it
+            # (tunatale-guzo.3). The header is a property of the endpoint, not
+            # of which row is asked for.
+            section_audio_id = data["sections"][0]["audio_id"]
+            response = await client.get(f"/api/audio/{section_audio_id}")
 
         assert response.status_code == 200
         cd = response.headers.get("content-disposition", "")
@@ -778,8 +867,9 @@ class TestAudioEndpoints:
         assert response.headers["content-type"] == "application/zip"
         z = zipfile.ZipFile(io.BytesIO(response.content))
         names = z.namelist()
-        # full lesson + one per section
-        assert len(names) == len(mock_lesson.sections) + 1
+        # one per section, and no _00_Full: the full concatenation is not encoded
+        assert len(names) == len(mock_lesson.sections)
+        assert not any("_00_Full" in name for name in names)
 
     async def test_zip_download_filenames_include_topic_and_day(self, tmp_path):
         """ZIP filenames include sanitized curriculum topic and zero-padded day."""
@@ -811,10 +901,10 @@ class TestAudioEndpoints:
         for name in names:
             assert "ordering_coffee" in name.lower()
             assert "Day03" in name
-        # full file sorts first (00), then sections (01, 02…); opus is the default codec
-        assert names[0].endswith("_00_Full.opus")
-        assert names[1].endswith("_01_Key_Phrases.opus")
-        assert names[2].endswith("_02_Natural_Speed.opus")
+        # Sections only — there is no 00 slot for a full file that is not
+        # encoded. opus is the default codec.
+        assert names[0].endswith("_01_Key_Phrases.opus")
+        assert names[1].endswith("_02_Natural_Speed.opus")
 
     async def test_zip_download_content_disposition_header(self, tmp_path):
         """ZIP Content-Disposition includes topic and day in the filename."""
@@ -892,8 +982,78 @@ class TestAudioEndpoints:
         assert response.status_code == 200
         z = zipfile.ZipFile(io.BytesIO(response.content))
         names = z.namelist()
-        # full lesson + sections
-        assert len(names) == len(mock_lesson.sections) + 1
+        # sections only; the fallback naming applies to each of them
+        assert len(names) == len(mock_lesson.sections)
+        assert all("Day05" in name for name in names)
+
+    async def test_get_audio_404s_for_a_row_with_no_file(self, tmp_path):
+        """A full-lesson row is a timeline record, not a download: 404, not 500.
+
+        `resolve_audio_path(None)` is a TypeError, so without the guard this is
+        a 500 on the id every lesson payload points at.
+        """
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_audio_file("full-nofile", "lesson-nofile", None, cues_json="[]")
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/full-nofile")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Audio file missing"
+
+    async def test_zip_of_a_lesson_with_no_full_file_has_every_section(self, tmp_path):
+        """The ZIP is the sections a listener can actually use."""
+        import io
+        import zipfile
+
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        store.save_audio_file("full-nofile", "lesson-zip-nofile", None, cues_json="[]")
+        for i, sec_type in enumerate(("key_phrases", "natural_speed")):
+            path = tmp_path / f"sec{i}.opus"
+            path.write_bytes(b"audio")
+            store.save_audio_file(f"sec{i}", "lesson-zip-nofile", str(path), section_index=i, section_type=sec_type)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-zip-nofile/zip")
+
+        assert response.status_code == 200
+        names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+        assert len(names) == 2, names
+        assert not any("_00_Full" in name for name in names), names
+
+    async def test_zip_still_includes_a_legacy_full_file(self, tmp_path):
+        """A lesson rendered before guzo.3 has a full file, and keeps its 00 slot.
+
+        The new-filename tests above all render fresh, so nothing covers the
+        other population: the drop is on a row with no FILE, not on the full row.
+        """
+        import io
+        import zipfile
+
+        from app.storage.store import ContentStore
+
+        store = ContentStore(":memory:")
+        full = tmp_path / "legacy-full.opus"
+        full.write_bytes(b"audio")
+        store.save_audio_file("full-legacy", "lesson-legacy-zip", str(full), cues_json="[]")
+        for i, sec_type in enumerate(("key_phrases", "natural_speed")):
+            path = tmp_path / f"lsec{i}.opus"
+            path.write_bytes(b"audio")
+            store.save_audio_file(f"lsec{i}", "lesson-legacy-zip", str(path), section_index=i, section_type=sec_type)
+        app.state.content_store = store
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/audio/lesson/lesson-legacy-zip/zip")
+
+        assert response.status_code == 200
+        names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+        assert len(names) == 3, names
+        assert names[0].endswith("_00_Full.opus"), names
 
     async def test_zip_download_returns_404_when_section_file_missing_on_disk(self, tmp_path):
         """ZIP endpoint returns 404 when a section file is absent from disk."""

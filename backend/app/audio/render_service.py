@@ -228,19 +228,24 @@ async def _render_lesson_audio(
     """The render itself. Split out so the gate above is a single statement and
     ``async with`` releases it on every path, success or failure."""
     old_rows = store.list_audio_files_for_lesson(lesson_id)
-    old_file_paths = [resolve_audio_path(r["file_path"]) for r in old_rows]
+    # A previous render of THIS code path left a full row with no file, and
+    # Path(None) is a TypeError — so the file-less row is skipped where the
+    # paths are read, not stored as a path.
+    old_file_paths = [resolve_audio_path(r["file_path"]) for r in old_rows if r["file_path"] is not None]
 
     audio_dir.mkdir(parents=True, exist_ok=True)
 
     ext = CODEC_EXT.get(settings.audio_delivery_codec, "wav")
     audio_id = str(uuid.uuid4())
-    full_path = audio_dir / f"{audio_id}.{ext}"
 
     section_ids = [str(uuid.uuid4()) for _ in lesson.sections]
     section_paths = [audio_dir / f"{sid}.{ext}" for sid in section_ids]
 
+    # No full file: the concatenation is ~140s of a ~345s render and nothing
+    # plays it (tunatale-guzo.3). The row below still carries the full-timeline
+    # cues, which is what the player and GET /api/audio/lesson/{id} need.
     cues = await _with_render_retries(
-        lambda: renderer.render(lesson, full_path, section_paths=section_paths, on_progress=on_progress),
+        lambda: renderer.render(lesson, None, section_paths=section_paths, on_progress=on_progress),
         f"lesson {lesson_id!r}",
     )
     cues_json = json.dumps([asdict(c) for c in cues], ensure_ascii=False)
@@ -248,7 +253,7 @@ async def _render_lesson_audio(
     section_cues = derive_section_cues(cues, lesson)
 
     store.delete_audio_files_for_lesson(lesson_id)
-    store.save_audio_file(audio_id, lesson_id, str(full_path), cues_json=cues_json)
+    store.save_audio_file(audio_id, lesson_id, None, cues_json=cues_json)
     for i, (sid, section) in enumerate(zip(section_ids, lesson.sections, strict=True)):
         sec_cues = section_cues.get(i, [])
         sec_cues_json = json.dumps([asdict(c) for c in sec_cues], ensure_ascii=False) if sec_cues else None
@@ -660,7 +665,11 @@ async def reassemble_lesson_audio(
 
     # Only the files this function REPLACED are removed, and only after the new
     # rows are committed. Every other section file is still referenced.
-    resolve_audio_path(old_full["file_path"]).unlink(missing_ok=True)
+    # A NULL is skipped: since tunatale-guzo.3 a full row is routinely a
+    # timeline record with no encoded file, and there is nothing to unlink.
+    # (Reassembly itself still encodes one — see new_full_path above.)
+    if old_full["file_path"] is not None:
+        resolve_audio_path(old_full["file_path"]).unlink(missing_ok=True)
     # Unconditional: every new target path carries a fresh uuid4, so it can never
     # be the path being deleted. A `!=` guard here would be a branch nothing can
     # take.

@@ -191,7 +191,7 @@ describe("playbackController", () => {
       storage: Storage;
       lessonId: string;
       lessonTitle: string;
-      audioUrl: string;
+      audioUrl: string | null;
       sectionUrl: (audioId: string) => string;
       onHandsFreeEnd: () => void;
     }> = {},
@@ -203,7 +203,9 @@ describe("playbackController", () => {
       storage: overrides.storage ?? fakeLocalStorage,
       lessonId: overrides.lessonId ?? "l1",
       lessonTitle: overrides.lessonTitle ?? "Lesson 1",
-      audioUrl: overrides.audioUrl ?? "/api/audio/a1",
+      // `?? ` would swallow an explicit null, which is exactly the value
+      // track mode passes — read the key instead.
+      audioUrl: ("audioUrl" in overrides ? overrides.audioUrl : "/api/audio/a1") ?? null,
       audio: overrides.audio ?? lessonAudio,
       sectionUrl: overrides.sectionUrl ?? ((id: string) => `/api/audio/${id}`),
       onHandsFreeEnd: overrides.onHandsFreeEnd,
@@ -2840,6 +2842,17 @@ describe("playbackController", () => {
       audioEl.currentTime = 0.1;
       audioEl.dispatchEvent(new Event("timeupdate"));
       expect(ctrl.currentCue?.index).toBe(0);
+    });
+
+    it("audioUrl null: init does NOT set src, and selectTrack supplies it", () => {
+      // tunatale-guzo.3: a lesson rendered now has NO full-lesson file, so the
+      // URL the player would assign here 404s. Track mode passes null and the
+      // init must leave src alone — a browser defaults it to "", which is a
+      // relative URL resolving to the current page, not an audio file.
+      const ctrl = createController({ audio: sectionsAudio, audioUrl: null });
+      expect(audioEl.src).toBe("");
+      ctrl.selectTrack("natural_speed");
+      expect(audioEl.src).toBe("/api/audio/sec-natural");
     });
 
     it("selectTrack with unknown section type is a no-op", () => {

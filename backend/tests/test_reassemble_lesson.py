@@ -280,6 +280,7 @@ def _populate_store(
     section_durations: list[float],
     tone_freqs: list[float] | None = None,
     tone_rate: int = 24000,
+    full_row_has_file: bool = True,
 ) -> tuple[str, list[str], list[Path]]:
     """Seed the ContentStore with a full-lesson row + section rows.
 
@@ -289,12 +290,16 @@ def _populate_store(
     one frequency per section, so the reassembled audio can be asked WHERE each
     section actually is. The default is silence, which is what every
     pre-existing test in this file was written against.
+
+    *full_row_has_file=False* is the shape a lesson rendered since tunatale-guzo.3
+    has: the row keeps its timeline, the concatenation was never encoded.
     """
     from uuid import uuid4
 
     full_id = str(uuid4())
     full_path = audio_dir / f"{full_id}.opus"
-    _make_opus_file(full_path, sum(section_durations) + 3.0)  # title + boundaries
+    if full_row_has_file:
+        _make_opus_file(full_path, sum(section_durations) + 3.0)  # title + boundaries
 
     section_ids = [str(uuid4()) for _ in lesson.sections]
     section_paths = [audio_dir / f"{sid}.opus" for sid in section_ids]
@@ -352,7 +357,7 @@ def _populate_store(
     cues_json = json.dumps([asdict(c) for c in cues])
 
     # Seed DB
-    store.save_audio_file(full_id, lesson.title, str(full_path), cues_json=cues_json)
+    store.save_audio_file(full_id, lesson.title, str(full_path) if full_row_has_file else None, cues_json=cues_json)
     for i, (sid, sp, sec) in enumerate(zip(section_ids, section_paths, lesson.sections, strict=True)):
         sec_cues = [c for c in cues if c.section_index == i]
         # Rebase section cues to start at 0 (matching derive_section_cues behavior)
@@ -921,6 +926,42 @@ class TestReassembleRefusals:
                 lesson_id=lesson.title,
                 lesson=lesson,
             )
+
+    @pytest.mark.asyncio
+    async def test_reassembles_when_the_old_full_row_has_no_file(self, tmp_path: Path) -> None:
+        """A full row with no file is a normal row, not a broken one.
+
+        Reassembly unlinks the old full file when it commits the new rows, and
+        `resolve_audio_path(None)` is a TypeError — so this is the shape every
+        lesson rendered since tunatale-guzo.3 arrives in.
+        """
+        from app.audio.render_service import reassemble_lesson_audio
+
+        store = ContentStore(":memory:")
+        lesson = _build_test_lesson(n_sections=4)
+        audio_dir = tmp_path / "audio"
+        _populate_store(store, lesson, audio_dir, [2.0, 5.0, 8.0, 5.0], full_row_has_file=False)
+
+        old_rows = store.list_audio_files_for_lesson(lesson.title)
+        old_full = next(r for r in old_rows if r["section_index"] is None)
+        assert old_full["file_path"] is None
+
+        result = await reassemble_lesson_audio(
+            store=store,
+            renderer=_make_fake_renderer(),
+            tts=_CountingTTS(),
+            audio_dir=audio_dir,
+            lesson_id=lesson.title,
+            lesson=lesson,
+        )
+
+        assert result["audio_id"] != old_full["id"]
+        assert len(result["sections"]) == len(lesson.sections)
+        assert result["cues"], "reassembly rebuilt the manifest"
+        # Reassembly itself still writes a full file — only render() stopped.
+        new_full = store.get_audio_file_row(result["audio_id"])
+        assert new_full["file_path"] is not None
+        assert resolve_audio_path(new_full["file_path"]).exists()
 
     @pytest.mark.asyncio
     async def test_refuses_when_section_row_count_disagrees(self, tmp_path: Path) -> None:
@@ -1564,11 +1605,16 @@ def _reroot_rows_to_basenames(store: ContentStore, lesson_id: str) -> None:
 
 
 class _WritingRenderer:
-    """Minimal renderer for render_lesson_audio: writes bytes, needs no ffmpeg."""
+    """Minimal renderer for render_lesson_audio: writes bytes, needs no ffmpeg.
+
+    Mirrors the real ``output_path=None`` contract (tunatale-guzo.3): a render
+    is handed None for the full file and writes the section files only.
+    """
 
     async def render(self, lesson, output_path, section_paths=None, *, on_progress=None):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"full")
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"full")
         for sp in section_paths or []:
             sp.parent.mkdir(parents=True, exist_ok=True)
             sp.write_bytes(b"sec")
@@ -1699,5 +1745,11 @@ class TestRenderLessonAudioUnlinksRecordedPaths:
         assert len(result["sections"]) == len(lesson.sections)
         rows = store.list_audio_files_for_lesson(lesson.title)
         assert len(rows) == len(lesson.sections) + 1
+        # Every row that names a file reaches one. The full row names none,
+        # since guzo.3 — it is a timeline record, not an encoded render.
+        file_less = [r for r in rows if r["file_path"] is None]
+        assert [r["section_index"] for r in file_less] == [None], file_less
         for r in rows:
+            if r["file_path"] is None:
+                continue
             assert resolve_audio_path(r["file_path"]).exists(), "a new row does not reach a real file"

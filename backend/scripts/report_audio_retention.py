@@ -65,6 +65,11 @@ def collect(db_paths: list[Path], audio_dir: Path, now: datetime) -> Report:
                         last[lesson_id] = t
             rows: dict[str, LessonAudio] = {}
             for lesson_id, file_path in conn.execute("SELECT lesson_id, file_path FROM audio_files"):
+                # Skipped, not counted and not reported missing: since
+                # tunatale-guzo.3 a full-lesson row names no file, so there is
+                # nothing on disk to measure and nothing to have gone missing.
+                if file_path is None:
+                    continue
                 row = rows.get(lesson_id)
                 if row is None:
                     row = rows[lesson_id] = LessonAudio(

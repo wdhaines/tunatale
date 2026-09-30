@@ -480,6 +480,77 @@ class TestLessonRendererSectionOutput:
                 sec_duration = wf.getnframes() / wf.getframerate()
             assert full_duration > sec_duration, "Full WAV should be longer than individual section"
 
+    async def test_render_without_output_path_writes_only_sections(self, tmp_path):
+        """render(lesson, None) produces the section files and nothing else.
+
+        The full-lesson encode is ~140s of a 345s render and nothing consumes
+        the file, so the whole point is that it is not written. "Nothing else"
+        is checked by listing the directory rather than by asserting the one
+        path is absent: a stray export under a different name would pass that.
+        """
+        lesson = self._make_multi_section_lesson()
+        fake_audio = _make_wav_bytes(100)
+        mock_tts = AsyncMock()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts.synthesize = fake_synthesize
+        rdr = _make_renderer(mock_tts)
+
+        section_paths = [tmp_path / f"s{i}.wav" for i in range(len(lesson.sections))]
+        cues = await rdr.render(lesson, None, section_paths=section_paths)
+
+        # FILES only: an autouse conftest fixture parks a tt-media/ dir in
+        # tmp_path, the same exclusion test_data_snapshot.py documents.
+        written = sorted(p.name for p in tmp_path.iterdir() if p.is_file())
+        assert written == sorted(p.name for p in section_paths), f"extra files: {written}"
+        assert all(sp.exists() and sp.stat().st_size > 0 for sp in section_paths)
+        assert cues, "a render with no full file still returns its cue manifest"
+
+    async def test_render_without_output_path_returns_the_same_cues(self, tmp_path):
+        """The timeline is a property of the lesson, not of the file: it must not
+        shift by a frame when the full export is skipped."""
+        lesson = self._make_multi_section_lesson()
+        fake_audio = _make_wav_bytes(100)
+        mock_tts = AsyncMock()
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+            output_path.write_bytes(fake_audio)
+
+        mock_tts.synthesize = fake_synthesize
+        rdr = _make_renderer(mock_tts)
+
+        with_full = await rdr.render(
+            lesson,
+            tmp_path / "full.wav",
+            section_paths=[tmp_path / f"f{i}.wav" for i in range(len(lesson.sections))],
+        )
+        without_full = await rdr.render(
+            lesson,
+            None,
+            section_paths=[tmp_path / f"n{i}.wav" for i in range(len(lesson.sections))],
+        )
+        assert without_full == with_full
+
+    async def test_render_without_output_path_or_sections_raises(self, tmp_path):
+        """Nothing deliverable would be written, so this is a caller bug."""
+        lesson = _minimal_lesson()
+        fake_audio = _make_wav_bytes(100)
+        mock_tts = AsyncMock()
+        synthesized: list[str] = []
+
+        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+            synthesized.append(text)
+            output_path.write_bytes(fake_audio)
+
+        mock_tts.synthesize = fake_synthesize
+        rdr = _make_renderer(mock_tts)
+
+        with pytest.raises(ValueError):
+            await rdr.render(lesson, None)
+        assert synthesized == [], "a whole render was paid for and then thrown away"
+
     async def test_render_without_section_paths_still_works(self, tmp_path):
         """render() with no section_paths kwarg still produces the full WAV (backward compat)."""
         lesson = _minimal_lesson()

@@ -37,7 +37,7 @@ _CREATE_AUDIO_FILES = """
 CREATE TABLE IF NOT EXISTS audio_files (
     id TEXT PRIMARY KEY,
     lesson_id TEXT NOT NULL,
-    file_path TEXT NOT NULL,
+    file_path TEXT,
     section_index INTEGER,
     section_type TEXT,
     created_at TEXT DEFAULT (datetime('now'))
@@ -109,11 +109,85 @@ class ContentStore:
         conn.commit()
 
     def _migrate_audio_files(self, conn: sqlite3.Connection) -> None:
-        """Add any missing columns to audio_files (idempotent)."""
+        """Bring an existing audio_files table up to the current schema (idempotent).
+
+        Two steps, in this order. Missing columns are added first, so a database
+        mid-way through the column history reaches the rebuild with the full set
+        and the copy below cannot silently drop one.
+
+        Then ``file_path`` loses its NOT NULL. A render produces only the section
+        files, so the full-lesson row keeps its timeline (``cues_json``) and has
+        no file — and SQLite cannot drop a constraint in place, so the table is
+        rebuilt. Every current column is carried into the replacement and every
+        row copied verbatim; the second open finds notnull=0 and does nothing.
+        """
         existing = {row[1] for row in conn.execute("PRAGMA table_info(audio_files)").fetchall()}
         for col_name, col_type in _AUDIO_FILES_MIGRATION_COLUMNS:
             if col_name not in existing:
                 conn.execute(f"ALTER TABLE audio_files ADD COLUMN {col_name} {col_type}")
+        self._relax_audio_files_file_path(conn)
+
+    def _relax_audio_files_file_path(self, conn: sqlite3.Connection) -> None:
+        """Rebuild audio_files so file_path may be NULL, keeping every row.
+
+        Atomic by SAVEPOINT, and it has to be an EXPLICIT one. The caller's
+        transaction does not cover this: Python's ``sqlite3`` opens its implicit
+        transaction only before INSERT/UPDATE/DELETE/REPLACE, so the ALTER TABLE
+        and the CREATE TABLE here would each commit themselves in autocommit.
+        A process killed between them leaves no ``audio_files`` table, and the
+        next open's ``CREATE TABLE IF NOT EXISTS`` then makes an EMPTY one —
+        every lesson in the database silently loses its audio rows, with no
+        error raised anywhere. This runs against the user's live database and
+        the production one, so the rebuild takes its own transaction and rolls
+        back to the intact original on any failure.
+
+        The replacement is declared from the live table's own
+        ``PRAGMA table_info`` rather than from a restatement of the schema here,
+        which is what makes the rebuild safe against a database at any point in
+        the column history. Everything the rest of the store depends on survives
+        it: the ``id`` primary key (``INSERT OR REPLACE`` on a table without one
+        would append a duplicate row instead of replacing), each column's
+        NOT NULL, and its DEFAULT.
+        """
+        info = conn.execute("PRAGMA table_info(audio_files)").fetchall()
+        # (name, type, notnull, dflt_value, pk)
+        columns = [(row[1], row[2], row[3], row[4], row[5]) for row in info]
+        if not any(name == "file_path" and notnull for name, _type, notnull, _dflt, _pk in columns):
+            return
+        defs = []
+        for name, col_type, notnull, dflt, pk in columns:
+            piece = f"{name} {col_type}"
+            if pk:
+                # table_info reports the key as a flag, not as an inline clause.
+                piece += " PRIMARY KEY"
+            # The one thing this rebuild changes: file_path keeps its column,
+            # its type and its rows, and loses only the NOT NULL.
+            if notnull and name != "file_path":
+                piece += " NOT NULL"
+            if dflt is not None:
+                # table_info reports the default as a bare expression
+                # (``datetime('now')``), which is only valid re-declared in
+                # parentheses — hence the wrap rather than the verbatim text.
+                piece += f" DEFAULT ({dflt})"
+            defs.append(piece)
+        names = [name for name, *_rest in columns]
+        column_list = ", ".join(names)
+        # A SAVEPOINT rather than BEGIN: this runs inside _init_schema, which
+        # may already be inside the caller's transaction, and a nested BEGIN
+        # would commit the caller's work out from under it.
+        conn.execute("SAVEPOINT audio_files_relax")
+        try:
+            conn.execute("ALTER TABLE audio_files RENAME TO audio_files_pre_relax")
+            conn.execute(f"CREATE TABLE audio_files ({', '.join(defs)})")
+            conn.execute(f"INSERT INTO audio_files ({column_list}) SELECT {column_list} FROM audio_files_pre_relax")
+            conn.execute("DROP TABLE audio_files_pre_relax")
+        except BaseException:
+            # ROLLBACK TO undoes the rename and the create together, which is
+            # what leaves the ORIGINAL table — name, schema and rows — in place.
+            conn.execute("ROLLBACK TO audio_files_relax")
+            conn.execute("RELEASE audio_files_relax")
+            raise
+        conn.execute("RELEASE audio_files_relax")
 
     def _normalize_audio_paths(self, conn: sqlite3.Connection) -> None:
         """Reduce any ``audio_files.file_path`` carrying a directory to its basename.
@@ -128,7 +202,8 @@ class ContentStore:
         once the data is clean, so no write is issued. ``LIKE '%/%'`` is the
         whole test — both broken shapes carry a separator
         (``/Users/…/x.opus`` and ``output/audio/x.opus``) and the correct one
-        cannot.
+        cannot. A NULL is not matched by ``LIKE`` at all, so a full-lesson row
+        with no file is skipped here exactly as it should be.
         """
         rows = conn.execute("SELECT id, file_path FROM audio_files WHERE file_path LIKE '%/%'").fetchall()
         for row in rows:
@@ -229,6 +304,7 @@ class ContentStore:
                     " WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
                     (curriculum_id,),
                 )
+                if row["file_path"] is not None
             ]
             conn.execute(
                 "DELETE FROM audio_files WHERE lesson_id IN (SELECT id FROM lessons WHERE curriculum_id = ?)",
@@ -344,7 +420,7 @@ class ContentStore:
         self,
         audio_id: str,
         lesson_id: str,
-        file_path: str,
+        file_path: str | None,
         *,
         section_index: int | None = None,
         section_type: str | None = None,
@@ -371,8 +447,13 @@ class ContentStore:
         is the one choke point every writer already passes through. Taking the
         basename also sidesteps ``resolve()``, which would rewrite a symlinked
         root (``/tmp`` -> ``/private/tmp`` on macOS) that was correct as recorded.
+
+        ``file_path`` may be None, and None is stored as NULL rather than
+        coerced: a full-lesson row that keeps its timeline but has no encoded
+        file is exactly that, and the directory guard below has nothing to say
+        about a value that is not a path.
         """
-        stored = Path(file_path).name
+        stored = None if file_path is None else Path(file_path).name
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO audio_files (id, lesson_id, file_path, section_index, section_type, cues_json)"
@@ -414,11 +495,16 @@ class ContentStore:
         Re-render replaces by id, so the previous render's rows must go while
         the lesson row itself stays. Rows here, files by the caller — the same
         split :meth:`delete_review_session_audio` uses.
+
+        A row with a NULL ``file_path`` is deleted but contributes no path: it
+        is a full-lesson row that keeps its timeline and has no file, and there
+        is nothing on the filesystem for the caller to unlink.
         """
         with self._get_conn() as conn:
             paths = [
                 resolve_audio_path(row["file_path"])
                 for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+                if row["file_path"] is not None
             ]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.commit()
@@ -441,7 +527,7 @@ class ContentStore:
         """
         with self._get_conn() as conn:
             rows = conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,)).fetchall()
-            paths = [resolve_audio_path(row["file_path"]) for row in rows]
+            paths = [resolve_audio_path(row["file_path"]) for row in rows if row["file_path"] is not None]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
             conn.commit()
@@ -469,6 +555,7 @@ class ContentStore:
                 paths += [
                     resolve_audio_path(r["file_path"])
                     for r in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (lesson_id,))
+                    if r["file_path"] is not None
                 ]
                 conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (lesson_id,))
             conn.execute("DELETE FROM lessons WHERE curriculum_id = ? AND day = ?", (curriculum_id, day))
@@ -626,6 +713,7 @@ class ContentStore:
             paths = [
                 resolve_audio_path(row["file_path"])
                 for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (session_id,))
+                if row["file_path"] is not None
             ]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (session_id,))
             conn.commit()
@@ -641,6 +729,7 @@ class ContentStore:
             paths = [
                 resolve_audio_path(row["file_path"])
                 for row in conn.execute("SELECT file_path FROM audio_files WHERE lesson_id = ?", (session_id,))
+                if row["file_path"] is not None
             ]
             conn.execute("DELETE FROM audio_files WHERE lesson_id = ?", (session_id,))
             conn.execute("DELETE FROM review_sessions WHERE id = ?", (session_id,))

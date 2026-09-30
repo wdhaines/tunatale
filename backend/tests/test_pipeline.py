@@ -74,8 +74,11 @@ class FakeRenderer:
                 "section_paths": section_paths,
             }
         )
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_bytes(b"audio")
+        # full_path is None for a production render (tunatale-guzo.3: the
+        # full-lesson file is no longer encoded), so the fake may not assume it.
+        if full_path is not None:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_bytes(b"audio")
         if section_paths:
             for sp in section_paths:
                 sp.parent.mkdir(parents=True, exist_ok=True)
@@ -1685,8 +1688,11 @@ class TestPipelineTaggedBeforeSaved:
 
         class _FakeRenderer:
             async def render(self, lesson, full_path, section_paths=None, *, on_progress=None):
-                full_path.parent.mkdir(parents=True, exist_ok=True)
-                full_path.write_bytes(b"audio")
+                # full_path may be None — a real render no longer encodes it
+                # (tunatale-guzo.3), and the production path calls it that way.
+                if full_path is not None:
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    full_path.write_bytes(b"audio")
                 return []
 
         store = _CapturingStore(":memory:")
@@ -1784,8 +1790,11 @@ class TestPipelineRenderProgress:
                 on_progress(116, 171)
                 render["started"].set()
                 await render["release"].wait()
-                full_path.parent.mkdir(parents=True, exist_ok=True)
-                full_path.write_bytes(b"audio")
+                # full_path may be None — a real render no longer encodes it
+                # (tunatale-guzo.3), and the production path calls it that way.
+                if full_path is not None:
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    full_path.write_bytes(b"audio")
                 return []
 
         render["renderer"] = _ProgressRenderer()
