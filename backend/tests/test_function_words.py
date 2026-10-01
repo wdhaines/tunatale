@@ -8,7 +8,9 @@ from app.models.language import Language
 from app.srs.function_words import (
     _ending_blank_split,
     _format_morphology_feature,
+    _load_fixed_glosses,
     _load_function_word_config,
+    fixed_gloss,
     format_morphology_hint,
     is_clozes_only_verb,
     is_function_word,
@@ -829,3 +831,53 @@ class TestNorwegianFunctionWords:
         assert is_function_word("v", "sl") is True
         assert is_function_word("i", "sl") is False  # "i" is Norwegian, not a Slovene function word
         assert is_clozes_only_verb("biti", "sl") is True
+
+
+class TestFixedGloss:
+    """A function word whose meaning is a grammatical ROLE gets a curated gloss.
+
+    The dialogue-gloss LLM pass glossed Cebuano "og" (the indefinite-object
+    marker: "Nagdala ko og kape" = "I brought (some) coffee") as "and" — it
+    confuses it with "ug". The curated ``glosses`` key in function_words.json
+    is the deterministic answer.
+    """
+
+    def test_cebuano_og_is_the_object_marker(self):
+        assert fixed_gloss("og", "ceb") == "a / some (object marker)"
+
+    def test_case_insensitive(self):
+        assert fixed_gloss("Og", "ceb") == "a / some (object marker)"
+
+    def test_word_without_a_curated_gloss_returns_none(self):
+        assert fixed_gloss("ug", "ceb") is None
+
+    def test_language_without_glosses_key_returns_none(self):
+        assert fixed_gloss("og", "no") is None
+
+    def test_unknown_language_returns_none(self):
+        assert fixed_gloss("og", "zz") is None
+
+    def test_loaded_from_the_config_file(self, tmp_path, monkeypatch):
+        (tmp_path / "xx.json").write_text(
+            json.dumps({"include": ["foo"], "glosses": {"Foo": "(foo marker)"}}),
+            encoding="utf-8",
+        )
+        import app.languages as _langs
+
+        monkeypatch.setattr(
+            _langs,
+            "_CONFIGS",
+            {
+                **_langs._CONFIGS,
+                "xx": _langs.LanguageConfig(
+                    language=Language(code="xx", name="XX", native_name="XX", script="latin", tts_voice_map={}),
+                    function_words_path=tmp_path / "xx.json",
+                ),
+            },
+        )
+        _load_fixed_glosses.cache_clear()
+        try:
+            assert fixed_gloss("foo", "xx") == "(foo marker)"
+            assert fixed_gloss("bar", "xx") is None
+        finally:
+            _load_fixed_glosses.cache_clear()

@@ -255,12 +255,12 @@ async def test_cache_hit_neither_counts_nor_calls_azure(tmp_path):
 
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "one.mp3")
     assert route.call_count == 1
-    assert ledger.chars_used() == 33
+    assert ledger.chars_used(now=SEP_13_1200_UTC) == 33
 
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "two.mp3")
 
     assert route.call_count == 1, "the cache hit made an HTTP request"
-    assert ledger.chars_used() == 33, "the cache hit incremented the tally"
+    assert ledger.chars_used(now=SEP_13_1200_UTC) == 33, "the cache hit incremented the tally"
     assert (tmp_path / "two.mp3").read_bytes() == b"audio"
 
 
@@ -277,9 +277,9 @@ async def test_cache_hit_still_succeeds_at_the_cap(tmp_path):
 
     await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "one.mp3")  # warms the cache
     assert route.call_count == 1
-    assert ledger.chars_used() == 33
+    assert ledger.chars_used(now=SEP_13_1200_UTC) == 33
 
-    ledger.record(500_000 - 33)  # now at exactly the cap
+    ledger.record(500_000 - 33, now=SEP_13_1200_UTC)  # now at exactly the cap
 
     out = tmp_path / "two.mp3"
     await svc.synthesize("hei", "nb-NO-FinnNeural", out)
@@ -298,7 +298,7 @@ async def test_at_the_cap_the_call_is_refused_with_no_http(tmp_path):
     """
     route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"audio"))
     ledger = AzureCharacterLedger(tmp_path / "ledger.log")
-    ledger.record(500_000)
+    ledger.record(500_000, now=SEP_13_1200_UTC)
     svc = _svc(cache_dir=tmp_path / "cache", ledger=ledger, chars_per_month_limit=500_000)
 
     with pytest.raises(TTSQuotaExceeded) as excinfo:
@@ -331,7 +331,7 @@ async def test_a_failed_synthesis_does_not_count(tmp_path):
     with pytest.raises(TTSExhausted):
         await svc.synthesize("hei", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
-    assert ledger.chars_used() == 0
+    assert ledger.chars_used(now=SEP_13_1200_UTC) == 0
     assert not (tmp_path / "o.mp3").exists()
 
 
@@ -345,7 +345,7 @@ async def test_a_successful_synthesis_increments_by_the_billable_count(tmp_path)
     await svc.synthesize("Kavno pivo je na meniju.", "nb-NO-FinnNeural", tmp_path / "o.mp3")
 
     assert route.call_count == 1
-    assert ledger.chars_used() == 54
+    assert ledger.chars_used(now=SEP_13_1200_UTC) == 54
     lines = (tmp_path / "ledger.log").read_text().splitlines()
     assert len(lines) == 1
     assert int(lines[0].split()[1]) == 54

@@ -42,6 +42,30 @@ def _load_function_word_config(
     return pos, include, exclude, clozes_only
 
 
+@cache
+def _load_fixed_glosses(language_code: str) -> dict[str, str]:
+    """Load the curated ``glosses`` map (casefolded surface → English) for *language_code*.
+
+    Empty when the language has no file or the file has no ``glosses`` key.
+    """
+    path = get_function_words_path(language_code)
+    if path is None or not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {w.casefold(): g for w, g in data.get("glosses", {}).items()}
+
+
+def fixed_gloss(token: str, language_code: str) -> str | None:
+    """Return the curated gloss for *token*, or ``None`` when it has none.
+
+    For function words whose meaning is a grammatical ROLE, which the
+    dialogue-gloss LLM pass guesses wrong: it glossed Cebuano ``og`` (the
+    indefinite-object marker) as "and", mistaking it for ``ug``. A curated
+    gloss overrides the LLM's in ``build_lesson_from_story``. Case-insensitive.
+    """
+    return _load_fixed_glosses(language_code).get(token.casefold())
+
+
 def is_function_word(token: str, language_code: str, *, upos: str | None = None) -> bool:
     """Return True if *token* is a function word in *language_code*.
 

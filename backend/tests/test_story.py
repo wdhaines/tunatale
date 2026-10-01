@@ -722,3 +722,68 @@ class TestBuildStoryPrompts:
         user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2").user_prompt
         assert "SOURCE TRANSCRIPT" not in user
         assert "(not available)" not in user
+
+
+def _ceb_story(glosses: list[dict]) -> dict:
+    return {
+        "title": "Kape",
+        "key_phrases": [],
+        "scenes": [
+            {
+                "label": "Scene 1",
+                "lines": [
+                    {
+                        "speaker": "female-1",
+                        "text": "Nagdala ko og kape ug pan.",
+                        "translation": "I brought coffee and bread.",
+                    },
+                ],
+            }
+        ],
+        "dialogue_glosses": glosses,
+    }
+
+
+def test_curated_function_word_gloss_overrides_the_llm():
+    """Cebuano "og" is the object marker; the gloss pass said "and" (seen live
+    2026-09-30, lesson an-evening-wake-in-jimenez). The curated gloss wins, and
+    words with no curated gloss keep the LLM's."""
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    story = _ceb_story(
+        [
+            {"word": "nagdala", "translation": "brought"},
+            {"word": "og", "translation": "and"},
+            {"word": "ug", "translation": "and"},
+        ]
+    )
+    lesson = build_lesson_from_story(story, language=get_language("ceb"))
+    glosses = lesson.generation_metadata["token_glosses"]
+    assert glosses["og"] == "a / some (object marker)"
+    assert glosses["ug"] == "and"
+    assert glosses["nagdala"] == "brought"
+    # The stored story source stays the model's verbatim output.
+    assert lesson.generation_metadata["story"]["dialogue_glosses"][1]["translation"] == "and"
+
+
+def test_curated_function_word_gloss_fills_a_word_the_llm_skipped():
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    lesson = build_lesson_from_story(
+        _ceb_story([{"word": "kape", "translation": "coffee"}]), language=get_language("ceb")
+    )
+    assert lesson.generation_metadata["token_glosses"]["og"] == "a / some (object marker)"
+
+
+def test_curated_gloss_absent_from_dialogue_is_not_added():
+    """Only surfaces the dialogue contains get a curated gloss — the map stays
+    a map of THIS lesson's words."""
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    story = _ceb_story([{"word": "kape", "translation": "coffee"}])
+    story["scenes"][0]["lines"][0]["text"] = "Kape ug pan."
+    lesson = build_lesson_from_story(story, language=get_language("ceb"))
+    assert "og" not in lesson.generation_metadata["token_glosses"]

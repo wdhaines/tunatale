@@ -33,6 +33,7 @@ from app.models.language import NARRATOR_VOICE, Language
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.database import SRSDatabase
+from app.srs.function_words import fixed_gloss
 from app.srs.review_selector import select_review_collocations
 from app.storage.store import ContentStore
 
@@ -582,6 +583,15 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             # Lemma key provides a fallback generic translation
             # (e.g. "biti" → "you will" from whichever surface came first).
             token_glosses.setdefault(lemma, translation)
+
+    # A curated gloss beats the LLM's for a function word whose meaning is a
+    # grammatical role (Cebuano `og` came back "and"). Applied to the built map
+    # only — the stored story keeps the model's verbatim array, and a re-import
+    # rebuilds through here, so the override reapplies.
+    for surface in surface_lemma:
+        curated = fixed_gloss(surface, language.code)
+        if curated:
+            token_glosses[surface] = curated
 
     # A separate, VERB-only map of base-form glosses (the LLM's optional "base"
     # key, e.g. `lyver` → "lie"), kept beside token_glosses on purpose: the
