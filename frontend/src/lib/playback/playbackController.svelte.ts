@@ -447,6 +447,27 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     // end of a track is left for `ended` to decide.
     if (!audioEl.ended) keepAlive.stop();
   });
+  // Starvation and failure. Without these a track that has started and then
+  // run dry looks, in the trace, exactly like one that is playing: the
+  // 2026-10-01 screen-off log showed a section change as plain el:play while
+  // the user heard it stall (tunatale-bibo). A seek fires the same pair on
+  // every step of a scrub, which would push the lines that matter out of the
+  // trace's ring, so a seek's own are skipped and el:playing is logged only
+  // after an el:waiting.
+  let starved = false;
+  onEl("waiting", () => {
+    if (audioEl.seeking) return;
+    starved = true;
+    trace("el:waiting");
+  });
+  onEl("playing", () => {
+    if (!starved) return;
+    starved = false;
+    trace("el:playing");
+  });
+  onEl("error", () => {
+    trace("el:error", `code=${audioEl.error?.code ?? "-"}`);
+  });
   onEl("ratechange", () => {
     rate = audioEl.playbackRate;
     updatePositionState();
@@ -655,6 +676,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // spot on tab-hide (mobile refresh / app switch) and pagehide (desktop).
   // beforeunload is deliberately NOT used — unreliable on mobile Safari.
   function onVisibilityChange() {
+    // When the page was hidden is the first thing a lock-screen log is read
+    // for, and no other line says it.
+    trace(`vis:${document.visibilityState}`);
     if (document.visibilityState === "hidden") {
       saveResume();
     }
