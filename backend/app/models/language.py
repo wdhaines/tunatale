@@ -97,13 +97,9 @@ class Language:
                 # Cebuano male-1's English (2026-10-01). Anchored to Adam's
                 # entry rather than re-measured on the 8-line set: both voices
                 # on Paul's own lines in 'An Evening Wake in Jimenez', the 13
-                # that run 1.5 s or longer, Adam -19.70 vs Brandon -20.23 LUFS
-                # (paired se 0.28), so -0.6 + 0.53.
-                # ⚠️ The 14th line, "Why?", is left out because ebur128 cannot
-                # gate a 0.6 s clip, but Brandon's take of it IS quiet: peak
-                # -14.5 dBFS against about -6 for his other lines. Azure is
-                # deterministic, so it renders that way every time, and a
-                # per-voice gain cannot fix one clip.
-                "en-US-BrandonMultilingualNeural": -0.1,
+                # that run 1.5 s or longer, Adam -19.70 vs Lewis -21.81 LUFS
+                # (paired se 0.34), so -0.6 + 2.11. The 14th line, "Why?", is
+                # left out because ebur128 cannot gate a clip that short.
+                "en-US-LewisMultilingualNeural": 1.5,
             },
         )
