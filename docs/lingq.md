@@ -41,7 +41,7 @@ The tooltip language ("click to untrack") in `Tooltip.svelte:26` is a deliberate
 
 LingQ's workflow: open a lesson with text + audio synced word-by-word → read while listening → click each unknown word for a translation popup → mark words as you learn them → finish, move to the next lesson. Vocabulary is acquired *during* immersion, not in a separate flashcard session.
 
-TT's expression of this is in `walkthrough.md` PART 15 ("Listen-First Acquisition Loop, Phases B–F"). The `/listen` endpoint:
+TT's expression of this is in `walkthrough.md` §8 ("Words & the Learning Loop"), §8.9 for listening. The `/listen` endpoint:
 
 1. Receives the lesson the user just played.
 2. Tokenizes the NATURAL_SPEED transcript.
@@ -89,7 +89,7 @@ LingQ assumes the user supplies their own input (uploads an article, picks a You
 - `backend/app/srs/database.py::untrack_collocation` — the LingQ "Known" action.
 - `backend/app/api/srs.py::untrack_item` — the endpoint.
 - `frontend/src/lib/WordSpan.svelte`, `Tooltip.svelte`, `Transcript.svelte` — the LingQ-style UI.
-- `walkthrough.md` PART 15 — the full listen-first acquisition loop.
-- `walkthrough.md` PART 4.4 — per-word SRS tracking (the data model behind the colors).
+- `walkthrough.md` §8 — the full listen-first acquisition loop.
+- `walkthrough.md` §8.5–§8.7 — per-word SRS tracking and mastery (the data model behind the colors).
 - `docs/refold.md` — the next-generation comprehensible-input community that built on Kaufmann's foundations.
 - `docs/pimsleur.md` — what TT keeps from before the immersion phase.

@@ -10,6 +10,7 @@ Contents:
 
 | File | What it recorded |
 |---|---|
+| `walkthrough-2026-03-to-07.md` | The previous, chronological edition of the system tour (PARTs 1–31, March–July 2026), replaced on 2026-10-01 by the subsystem-ordered `../walkthrough.md`. Its Appendix A maps old PART numbers to current chapters. |
 | `walkthrough-prototypes.md` | Lineage of the two pre-rebuild prototypes (`micro-demo-0.0`/`0.1`). |
 | `bug-refactor-backlog.md` | 36-item refactor backlog, all closed (the one item that was still open migrated to `../refactor-suggestions-2026-07.md` #11). |
 | `review-2026-07-10-followups.md` | Deferred findings from the 2026-07-10 norwegian-breakdown review — all DONE. |

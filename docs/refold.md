@@ -39,7 +39,7 @@ The constraint that makes it 1T: TT only creates a cloze when the target is a **
 
 Refold's strongest position: **do not attempt to produce the language until you can comprehend it**. The reasoning: production with insufficient input ossifies errors into your mental model; comprehension trains your ear; output emerges naturally when comprehension is solid. Stages 1–2 are pure input; output starts in stage 3+ after hundreds of hours of immersion.
 
-TT's expression of this is structural, in the SRS data model (`walkthrough.md` PART 12.1):
+TT's expression of this is structural, in the SRS data model (`walkthrough.md` §9.2):
 
 ```
 DirectionState (per direction, independently scheduled):
@@ -106,8 +106,8 @@ Underlying research:
 - `backend/app/anki/sync.py::create_cloze_note` — pushes cloze rows to Anki's built-in Cloze notetype.
 - `backend/app/models/srs_item.py` — `SyntacticUnit.card_type` ('vocab' | 'cloze'), `DirectionState` per direction.
 - `backend/app/api/srs.py::listen` — the implicit-grade loop (auto-Good on heard, no signal on missed).
-- `walkthrough.md` PART 12.1 — two-direction SRS items.
-- `walkthrough.md` PART 15.5 — Phase F function-word clozes.
-- `walkthrough.md` PART 20 — current cloze pipeline (TTS, sentence translation, Anki round-trip).
+- `walkthrough.md` §9.2 — two-direction SRS items.
+- `walkthrough.md` §8.4 — function-word clozes.
+- `walkthrough.md` §11.7 — the cloze pipeline (kinds, LLM tier, blind judge, Anki round-trip).
 - `docs/fluent-forever.md` — the picture+audio model for content words (the half of the card system Refold doesn't cover).
 - `docs/lingq.md` — sibling comprehensible-input lineage (Refold built on the same Krashen foundations as LingQ but from a Japanese-immersion subculture rather than Kaufmann's polyglot direction).

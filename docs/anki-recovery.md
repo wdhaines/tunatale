@@ -177,5 +177,5 @@ This is not a TT-specific procedure — it's general Anki disaster recovery — 
 - `.claude/rules/anki-sync.md` — USN protocol, safety envelope, schema-bump workflow.
 - `backend/app/plugins/anki_sync/safety.py` — `safe_open`, backup validation, post-write audit.
 - `backend/app/plugins/anki_sync/normalize_usns.py` — the post-restore USN normalizer.
-- `walkthrough.md` PART 12 — Anki integration + safety-envelope deep-dive.
+- `walkthrough.md` §10 — Anki integration; §10.2 is the safety envelope.
 - `backend/app/plugins/anki_sync/sync_engine.py::detect_and_reset_orphans` — orphan recovery (graves-aware since Layer 68).

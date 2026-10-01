@@ -100,5 +100,5 @@ If the user (this repo's owner) extracts concrete prescriptions from the paid co
 - `docs/lingq.md` — sibling input-side influence. LingQ is high-throughput / low-depth; BDT is the opposite. TT today is closer to LingQ.
 - `docs/refold.md` — Refold also defers output; BDT brings output forward, on passages the user has already absorbed.
 - `docs/fluent-forever.md` — Card Type 2 (production card with image-only front) is the closest existing analogue to BDT's L1→L2 direction, at flashcard granularity.
-- `walkthrough.md` PART 12.1 (two-direction SRS items) — the data model that would support a BDT-style passage exercise.
-- `walkthrough.md` PART 15.4 — the transcript translation button (the reception side of step 4).
+- `walkthrough.md` §9.2 (two-direction SRS items) — the data model that would support a BDT-style passage exercise.
+- `walkthrough.md` §8.11 — the transcript translation button (the reception side of step 4).
