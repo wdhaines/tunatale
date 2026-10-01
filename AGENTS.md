@@ -52,6 +52,7 @@ Two main packages:
   - `app/storage/` — File/DB storage layer
 
 - **`frontend/`** — SvelteKit + TypeScript, Vite, Vitest, Playwright
+  - **Needs Node ≥ 22.19** (`engines` in `frontend/package.json`): bun runs vitest under the system `node`, and jsdom's undici dies on Node 20 with `TypeError: webidl.util.markAsUncloneable is not a function` before any test starts — a version problem that does not look like one. (jsdom 30.1 declares `^22.22.2`; 22.22.0 was measured working.)
 - **`tests/`** (root) — shared prompts and test data (not a test package)
 - **`micro-demo-*/`** — separate git repos, ignored by main repo
 
