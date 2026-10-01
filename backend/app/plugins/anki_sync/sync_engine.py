@@ -1424,11 +1424,20 @@ class AnkiSync:
             # pull, so once Anki is forgotten the subsequent pull reads queue=0 and
             # keeps NEW. Skip recovered directions — orphan re-mint already rebuilds
             # those fresh. Idempotent: no-op when Anki already has the card new.
+            #
+            # A card Anki holds as new AND suspended is the other thing this
+            # branch must act on (Layer 86): un-suspending a never-reviewed card
+            # in TT lands here too, and forget_card is skipped for a type-0 card,
+            # so without the unsuspend the card stayed queue=-1, was marked clean,
+            # and the pull below re-suspended it in TT.
             if ds.state == SRSState.NEW and ds.reps == 0 and (guid, direction.value) not in recovered:
                 if not dry_run:
                     anki_state_before = self._capture_anki_card_state(ds.anki_card_id)
-                    if anki_state_before is not None and anki_state_before["type"] != 0:
-                        self._writer.forget_card(ds.anki_card_id)
+                    if anki_state_before is not None:
+                        if anki_state_before["type"] != 0:
+                            self._writer.forget_card(ds.anki_card_id)
+                        elif anki_state_before["queue"] == -1:
+                            self._writer.unsuspend([ds.anki_card_id])
                     self._db.mark_direction_clean(guid, direction)
                 report.directions_pushed += 1
                 continue
@@ -1455,6 +1464,16 @@ class AnkiSync:
 
                 if ds.state == SRSState.SUSPENDED:
                     self._writer.suspend([ds.anki_card_id])
+                    if ds.reps == 0 and ds.last_review is None:
+                        # A card with no schedule (Layer 85's test) has nothing
+                        # else to push: suspending is queue=-1 and no more, as it
+                        # is in Anki. set_due_date below keeps a suspended card's
+                        # queue and type but still writes due and ivl, and on a
+                        # new card `due` is its place in the new queue — it came
+                        # back from suspension at today's day number (Layer 86).
+                        self._db.mark_direction_clean(guid, direction)
+                        report.directions_pushed += 1
+                        continue
                 else:
                     self._writer.unsuspend([ds.anki_card_id])
 
