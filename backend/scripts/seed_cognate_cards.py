@@ -62,7 +62,10 @@ REVIEWED_COGNATES = ",".join(
 
 # Ruled out by the user in batch 2: the dictionary lists them only as variants
 # (of ayroplano and bulan). Batch 3's classifier would otherwise reach bulan.
-REVIEWED_REJECTS = "eroplano,buwan"
+# saan, 2026-10-01: its near-cognate is saa, which the dictionary tags dialectal.
+# Standard Cebuano says asa (3,136 uses in the frequency corpus to saa's 25). The
+# card was minted in batch 1, lapsed twice, and was removed on the user's call.
+REVIEWED_REJECTS = "eroplano,buwan,saan"
 
 _BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_DICTIONARY = _BACKEND / "scripts/local/kaikki/Cebuano.jsonl"

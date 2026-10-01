@@ -15,6 +15,7 @@ export type ClozeSentenceVerdict = components["schemas"]["ClozeSentenceVerdict"]
 export type ProposeClozeResponse = components["schemas"]["ProposeClozeResponse"];
 export type SetClozeSentenceResponse = components["schemas"]["SetClozeSentenceResponse"];
 export type CreateReviewSessionResponse = components["schemas"]["CreateReviewSessionResponse"];
+export type RenderEstimate = components["schemas"]["RenderEstimateResponse"];
 export type DeleteReviewSessionResponse = components["schemas"]["DeleteReviewSessionResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
@@ -1022,10 +1023,53 @@ export class TunaTaleAPI {
   }
 
   async renderAudio(lessonId: string): Promise<LessonAudio> {
-    return this.request("/api/audio/render", {
+    // Typed against the route's own schema: this body said content_id from
+    // 8a4520c on, and the route answered 422 to every Render Audio click.
+    return this.postJson("/api/audio/render", {
+      lesson_id: lessonId,
+    } satisfies components["schemas"]["RenderAudioRequest"]);
+  }
+
+  // Re-render from the tools menu (tunatale-9paa). `null` sections = the whole
+  // lesson; the estimate is priced against the server's TTS cache, so a clip
+  // that is already cached costs nothing.
+  async estimateLessonRerender(
+    lessonId: string,
+    sectionTypes: string[] | null,
+  ): Promise<RenderEstimate> {
+    return this.postJson("/api/audio/render-estimate", {
+      lesson_id: lessonId,
+      section_types: sectionTypes,
+    } satisfies components["schemas"]["LessonSectionSelection"]);
+  }
+
+  async rerenderLesson(lessonId: string, sectionTypes: string[] | null): Promise<LessonAudio> {
+    return this.postJson("/api/audio/rerender", {
+      lesson_id: lessonId,
+      section_types: sectionTypes,
+    } satisfies components["schemas"]["LessonSectionSelection"]);
+  }
+
+  async estimateReviewSessionRerender(
+    id: string,
+    sectionTypes: string[] | null,
+  ): Promise<RenderEstimate> {
+    return this.postJson(`/api/review-sessions/${id}/render-estimate`, {
+      section_types: sectionTypes,
+    } satisfies components["schemas"]["SectionSelection"]);
+  }
+
+  async rerenderReviewSession(id: string, sectionTypes: string[] | null): Promise<LessonAudio> {
+    return this.postJson(`/api/review-sessions/${id}/rerender`, {
+      section_types: sectionTypes,
+    } satisfies components["schemas"]["SectionSelection"]);
+  }
+
+  private postJson<T>(path: string, body: unknown): Promise<T> {
+    return this.request(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content_id: lessonId }),
+      body: JSON.stringify(body),
     });
   }
 

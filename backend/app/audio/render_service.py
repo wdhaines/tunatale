@@ -10,7 +10,7 @@ import tempfile
 import uuid
 import weakref
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Collection, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -690,3 +690,64 @@ async def reassemble_lesson_audio(
         ],
         "cues": json.loads(cues_json),
     }
+
+
+class SectionSelectionError(ValueError):
+    """A re-render selection that names nothing, or something the lesson lacks."""
+
+
+def resolve_section_selection(lesson, raw: Sequence[str] | None) -> set[SectionType] | None:
+    """The sections a tools-menu re-render names, or ``None`` for the whole lesson.
+
+    ``None`` (nothing sent) and every section ticked both mean the whole lesson,
+    which goes through the full render: the reassemble exists to keep sections
+    byte-identical, and with nothing to keep it is only the slower path.
+    Refused, before any work: an empty selection, an unknown type, and a real
+    type this lesson does not have.
+    """
+    if raw is None:
+        return None
+    if not raw:
+        raise SectionSelectionError("Pick at least one section to re-render")
+    try:
+        chosen = {SectionType(v) for v in raw}
+    except ValueError:
+        raise SectionSelectionError(f"Unknown section in {list(raw)}") from None
+    present = {s.section_type for s in lesson.sections}
+    if absent := chosen - present:
+        raise SectionSelectionError(f"This lesson has no {', '.join(sorted(t.value for t in absent))} section")
+    return None if chosen == present else chosen
+
+
+async def rerender_lesson_audio(
+    *,
+    store: ContentStore,
+    renderer,
+    tts,
+    audio_dir: Path,
+    lesson_id: str,
+    lesson,
+    section_types: set[SectionType] | None,
+) -> dict:
+    """Re-render from the tools menu (tunatale-9paa): the whole lesson, or some sections.
+
+    The whole lesson is :func:`render_lesson_audio`; a subset is
+    :func:`reassemble_lesson_audio`, which re-renders only those sections and
+    keeps every other one byte-for-byte. Its precondition ``ValueError``s (no
+    audio yet, a section count that no longer matches) propagate for the route
+    to map to 409: the lesson's audio is in a state a partial re-render cannot
+    build on, and the whole-lesson render is the fix.
+    """
+    if section_types is None:
+        return await render_lesson_audio(
+            store=store, renderer=renderer, audio_dir=audio_dir, lesson_id=lesson_id, lesson=lesson
+        )
+    return await reassemble_lesson_audio(
+        store=store,
+        renderer=renderer,
+        tts=tts,
+        audio_dir=audio_dir,
+        lesson_id=lesson_id,
+        lesson=lesson,
+        section_types=tuple(section_types),
+    )

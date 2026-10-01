@@ -22,6 +22,7 @@
 	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
+	import RerenderAudio from '$lib/components/RerenderAudio.svelte';
 	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
 	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
 	import { lessonMastery, masteryColor } from '$lib/mastery';
@@ -224,6 +225,16 @@
 		} finally {
 			if (data.lesson.id === lessonId) audioLoading = false;
 		}
+	}
+
+	// A tools-menu re-render (tunatale-9paa) replaces the audio rows and moves
+	// the re-rendered sections' cue timings, so the transcript is re-read too.
+	// Same stale-lesson guard as handleRenderAudio: the render takes seconds.
+	async function handleRerendered(rendered: LessonAudio, lessonId: string) {
+		if (data.lesson.id !== lessonId) return;
+		audio = rendered;
+		const fresh = await api.getTranscript(lessonId).catch(() => null);
+		if (fresh && data.lesson.id === lessonId) transcript = fresh;
 	}
 
 	// What the generating prompt asked this lesson to reuse, and what it actually
@@ -544,6 +555,21 @@
 	<details class="card tools-card">
 		<summary>{t('lessonPage.lessonTools')}</summary>
 		<AudioDownloads {audio} />
+		{#if audio}
+			<!-- Keyed on the lesson: in-page navigation must not carry this
+			     lesson's ticked sections over to the next one. -->
+			{#key data.lesson.id}
+				{@const lessonId = data.lesson.id}
+				<hr />
+				<RerenderAudio
+					sections={audio.sections}
+					estimate={(types) => api.estimateLessonRerender(lessonId, types)}
+					rerender={(types) => api.rerenderLesson(lessonId, types)}
+					onRendered={(a) => handleRerendered(a, lessonId)}
+				/>
+				<hr />
+			{/key}
+		{/if}
 		{#if reviewRequested.length > 0}
 			<!-- Deliberately neutral: at the default pressure the prompt tells the
 			     model that using none of these is a correct answer, so a low number

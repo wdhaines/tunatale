@@ -12,6 +12,7 @@
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
+	import RerenderAudio from '$lib/components/RerenderAudio.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
@@ -476,6 +477,26 @@
 		     returning reader something they already know. Still one tap away. -->
 		<p class="muted">{t('reviewSessions.sessionExplainer')}</p>
 		<AudioDownloads {audio} />
+		{#if audio}
+			<!-- The lesson reader's re-render (tunatale-9paa) on the session's own
+			     routes. They share the render marker with Prepare audio, so a
+			     re-render while another tab renders is a 409 shown here. -->
+			{#key data.session.id}
+				{@const sessionId = data.session.id}
+				<RerenderAudio
+					sections={audio.sections}
+					estimate={(types) => api.estimateReviewSessionRerender(sessionId, types)}
+					rerender={(types) => api.rerenderReviewSession(sessionId, types)}
+					onRendered={async (a) => {
+						if (data.session.id !== sessionId) return;
+						audio = a;
+						// Re-rendered sections moved their cue timings.
+						const fresh = await api.getTranscript(sessionId).catch(() => null);
+						if (fresh && data.session.id === sessionId) transcript = fresh;
+					}}
+				/>
+			{/key}
+		{/if}
 		<div class="regen-row">
 			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
 				{regenerating ? t('reviewSessions.rewriting') : t('reviewSessions.rewriteDialogue')}

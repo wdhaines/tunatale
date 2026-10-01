@@ -63,6 +63,12 @@ VERB_MAP: tuple[tuple[str, str | None, str | None], ...] = (
     ("list", "GET /api/curriculum/{curriculum_id}", "GET /api/review-sessions"),
     ("render", "POST /api/audio/render", "POST /api/review-sessions/{session_id}/render"),
     (
+        "render-estimate",
+        "POST /api/audio/render-estimate",
+        "POST /api/review-sessions/{session_id}/render-estimate",
+    ),
+    ("rerender", "POST /api/audio/rerender", "POST /api/review-sessions/{session_id}/rerender"),
+    (
         "render-status",
         "GET /api/curriculum/{curriculum_id}/pipeline",
         "GET /api/review-sessions/{session_id}/render-status",

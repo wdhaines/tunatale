@@ -60,7 +60,7 @@ location	bank	bangko	dictionary
 location	place; location	lugar	usage
 clothing	hat	kalo	dictionary
 clothing	dress	bestida	accepted
-clothing	skirt	sayal	variant
+clothing	skirt	saya	dictionary
 clothing	clothes; shirt	sinina	dictionary
 clothing	T-shirt	kamiseta	accepted
 clothing	pants	karsones	dictionary
@@ -83,7 +83,7 @@ people	parent	ginikanan	dictionary
 people	baby	masuso	reviewed
 people	man	lalaki	dictionary
 people	woman	babaye	dictionary
-people	sibling	igsoon	dictionary
+people	sibling	igsuon	dictionary
 people	family	pamilya	usage
 people	grandfather	lolo	dictionary
 people	grandmother	lola	dictionary

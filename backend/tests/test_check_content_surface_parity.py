@@ -49,6 +49,8 @@ _LESSON_HOST = {
     "regloss": "generation",
     "list": "curriculum",
     "render": "audio",
+    "render-estimate": "audio",
+    "rerender": "audio",
     "render-status": "pipeline",
     "delete": "curriculum",
 }

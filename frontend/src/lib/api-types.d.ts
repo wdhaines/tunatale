@@ -205,6 +205,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/audio/render-estimate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Estimate Lesson Rerender
+     * @description What re-rendering the chosen sections would cost (tunatale-9paa).
+     */
+    post: operations["estimate_lesson_rerender_api_audio_render_estimate_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/audio/rerender": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rerender Lesson
+     * @description Re-render the whole lesson, or only the chosen sections (tunatale-9paa).
+     */
+    post: operations["rerender_lesson_api_audio_rerender_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/audio/{audio_id}": {
     parameters: {
       query?: never;
@@ -1151,6 +1191,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/review-sessions/{session_id}/render-estimate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Estimate Review Session Rerender
+     * @description What re-rendering the chosen sections of a session would cost (tunatale-9paa).
+     */
+    post: operations["estimate_review_session_rerender_api_review_sessions__session_id__render_estimate_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/review-sessions/{session_id}/render-status": {
     parameters: {
       query?: never;
@@ -1172,6 +1232,29 @@ export interface paths {
     get: operations["get_review_session_render_status_api_review_sessions__session_id__render_status_get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/review-sessions/{session_id}/rerender": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Rerender Review Session
+     * @description Re-render a session, or only its chosen sections (tunatale-9paa).
+     *
+     *     Shares ``review_renders`` with the render route above, so a re-render and a
+     *     render of the same session exclude each other.
+     */
+    post: operations["rerender_review_session_api_review_sessions__session_id__rerender_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -3055,6 +3138,16 @@ export interface components {
       type: string;
     };
     /**
+     * LessonSectionSelection
+     * @description Body of POST /api/audio/render-estimate and POST /api/audio/rerender.
+     */
+    LessonSectionSelection: {
+      /** Lesson Id */
+      lesson_id: string;
+      /** Section Types */
+      section_types?: string[] | null;
+    };
+    /**
      * LessonSourceResponse
      * @description Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).
      *
@@ -3825,6 +3918,26 @@ export interface components {
       target_index?: number | null;
     };
     /**
+     * RenderEstimateResponse
+     * @description What a re-render would cost before the click (``render_cost.estimate_render``).
+     *
+     *     ``billable_chars`` is Azure's billed unit, against ``monthly_allowance`` on
+     *     the F0 tier; cached clips cost nothing. The lesson title's one clip is not
+     *     counted.
+     */
+    RenderEstimateResponse: {
+      /** Billable Chars */
+      billable_chars: number;
+      /** Cached Clips */
+      cached_clips: number;
+      /** Gemini Usd */
+      gemini_usd: number;
+      /** Monthly Allowance */
+      monthly_allowance: number;
+      /** New Clips */
+      new_clips: number;
+    };
+    /**
      * RenderSectionCue
      * @description One element of RenderAudioResponse.cues (a full-manifest ``Cue``).
      */
@@ -3957,6 +4070,18 @@ export interface components {
       session_date: string;
       /** Title */
       title: string;
+    };
+    /**
+     * SectionSelection
+     * @description Which sections a tools-menu re-render names (tunatale-9paa).
+     *
+     *     ``section_types`` omitted or null means the whole lesson; a list names
+     *     ``SectionType`` values. An empty list, an unknown value, or a section the
+     *     lesson lacks is refused with 422 before any work.
+     */
+    SectionSelection: {
+      /** Section Types */
+      section_types?: string[] | null;
     };
     /**
      * SetClozeSentenceRequest
@@ -4541,6 +4666,72 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": components["schemas"]["RenderAudioRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RenderAudioResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  estimate_lesson_rerender_api_audio_render_estimate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LessonSectionSelection"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RenderEstimateResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  rerender_lesson_api_audio_rerender_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LessonSectionSelection"];
       };
     };
     responses: {
@@ -5795,6 +5986,41 @@ export interface operations {
       };
     };
   };
+  estimate_review_session_rerender_api_review_sessions__session_id__render_estimate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SectionSelection"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RenderEstimateResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   get_review_session_render_status_api_review_sessions__session_id__render_status_get: {
     parameters: {
       query?: never;
@@ -5813,6 +6039,41 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReviewSessionRenderStatusResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  rerender_review_session_api_review_sessions__session_id__rerender_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SectionSelection"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RenderAudioResponse"];
         };
       };
       /** @description Validation Error */

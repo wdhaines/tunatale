@@ -11,8 +11,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from app.api import app_state
-from app.api.models import GetLessonAudioResponse, RenderAudioRequest, RenderAudioResponse
+from app.api import app_state, rerender
+from app.api.models import (
+    GetLessonAudioResponse,
+    LessonSectionSelection,
+    RenderAudioRequest,
+    RenderAudioResponse,
+    RenderEstimateResponse,
+)
 from app.audio.paths import resolve_audio_path
 from app.audio.render_service import render_lesson_audio
 from app.audio.transcode import EXT_MEDIA_TYPE
@@ -102,6 +108,31 @@ async def render_audio(body: RenderAudioRequest, request: Request):
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@router.post("/render-estimate", status_code=200, response_model=RenderEstimateResponse)
+async def estimate_lesson_rerender(body: LessonSectionSelection, request: Request):
+    """What re-rendering the chosen sections would cost (tunatale-9paa)."""
+    lesson = request.state.content_store.get_lesson(body.lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return rerender.estimate(lesson, body.section_types)
+
+
+@router.post("/rerender", status_code=200, response_model=RenderAudioResponse)
+async def rerender_lesson(body: LessonSectionSelection, request: Request):
+    """Re-render the whole lesson, or only the chosen sections (tunatale-9paa)."""
+    lesson = request.state.content_store.get_lesson(body.lesson_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return await rerender.rerender(
+        request,
+        body.lesson_id,
+        lesson,
+        body.section_types,
+        app_state.lesson_renders(request.app),
+        "A render is already in progress for this lesson",
+    )
 
 
 @router.get("/lesson/{lesson_id}", status_code=200, response_model=GetLessonAudioResponse)

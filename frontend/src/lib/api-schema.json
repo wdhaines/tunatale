@@ -2011,6 +2011,34 @@
         "title": "LessonSection",
         "type": "object"
       },
+      "LessonSectionSelection": {
+        "description": "Body of POST /api/audio/render-estimate and POST /api/audio/rerender.",
+        "properties": {
+          "lesson_id": {
+            "title": "Lesson Id",
+            "type": "string"
+          },
+          "section_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Types"
+          }
+        },
+        "required": [
+          "lesson_id"
+        ],
+        "title": "LessonSectionSelection",
+        "type": "object"
+      },
       "LessonSourceResponse": {
         "description": "Response of GET /api/story/{lesson_id}/source (``lesson_io.export_lesson``).\n\n``story`` stays a bare dict on purpose: it is the raw editable Story-JSON\nfile \u2014 heterogeneous, versioned, and already treated as opaque by both the\nimport request model (``ImportLessonRequest.story``) and the frontend\n(``StorySourceResponse.story: Record<string, unknown>``).",
         "properties": {
@@ -3825,6 +3853,40 @@
         "title": "RenderCueRef",
         "type": "object"
       },
+      "RenderEstimateResponse": {
+        "description": "What a re-render would cost before the click (``render_cost.estimate_render``).\n\n``billable_chars`` is Azure's billed unit, against ``monthly_allowance`` on\nthe F0 tier; cached clips cost nothing. The lesson title's one clip is not\ncounted.",
+        "properties": {
+          "billable_chars": {
+            "title": "Billable Chars",
+            "type": "integer"
+          },
+          "cached_clips": {
+            "title": "Cached Clips",
+            "type": "integer"
+          },
+          "gemini_usd": {
+            "title": "Gemini Usd",
+            "type": "number"
+          },
+          "monthly_allowance": {
+            "title": "Monthly Allowance",
+            "type": "integer"
+          },
+          "new_clips": {
+            "title": "New Clips",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "billable_chars",
+          "new_clips",
+          "cached_clips",
+          "gemini_usd",
+          "monthly_allowance"
+        ],
+        "title": "RenderEstimateResponse",
+        "type": "object"
+      },
       "RenderSectionCue": {
         "description": "One element of RenderAudioResponse.cues (a full-manifest ``Cue``).",
         "properties": {
@@ -4115,6 +4177,27 @@
           "title"
         ],
         "title": "ReviewSessionSummary",
+        "type": "object"
+      },
+      "SectionSelection": {
+        "description": "Which sections a tools-menu re-render names (tunatale-9paa).\n\n``section_types`` omitted or null means the whole lesson; a list names\n``SectionType`` values. An empty list, an unknown value, or a section the\nlesson lacks is refused with 422 before any work.",
+        "properties": {
+          "section_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Types"
+          }
+        },
+        "title": "SectionSelection",
         "type": "object"
       },
       "SetClozeSentenceRequest": {
@@ -5352,6 +5435,90 @@
           }
         },
         "summary": "Render Audio",
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/audio/render-estimate": {
+      "post": {
+        "description": "What re-rendering the chosen sections would cost (tunatale-9paa).",
+        "operationId": "estimate_lesson_rerender_api_audio_render_estimate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonSectionSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderEstimateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Estimate Lesson Rerender",
+        "tags": [
+          "audio"
+        ]
+      }
+    },
+    "/api/audio/rerender": {
+      "post": {
+        "description": "Re-render the whole lesson, or only the chosen sections (tunatale-9paa).",
+        "operationId": "rerender_lesson_api_audio_rerender_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonSectionSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderAudioResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerender Lesson",
         "tags": [
           "audio"
         ]
@@ -7026,6 +7193,59 @@
         ]
       }
     },
+    "/api/review-sessions/{session_id}/render-estimate": {
+      "post": {
+        "description": "What re-rendering the chosen sections of a session would cost (tunatale-9paa).",
+        "operationId": "estimate_review_session_rerender_api_review_sessions__session_id__render_estimate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderEstimateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Estimate Review Session Rerender",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
     "/api/review-sessions/{session_id}/render-status": {
       "get": {
         "description": "Whether a render is currently in flight for this session.\n\nThe page polls this on mount: the render outlives the page, so navigating\naway aborts the fetch but not the work, and the page must be able to pick\nthe render back up when it returns. Declared after the render route on\npurpose \u2014 ``render-status`` is two segments so it never collides with\n``GET /{session_id}``, and the parameterised routes must stay below the\nid-less ones.",
@@ -7064,6 +7284,59 @@
           }
         },
         "summary": "Get Review Session Render Status",
+        "tags": [
+          "review-sessions"
+        ]
+      }
+    },
+    "/api/review-sessions/{session_id}/rerender": {
+      "post": {
+        "description": "Re-render a session, or only its chosen sections (tunatale-9paa).\n\nShares ``review_renders`` with the render route above, so a re-render and a\nrender of the same session exclude each other.",
+        "operationId": "rerender_review_session_api_review_sessions__session_id__rerender_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SectionSelection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderAudioResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerender Review Session",
         "tags": [
           "review-sessions"
         ]

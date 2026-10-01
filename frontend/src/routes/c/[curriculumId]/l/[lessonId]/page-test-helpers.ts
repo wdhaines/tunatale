@@ -21,6 +21,10 @@ export function createApiMock() {
   return {
     getLessonAudio: vi.fn(),
     renderAudio: vi.fn(),
+    // Pending by default: the tools card prices a re-render on mount, and a
+    // resolved estimate would repaint pages whose tests are about something else.
+    estimateLessonRerender: vi.fn(() => new Promise(() => {})),
+    rerenderLesson: vi.fn(),
     getTranscript: vi.fn(),
     createSRSItem: vi.fn(),
     setSRSItemState: vi.fn(),

@@ -57,6 +57,8 @@ vi.mock("$lib/api", () => ({
     getReviewSession: vi.fn(),
     getLessonAudio: vi.fn(),
     renderReviewSession: vi.fn(),
+    estimateReviewSessionRerender: vi.fn(() => new Promise(() => {})),
+    rerenderReviewSession: vi.fn(),
     getReviewSessionRenderStatus: vi.fn(),
     getTranscript: vi.fn(),
     submitDrill: vi.fn(),
@@ -824,6 +826,94 @@ describe("the reader", () => {
       // Not /decayed/ — the page's own standing blurb already says that, and the
       // assertion matched it in both panels. Pick a phrase only the help has.
       expect(await findByText(/keeping its date/i)).toBeTruthy();
+    });
+
+    // Re-render audio (bd tunatale-9paa): the lesson page's tool on the
+    // session's own id and routes. Shaped like the live API's audio rows,
+    // which carry section_type (withAudio() above predates it).
+    describe("re-render audio", () => {
+      const rendered = (sectionAudioId: string) => ({
+        audio_id: "a1",
+        lesson_id: "sess-1",
+        sections: [
+          {
+            audio_id: sectionAudioId,
+            section_index: 0,
+            section_type: "natural_speed",
+            title: "Natural Speed",
+          },
+          { audio_id: "s2", section_index: 1, section_type: "slow_speed", title: "Enunciated" },
+        ],
+      });
+
+      it("prices a re-render of THIS session once audio exists", async () => {
+        const { getByRole } = render(Page, { props: { data: data({ audio: rendered("s1") }) } });
+
+        expect(getByRole("checkbox", { name: "Enunciated" })).toBeTruthy();
+        await vi.waitFor(() =>
+          expect(api.estimateReviewSessionRerender).toHaveBeenCalledWith("sess-1", null),
+        );
+      });
+
+      it("is not offered before the session has audio", () => {
+        const { queryByText } = render(Page, { props: { data: data() } });
+
+        expect(queryByText("Re-render audio")).toBeNull();
+      });
+
+      it("re-renders the chosen sections and shows the new audio and cues", async () => {
+        vi.mocked(api.rerenderReviewSession).mockResolvedValue(rendered("s9") as never);
+        const { getByRole, findByRole } = render(Page, {
+          props: { data: data({ audio: rendered("s1") }) },
+        });
+        await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalled());
+        mockSessionTranscript.mockClear();
+
+        await fireEvent.click(getByRole("checkbox", { name: "Enunciated" }));
+        await fireEvent.click(getByRole("button", { name: /re-render 1 section/i }));
+
+        expect(api.rerenderReviewSession).toHaveBeenCalledWith("sess-1", ["natural_speed"]);
+        expect((await findByRole("link", { name: "Natural Speed" })).getAttribute("href")).toBe(
+          "/audio/s9",
+        );
+        expect(mockSessionTranscript).toHaveBeenCalledWith("sess-1");
+      });
+
+      it("a render that lands after moving to another session is dropped", async () => {
+        let finish!: (a: never) => void;
+        vi.mocked(api.rerenderReviewSession).mockReturnValue(new Promise((r) => (finish = r)));
+        const { getByRole, rerender } = render(Page, {
+          props: { data: data({ audio: rendered("s1") }) },
+        });
+        await fireEvent.click(getByRole("button", { name: /re-render all sections/i }));
+        mockSessionTranscript.mockClear();
+
+        await rerender({ data: data({ session: sessionBody({ id: "sess-2" }), audio: null }) });
+        finish(rendered("s9") as never);
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(mockSessionTranscript).not.toHaveBeenCalledWith("sess-1");
+        expect(getByRole("link", { name: "Natural Speed" }).getAttribute("href")).not.toBe(
+          "/audio/s9",
+        );
+      });
+
+      it("a failed transcript re-read still shows the new audio", async () => {
+        vi.mocked(api.rerenderReviewSession).mockResolvedValue(rendered("s9") as never);
+        const { getByRole, findByRole } = render(Page, {
+          props: { data: data({ audio: rendered("s1") }) },
+        });
+        await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalled());
+        mockSessionTranscript.mockRejectedValue(new Error("offline"));
+
+        await fireEvent.click(getByRole("button", { name: /re-render all sections/i }));
+
+        await vi.waitFor(async () =>
+          expect((await findByRole("link", { name: "Natural Speed" })).getAttribute("href")).toBe(
+            "/audio/s9",
+          ),
+        );
+      });
     });
 
     describe("manual story paste", () => {
