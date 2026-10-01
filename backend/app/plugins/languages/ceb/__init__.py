@@ -65,21 +65,25 @@ register(
             # male-1 is the exception to the pitch match (tunatale-fx5n,
             # 2026-10-01). Once narration's English moved to the narrator, the
             # user found Adam too close to him on this lesson's own lines, and
-            # picked Brandon by ear from nine voices reading them. Pitch did
-            # not predict it: Adam sat 10 Hz below the narrator's line and
-            # Brandon 19 above (134.8 vs 115.6), but what the user heard was
-            # Adam's ACCENT changing with the text, the same voice sounding
-            # southern on a Norwegian lesson's English and not on this one's.
-            # Audition a stand-in on the lesson's own lines, beside the voice
-            # it has to differ from.
+            # chose by ear from nine voices reading them. Pitch did not predict
+            # it: Adam sat 10 Hz below the narrator's line and Lewis 27 above
+            # (142.8 vs 115.6), but what the user heard was Adam's ACCENT
+            # changing with the text, the same voice sounding southern on a
+            # Norwegian lesson's English and not on this one's. Audition a
+            # stand-in on the lesson's own lines, beside the voice it has to
+            # differ from.
+            # ⚠️ Lewis was the SECOND pick. Brandon, the first, clips short
+            # one-word lines ("Why?", "Yes.", "No.": 110-150 ms of sound in
+            # every request shape tried). An audition on two full sentences
+            # cannot show that, so check a candidate's one-word lines too.
             tts_en_voice_map={
                 "narration": NARRATOR_VOICE,
                 "female-1": "en-US-EmmaMultilingualNeural",
                 "female-2": "en-US-NancyMultilingualNeural",
-                "male-1": "en-US-BrandonMultilingualNeural",
+                "male-1": "en-US-LewisMultilingualNeural",
                 "male-2": "en-US-DustinMultilingualNeural",
                 "female": "en-US-EmmaMultilingualNeural",
-                "male": "en-US-BrandonMultilingualNeural",
+                "male": "en-US-LewisMultilingualNeural",
             },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS: integrated loudness of the same 8 Cebuano sentences per

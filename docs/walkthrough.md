@@ -1,7 +1,7 @@
 # TunaTale Codebase Walkthrough
 
-*2026-10-01T16:55:58Z by Showboat 0.6.1*
-<!-- showboat-id: a907b330-6c59-49bc-8d73-397120116258 -->
+*2026-10-01T17:07:06Z by Showboat 0.6.1*
+<!-- showboat-id: 375ac829-829c-4df4-b714-7f5d71ce89df -->
 
 ## About This Walkthrough
 
@@ -603,7 +603,7 @@ for code in ('sl', 'no', 'tl', 'ceb'):
   narration   ceb-PH-OrusGemini                        reads English as en-US-DavisMultilingualNeural
   female-1    ceb-PH-KoreGemini                        reads English as en-US-EmmaMultilingualNeural
   female-2    ceb-PH-DespinaGemini                     reads English as en-US-NancyMultilingualNeural
-  male-1      ceb-PH-CharonGemini                      reads English as en-US-BrandonMultilingualNeural
+  male-1      ceb-PH-CharonGemini                      reads English as en-US-LewisMultilingualNeural
   male-2      ceb-PH-OrusGemini                        reads English as en-US-DustinMultilingualNeural
 ```
 
@@ -3998,8 +3998,8 @@ Two checks:
    period" are the same rule; only the second needs machinery.
 
 Usage::
-14:		"gen:api": "openapi-typescript src/lib/api-schema.json -o src/lib/api-types.d.ts && oxfmt src/lib/api-typ
-15:		"check:api": "mkdir -p node_modules/.tmp && openapi-typescript src/lib/api-schema.json -o node_modules/.t
+17:		"gen:api": "openapi-typescript src/lib/api-schema.json -o src/lib/api-types.d.ts && oxfmt src/lib/api-typ
+18:		"check:api": "mkdir -p node_modules/.tmp && openapi-typescript src/lib/api-schema.json -o node_modules/.t
 ```
 
 The untyped-endpoint rule is zero tolerance: every 2xx JSON response must name a Pydantic model (`response_model=`), recursing through `list[...]`, optionals and `allOf`. This started as a shrink-only ledger of 70 untyped endpoints and drained to zero over eleven batches (`3621a152`..`9f9fdf71`); the ledger and its ratchet were then deleted because "a ledger at zero" and "no additions, period" are the same rule and only the second needs no machinery. When you add or change an endpoint the loop is: edit the model, `uv run python scripts/dump_openapi.py`, `bun run gen:api`, fix whatever `bun run check` now flags. `check_openapi_snapshot.py` runs `app.openapi()` in memory and diffs it against the committed file, so a forgotten dump fails the backend job, and `bun run check:api` fails the frontend job if `api-types.d.ts` is stale.

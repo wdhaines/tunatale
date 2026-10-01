@@ -233,8 +233,8 @@ def test_a_story_built_for_norwegian_uses_the_plugin_english_cast():
         ("en-US-GuyNeural", -0.5),
         # Cebuano male-1's English since 2026-10-01. Anchored to Adam's entry on
         # the 13 lines of 'An Evening Wake in Jimenez' both voices read for at
-        # least 1.5 s: Adam -19.70 vs Brandon -20.23 LUFS, so -0.6 + 0.53.
-        ("en-US-BrandonMultilingualNeural", -0.1),
+        # least 1.5 s: Adam -19.70 vs Lewis -21.81 LUFS, so -0.6 + 2.11.
+        ("en-US-LewisMultilingualNeural", 1.5),
     ],
 )
 def test_english_gain_for_each_voice(voice_id, expected):
@@ -378,7 +378,7 @@ def test_the_renderer_factory_knows_the_english_locale():
 # the Norwegian rule: a Multilingual cast member reads its own English; a
 # native-only voice gets a stand-in. The stand-ins are one repertoire across
 # languages (Emma, Nancy, Amanda, Adam, Dustin), each already gain-measured.
-# Cebuano's male-1 left that repertoire for Brandon on 2026-10-01, by ear.
+# Cebuano's male-1 left that repertoire for Lewis on 2026-10-01, by ear.
 
 _EN_CASTS = {
     "ceb": {
@@ -386,11 +386,12 @@ _EN_CASTS = {
         "female-2": "en-US-NancyMultilingualNeural",  # Despina 185.5
         # Not the pitch match (that was Adam, 105.9): the user's ear,
         # 2026-10-01, found Adam too close to the narrator on this lesson's
-        # text and picked Brandon from a nine-voice audition (tunatale-fx5n).
-        "male-1": "en-US-BrandonMultilingualNeural",  # Charon 107.2
+        # text. Lewis was their second pick from a nine-voice audition
+        # (tunatale-fx5n); Brandon, the first, clips one-word lines.
+        "male-1": "en-US-LewisMultilingualNeural",  # Charon 107.2
         "male-2": "en-US-DustinMultilingualNeural",  # Orus 139.2
         "female": "en-US-EmmaMultilingualNeural",
-        "male": "en-US-BrandonMultilingualNeural",
+        "male": "en-US-LewisMultilingualNeural",
         "narration": _DAVIS,
     },
     "tl": {
@@ -462,3 +463,21 @@ def test_no_gemini_voice_reads_english():
 )
 def test_english_gain_for_the_tagalog_and_slovene_readers(voice_id, expected):
     assert get_tts_voice_gain_db("en", voice_id) == expected
+
+
+def test_no_voice_in_the_cast_is_one_known_to_clip_one_word_lines():
+    """Brandon cannot say a short one-word line (tunatale-fx5n, 2026-10-01).
+
+    Measured through the product's own request: "Why?", "Yes.", "No.", "Okay.",
+    "What?" and "Where?" each came back with 110-150 ms of sound, against
+    190-470 ms for Lewis, Derek and Samuel, and it was the same in five request
+    shapes (with and without <lang>, <prosody> and a <break>). The user heard it
+    as "cut off". Azure is deterministic, so no re-render fixes it, and a lesson
+    has no way to avoid a one-word line. He was picked by ear for Cebuano male-1
+    and had to be dropped; this keeps him from being picked again.
+    """
+    for code in ("sl", "no", "tl", "ceb"):
+        lang = get_language(code)
+        voices = {*lang.tts_voice_map.values(), *lang.tts_en_voice_map.values()}
+        assert "en-US-BrandonMultilingualNeural" not in voices, code
+    assert "en-US-BrandonMultilingualNeural" not in get_language("en").tts_voice_gain_db
