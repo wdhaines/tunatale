@@ -112,6 +112,9 @@ docs/briefs/
 # store (embeddeddolt/, dolt/, proxieddb/), so the backlog itself was never at
 # risk; this is hygiene, not a disclosure fix.
 .beads/
+# bd 1.3.1's schema-migration gate ("Smart gate") leaves this empty lock file
+# BESIDE `.beads/`, in the repo root, so the rule above does not cover it.
+.beads.gate.lock
 
 # ⚠️ A backup named *.db.<suffix> does NOT match the *.db rule above — the
 # filename no longer ENDS in .db. A 21.7 MB snapshot of the live Norwegian DB
