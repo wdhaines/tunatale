@@ -359,6 +359,21 @@ describe("cards/+page.svelte", () => {
     expect(await findByText("reset failed")).toBeTruthy();
   });
 
+  it("shows a non-Error resetSRSItem rejection as text", async () => {
+    const item = makeSRSItemDetail({ id: 11, text: "kava", state: "review" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    mockReset.mockRejectedValue("reset string error");
+
+    const { findByText, findByLabelText } = render(CardsPage);
+    await findByText("kava");
+
+    await openRowMenu(findByLabelText, "kava");
+    await fireEvent.click(await findByText("Reset"));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await findByText("reset string error")).toBeTruthy();
+  });
+
   it("shows error when toggleSuspend fails", async () => {
     const item = makeSRSItemDetail({ id: 12, text: "voda", state: "review" });
     mockList.mockResolvedValue({ items: [item], total: 1 });
@@ -371,6 +386,20 @@ describe("cards/+page.svelte", () => {
     await fireEvent.click(await findByText("Suspend"));
 
     expect(await findByText("suspend failed")).toBeTruthy();
+  });
+
+  it("shows a non-Error toggleSuspend rejection as text", async () => {
+    const item = makeSRSItemDetail({ id: 12, text: "voda", state: "review" });
+    mockList.mockResolvedValue({ items: [item], total: 1 });
+    mockSuspend.mockRejectedValue("suspend string error");
+
+    const { findByText, findByLabelText } = render(CardsPage);
+    await findByText("voda");
+
+    await openRowMenu(findByLabelText, "voda");
+    await fireEvent.click(await findByText("Suspend"));
+
+    expect(await findByText("suspend string error")).toBeTruthy();
   });
 
   it("clicking Cancel during edit closes the edit row without saving", async () => {
@@ -657,6 +686,27 @@ describe("cards/+page.svelte", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
     expect(await findByText("bulk delete failed")).toBeTruthy();
+  });
+
+  it("shows a non-Error bulkDeleteSRSItems rejection as text", async () => {
+    mockList.mockResolvedValue({
+      items: [makeSRSItemDetail({ id: 1, text: "a" }), makeSRSItemDetail({ id: 2, text: "b" })],
+      total: 2,
+    });
+    mockBulkDelete.mockRejectedValue("bulk string error");
+
+    const { findAllByRole, findByText } = render(CardsPage);
+    await findByText("a");
+
+    const checkboxes = (await findAllByRole("checkbox")) as HTMLInputElement[];
+    // [0]=select-all header, [1+]=item rows
+    await fireEvent.click(checkboxes[1]);
+    await fireEvent.click(checkboxes[2]);
+
+    await fireEvent.click(await findByText(/Delete selected/));
+    await fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+    expect(await findByText("bulk string error")).toBeTruthy();
   });
 
   it("shows stringified error when listSRSItems throws a non-Error", async () => {

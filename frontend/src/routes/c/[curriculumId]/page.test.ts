@@ -321,6 +321,34 @@ describe("/c/[curriculumId] page", () => {
     expect(await findByText("409 Conflict")).toBeTruthy();
   });
 
+  it("shows a non-Error retry rejection as text", async () => {
+    Object.defineProperty(pipelineStore, "status", {
+      value: {
+        active: true,
+        days: [
+          {
+            day: 1,
+            position: 1,
+            state: "failed",
+            lesson_id: null,
+            has_audio: false,
+            error: "LLM error",
+            retryable: true,
+            detail: null,
+          },
+        ],
+      },
+      configurable: true,
+    });
+    mockRetryPipelineDay.mockRejectedValue("retry string error");
+
+    const { getByText, findByText } = render(Page, {
+      props: { data: { curriculum } },
+    });
+    await fireEvent.click(getByText(/Day 1 ·/));
+    expect(await findByText("retry string error")).toBeTruthy();
+  });
+
   it("loads and maps getCurriculumProgress into progress state", async () => {
     const { api: mockApi } = await import("$lib/api");
     vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([

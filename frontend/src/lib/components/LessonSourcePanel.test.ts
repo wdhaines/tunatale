@@ -97,6 +97,33 @@ describe("LessonSourcePanel", () => {
     });
   });
 
+  it("shows a non-Error source-fetch rejection as text", async () => {
+    mockGetStorySource.mockRejectedValue("source string error");
+    const { container } = render(LessonSourcePanel, { props: PROPS });
+    await openPanel(container);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("source string error");
+    });
+  });
+
+  it("shows a non-Error import rejection as text", async () => {
+    mockImportStory.mockRejectedValue("import string error");
+    const { container, getByText } = render(LessonSourcePanel, { props: PROPS });
+    await openPanel(container);
+
+    await waitFor(() => {
+      expect(container.querySelector("textarea")).toBeTruthy();
+    });
+    const textarea = container.querySelector("textarea")!;
+    await fireEvent.input(textarea, { target: { value: JSON.stringify(SOURCE_STORY) } });
+    await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
+
+    await waitFor(() => {
+      expect(getByText("import string error")).toBeTruthy();
+    });
+  });
+
   it("copies JSON to clipboard", async () => {
     const { container } = render(LessonSourcePanel, { props: PROPS });
     await openPanel(container);

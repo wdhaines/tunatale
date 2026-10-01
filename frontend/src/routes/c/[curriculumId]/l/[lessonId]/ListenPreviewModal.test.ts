@@ -213,6 +213,16 @@ describe("ListenPreviewModal", () => {
     expect(await waitFor(() => getByText("preview boom"))).toBeTruthy();
   });
 
+  it("shows a non-Error getListenPreview rejection as text", async () => {
+    mockGetListenPreview.mockRejectedValue("preview string error");
+
+    const { getByText } = render(ListenPreviewModal, {
+      props: { lessonId: "l1", onDone: vi.fn() },
+    });
+
+    expect(await waitFor(() => getByText("preview string error"))).toBeTruthy();
+  });
+
   it("shows empty state when no candidates", async () => {
     mockGetListenPreview.mockResolvedValue({ candidates: [] });
 

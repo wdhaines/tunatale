@@ -188,6 +188,22 @@ describe("/c/[curriculumId]/plan page", () => {
     expect(container.querySelectorAll(".msg-user")).toHaveLength(0);
   });
 
+  it("a non-Error turn rejection shows as text", async () => {
+    mockPlanTurn.mockRejectedValue("turn string error");
+
+    const { getByText, getByRole, getByPlaceholderText, queryByText, container } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan" },
+    });
+    await fireEvent.click(getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(getByText("turn string error")).toBeTruthy());
+    expect(queryByText(/proposed/i)).toBeNull();
+    expect(container.querySelectorAll(".msg-user")).toHaveLength(0);
+  });
+
   it("commit appends the event line, clears the proposal, updates the day count and starts pipeline", async () => {
     const proposed: ProposedBatch = { start_day: 1, days: [day(1), day(2), day(3)] };
     mockCommitPlan.mockResolvedValue({ id: "trip-1", days: 3 });
@@ -217,6 +233,21 @@ describe("/c/[curriculumId]/plan page", () => {
     await fireEvent.click(getByRole("button", { name: /commit batch/i }));
 
     await waitFor(() => expect(getByText(/no proposed batch/i)).toBeTruthy());
+    expect(getByText(/proposed: day 1/i)).toBeTruthy();
+    // Called once from onMount; the failed commit does not add a second call
+    expect(mockPipelineStoreStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-Error commit rejection shows as text", async () => {
+    const proposed: ProposedBatch = { start_day: 1, days: [day(1)] };
+    mockCommitPlan.mockRejectedValue("commit string error");
+
+    const { getByText, getByRole } = render(Page, {
+      props: { data: { curriculum: makeCurriculum({ proposed }) } },
+    });
+    await fireEvent.click(getByRole("button", { name: /commit batch/i }));
+
+    await waitFor(() => expect(getByText("commit string error")).toBeTruthy());
     expect(getByText(/proposed: day 1/i)).toBeTruthy();
     // Called once from onMount; the failed commit does not add a second call
     expect(mockPipelineStoreStart).toHaveBeenCalledTimes(1);
@@ -430,6 +461,23 @@ describe("/c/[curriculumId]/plan page", () => {
 
       await waitFor(() => {
         expect(getByText(/not found/i)).toBeTruthy();
+      });
+      // Button reverted
+      expect(getByRole("button", { name: "Reset chat" })).toBeTruthy();
+    });
+
+    it("a non-Error reset rejection shows as text", async () => {
+      mockResetPlanChat.mockRejectedValue("reset string error");
+
+      const { getByRole, getByText } = render(Page, {
+        props: { data: { curriculum: makeCurriculum() } },
+      });
+
+      await fireEvent.click(getByRole("button", { name: "Reset chat" }));
+      await fireEvent.click(getByRole("button", { name: "Confirm reset" }));
+
+      await waitFor(() => {
+        expect(getByText("reset string error")).toBeTruthy();
       });
       // Button reverted
       expect(getByRole("button", { name: "Reset chat" })).toBeTruthy();
@@ -661,6 +709,20 @@ describe("manual mode", () => {
     });
   });
 
+  it("a non-Error setGenerationMode rejection shows as text", async () => {
+    mockSetGenerationMode.mockRejectedValue("mode string error");
+
+    const { getByText, getByRole } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.click(getByRole("button", { name: /auto/i }));
+
+    await waitFor(() => {
+      expect(getByText("mode string error")).toBeTruthy();
+    });
+  });
+
   it("getPlanTurnPrompt failure shows error", async () => {
     mockGetPlanTurnPrompt.mockRejectedValue(new Error("POST …/prompt: Not found"));
 
@@ -675,6 +737,23 @@ describe("manual mode", () => {
 
     await waitFor(() => {
       expect(getByText(/not found/i)).toBeTruthy();
+    });
+  });
+
+  it("a non-Error getPlanTurnPrompt rejection shows as text", async () => {
+    mockGetPlanTurnPrompt.mockRejectedValue("prompt string error");
+
+    const { getByText, getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(getByText("prompt string error")).toBeTruthy();
     });
   });
 
@@ -705,6 +784,39 @@ describe("manual mode", () => {
 
     await waitFor(() => {
       expect(getByText(/expected 5 days/i)).toBeTruthy();
+    });
+    // The paste box lets you retry — its contents survive the error instead of
+    // being cleared, unlike the success branch of handlePasteSubmit.
+    expect((pasteTextarea as HTMLTextAreaElement).value).toBe("Here are the days");
+  });
+
+  it("a non-Error paste-mode planTurn rejection shows as text", async () => {
+    mockGetPlanTurnPrompt.mockResolvedValue({
+      system_prompt: "sys",
+      user_prompt: "plan 1 day",
+    });
+    vi.mocked(api.planTurn).mockRejectedValue("paste string error");
+
+    const { getByText, getByRole, getByPlaceholderText } = render(Page, {
+      props: { data: { curriculum: makeManualCurriculum() } },
+    });
+
+    await fireEvent.input(getByPlaceholderText(/message the planner/i), {
+      target: { value: "plan 1 day" },
+    });
+    await fireEvent.click(getByRole("button", { name: /copy prompt/i }));
+
+    await waitFor(() => {
+      expect(getByPlaceholderText(/paste claude/i)).toBeTruthy();
+    });
+    const pasteTextarea = getByPlaceholderText(/paste claude/i);
+    await fireEvent.input(pasteTextarea, {
+      target: { value: "Here are the days" },
+    });
+    await fireEvent.click(getByRole("button", { name: /submit reply/i }));
+
+    await waitFor(() => {
+      expect(getByText("paste string error")).toBeTruthy();
     });
     // The paste box lets you retry — its contents survive the error instead of
     // being cleared, unlike the success branch of handlePasteSubmit.
@@ -873,6 +985,22 @@ describe("review pressure control (bd tunatale-xwqg)", () => {
     await fireEvent.change(getByLabelText(/review words/i), { target: { value: "INSISTENT" } });
 
     expect(await findByText(/curriculum not found/i)).toBeTruthy();
+    await waitFor(() => {
+      expect((getByLabelText(/review words/i) as HTMLSelectElement).value).toBe("NATURAL");
+    });
+  });
+
+  it("a non-Error review-pressure rejection shows as text", async () => {
+    // A control that keeps a value the server rejected is lying about the state
+    // of the plan, and the next generation would surprise the user.
+    mockSetReviewPressure.mockRejectedValue("pressure string error");
+    const { getByLabelText, findByText } = render(Page, {
+      props: { data: { curriculum: makeCurriculum() } },
+    });
+
+    await fireEvent.change(getByLabelText(/review words/i), { target: { value: "INSISTENT" } });
+
+    expect(await findByText("pressure string error")).toBeTruthy();
     await waitFor(() => {
       expect((getByLabelText(/review words/i) as HTMLSelectElement).value).toBe("NATURAL");
     });

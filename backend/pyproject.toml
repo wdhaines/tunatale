@@ -7,19 +7,19 @@ name = "tunatale-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.141.1",
-    "uvicorn>=0.52.4",
+    "fastapi>=0.142.2",
+    "uvicorn>=0.54.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "httpx>=0.28.1",
-    "python-dotenv>=1.2.3",
+    "python-dotenv>=1.2.4",
     "python-multipart>=0.0.32",
     "soundfile>=0.14.0",
     "aiofiles>=25.1.0",
-    "numpy>=2.5.2",
+    "numpy>=2.5.3",
     "wordfreq>=3.1.1",
     "argon2-cffi>=25.1.0",
-    "google-auth[requests]>=2.58.1",
+    "google-auth[requests]>=2.59.1",
 ]
 
 [project.optional-dependencies]
@@ -45,8 +45,8 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "respx>=0.23.1",
-    "ruff>=0.16.5",
-    "anyio>=4.14.2",
+    "ruff>=0.16.9",
+    "anyio>=4.15.1",
     # Reads docker-compose.yml in tests/test_compose_profile.py. Declared even
     # though it arrives transitively via transformers in the `slovene`/
     # `norwegian` groups: CI installs `--no-default-groups --group dev` with
@@ -61,7 +61,7 @@ dev = [
     # idled at ~59% of a core (measured 2026-07-26); watchfiles uses FSEvents
     # instead and idles at ~0%. Dev-only: nothing under app/ imports it, and
     # `--reload` is only ever passed by start-dev.sh.
-    "watchfiles>=1.2.0",
+    "watchfiles>=1.3.0",
     # Bit-exact precision oracle for TT's FSRS math (tests/test_parity_fsrs_f32.py,
     # test_parity_same_day_review.py, …).
     #
@@ -108,10 +108,10 @@ dev = [
 # builds. Models still download once per engine: `classla.download("sl")` /
 # `stanza.download("nb")`. See docs/walkthrough.md §22.2.
 slovene = [
-    "classla==2.2.1",
+    "classla==2.2.3",
 ]
 norwegian = [
-    "stanza",
+    "stanza>=1.15.0",
 ]
 # Forced-alignment models for syllable slicing (app/plugins/languages/no/alignment.py).
 # A DEFAULT dependency group (see `[tool.uv] default-groups` below), so a plain
@@ -128,7 +128,7 @@ norwegian = [
 # different capabilities that happen to share torch today. (The original second
 # half of this sentence — "and CI's opt-out list stays readable as a list of
 # capabilities it declines" — described an opt-out list that no longer exists.)
-alignment = ["transformers>=5.16.1"]
+alignment = ["transformers>=5.18.0"]
 
 [tool.uv]
 # The slovene/norwegian/alignment groups are DEFAULT groups, so a bare
@@ -141,31 +141,24 @@ alignment = ["transformers>=5.16.1"]
 # pulled only by the `uv run --with anki` driver subprocess, never by these
 # syncs.
 default-groups = ["dev", "slovene", "norwegian", "alignment"]
-# Two 3.14 pin-overrides for the slovene/norwegian groups. These are LIVE, not
-# inert: an earlier version of this comment called them "inert unless
-# torch/protobuf are actually pulled — CI's `--no-group ...` run never resolves
-# them", which stopped being true when those flags were deleted 2026-08-14.
-# Every CI job resolves them today.
-#   torch:    classla 2.2.1 pins torch<=2.6, which has no cp314 wheel — torch only
-#             gained 3.14 support at 2.12.
-#   protobuf: classla 2.2.1 pins protobuf==4.21.2, whose google._upb C extension has
-#             no cp314 wheel and dies with "Metaclasses with custom tp_new are not
-#             supported" at import. classla tolerates it (imports protobuf lazily);
-#             `import stanza` does NOT (it eagerly pulls google.protobuf via its
-#             CoreNLP server bindings), so stanza needs a 3.14-capable protobuf.
-#   requests: classla 2.2.1 also hard-pins requests==2.28.0 (2022), which strands
-#             urllib3 at 1.26.20 and charset-normalizer at 2.0.12 across the whole
-#             lock. Nothing in app/ imports requests; classla touches it in exactly
-#             two places — `requests.get(url, stream=True)` for model downloads
-#             (resources/common.py) and the CoreNLP server client we never use
-#             (server/client.py). That API surface is unchanged from 2.28 to 2.34,
-#             so the pin is staleness, not a compatibility constraint. Carries the
-#             [socks] extra: an override REPLACES the requirement it matches, so a
-#             bare `requests>=…` would silently drop the PySocks that anki's own
-#             `requests[socks]` asks for (the isolated `uv run --with anki` driver
-#             subprocess resolves separately and is unaffected either way, but the
-#             lock should still say what anki actually declares).
-override-dependencies = ["torch==2.13.0", "protobuf>=5.29", "requests[socks]>=2.34.2"]
+# One 3.14 pin-override for the slovene/norwegian groups. It is LIVE, not inert:
+# every CI job resolves it (the `--no-group ...` flags that once skipped these
+# groups were deleted 2026-08-14).
+#   protobuf: classla (2.2.1 and still 2.2.3) pins protobuf==4.21.2, whose
+#             google._upb C extension has no cp314 wheel and dies with
+#             "Metaclasses with custom tp_new are not supported" at import. classla
+#             tolerates it (imports protobuf lazily); `import stanza` does NOT (it
+#             eagerly pulls google.protobuf via its CoreNLP server bindings), so
+#             stanza needs a 3.14-capable protobuf.
+# Two former overrides were RETIRED 2026-10-01 because classla 2.2.3 removed the
+# pins they existed to defeat — re-add one only if a classla release re-pins:
+#   torch:    classla 2.2.1 pinned torch<=2.6 (no cp314 wheel), forced to
+#             ==2.13.0 here. 2.2.3 declares `torch>=2.9; python_version >= "3.14"`.
+#   requests: classla 2.2.1 hard-pinned requests==2.28.0, stranding urllib3 and
+#             charset-normalizer; forced to `requests[socks]>=2.34.2` here. 2.2.3
+#             declares a bare `requests`, and anki's own `requests[socks]` now
+#             reaches the lock unreplaced.
+override-dependencies = ["protobuf>=5.29"]
 
 [tool.ruff]
 target-version = "py314"

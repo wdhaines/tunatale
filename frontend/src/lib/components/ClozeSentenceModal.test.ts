@@ -267,6 +267,24 @@ describe("ClozeSentenceModal", () => {
       expect(onupdated).not.toHaveBeenCalled();
     });
 
+    it("surfaces a non-Error rejection from the suggestion as text", async () => {
+      mockPropose.mockRejectedValue("network down");
+      const { getByRole, getByText } = open();
+      await fireEvent.click(getByRole("button", { name: /suggest a sentence/i }));
+      expect(await waitFor(() => getByText("network down"))).toBeTruthy();
+    });
+
+    it("surfaces a non-Error rejection from the save as text", async () => {
+      mockSet.mockRejectedValue("server went away");
+      const { getByRole, getByLabelText, getByText, onupdated } = open();
+      await fireEvent.input(getByLabelText(/sentence to store/i), {
+        target: { value: "Kari tar toget." },
+      });
+      await fireEvent.click(getByRole("button", { name: /use this sentence/i }));
+      expect(await waitFor(() => getByText("server went away"))).toBeTruthy();
+      expect(onupdated).not.toHaveBeenCalled();
+    });
+
     it("disables the save while one is in flight", async () => {
       let release: (v: { sentence: string; translation: string }) => void = () => {};
       mockSet.mockImplementation(() => new Promise((r) => (release = r)));

@@ -21,6 +21,16 @@ describe("isPhantom", () => {
       expect(isPhantom("cond-expr", "", false)).toBe(true);
     });
 
+    it("drops whitespace-only source ranges across all branch types", () => {
+      // No real operand is whitespace. esrap 2.3+ (svelte 5.57.1) maps the
+      // compiler's `{option.name}` -> `option.name ?? ""` fallback onto the
+      // single space inside `<option value=...>` (LanguageSelector.svelte),
+      // where esrap 2.2 had given it an empty range. Measured 2026-10-01.
+      expect(isPhantom("binary-expr", " ", false)).toBe(true);
+      expect(isPhantom("cond-expr", "\t", false)).toBe(true);
+      expect(isPhantom("if", "  \n ", false)).toBe(true);
+    });
+
     it("drops synthetic locations regardless of text content", () => {
       expect(isPhantom("if", "looks-real", true)).toBe(true);
       expect(isPhantom("binary-expr", "value || other", true)).toBe(true);

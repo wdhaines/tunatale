@@ -114,3 +114,18 @@ describe("onPreviewDone — cancel", () => {
     expect(actions.showPreview).toBe(false);
   });
 });
+
+describe("onPreviewDone — committed", () => {
+  const committed = { status: "ok", created: 0 } as unknown as Parameters<
+    ReturnType<typeof createListenActions>["onPreviewDone"]
+  >[0];
+
+  it("stringifies a non-Error rejection from the post-commit refresh", async () => {
+    const { opts, actions } = setup();
+    mockGetTranscript.mockRejectedValue("offline");
+
+    await actions.onPreviewDone(committed);
+
+    expect(opts.setError).toHaveBeenCalledWith("offline");
+  });
+});

@@ -274,6 +274,12 @@ describe("review/+page.svelte", () => {
     expect(await findByText("Network error")).toBeTruthy();
   });
 
+  it("shows a non-Error fetch rejection as text", async () => {
+    mockFetchReviewQueue.mockRejectedValue("fetch string error");
+    const { findByText } = render(ReviewPage);
+    expect(await findByText("fetch string error")).toBeTruthy();
+  });
+
   it("shows error and stays on card when submitDrill rejects", async () => {
     const item = makeReviewQueueItem({
       id: 1,
@@ -287,6 +293,21 @@ describe("review/+page.svelte", () => {
     await fireEvent.click(await findByRole("button", { name: "Show" }));
     await fireEvent.click(await findByRole("button", { name: "Good" }));
     expect(await findByText("Submit failed")).toBeTruthy();
+  });
+
+  it("shows a non-Error submitDrill rejection as text", async () => {
+    const item = makeReviewQueueItem({
+      id: 1,
+      text: "okno",
+      translation: "window",
+      direction: "recognition",
+    });
+    mockFetchReviewQueue.mockResolvedValue({ queue: [item] });
+    mockSubmitDrill.mockRejectedValue("submit string error");
+    const { findByRole, findByText } = render(ReviewPage);
+    await fireEvent.click(await findByRole("button", { name: "Show" }));
+    await fireEvent.click(await findByRole("button", { name: "Good" }));
+    expect(await findByText("submit string error")).toBeTruthy();
   });
 
   it("production word_count=1 with image_url shows img element", async () => {

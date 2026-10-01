@@ -14,17 +14,17 @@ import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
 beforeAll(() => {
-  vi.spyOn(HTMLAudioElement.prototype, "play").mockImplementation(
-    function (this: HTMLAudioElement) {
-      this.dispatchEvent(new Event("play"));
-      return Promise.resolve();
-    },
-  );
-  vi.spyOn(HTMLAudioElement.prototype, "pause").mockImplementation(
-    function (this: HTMLAudioElement) {
-      this.dispatchEvent(new Event("pause"));
-    },
-  );
+  vi.spyOn(HTMLAudioElement.prototype, "play").mockImplementation(function (
+    this: HTMLAudioElement,
+  ) {
+    this.dispatchEvent(new Event("play"));
+    return Promise.resolve();
+  });
+  vi.spyOn(HTMLAudioElement.prototype, "pause").mockImplementation(function (
+    this: HTMLAudioElement,
+  ) {
+    this.dispatchEvent(new Event("pause"));
+  });
   // Define currentTime so setting it dispatches timeupdate (controllers rely on it).
   Object.defineProperty(HTMLAudioElement.prototype, "currentTime", {
     get() {
@@ -355,6 +355,18 @@ describe("LessonPlayer", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
       expect(container.querySelector(".section-info")).toBeFalsy();
       expect(container.querySelector(".current-line")).toBeTruthy();
+    });
+
+    it("shows an empty subtitle before the first cue starts", () => {
+      // A lead-in silence: cues exist, but none has started at t=0, so there is
+      // no current cue and the line must render blank rather than throw.
+      const lateCue = { ...audioWithCues.cues![0], start_ms: 1000, end_ms: 1800 };
+      const { container } = render(LessonPlayer, {
+        props: { audio: { ...audioWithCues, cues: [lateCue] } },
+      });
+      const line = container.querySelector(".current-line");
+      expect(line).toBeTruthy();
+      expect(line!.textContent?.trim()).toBe("");
     });
 
     it("renders the current line BELOW the controls (sticky-header layout)", () => {
