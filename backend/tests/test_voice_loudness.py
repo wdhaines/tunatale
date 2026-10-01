@@ -150,17 +150,23 @@ class TestGetVoiceGainDb:
     def test_unknown_voice_returns_zero(self):
         assert get_tts_voice_gain_db("no", "some-unknown-voice") == 0.0
 
-    def test_the_narrator_has_no_entry_in_an_l2_table(self):
-        """An English voice's gain resolves in the ``en`` table, never an L2 one.
+    def test_the_narrator_has_an_l2_entry_exactly_where_he_reads_l2(self):
+        """An English voice's gain resolves in the ``en`` table; an L2 entry only
+        for the L2 text he actually reads.
 
         Until 2026-09-29 the narrator sat in every L2 table and the ``en`` table
         was empty — and since the renderer keys each phrase on its own
-        language_code, every English line in every section got 0.0 dB. An entry
-        back in an L2 table would be dead config that reads as if it worked.
+        language_code, every English line in every section got 0.0 dB. Since
+        2026-09-30 (tunatale-fx5n) the narrator also reads NARRATION lines in
+        the target language where Azure speaks it (no, sl, tl), and those need a
+        measured L2 gain. Where he reads no L2 (ceb: Gemini keeps narration), an
+        entry would be dead config that reads as if it worked.
         """
         for code in ("no", "sl", "tl", "ceb"):
-            narrator = get_language(code).tts_voice_map["narrator"]
-            assert narrator not in get_language(code).tts_voice_gain_db, code
+            lang = get_language(code)
+            narrator = lang.tts_voice_map["narrator"]
+            reads_l2 = narrator in {v for role, v in lang.tts_voice_map.items() if role != "narrator"}
+            assert (narrator in lang.tts_voice_gain_db) == reads_l2, code
 
     def test_unknown_language_returns_zero(self):
         assert get_tts_voice_gain_db("zz", "some-voice") == 0.0

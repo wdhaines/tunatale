@@ -36,6 +36,11 @@ register(
             tts_locale="nb-NO",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
+                # Narration lines in the dialogue (description no character says
+                # aloud) are the narrator's in BOTH languages, so they sound like
+                # the titles (user, 2026-09-30, tunatale-fx5n). Davis reads the
+                # L2 text under this language's <lang> tag.
+                "narration": NARRATOR_VOICE,
                 "female-1": "nb-NO-PernilleNeural",
                 "female-2": "nb-NO-IselinNeural",
                 "female-3": "en-US-EmmaMultilingualNeural",
@@ -59,6 +64,7 @@ register(
             #   female-4 Shimmer 149.6 male-1 Adam 105.9       male-2 Derek 120.5
             #   male-3 Giuseppe 146.6  male-4 Dustin 141.0     narrator Davis 113.0
             tts_en_voice_map={
+                "narration": NARRATOR_VOICE,
                 "female-1": "en-US-NancyMultilingualNeural",
                 "female-2": "en-US-AmandaMultilingualNeural",
                 "female-3": "en-US-EmmaMultilingualNeural",
@@ -105,6 +111,11 @@ register(
             # table, measured on English text: a voice's two levels differ
             # (Giuseppe -0.7 here, +0.9 in English).
             tts_voice_gain_db={
+                # The narrator reading no narration (tunatale-fx5n), measured
+                # 2026-09-30 against Emma on the same 8 lines of 'The Trail Ends in the Garden', same
+                # synthesize() SSML, ebur128 mean: Davis -21.75 vs Emma -17.84 LUFS,
+                # so Emma's -1.8 + (-17.84 - (-21.75)) = +2.1.
+                NARRATOR_VOICE: 2.1,
                 "nb-NO-PernilleNeural": 1.2,
                 "nb-NO-IselinNeural": -0.1,
                 "en-US-EmmaMultilingualNeural": -1.8,

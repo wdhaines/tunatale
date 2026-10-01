@@ -109,6 +109,7 @@ def test_norwegian_english_cast_is_the_one_the_user_approved():
         "male-4": "en-US-DustinMultilingualNeural",
         "female": "en-US-NancyMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,  # narration is the narrator's (tunatale-fx5n, 2026-09-30)
     }
 
 
@@ -382,6 +383,7 @@ _EN_CASTS = {
         "male-2": "en-US-DustinMultilingualNeural",  # Orus 139.2
         "female": "en-US-EmmaMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,
     },
     "tl": {
         "female-1": "en-US-AmandaMultilingualNeural",  # Blessica, above Emma in tl too
@@ -390,6 +392,7 @@ _EN_CASTS = {
         "male-2": "en-US-SamuelMultilingualNeural",
         "female": "en-US-AmandaMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,
     },
     "sl": {
         "female-1": "en-US-AmandaMultilingualNeural",  # Petra 185.7, above Emma's 166.9 in sl
@@ -398,6 +401,7 @@ _EN_CASTS = {
         "male-2": "de-DE-FlorianMultilingualNeural",
         "female": "en-US-AmandaMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,
     },
 }
 

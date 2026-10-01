@@ -25,6 +25,10 @@ register(
             tts_locale="ceb-PH",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
+                # Narration lines keep the Cebuano voice that read them before
+                # the role existed (Orus, lent by male-2); only their English
+                # moves to the narrator (user, 2026-09-30, tunatale-fx5n).
+                "narration": "ceb-PH-OrusGemini",
                 # Gemini-TTS voices (the user's decision, 2026-09-25,
                 # tunatale-u8nz.1), rendered through Cloud TTS with
                 # languageCode=ceb-PH by app/audio/gemini_tts.py. The id shape
@@ -59,6 +63,7 @@ register(
             # Adam 105.9, Dustin 141.0 (vs Kore 209.4, Despina 185.5,
             # Charon 107.2, Orus 139.2 above).
             tts_en_voice_map={
+                "narration": NARRATOR_VOICE,
                 "female-1": "en-US-EmmaMultilingualNeural",
                 "female-2": "en-US-NancyMultilingualNeural",
                 "male-1": "en-US-AdamMultilingualNeural",
