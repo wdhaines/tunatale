@@ -60,7 +60,7 @@ location	bank	bangko	dictionary
 location	place; location	lugar	usage
 clothing	hat	kalo	dictionary
 clothing	dress	bestida	accepted
-clothing	skirt	saya	dictionary
+clothing	skirt	sayal	variant
 clothing	clothes; shirt	sinina	dictionary
 clothing	T-shirt	kamiseta	accepted
 clothing	pants	karsones	dictionary

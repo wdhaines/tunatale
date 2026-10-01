@@ -5,8 +5,11 @@
 # The main spelling is the one Cebuano news uses more (cebuano_frequency.tsv.gz, before this merge):
 # pwede 1535 vs puwede 594; lamesa 172 vs mesa 26. Tagalog's KWF orthography prefers the u-spelling
 # (puwede, kuwarto); Cebuano has no standard of that weight and its writers mostly use the short one.
+#
+# NOT a pair: sayal / saya ("skirt"). Listed here for a few hours on 2026-10-01 and taken back out the same
+# day (the user). Wiktionary heads the entry at saya, Binisaya heads it at sayal, and the corpus count
+# (saya 152 vs sayal 14) cannot settle it because saya is also the adjective "merry". The card is sayal.
 variant	main	note
 puwede	pwede	Spanish puede; Tagalog-style spelling
 mesa	lamesa	Spanish la mesa, article fused; mesa is understood but rarer
 igsoon	igsuon	o/u spelling; igsuon 1330 vs igsoon 290 (the user, 2026-10-01)
-sayal	saya	sayal is the rarer form: 14 vs 152, though saya's count includes the adjective "merry" (the user, 2026-10-01)

@@ -94,3 +94,15 @@ def test_every_listed_variant_reads_as_its_main_spelling(table, variant, main):
 def test_the_pairs_the_user_asked_about(table, surface, lemma):
     default = next(r for r in table.readings(surface) if r.is_default)
     assert default.lemma == lemma
+
+
+@pytest.mark.parametrize("surface", ["sayal", "saya"])
+def test_sayal_and_saya_stay_two_words(table, surface):
+    """``sayal`` (skirt) is not a spelling of ``saya`` (the user, 2026-10-01).
+
+    It was listed as one for a few hours on Wiktionary's choice of headword;
+    Binisaya heads the entry the other way, and ``saya`` is also "merry", so the
+    merge both taught the rarer word and read a skirt into every ``saya``.
+    """
+    assert {r.lemma for r in table.readings(surface)} == {surface}
+    assert surface not in dict(load_spelling_variants(SPELLING_VARIANTS))
