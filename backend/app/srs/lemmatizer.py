@@ -374,7 +374,7 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
                 "It's in the default `slovene` dependency-group — a plain "
                 "`uv sync` installs and keeps it (only `--no-group slovene` / "
                 "`--only-group` prunes it). Then run `classla.download('sl')` once. "
-                "See docs/walkthrough.md §22.2.",
+                "See docs/walkthrough.md §8.2.",
                 language_code,
             )
     elif engine == "stanza":
@@ -389,7 +389,7 @@ def get_lemmatizer(language_code: str) -> Lemmatizer:
                 "`uv sync` installs and keeps it (only `--no-group norwegian` / "
                 "`--only-group` prunes it). Then download the model once — "
                 '`uv run python -c "import stanza; '
-                "stanza.download('nb')\"`. See docs/walkthrough.md §22.2.",
+                "stanza.download('nb')\"`. See docs/walkthrough.md §8.2.",
                 language_code,
             )
     return LowercaseLemmatizer()

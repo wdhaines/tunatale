@@ -106,7 +106,7 @@ dev = [
 # classla 2.2.1 pins torch<=2.6 / protobuf==4.21.2, neither of which has a
 # cp314 wheel; the `[tool.uv] override-dependencies` below forces 3.14-capable
 # builds. Models still download once per engine: `classla.download("sl")` /
-# `stanza.download("nb")`. See docs/walkthrough.md §22.2.
+# `stanza.download("nb")`. See docs/walkthrough.md §8.2.
 slovene = [
     "classla==2.2.1",
 ]

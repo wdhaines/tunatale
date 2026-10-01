@@ -22,7 +22,7 @@ The user is asked to produce a phrase (in their head or aloud) *before* the reco
 
 Pimsleur discovered (1967) that re-presenting a word at exponentially increasing intervals (5 sec → 25 sec → 2 min → 10 min → 1 hr → 5 hr → 1 day → 5 days → 25 days → 4 months → 2 years) moved it from short-term to long-term memory faster than any other tested schedule. This is the historical ancestor of modern SRS.
 
-**TT's expression**: not directly. TT uses **FSRS-5** (PART 4 of `walkthrough.md`), the modern descendant. Pimsleur's specific intervals don't appear anywhere in `app/srs/fsrs.py` — FSRS computes intervals from stability/difficulty/retrievability, not a fixed schedule. The lineage is real but the algorithm is two generations newer.
+**TT's expression**: not directly. TT uses **FSRS-5** (§9 of `walkthrough.md`), the modern descendant. Pimsleur's specific intervals don't appear anywhere in `app/srs/fsrs.py` — FSRS computes intervals from stability/difficulty/retrievability, not a fixed schedule. The lineage is real but the algorithm is two generations newer.
 
 ### 3. Core Vocabulary — high-frequency words first
 
@@ -34,7 +34,7 @@ Pimsleur drills 500 high-frequency words because those words carry the majority 
 
 Pimsleur lessons are audio-only by design. Reading and writing come after the audio foundation.
 
-**TT's expression**: the `/review` queue is audio-first by default (recognition direction plays L2 audio first, asks the user to recall L1). The transcript is text-second — you see the words only after the audio plays. PART 15.3 of `walkthrough.md` covers the transcript component.
+**TT's expression**: the `/review` queue is audio-first by default (recognition direction plays L2 audio first, asks the user to recall L1). The transcript is text-second — you see the words only after the audio plays. §8.6 of `walkthrough.md` covers the transcript component.
 
 ## The four-section lesson format
 
@@ -65,13 +65,13 @@ Pimsleur's strongest claim is that audio-first acquisition transfers to spoken f
 2. **Audio immersion** (mobile / car) — the Pimsleur-style lesson.
 3. **Spaced reinforcement** (SRS) — implicit-feedback grading via help signals.
 
-TT's audio pipeline (PART 6 of `walkthrough.md`) — EdgeTTS → ffmpeg LUFS normalization → pydub assembly — exists because the audio is the artifact. Everything else (transcript, translation, SRS) is scaffolding around the audio.
+TT's audio pipeline (§7 of `walkthrough.md`): Azure/Gemini TTS, per-voice gain, then one streamed Opus encode per section. It exists because the audio is the artifact. Everything else (transcript, translation, SRS) is scaffolding around the audio.
 
 ## The micro-demo lineage
 
 `micro-demo-0.0/` (Tagalog) is the proof-of-concept audio engine. Its README leads with "Multi-Voice Support: Different Filipino and English voices for natural dialogue" and "Structured Lessons: Automatic section detection (Key Phrases, Natural Speed, Slow Speed, Translated)." That's the Pimsleur format, on tape. The production rebuild kept the format and generalized the language layer.
 
-`walkthrough.md` PART 10's "What was preserved from the prototypes" line explicitly calls out:
+`walkthrough.md` Appendix A.2, "What survived from the prototypes", explicitly calls out:
 
 - Pimsleur 4-section format (KEY_PHRASES, NATURAL_SPEED, SLOW_SPEED, TRANSLATED)
 - EdgeTTS rate limiting (200 ms delay between requests)
@@ -100,8 +100,8 @@ The Pimsleur format is in the "do not break this" set.
 - `backend/app/generation/section_builder.py` — builds the four-section structure.
 - `backend/app/generation/syllabify.py` — Slovene syllabifier driving backward buildup.
 - `backend/app/audio/pause_calculator.py` — pause timing for the anticipation phase.
-- `walkthrough.md` PART 2 (Domain Models — Lesson Structure) and PART 6 (Audio Pipeline).
-- `walkthrough.md` PART 10 — preserved-from-prototypes line.
+- `walkthrough.md` §4.3 (Lesson Structure) and §7 (Audio Pipeline).
+- `walkthrough.md` Appendix A.2 — what survived from the prototypes.
 - `docs/fluent-forever.md` — companion influence (memory principles, card design).
 - `docs/lingq.md` — what TT adds *on top of* the Pimsleur audio (word-status transcript).
 - `docs/refold.md` — what TT does instead of Pimsleur's static-content limitation.

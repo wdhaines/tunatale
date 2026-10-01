@@ -100,13 +100,13 @@ See `Dockerfile`, `docker-compose.yml`, and `Caddyfile` in the repo root.
 - **Backend** — FastAPI on Python 3.14, `uv` for dependencies, SQLite for SRS + content storage. Per-language plugin registry so adding an L2 doesn't touch the core.
 - **Frontend** — SvelteKit + TypeScript (Svelte 5), Vite, Vitest with a custom phantom-filter coverage gate at 100% per-file. Lint via Oxlint (fast Rust) + ESLint with `eslint-plugin-svelte` (thorough). Format via Oxfmt. Playwright for E2E.
 - **Audio** — EdgeTTS, ffmpeg, pydub, Opus delivery, Forvo + Pixabay for media enrichment with deterministic fallbacks.
-- **SRS** — FSRS-5 in f32 bit-parity with Anki (pinned by a differential oracle against `fsrs-rs`), per-direction state, live load-balancer mirror, `tt_revlog` event log with the event-sourced pull path live (walkthrough PARTs 19 and 27).
+- **SRS** — FSRS-5 in f32 bit-parity with Anki (pinned by a differential oracle against `fsrs-rs`), per-direction state, live load-balancer mirror, `tt_revlog` event log with the event-sourced pull path live (walkthrough §9.9 and §10.5).
 - **LLM** — Groq for content generation with a VCR-style cassette system so tests are deterministic and offline.
 
 ## Documentation
 
 - **[docs/prd.md](docs/prd.md)** — original product-requirements doc with the full pitch: market gap, user journeys, three-phase pedagogical cycle, competitive positioning, the tuna.
-- **[docs/walkthrough.md](docs/walkthrough.md)** — full system tour (29 parts, ~7700 lines, executable via [Showboat](https://github.com/jbenet/showboat) so every code block is re-runnable). Start here to understand any specific subsystem.
+- **[docs/walkthrough.md](docs/walkthrough.md)** — full system tour, ordered by subsystem (a one-lesson journey, then 15 subsystem chapters and a history appendix), executable via [Showboat](https://github.com/simonw/showboat) so every code block is re-runnable (`uvx showboat verify docs/walkthrough.md`). Start here to understand any specific subsystem; the earlier chronological edition is archived in `docs/archive/`.
 - **[docs/learning-modes.md](docs/learning-modes.md)** — the canonical design for the study modes (Review / Listen / Read) and their build order.
 - **Design influences** — what TT inherits from each, and where it diverges, with code references:
   - **[docs/pimsleur.md](docs/pimsleur.md)** — the four-section lesson format, anticipation pause, syllable-level backward buildup.
