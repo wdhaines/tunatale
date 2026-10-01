@@ -7,6 +7,7 @@ to flush — grades reviewed in TunaTale were silently discarded.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, time, timedelta
 
 from app.models.srs_item import Direction, DirectionState, SRSState
@@ -894,43 +895,112 @@ def test_suspending_a_never_reviewed_card_keeps_its_place_in_the_new_queue(tmp_p
         conn.close()
 
 
-def test_suspending_a_reviewed_card_still_pushes_its_schedule(tmp_path):
-    """The regression guard for the cut above: only a card with NO schedule skips it.
+# ── Suspending a REVIEWED card (tunatale-htjr) ────────────────────────────────
 
-    A reviewed card may be carrying a grade Anki has not seen, so its suspension
-    still goes through set_due_date and the memory-state write, and comes back.
+_REVIEWED_CARD = 30010  # være: type 2, reps 5, overdue, with its own review history
+_REVIEWED_NOTE = 3001
+_HISTORY = [1_750_000_000_000 + i * 86_400_000 for i in range(5)]
 
-    ⚠️ ``reps`` is deliberately not asserted. That path also writes a review row
-    Anki never saw for a change that was not a grade (tunatale-htjr); pinning 5
-    here would be red today and pinning 6 would enshrine the defect.
-    """
-    reviewed_card, reviewed_note = 30010, 3001  # være: type 2, reps 5
+
+def _reviewed_card_with_history(tmp_path):
+    """(db, conn, row_id, guid) with the reviewed card's five reviews in Anki's revlog."""
     db, conn, _ = _norwegian_deck_with_a_new_card(tmp_path, queue=0)
+    conn.executemany(
+        "INSERT INTO revlog VALUES (?, ?, 0, 3, 21, 10, 2500, 4000, 1)", [(rid, _REVIEWED_CARD) for rid in _HISTORY]
+    )
+    conn.commit()
+    guid = db.get_collocation_by_anki_note_id(_REVIEWED_NOTE).guid
+    rows, _ = db.list_collocations()
+    row_id = next(rid for rid, item, *_ in rows if item.guid == guid)
+    return db, conn, row_id, guid
+
+
+def _reviewed_schedule(conn) -> dict:
+    return dict(conn.execute(f"SELECT {_SCHEDULE} FROM cards WHERE id = ?", (_REVIEWED_CARD,)).fetchone())
+
+
+def _reviewed_revlog(conn) -> list[tuple]:
+    return [
+        tuple(r) for r in conn.execute("SELECT id, ease, type FROM revlog WHERE cid = ? ORDER BY id", (_REVIEWED_CARD,))
+    ]
+
+
+def _reviewed_direction(db) -> DirectionState:
+    return db.get_collocation_by_anki_note_id(_REVIEWED_NOTE).directions[Direction.RECOGNITION]
+
+
+def test_suspending_and_unsuspending_a_reviewed_card_changes_only_its_queue(tmp_path):
+    """A suspension is not a grade: no review row, no new due date, no new interval.
+
+    Every dirty direction with reps took the grade push. With nothing graded
+    there were no tt_revlog rows to send, so the fallback invented one (ease 3,
+    a "Good" nobody pressed) and bumped ``cards.reps``; set_due_date then moved
+    an overdue card to today with ``ivl = 1``. Live: Cebuano ``saa`` gained a
+    seventh review on 2026-10-01 by being suspended.
+    """
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path)
     try:
-        guid = db.get_collocation_by_anki_note_id(reviewed_note).guid
-        rows, _ = db.list_collocations()
-        row_id = next(rid for rid, item, *_ in rows if item.guid == guid)
-
-        def card() -> dict:
-            return dict(conn.execute("SELECT type, queue, usn FROM cards WHERE id = ?", (reviewed_card,)).fetchone())
-
-        def tt() -> DirectionState:
-            return db.get_collocation_by_anki_note_id(reviewed_note).directions[Direction.RECOGNITION]
-
-        assert tt().state == SRSState.REVIEW  # the control: seeded as a review card
-        assert tt().reps == 5
+        assert _reviewed_direction(db).state == SRSState.REVIEW  # the control: seeded as a review card
+        before, history = _reviewed_schedule(conn), _reviewed_revlog(conn)
+        assert (before["type"], before["reps"], len(history)) == (2, 5, 5)
 
         db.set_suspended(row_id, True)
         _sync(db, conn)
 
-        assert card() == {"type": 2, "queue": -1, "usn": -1}
-        assert tt().state == SRSState.SUSPENDED
+        assert _reviewed_schedule(conn) == {**before, "queue": -1}
+        assert _reviewed_revlog(conn) == history
+        assert _reviewed_direction(db).state == SRSState.SUSPENDED
+        assert _reviewed_direction(db).reps == 5
 
         db.set_suspended(row_id, False)
         _sync(db, conn)
 
-        assert card() == {"type": 2, "queue": 2, "usn": -1}
-        assert tt().state == SRSState.REVIEW
-        assert tt().dirty_fsrs is False
+        assert _reviewed_schedule(conn) == before
+        assert _reviewed_revlog(conn) == history
+        after = _reviewed_direction(db)
+        assert (after.state, after.reps, after.dirty_fsrs) == (SRSState.REVIEW, 5, False)
+    finally:
+        conn.close()
+
+
+def test_a_grade_waiting_under_a_suspension_still_reaches_anki(tmp_path):
+    """The regression guard: graded in TT, then suspended before the sync.
+
+    ``last_rating`` is what says a grade is waiting (mark_direction_clean clears
+    it), and a suspension leaves it alone, so this card still takes the whole
+    grade push: the review row, the memory state, and the suspension.
+    """
+    db, conn, row_id, guid = _reviewed_card_with_history(tmp_path)
+    try:
+        history = _reviewed_revlog(conn)
+        graded_at = datetime.now(UTC) - timedelta(hours=2)
+        db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_at=graded_at + timedelta(days=27),
+                stability=18.2671,
+                difficulty=8.883,
+                reps=6,
+                lapses=0,
+                state=SRSState.REVIEW,
+                dirty_fsrs=True,
+                anki_card_id=_REVIEWED_CARD,
+                last_review=graded_at,
+                last_review_time_ms=int(graded_at.timestamp() * 1000),
+                last_rating=3,
+            ),
+        )
+
+        db.set_suspended(row_id, True)
+        assert _reviewed_direction(db).last_rating == 3  # the control: the suspension kept the grade marker
+        _sync(db, conn)
+
+        assert _reviewed_revlog(conn) == [*history, (int(graded_at.timestamp() * 1000), 3, 1)]
+        card = _reviewed_schedule(conn)
+        assert (card["type"], card["queue"], card["reps"]) == (2, -1, 6)
+        assert json.loads(card["data"])["s"] == 18.2671
+        assert _reviewed_direction(db).state == SRSState.SUSPENDED
     finally:
         conn.close()

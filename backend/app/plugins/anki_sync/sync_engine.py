@@ -1462,20 +1462,38 @@ class AnkiSync:
                 # set_learning_state / set_due_date, which mutate cards.queue.
                 anki_state_before = self._capture_anki_card_state(ds.anki_card_id)
 
+                # A suspension is not a grade (Layers 86, 87). Everything below this
+                # block is the GRADE push: set_due_date keeps a suspended card's
+                # queue and type but still writes due and ivl, and the revlog
+                # fallback, finding no tt_revlog row to send, invents one (ease 3).
+                # So when the suspension is the whole change, stop here — which is
+                # all Anki's own suspend and unsuspend do.
+                #
+                # `relabel`: nothing was graded since the last push (last_rating is
+                # the grade marker; mark_direction_clean clears it), nothing forces
+                # a schedule write, and Anki already holds this card with a schedule
+                # of its own (type != 0), so TT has no schedule to add. A scheduled
+                # TT direction over a type-0 Anki card is NOT a relabel: that is a
+                # schedule Anki has never seen, and it takes the push below.
+                relabel = (
+                    ds.last_rating is None
+                    and not row_force_fsrs
+                    and anki_state_before is not None
+                    and anki_state_before["type"] != 0
+                )
                 if ds.state == SRSState.SUSPENDED:
                     self._writer.suspend([ds.anki_card_id])
-                    if ds.reps == 0 and ds.last_review is None:
-                        # A card with no schedule (Layer 85's test) has nothing
-                        # else to push: suspending is queue=-1 and no more, as it
-                        # is in Anki. set_due_date below keeps a suspended card's
-                        # queue and type but still writes due and ivl, and on a
-                        # new card `due` is its place in the new queue — it came
-                        # back from suspension at today's day number (Layer 86).
-                        self._db.mark_direction_clean(guid, direction)
-                        report.directions_pushed += 1
-                        continue
+                    # No schedule at all (Layer 85's test): on a new card `due` is
+                    # its place in the new queue, and set_due_date replaced it with
+                    # today's day number.
+                    queue_only = relabel or (ds.reps == 0 and ds.last_review is None)
                 else:
                     self._writer.unsuspend([ds.anki_card_id])
+                    queue_only = relabel and ds.state == SRSState.REVIEW and anki_state_before["queue"] == -1
+                if queue_only:
+                    self._db.mark_direction_clean(guid, direction)
+                    report.directions_pushed += 1
+                    continue
 
                 # Handle learning/relearning cards differently: update left and due (absolute timestamp)
                 if (
