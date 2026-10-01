@@ -56,7 +56,7 @@ All are `LanguageConfig` fields. Who uses what today:
 | `ipa_for_drill_phrases` | | | | ✓ | Per-word IPA on multi-word drill steps. Deliberately not a default, because on Azure it would wrap every word in `<phoneme>`. |
 | `notetype_profiles` | | | ✓ | ✓ | **Required for any language with no `l2_scorer`**, which covers both Philippine languages: no letters tell them apart from English. TT's own vocab notes must be read by field name, or the first sync after minting fails with "No L2 scorer" (`1e93783`, tunatale-2qqr). An imported deck needs its own profile too (Tagalog's Pimsleur deck: `recognition_ord=1`, `disambig="Front"`). |
 | `mint_deck_name` | | | ✓ | ✓ | TT mints into a `::TunaTale` subdeck. Create the subdeck in Anki first. |
-| `a1_morphology` | ✓ | ✓ | | ✓ | Cebuano: an affixed verb form becomes an inflection cloze on its root card. A language without a bundle gets no morphology, not Slovene's (`0f34ec3`). |
+| `a1_morphology` | ✓ | ✓ | ✓ | ✓ | Tagalog and Cebuano: an affixed verb form becomes an inflection cloze on its root card. A language without a bundle gets no morphology, not Slovene's (`0f34ec3`). |
 | `verb_headword_fn`, `story_text_normalizer` | | | ✓ | | Tagalog keys verbs on the root; the normalizer joins the LLM's `mag‑kape` affix hyphens. |
 | `planner_example` | ✓ | ✓ | ✓ | ⚠️ | See the gotchas below. |
 | Norwegian-only | | ✓ | | | `lexicon_factory`, `breakdown_spans_fn` (compound breakdown), `variant_separator`, gender facets, `alignment`. |

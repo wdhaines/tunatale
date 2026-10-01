@@ -202,12 +202,13 @@ class DbQueueMixin:
     def unbury_if_needed(self, today: date) -> int:
         """Anki-parity daily unbury sweep — restores stale sched-buried rows.
 
-        Anki distinguishes two bury kinds: ``queue=-3`` (sched/sibling, auto-
-        released at next rollover) and ``queue=-2`` (user/manual, stays buried
-        until manually unburied). TT mirrors this via ``bury_kind``:
-        only rows where ``bury_kind = 'sched'`` get released here. Manually-
-        buried rows (``bury_kind = 'user'``) survive the sweep, matching
-        Anki's ``unbury_if_needed`` behavior in ``rslib/.../queue/builder/``.
+        Anki has two buried queues, ``queue=-3`` and ``queue=-2``, and its
+        ``unbury_on_day_rollover`` releases both. Sync maps both to
+        ``bury_kind = 'sched'`` (``_bury_kind_from_queue``, Layer 39), so every
+        bury that arrives from Anki is released here. Only ``'sched'`` rows are
+        touched: a ``bury_kind = 'user'`` row survives the sweep. Nothing writes
+        ``'user'`` today; the rows that carry it came from the one-time Layer 35
+        backfill in ``migrations.py``.
 
         Tracked via ``anki_state_cache['last_unbury_day']``. Idempotent within a
         local day — subsequent calls today return 0 without touching anything,
@@ -222,7 +223,7 @@ class DbQueueMixin:
             return 0
         with self._get_conn() as conn:
             cursor = conn.execute(
-                # Layer 35: filter on bury_kind='sched' so user buries (queue=-2) survive.
+                # Layer 35: filter on bury_kind='sched' so 'user' rows survive.
                 # A seeded starter card has a schedule and no reps; last_review is
                 # what marks it (seed_review_state), as Anki's card type does.
                 """

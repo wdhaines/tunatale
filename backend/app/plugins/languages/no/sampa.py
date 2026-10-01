@@ -20,7 +20,7 @@ Two deliberate departures from upstream, both control flow rather than data:
   caller must strip — but the raw conversion stays lossless, because captions
   and lexicon-derived syllable boundaries both want the mark.
 
-Stage 2a of lexicon adoption: this module is called by nothing.
+Its callers are ``phoneme_plan.py`` and ``lexicon_syllables.py``.
 """
 
 from __future__ import annotations

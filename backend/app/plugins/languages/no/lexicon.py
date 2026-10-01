@@ -1,8 +1,11 @@
 """Pronunciation lexicon backed by the NST pronunciation dictionary.
 
-Stage 1 of lexicon adoption: this module is **called by nothing** — it ships the
-facet, the data extract, and the resolver; wiring ``<phoneme>`` into the TTS
-path is stage 2. The committed artifact is a lean gzipped 4-column extract
+Its callers are ``phoneme_plan.py`` (the ``<phoneme>`` planner on the TTS
+path), ``lexicon_syllables.py`` (syllable splits and stress) and
+``morphology.py``; the plugin's ``__init__.py`` registers
+:func:`create_nst_lexicon` as the language's lexicon facet.
+
+The committed artifact is a lean gzipped 4-column extract
 (``nst_lexicon.tsv.gz``); the indexed SQLite database is a BUILD ARTIFACT,
 gitignored, produced by ``python -m app.build_data`` (the Dockerfile and
 ``switch.sh`` run it; ``scripts/build_nst_lexicon.py build`` still works for a

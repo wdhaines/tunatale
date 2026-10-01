@@ -23,20 +23,19 @@ TunaTale fills it with a three-phase loop drawn from Krashen's comprehensible in
 
 ## What's currently built
 
-A working personal-use system with **Slovene and Norwegian** wired end-to-end (Slovene most completely), driving the pedagogical loop daily:
+A working personal-use system with **Slovene and Norwegian** wired end-to-end (Slovene most completely), plus **Tagalog and Cebuano** language plugins, driving the pedagogical loop daily:
 
 - **Curriculum + story generation** via Groq LLM, with a planner-chat UI to propose and commit curriculum days and a cassette-replay system for deterministic tests.
-- **Audio pipeline** — EdgeTTS for synthesis, syllable-level backward buildup for tricky words, Forvo for human pronunciations where available, ffmpeg LUFS normalization across the lesson, Opus transcoding, and a service worker that caches lesson audio for offline listening on the phone.
+- **Audio pipeline** — Azure Speech for synthesis (Gemini TTS for Cebuano, which Azure has no voice for), syllable-level backward buildup for tricky words, Forvo for human pronunciations where available, ffmpeg LUFS normalization across the lesson, Opus transcoding, and a service worker that caches lesson audio for offline listening on the phone.
 - **Listen-first acquisition loop** — `POST /listen` records the listen server-side, auto-grades the recognition cards you heard, and creates a *budget-capped* batch of new cards per listen (one Anki-day's worth, ranked key-phrases-first then by in-lesson frequency) — repeated listens gradually acquire the lesson. Function words become cloze cards with sentence audio.
 - **Read mode** — LingQ-style colored transcript with per-word status, tap-to-introduce/untrack, interlinear translations, and morphology clozes for inflected forms.
-- **FSRS-5 scheduler** with per-direction state (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki bit-exact in f32 — RNG seed, fuzz, interval cascade, lapse-stability ceiling, the live load balancer, queue ordering, sibling burying, daily caps. Divergences found in production are documented as numbered Layers (80 so far).
+- **FSRS-5 scheduler** with per-direction state (RECOGNITION L2→L1 and PRODUCTION L1→L2), mirroring Anki bit-exact in f32 — RNG seed, fuzz, interval cascade, lapse-stability ceiling, the live load balancer, queue ordering, sibling burying, daily caps. Divergences found in production are documented as numbered Layers (87 so far).
 - **Bidirectional Anki sync** — direct SQLite access to `collection.anki2` via a safety envelope (`safe_open` — backup, integrity check, lock probe), an event log (`tt_revlog`) whose event-sourced pull path is live, and peer-sync round-trip tests against a real `anki.syncserver`. The PRD positioned Anki as a competitor, but the real workflow turned out to be complementary: TunaTale is the audio-first front-end for an Anki deck the author was already studying, with grades flowing in both directions and FSRS staying consistent across both apps.
 - **Language plugins** — each language is a self-contained plugin (registration, preprocessor, lemmatizer, syllabifier, audio breakdown, vocab notetype) under `app/plugins/languages/`; the core never hardcodes a language, and a checker enforces it.
 - **SvelteKit frontend** — unified `/review` queue, lesson pages with Listen/Read modes, planner chat, `/cards` browser (search, suspend, image management), single Sync button; usable from a phone over Tailscale.
 
 Still ahead from the PRD:
 
-- Tagalog, to exercise the loop in a third language (scaffolding exists from the original prototype; `docs/adding-a-language.md` has the recipe, with Norwegian as the worked example).
 - Target-language audio control phrases ("Más despacio").
 - A native mobile / car experience (today it's the browser at `:5173` plus the offline-audio service worker).
 - The TunaTale mascot in the prep phase, telling travel stories about the new vocabulary.
@@ -99,7 +98,7 @@ See `Dockerfile`, `docker-compose.yml`, and `Caddyfile` in the repo root.
 
 - **Backend** — FastAPI on Python 3.14, `uv` for dependencies, SQLite for SRS + content storage. Per-language plugin registry so adding an L2 doesn't touch the core.
 - **Frontend** — SvelteKit + TypeScript (Svelte 5), Vite, Vitest with a custom phantom-filter coverage gate at 100% per-file. Lint via Oxlint (fast Rust) + ESLint with `eslint-plugin-svelte` (thorough). Format via Oxfmt. Playwright for E2E.
-- **Audio** — EdgeTTS, ffmpeg, pydub, Opus delivery, Forvo + Pixabay for media enrichment with deterministic fallbacks.
+- **Audio** — Azure Speech and Gemini TTS, ffmpeg, Opus delivery, Forvo + Pixabay for media enrichment with deterministic fallbacks.
 - **SRS** — FSRS-5 in f32 bit-parity with Anki (pinned by a differential oracle against `fsrs-rs`), per-direction state, live load-balancer mirror, `tt_revlog` event log with the event-sourced pull path live (walkthrough §9.9 and §10.5).
 - **LLM** — Groq for content generation with a VCR-style cassette system so tests are deterministic and offline.
 

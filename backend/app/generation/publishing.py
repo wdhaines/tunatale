@@ -1,6 +1,6 @@
 """Shared write+publish seam for lesson-shaped content (bd tunatale-w1fp).
 
-Seven code paths write lesson-shaped content, and each used to perform the
+Six code paths write lesson-shaped content, and each used to perform the
 same post-generation steps by hand, dropping different ones. The observable
 bug that started this: creating a review session never rendered audio, while
 creating a lesson always did. ``publish_lesson`` is the one ordering every

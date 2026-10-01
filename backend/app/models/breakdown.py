@@ -11,10 +11,10 @@ class BreakdownChunk:
 
     ``text`` is the *spoken* form, which is not always the raw substring: a
     fragment the voice would misread as a word is respelled for isolated
-    synthesis (``de`` → ``deh``, ``bus`` → ``buss``, and geminate lengthening
-    like ``et`` → ``ett``). ``span`` indexes the **raw** syllables of
-    ``source_word``. They disagree on purpose — ``text`` feeds the fallback TTS
-    path, ``span`` feeds the slicer.
+    synthesis (``bus`` → ``buss``, and geminate lengthening like ``et`` →
+    ``ett``). ``span`` indexes the **raw** syllables of ``source_word``. They
+    disagree on purpose — ``text`` feeds the fallback TTS path, ``span`` feeds
+    the slicer.
 
     ``source_word`` is the whole word to render and cut from, never a piece of
     one: the point of slicing is to avoid asking the voice for a fragment. Both

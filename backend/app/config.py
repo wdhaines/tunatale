@@ -220,15 +220,15 @@ class Settings(BaseSettings):
     # app/audio/azure_tts.py::_do_synthesize.
     tts_max_concurrent_requests: int = 1
     tts_min_request_delay_s: float = 0.2
-    # Per-provider pacing override, falling back to tts_min_request_delay_s when
-    # unset (None). Edge measured ZERO throughput degradation from concurrency
-    # 1->10 (findings-tts-pacing-2026-08-21.md item 3) — i.e. Azure's pacing
-    # constraint does not apply to it — so the two adapters must not be pinned
-    # to the same number. Concurrency intentionally has no per-provider override
-    # here; see the "OUT of scope" note above.
+    # The Azure adapter's pacing override, falling back to
+    # tts_min_request_delay_s when unset (None); app/audio/azure_tts.py is the
+    # only reader of both. It was split out when a second adapter (Edge, retired
+    # in 3f94eb25) shared the generic setting, and Edge's own override went with
+    # it. The Gemini adapter reads neither: it paces itself with
+    # gemini_tts_min_delay. Concurrency intentionally has no override here; see
+    # the "OUT of scope" note above.
     tts_azure_min_request_delay_s: float | None = None
-    tts_edge_min_request_delay_s: float | None = None
-    # Base of the retry ladder both adapters climb: rung N waits
+    # Base of the retry ladder the Azure adapter climbs: rung N waits
     # tts_retry_base_delay_s * 2**N, so with MAX_RETRIES = 6 an exhausted clip
     # spends 0.5 * (1+2+4+8+16) = 15.5s in backoff. 0.5 is the spacing
     # MAX_RETRIES was sized against — see app/audio/azure_tts.py::MAX_RETRIES —

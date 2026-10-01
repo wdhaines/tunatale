@@ -1438,10 +1438,11 @@ measurement.
 
 ### Not done yet
 
-The restore has only ever been performed on the Mac that made the backup.
-Restoring onto a *different* box — the actual disaster scenario — additionally
-requires the passphrase out of the password manager, which is precisely the step
-this arrangement is designed around and the one thing never exercised.
+The different-machine restore that this section used to list as never exercised
+was performed on 2026-09-11, on the GCP box, with the restic passphrase and the
+B2 application key both taken from Bitwarden: see "Drill results — 2026-09-11,
+restored onto a DIFFERENT machine" above. What remains unverified in this
+chapter is the launchd sleep/wake catch-up flagged above.
 
 ## Schema rollback
 

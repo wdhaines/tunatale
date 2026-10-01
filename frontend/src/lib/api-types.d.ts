@@ -1424,8 +1424,9 @@ export interface paths {
      *     today" — the double-question the split existed to remove), and due *cloze*
      *     cards appeared that a listen can never autograde, since staging is
      *     RECOGNITION-only and cloze is production-only. Everything dropped stays
-     *     reachable from the main queue: with no pending row, the Layer 81 exclusion
-     *     does not hold it back.
+     *     reachable from the main queue, which serves a due card whether or not it
+     *     has a pending row (the Layer 81 exclusion that once held staged cards back
+     *     is retired).
      *
      *     Consequences worth knowing: a NEW card CAN appear here (since 2026-08
      *     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a

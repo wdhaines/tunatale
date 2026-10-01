@@ -1708,8 +1708,9 @@ async def get_lesson_review_queue(content_id: str, request: Request, response: R
     today" — the double-question the split existed to remove), and due *cloze*
     cards appeared that a listen can never autograde, since staging is
     RECOGNITION-only and cloze is production-only. Everything dropped stays
-    reachable from the main queue: with no pending row, the Layer 81 exclusion
-    does not hold it back.
+    reachable from the main queue, which serves a due card whether or not it
+    has a pending row (the Layer 81 exclusion that once held staged cards back
+    is retired).
 
     Consequences worth knowing: a NEW card CAN appear here (since 2026-08
     ``_listen_grade_class`` returns ``"new"`` for a NEW-state direction, so a
@@ -2658,10 +2659,11 @@ async def get_queue_stats(request: Request, response: Response):
     db.unbury_if_needed(today)
     new_cap, new_cap_source = resolve_daily_new_cap(db)
     _, fsrs_source = resolve_fsrs_params(db)
-    # "Introduced today" is reconstructed from TT state (`prior_state='new'` +
-    # `last_review` today): captures TT-side grades immediately and synced Anki
-    # grades after the next sync. No live `collection.anki2` read on the
-    # request path — sync is the cross-app alignment moment.
+    # "Introduced today" is counted from TT state: the `introduced_at` column,
+    # stamped once on a direction's first NEW→non-NEW transition (Layer 26). It
+    # captures TT-side grades immediately and synced Anki grades after the next
+    # sync. No live `collection.anki2` read on the request path — sync is the
+    # cross-app alignment moment.
     introduced_today = db.count_new_introduced_today(today)
     remaining_quota = max(0, new_cap - introduced_today)
     # Badge tracks TT's view directly so every TT grade visibly decrements

@@ -219,7 +219,7 @@ for k in ('llm', 'groq', 'azure', 'tts', 'auth', 'cors', 'sync'):
 llm    llm_mode llm_model llm_allow_fallback llm_usage_ledger_path llm_cassette_miss_log
 groq   groq_api_key groq_tokens_per_day_limit groq_requests_per_day_limit
 azure  azure_speech_key azure_speech_region azure_tts_chars_per_month_limit azure_tts_usage_ledger_path azure_tts_quota_reset_tz
-tts    tts_max_concurrent_requests tts_min_request_delay_s tts_azure_min_request_delay_s tts_edge_min_request_delay_s tts_retry_base_delay_s tts_cache_dir tts_render_max_attempts tts_render_retry_cooldown_s
+tts    tts_max_concurrent_requests tts_min_request_delay_s tts_azure_min_request_delay_s tts_retry_base_delay_s tts_cache_dir tts_render_max_attempts tts_render_retry_cooldown_s
 auth   auth_enabled auth_database_url
 cors   cors_origins cors_allow_origin_regex
 sync   sync_log sync_enabled sync_endpoint sync_username sync_password sync_keychain_service sync_password_file
@@ -1799,7 +1799,7 @@ There are exactly two providers, and no provider switch:
 | `...Neural` | `azure_tts.py::AzureTTSService` | Azure Speech REST, SSML, deterministic output |
 | `...Gemini` | `gemini_tts.py::GeminiTTSService` | Google Cloud TTS, service-account OAuth, nondeterministic output |
 
-An earlier unofficial Edge Read Aloud adapter and its `TTS_PROVIDER` setting were deleted (`3f94eb25`). The reason is worth remembering: Edge silently ignored `<phoneme>` markup yet shared a cache directory and key space with Azure, so one Edge render would have poisoned the IPA cache entries. (A `tts_edge_min_request_delay_s` field survives in `app/config.py` as a dead setting; nothing reads it.)
+An earlier unofficial Edge Read Aloud adapter and its `TTS_PROVIDER` setting were deleted (`3f94eb25`). The reason is worth remembering: Edge silently ignored `<phoneme>` markup yet shared a cache directory and key space with Azure, so one Edge render would have poisoned the IPA cache entries.
 
 `tts_router.py::RoutingTTSService` dispatches on the voice-id suffix and nothing else. The rule lives in one public function, so the cost report can ask "whose bill is this voice on?" without building an adapter:
 
