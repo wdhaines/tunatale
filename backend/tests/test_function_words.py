@@ -845,6 +845,10 @@ class TestFixedGloss:
     def test_cebuano_og_is_the_object_marker(self):
         assert fixed_gloss("og", "ceb") == "a / some (object marker)"
 
+    def test_cebuano_si_is_the_name_marker(self):
+        """The gloss pass said "[title]" for "naglakaw si Paul" (seen live 2026-09-30)."""
+        assert fixed_gloss("si", "ceb") == "(name marker)"
+
     def test_case_insensitive(self):
         assert fixed_gloss("Og", "ceb") == "a / some (object marker)"
 
