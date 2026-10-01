@@ -766,3 +766,171 @@ def test_tt_grade_memory_state_survives_push_pull_round_trip(fake_anki_db):
         assert data["dr"] == 0.86
     finally:
         conn.close()
+
+
+# ── Suspending a never-reviewed card (tunatale-jk64) ──────────────────────────
+#
+# Real collection, real reader, real writer, push then pull as run_full_sync
+# orders them. The fake-writer tests in test_anki_sync_push.py pinned each call
+# and never held a card that was new AND suspended, which is where both of
+# these lived.
+
+_NO_DECK = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+_NEW_CARD = 30020  # løfte (noun): type 0, never reviewed
+_NEW_NOTE = 3002
+_POSITION = 4242  # its place in the new queue; no day number comes near it
+_SCHEDULE = "type, queue, due, ivl, factor, reps, lapses, left, odue, odid, data"
+
+
+def _norwegian_deck_with_a_new_card(tmp_path, *, queue: int):
+    """(db, conn, row_id) for a TT deck seeded from a collection holding one new card."""
+    import sqlite3
+
+    from app.plugins.anki_sync.import_seed import import_seed
+    from tests.conftest import build_norwegian_anki_db
+
+    col = build_norwegian_anki_db(tmp_path, with_homographs=True)
+    setup = sqlite3.connect(str(col))
+    setup.execute("UPDATE cards SET due = ?, queue = ? WHERE id = ?", (_POSITION, queue, _NEW_CARD))
+    setup.commit()
+    setup.close()
+    db_path = str(tmp_path / "tunatale_no.db")
+    import_seed(
+        anki_collection_path=col,
+        anki_backup_dir=tmp_path / "bak",
+        anki_media_path=tmp_path / "fake_media",
+        deck_name=_NO_DECK,
+        language_code="no",
+        tunatale_db_path=db_path,
+        media_dir=tmp_path / "media",
+        fallback_log_path=tmp_path / "fallback.log",
+    )
+    db = SRSDatabase(db_path)
+    guid = db.get_collocation_by_anki_note_id(_NEW_NOTE).guid
+    rows, _ = db.list_collocations()
+    row_id = next(rid for rid, item, *_ in rows if item.guid == guid)
+    conn = sqlite3.connect(str(col))
+    conn.row_factory = sqlite3.Row
+    return db, conn, row_id
+
+
+def _sync(db, conn) -> None:
+    from app.plugins.anki_sync.sync import OfflineReader
+
+    sync = AnkiSync(
+        db=db,
+        _reader=OfflineReader(conn, _NO_DECK, language_code="no"),
+        _writer=OfflineWriter(conn),
+        language_code="no",
+    )
+    sync.sync_push()
+    sync.sync_pull()
+
+
+def _schedule(conn) -> dict:
+    return dict(conn.execute(f"SELECT {_SCHEDULE} FROM cards WHERE id = ?", (_NEW_CARD,)).fetchone())
+
+
+def _tt_direction(db) -> DirectionState:
+    return db.get_collocation_by_anki_note_id(_NEW_NOTE).directions[Direction.RECOGNITION]
+
+
+def test_unsuspending_a_never_reviewed_card_reaches_anki(tmp_path):
+    """The un-suspend was lost: Anki kept queue=-1 and the pull re-suspended TT.
+
+    Found on live data 2026-10-01 (Cebuano ``sayal``). A dirty NEW direction with
+    no reps took sync_push's reset-to-new branch, which forgets a reviewed card
+    and otherwise does nothing — so a card that was new AND suspended in Anki was
+    left suspended, marked clean, and read back as SUSPENDED by the same sync.
+    """
+    db, conn, row_id = _norwegian_deck_with_a_new_card(tmp_path, queue=-1)
+    try:
+        assert _tt_direction(db).state == SRSState.SUSPENDED  # the control: seeded as suspended
+        before = _schedule(conn)
+
+        db.set_suspended(row_id, False)
+        _sync(db, conn)
+
+        assert _schedule(conn) == {**before, "queue": 0}
+        assert conn.execute("SELECT usn FROM cards WHERE id = ?", (_NEW_CARD,)).fetchone()[0] == -1
+        after = _tt_direction(db)
+        assert after.state == SRSState.NEW
+        assert after.dirty_fsrs is False
+
+        _sync(db, conn)  # and it holds: a second sync changes nothing
+        assert _schedule(conn) == {**before, "queue": 0}
+        assert _tt_direction(db).state == SRSState.NEW
+    finally:
+        conn.close()
+
+
+def test_suspending_a_never_reviewed_card_keeps_its_place_in_the_new_queue(tmp_path):
+    """Suspending is ``queue = -1`` and nothing else, as it is in Anki.
+
+    The push went on to set_due_date, which for a suspended card keeps queue and
+    type but still writes ``due`` and ``ivl``. On a new card ``due`` is the
+    position in the new queue, so the card came back from suspension at today's
+    day number with ``ivl = 1`` (``sayal``: due 4653, ivl 1 on a type-0 card).
+    """
+    db, conn, row_id = _norwegian_deck_with_a_new_card(tmp_path, queue=0)
+    try:
+        assert _tt_direction(db).state == SRSState.NEW  # the control: seeded as new
+        before = _schedule(conn)
+        assert (before["type"], before["due"], before["ivl"]) == (0, _POSITION, 0)
+
+        db.set_suspended(row_id, True)
+        _sync(db, conn)
+
+        assert _schedule(conn) == {**before, "queue": -1}
+        assert _tt_direction(db).state == SRSState.SUSPENDED
+        assert _tt_direction(db).dirty_fsrs is False
+
+        db.set_suspended(row_id, False)
+        _sync(db, conn)
+
+        assert _schedule(conn) == before  # the round trip is lossless
+        assert _tt_direction(db).state == SRSState.NEW
+    finally:
+        conn.close()
+
+
+def test_suspending_a_reviewed_card_still_pushes_its_schedule(tmp_path):
+    """The regression guard for the cut above: only a card with NO schedule skips it.
+
+    A reviewed card may be carrying a grade Anki has not seen, so its suspension
+    still goes through set_due_date and the memory-state write, and comes back.
+
+    ⚠️ ``reps`` is deliberately not asserted. That path also writes a review row
+    Anki never saw for a change that was not a grade (tunatale-htjr); pinning 5
+    here would be red today and pinning 6 would enshrine the defect.
+    """
+    reviewed_card, reviewed_note = 30010, 3001  # være: type 2, reps 5
+    db, conn, _ = _norwegian_deck_with_a_new_card(tmp_path, queue=0)
+    try:
+        guid = db.get_collocation_by_anki_note_id(reviewed_note).guid
+        rows, _ = db.list_collocations()
+        row_id = next(rid for rid, item, *_ in rows if item.guid == guid)
+
+        def card() -> dict:
+            return dict(conn.execute("SELECT type, queue, usn FROM cards WHERE id = ?", (reviewed_card,)).fetchone())
+
+        def tt() -> DirectionState:
+            return db.get_collocation_by_anki_note_id(reviewed_note).directions[Direction.RECOGNITION]
+
+        assert tt().state == SRSState.REVIEW  # the control: seeded as a review card
+        assert tt().reps == 5
+
+        db.set_suspended(row_id, True)
+        _sync(db, conn)
+
+        assert card() == {"type": 2, "queue": -1, "usn": -1}
+        assert tt().state == SRSState.SUSPENDED
+
+        db.set_suspended(row_id, False)
+        _sync(db, conn)
+
+        assert card() == {"type": 2, "queue": 2, "usn": -1}
+        assert tt().state == SRSState.REVIEW
+        assert tt().dirty_fsrs is False
+    finally:
+        conn.close()
