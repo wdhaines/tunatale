@@ -4,7 +4,7 @@ O9: dry-run must be a no-op. The failure this exists to catch is a dry-run that
 silently mutates: it MUST NOT touch a single file byte or DB row, while still
 printing the plan of lessons it WOULD touch.
 
-The script's own re-render machinery (renderer, TTS, slicers) is stubbed — a
+The script's own re-render machinery (renderer, TTS) is stubbed — a
 dry-run never reaches it, and keeping it real would tie the test to network or
 lazy model loading that has nothing to do with O9's claim.
 """
@@ -112,7 +112,6 @@ def _run_dry_run(store: ContentStore, audio_dir: Path, monkeypatch, capsys) -> s
         "build_lesson_renderer",
         _StubRendererFactory("dry-run must never reach the renderer"),
     )
-    monkeypatch.setattr(rename_mod, "build_slicers", lambda codes, tts, settings: [])
 
     monkeypatch.setattr(
         sys,
@@ -189,7 +188,6 @@ def _run_go(store: ContentStore, audio_dir: Path, monkeypatch, capsys) -> str:
     fake = _make_fake_renderer()
     monkeypatch.setattr(rename_mod, "get_tts_service", lambda **kw: _CountingTTS())
     monkeypatch.setattr(rename_mod, "build_lesson_renderer", lambda *a, **kw: fake)
-    monkeypatch.setattr(rename_mod, "build_slicers", lambda codes, tts, settings: [])
     monkeypatch.setattr(
         sys,
         "argv",

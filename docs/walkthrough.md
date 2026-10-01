@@ -2068,9 +2068,6 @@ grep -n "_slicers == {}" tests/test_main_lifespan.py
 ```
 
 ```output
-scripts/regen_key_phrases.py:110:    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
-scripts/rename_section_titles.py:152:    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
-scripts/rebuild_lessons_from_story.py:212:    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
 scripts/render_slicing_ab.py:105:        ("SLICED", build_slicers([_LANGUAGE_CODE], tts, settings)),
 ---
     # NOT WIRED, deliberately (tunatale-k318.4). The audio slicer cut breakdown
@@ -2088,7 +2085,7 @@ scripts/render_slicing_ab.py:105:        ("SLICED", build_slicers([_LANGUAGE_COD
 ```
 
 - **Not wired:** `app/main.py` calls `build_lesson_renderer(tts, db_map, settings)` with no `slicers`, so `app.state.renderer._slicers` is `{}`. `tests/test_main_lifespan.py` asserts this even with the capability gate open, so it cannot creep back. There is no settings flag (`audio_slicing_enabled` was deleted). `render_cost.py::estimate_render` passes `slicer_enabled=False` for the same reason.
-- **Still wired, in four offline scripts:** `regen_key_phrases.py`, `rename_section_titles.py`, `rebuild_lessons_from_story.py` and `render_slicing_ab.py` pass `slicers=build_slicers(...)` into `build_lesson_renderer`. Because `build_slicers` returns `{}` unless `alignment_installed()` (both `transformers` and `torch` importable), a script re-render on a full dev machine can slice Norwegian chunks that the app would synthesise plainly. If you re-render a lesson via a script and the key-phrases audio differs from an in-app re-render, this is the first place to look.
+- **Still wired, in one offline script:** `render_slicing_ab.py`, the A/B ear-check tool, passes `slicers=build_slicers(...)` into `build_lesson_renderer`, because comparing a sliced render with a plain one is its purpose. The re-render scripts (`regen_key_phrases.py`, `rename_section_titles.py`, `rebuild_lessons_from_story.py`) used to wire it too, so on a machine with `transformers` and `torch` installed a script re-render sliced Norwegian chunks that the app synthesised plainly. They now build the renderer exactly as the app does, and `tests/test_build_lesson_renderer.py::test_only_the_ab_tool_wires_the_slicer` fails if any other file names `build_slicers` or passes `slicers=`.
 - **Fallback contract, if re-enabled:** failure is always fallback, never an exception. A word that will not syllabify losslessly, an out-of-vocab character, a degenerate alignment or a raising model all return `False` from `slice_to_file`, and the isolated-TTS clip is kept. The lossless-syllable precondition (`"".join(syllables) == word.lower()`) is what keeps the character-index walk in range.
 - **Pacing stays honest:** `_assemble_section_parts` takes `pace_files` (the isolated render) separately from `play_files`, because a KEY_PHRASES pause equals the chunk's own duration and a shorter sliced chunk would shorten the gap the learner repeats into (measured on a real lesson: 6.5 to 5.1 minutes).
 

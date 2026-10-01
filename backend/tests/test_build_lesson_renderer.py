@@ -109,3 +109,79 @@ def test_the_guard_sees_a_hand_built_renderer(tmp_path):
     assert _constructs_renderer(src)
     src.write_text("renderer = build_lesson_renderer(tts, ['tl'], settings)\n", encoding="utf-8")
     assert not _constructs_renderer(src)
+
+
+# The app renders with NO slicers (main.py; pinned by test_main_lifespan). A
+# re-render script that wires them makes the same lesson sound different by
+# which path rendered it: on a dev install with the alignment extra, the script
+# slices Norwegian chunks the app synthesises plainly (bd tunatale-b7o2.4).
+# Only the A/B tool wires the slicer, because comparing the two is its purpose.
+_MAY_WIRE_SLICERS = {
+    _BACKEND / "app" / "audio" / "renderer.py",  # the builder forwards its own parameter
+    _BACKEND / "app" / "audio" / "slicer.py",  # defines build_slicers
+    _BACKEND / "scripts" / "render_slicing_ab.py",
+}
+
+
+def _wires_slicers(path: Path) -> bool:
+    """True when the file names ``build_slicers`` or passes a ``slicers=`` keyword.
+
+    Either half alone leaves a way round the other: a renamed import still has
+    to pass ``slicers=``, and a ``**kwargs`` spread still has to name the
+    factory. Comments and docstrings are not code and do not count.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "build_slicers":
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "build_slicers":
+            return True
+        if isinstance(node, ast.alias) and node.name.rpartition(".")[2] == "build_slicers":
+            return True
+        if isinstance(node, ast.Call) and any(kw.arg == "slicers" for kw in node.keywords):
+            return True
+    return False
+
+
+def test_only_the_ab_tool_wires_the_slicer():
+    offenders = sorted(
+        str(p.relative_to(_BACKEND))
+        for root in (_BACKEND / "app", _BACKEND / "scripts")
+        for p in root.rglob("*.py")
+        # scripts/local/ is gitignored scratch: CI never sees it.
+        if p not in _MAY_WIRE_SLICERS and "local" not in p.relative_to(root).parts[:1] and _wires_slicers(p)
+    )
+    assert offenders == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))\n",
+        "from app.audio.slicer import build_slicers\n",
+        "from app.audio.slicer import build_slicers as make\n",
+        "import app.audio.slicer as s\nx = s.build_slicers(codes, tts, settings)\n",
+        "renderer = build_lesson_renderer(tts, [code], settings, slicers={code: my_slicer})\n",
+        "kwargs = {'slicers': build_slicers(codes, tts, settings)}\n",
+    ],
+)
+def test_the_slicer_guard_sees_each_wiring_shape(tmp_path, source):
+    """Control: the detector fires on the shape the scripts had and on its near-misses."""
+    src = tmp_path / "script.py"
+    src.write_text(source, encoding="utf-8")
+    assert _wires_slicers(src)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "renderer = build_lesson_renderer(tts, [code], settings)\n",
+        "# re-add build_slicers here and pass slicers= to wire it back\nx = 1\n",
+        '"""build_slicers returns {} unless the extra is installed; slicers=... is unused."""\n',
+        "slicers = {}\nprint(renderer._slicers)\n",
+    ],
+)
+def test_the_slicer_guard_ignores_prose_and_unrelated_names(tmp_path, source):
+    src = tmp_path / "script.py"
+    src.write_text(source, encoding="utf-8")
+    assert not _wires_slicers(src)

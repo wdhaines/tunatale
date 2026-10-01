@@ -74,7 +74,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
 from app.audio.renderer import build_lesson_renderer  # noqa: E402
-from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.story import build_lesson_from_story  # noqa: E402
@@ -209,7 +208,7 @@ async def main() -> int:
 
     store = ContentStore(db_path)
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
-    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
+    renderer = build_lesson_renderer(tts, [code], settings)
 
     rebuilt_count = skipped = failed = 0
     for lesson_id, curriculum_id, day, stored in _latest_lessons(store):

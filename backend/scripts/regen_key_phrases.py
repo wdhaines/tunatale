@@ -40,7 +40,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
 from app.audio.renderer import build_lesson_renderer  # noqa: E402
-from app.audio.slicer import build_slicers  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.section_builder import build_key_phrases_section  # noqa: E402
@@ -107,7 +106,7 @@ async def main() -> int:
     store = ContentStore(db_path)
     srs_db = SRSDatabase(db_path)
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
-    renderer = build_lesson_renderer(tts, [code], settings, slicers=build_slicers([code], tts, settings))
+    renderer = build_lesson_renderer(tts, [code], settings)
 
     from app.generation.lemma_annotation import annotate_chunk_upos_for_lesson
 

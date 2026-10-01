@@ -124,7 +124,6 @@ def _seed(tmp_path: Path, *, story: dict | None = None, days: tuple[int, ...] = 
 def _stub_renderer(monkeypatch, captured: dict | None = None):
     """Neutralise everything the script builds but this test does not exercise."""
     monkeypatch.setattr(rebuild_mod, "get_tts_service", lambda **kw: object())
-    monkeypatch.setattr(rebuild_mod, "build_slicers", lambda codes, tts, settings: {})
     real_builder = rebuild_mod.build_lesson_renderer
 
     def factory(tts, codes, settings, **kwargs):
