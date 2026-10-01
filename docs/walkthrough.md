@@ -1,7 +1,7 @@
 # TunaTale Codebase Walkthrough
 
-*2026-10-01T14:57:02Z by Showboat 0.6.1*
-<!-- showboat-id: 9f7d96c5-f16b-41a6-95e4-ffd65e13a68a -->
+*2026-10-01T16:55:58Z by Showboat 0.6.1*
+<!-- showboat-id: a907b330-6c59-49bc-8d73-397120116258 -->
 
 ## About This Walkthrough
 
@@ -390,7 +390,7 @@ There is **no `--password` flag**, and a test asserts the parser rejects one: a 
 A deploy that fails one restart per mistake is a deploy nobody finishes, so the check reports all problems in one go. The rules live in `config.py::prod_profile_problems`, which is pure and does not consult `tt_env`, so both callers decide when it applies. Run against bare defaults it lists what a prod profile must override:
 
 ```bash
-cd backend && env -i PATH="$PATH" HOME="$HOME" uv run python -c "
+cd backend && env -i PATH="$PATH" HOME="$HOME" UV_NO_SYNC=1 uv run python -c "
 from app.config import Settings, prod_profile_problems
 for p in prod_profile_problems(Settings(_env_file=None)):
     print('-', p.split(' —')[0].split(', a path')[0])
@@ -554,7 +554,7 @@ Codes are ISO 639-1 where one exists and 639-3 otherwise (`ceb` is TunaTale's fi
 
 ### 3.3 Voices: who speaks, in which language, how loud
 
-A language's `Language.tts_voice_map` maps a *role* to a voice id. Roles are `narrator`, `female-1`, `female-2`, `male-1`, `male-2` (Norwegian adds `-3` and `-4`), the legacy `female`/`male` aliases, and an optional `key-phrases` slot. Dialogue speakers are assigned roles by the story generator (§6), and `section_builder._resolve_voice` raises `ValueError` listing the known roles when a speaker has no entry, which is why an unmapped speaker is loud rather than silently read by the wrong voice.
+A language's `Language.tts_voice_map` maps a *role* to a voice id. Roles are `narrator`, `female-1`, `female-2`, `male-1`, `male-2` (Norwegian adds `-3` and `-4`), the legacy `female`/`male` aliases, an optional `key-phrases` slot, and `narration`. Dialogue speakers are assigned roles by the story generator (§6), and `section_builder._resolve_voice` raises `ValueError` listing the known roles when a speaker has no entry, which is why an unmapped speaker is loud rather than silently read by the wrong voice.
 
 ```bash
 cd backend && uv run python -c "
@@ -572,14 +572,16 @@ for code in ('sl', 'no', 'tl', 'ceb'):
 ```
 
 ```output
-== sl  (4 voices have a measured gain)
+== sl  (5 voices have a measured gain)
   narrator    en-US-DavisMultilingualNeural            reads English as (narrator)
+  narration   en-US-DavisMultilingualNeural            reads English as en-US-DavisMultilingualNeural
   female-1    sl-SI-PetraNeural                        reads English as en-US-AmandaMultilingualNeural
   female-2    en-US-EmmaMultilingualNeural             reads English as en-US-EmmaMultilingualNeural
   male-1      sl-SI-RokNeural                          reads English as en-US-AdamMultilingualNeural
   male-2      de-DE-FlorianMultilingualNeural          reads English as de-DE-FlorianMultilingualNeural
-== no  (9 voices have a measured gain)
+== no  (10 voices have a measured gain)
   narrator    en-US-DavisMultilingualNeural            reads English as (narrator)
+  narration   en-US-DavisMultilingualNeural            reads English as en-US-DavisMultilingualNeural
   female-1    nb-NO-PernilleNeural                     reads English as en-US-NancyMultilingualNeural
   female-2    nb-NO-IselinNeural                       reads English as en-US-AmandaMultilingualNeural
   female-3    en-US-EmmaMultilingualNeural             reads English as en-US-EmmaMultilingualNeural
@@ -588,8 +590,9 @@ for code in ('sl', 'no', 'tl', 'ceb'):
   male-2      en-US-DerekMultilingualNeural            reads English as en-US-DerekMultilingualNeural
   male-3      it-IT-GiuseppeMultilingualNeural         reads English as it-IT-GiuseppeMultilingualNeural
   male-4      en-US-DustinMultilingualNeural           reads English as en-US-DustinMultilingualNeural
-== tl  (5 voices have a measured gain)
+== tl  (6 voices have a measured gain)
   narrator    en-US-DavisMultilingualNeural            reads English as (narrator)
+  narration   en-US-DavisMultilingualNeural            reads English as en-US-DavisMultilingualNeural
   female-1    fil-PH-BlessicaNeural                    reads English as en-US-AmandaMultilingualNeural
   female-2    en-US-EmmaMultilingualNeural             reads English as en-US-EmmaMultilingualNeural
   male-1      fil-PH-AngeloNeural                      reads English as en-US-AdamMultilingualNeural
@@ -597,9 +600,10 @@ for code in ('sl', 'no', 'tl', 'ceb'):
   key-phrases de-DE-SeraphinaMultilingualNeural        reads English as (narrator)
 == ceb  (4 voices have a measured gain)
   narrator    en-US-DavisMultilingualNeural            reads English as (narrator)
+  narration   ceb-PH-OrusGemini                        reads English as en-US-DavisMultilingualNeural
   female-1    ceb-PH-KoreGemini                        reads English as en-US-EmmaMultilingualNeural
   female-2    ceb-PH-DespinaGemini                     reads English as en-US-NancyMultilingualNeural
-  male-1      ceb-PH-CharonGemini                      reads English as en-US-AdamMultilingualNeural
+  male-1      ceb-PH-CharonGemini                      reads English as en-US-BrandonMultilingualNeural
   male-2      ceb-PH-OrusGemini                        reads English as en-US-DustinMultilingualNeural
 ```
 
@@ -609,7 +613,9 @@ Several design decisions are visible in that output.
 
 **Azure ships fewer native voices than there are dialogue roles.** sl-SI has two voices (Petra, Rok) for four roles, fil-PH two (Blessica, Angelo), nb-NO three. The remaining roles are Multilingual Neural voices speaking the target language under a `<lang xml:lang="...">` wrapper, which is what `Language.tts_locale` exists for: it is handed to the adapter as `speak_locale`, and the adapter emits the wrapper only when the voice's own locale differs (a Multilingual voice left to auto-detect was measured misidentifying a real Slovene line). Casts were chosen by measurement, in this order: STT word error rate on A1 sentences, then median F0 distance between same-gender voices, then loudness. The pitch map does not transfer between languages (Dustin measured 160.0 Hz on Norwegian and 136.5 on Tagalog), so each language is measured on its own text. The Slovene comment block in `app/plugins/languages/sl/__init__.py` is the worked record of the method.
 
-**English is read by a speaker-matched voice.** `Language.tts_en_voice_map` makes each speaker read their own English translation in the four translated sections, so a line's English sounds like its speaker. A role absent from the map falls back to the narrator, `NARRATOR_VOICE` (`en-US-DavisMultilingualNeural`, single-sourced in `app/models/language.py`; Davis replaced Guy on 2026-09-29 by ear). The translation phrase keeps `role="narrator"` because that role is structure (cue pairing, key-phrase groups); only its `voice_id` changes. Cebuano's four Gemini voices cannot read English, so they get pitch-matched Azure stand-ins (Kore to Emma, Despina to Nancy, Charon to Adam, Orus to Dustin).
+**Narration is not a character.** `narration` is a *dialogue* role the story writer uses for what no character says aloud ("They walked to the house."). Before it existed the model put narration in a character's mouth, and the transcript lettered it like a speaker. It is distinct from `narrator`, the structural role of titles and English translation lines that cues and key-phrase grouping key on. Narration is read by the narrator's voice, Davis, in both languages (the L2 under that language's `<lang>` wrapper) so it matches the titles. Cebuano is the exception: its L2 narration keeps a Gemini voice, because Davis cannot speak Cebuano, and Davis reads only its English. The transcript marks a narration line with an "N" chip rather than a speaker letter.
+
+**English is read by a speaker-matched voice.** `Language.tts_en_voice_map` makes each speaker read their own English translation in the four translated sections, so a line's English sounds like its speaker. A role absent from the map falls back to the narrator, `NARRATOR_VOICE` (`en-US-DavisMultilingualNeural`, single-sourced in `app/models/language.py`; Davis replaced Guy on 2026-09-29 by ear). The translation phrase keeps `role="narrator"` because that role is structure (cue pairing, key-phrase groups); only its `voice_id` changes. Cebuano's four Gemini voices cannot read English, so each gets a pitch-matched Azure stand-in for its English lines (the live table above shows the current pairs).
 
 **Loudness is a per-voice constant.** `tts_voice_gain_db` is keyed by voice id (two roles can share one voice) and pins each voice to -20.0 LUFS at assembly, after the content-addressed TTS cache, so a gain change never invalidates cached audio. Per-clip normalisation was rejected because spread within one voice exceeds the gap between voices. The table is looked up under the language *of the text*, which is why `Language.english()` carries its own table: an English translation line inside a Norwegian lesson resolves its gain against `en`, and for a while the narrator's gain never reached any English line because only the `no` table had it. A voice's English level is not its Norwegian level (Giuseppe is -0.7 dB in `nb`, +0.9 in `en`), so the tables are separate by design.
 
@@ -823,7 +829,7 @@ print('gain rows:', len(en.tts_voice_gain_db), '(English-reading voices)')
 narrator : en-US-DavisMultilingualNeural
 locale   : en-US
 roles    : ['female', 'female-1', 'female-2', 'male', 'male-1', 'male-2', 'narrator']
-gain rows: 12 (English-reading voices)
+gain rows: 13 (English-reading voices)
 ```
 
 ### 4.3 `Lesson`, `Section`, `Phrase`
@@ -1967,7 +1973,7 @@ Gemini keys are priced differently, and loosely: there is no billable-body unit 
 
 ### 7.5 Voices, narrator and loudness
 
-Voice assignment is data on `Language` (`app/models/language.py`) and is built per language plugin (§3). `Language.tts_voice_map` maps a role (`narrator`, `female-1`, `male-2`, ...) to a voice id; `Language.tts_en_voice_map` does the same for the English translation spoken by that role, so each character reads their own English line (the translation phrase keeps `role="narrator"`; only its `voice_id` moves). The narrator is `NARRATOR_VOICE = en-US-DavisMultilingualNeural`. The table below is generated from the live registry:
+Voice assignment is data on `Language` (`app/models/language.py`) and is built per language plugin (§3). `Language.tts_voice_map` maps a role (`narrator`, `female-1`, `male-2`, ...) to a voice id; `Language.tts_en_voice_map` does the same for the English translation spoken by that role, so each character reads their own English line (the translation phrase keeps `role="narrator"`; only its `voice_id` moves). The dialogue role `narration` (§3.3) maps to Davis in both maps, except Cebuano's L2 narration, which stays on Gemini. The narrator is `NARRATOR_VOICE = en-US-DavisMultilingualNeural`. The table below is generated from the live registry:
 
 ```bash
 cd backend && uv run python -c "

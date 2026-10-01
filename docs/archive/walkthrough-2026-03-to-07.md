@@ -6842,7 +6842,7 @@ Configuration is one new setting, `lemmatizer_type` (`"lowercase"` default, `"cl
 
 **Python 3.14 install caveat (verified 2026-06-02; made reproducible 2026-06-02).** The latest working classla (`2.2.1`) pins `torch<=2.6`, but torch `<=2.6` ships no 3.14 (`cp314`) wheel — torch only gained 3.14 support at `2.12`. So a bare `pip install classla` on 3.14 silently resolves to the ancient `classla==1.1.0`, which crashes on modern torch (PyTorch-2.6 `weights_only=True` → "Vector file is not provided"), and the factory returns a `ClasslaLemmatizer` that fails at first use rather than falling back. classla `2.2.1` is pure-Python, so the fix is to override its torch pin to a 3.14-capable build.
 
-This is now **declared, not ad-hoc.** classla and stanza live in per-language groups under `[dependency-groups]` in `backend/pyproject.toml` (`slovene = ["classla==2.2.1"]` and `norwegian = ["stanza"]`), and `[tool.uv] override-dependencies = ["torch==2.12.0", "protobuf>=5.29"]` forces the 3.14 torch/protobuf over classla's `torch<=2.6` / `protobuf==4.21.2` pins. Install reproducibly:
+This is now **declared, not ad-hoc.** classla and stanza live in per-language groups under `[dependency-groups]` in `backend/pyproject.toml` (`slovene = ["classla==2.2.3"]` and `norwegian = ["stanza>=1.15.0"]`), and `[tool.uv] override-dependencies = ["protobuf>=5.29"]` forces a 3.14-capable protobuf over classla's `protobuf==4.21.2` pin. (classla 2.2.3 declares `torch>=2.9` on 3.14 itself, so the torch override was retired 2026-10-01.) Install reproducibly:
 
 ```bash
 cd backend && uv sync   # a plain sync; --all-groups also works

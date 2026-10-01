@@ -1,6 +1,7 @@
 import { untrack } from "svelte";
 import type { Cue, CueRef, LessonAudio } from "$lib/api";
 import { mediaTrace, mediaTraceSource } from "$lib/mediaTrace";
+import { createKeepAlive, type KeepAlive } from "./keepAlive";
 import type { SectionType } from "$lib/sectionTypes";
 
 // The hands-free pass sequence, in order of playback. One const so a later
@@ -97,6 +98,9 @@ export interface PlaybackController {
 
 interface Deps {
   createAudio?: () => HTMLAudioElement;
+  // The silent second player that holds the media session open across a track
+  // swap (see keepAlive.ts). Tests pass a double; the app takes the default.
+  keepAlive?: KeepAlive;
   mediaSession?: MediaSession;
   storage?: Storage;
   lessonId: string;
@@ -373,9 +377,21 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   function startPlay(via: string): void {
     const started = audioEl.play();
     if (started && typeof started.catch === "function") {
-      started.catch((err: unknown) => trace("play:rejected", `via=${via} err=${String(err)}`));
+      started.catch((err: unknown) => {
+        trace("play:rejected", `via=${via} err=${String(err)}`);
+        // Nothing is playing, so the keep-alive must not go on claiming the
+        // session. Except mid-swap: a play() aborted by the new load is
+        // followed by the swap's own play(), and stopping here would open the
+        // very gap the keep-alive exists to close.
+        if (!swapping) keepAlive.stop();
+      });
     }
   }
+
+  // Playing exactly while this controller means to be playing: started with the
+  // lesson audio, kept across every track swap, stopped at every real stop
+  // (tunatale-bibo; the mechanism is in keepAlive.ts).
+  const keepAlive = deps.keepAlive ?? createKeepAlive({ onEvent: (event) => trace(event) });
 
   // Audio event listeners
   onEl("timeupdate", () => {
@@ -414,6 +430,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   });
   onEl("play", () => {
     trace("el:play");
+    keepAlive.start();
     playing = true;
     if (mediaSession) mediaSession.playbackState = "playing";
   });
@@ -424,6 +441,32 @@ export function createPlaybackController(deps: Deps): PlaybackController {
     saveResume();
     if (mediaSession) mediaSession.playbackState = "paused";
     updatePositionState();
+    // A track that played to its end fires pause and THEN ended, and a
+    // hands-free run swaps to the next pass from the ended handler. Stopping
+    // here would leave the page with no player for exactly that swap, so the
+    // end of a track is left for `ended` to decide.
+    if (!audioEl.ended) keepAlive.stop();
+  });
+  // Starvation and failure. Without these a track that has started and then
+  // run dry looks, in the trace, exactly like one that is playing: the
+  // 2026-10-01 screen-off log showed a section change as plain el:play while
+  // the user heard it stall (tunatale-bibo). A seek fires the same pair on
+  // every step of a scrub, which would push the lines that matter out of the
+  // trace's ring, so a seek's own are skipped and el:playing is logged only
+  // after an el:waiting.
+  let starved = false;
+  onEl("waiting", () => {
+    if (audioEl.seeking) return;
+    starved = true;
+    trace("el:waiting");
+  });
+  onEl("playing", () => {
+    if (!starved) return;
+    starved = false;
+    trace("el:playing");
+  });
+  onEl("error", () => {
+    trace("el:error", `code=${audioEl.error?.code ?? "-"}`);
   });
   onEl("ratechange", () => {
     rate = audioEl.playbackRate;
@@ -469,6 +512,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       }
     }
     playing = false;
+    keepAlive.stop();
     if (mediaSession) mediaSession.playbackState = "none";
     updatePositionState();
   });
@@ -632,6 +676,9 @@ export function createPlaybackController(deps: Deps): PlaybackController {
   // spot on tab-hide (mobile refresh / app switch) and pagehide (desktop).
   // beforeunload is deliberately NOT used — unreliable on mobile Safari.
   function onVisibilityChange() {
+    // When the page was hidden is the first thing a lock-screen log is read
+    // for, and no other line says it.
+    trace(`vis:${document.visibilityState}`);
     if (document.visibilityState === "hidden") {
       saveResume();
     }
@@ -969,6 +1016,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       return;
     }
     playing = false;
+    keepAlive.stop();
     if (mediaSession) mediaSession.playbackState = "none";
     updatePositionState();
     deps.onHandsFreeEnd?.();
@@ -1115,6 +1163,7 @@ export function createPlaybackController(deps: Deps): PlaybackController {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pagehide", onPageHide);
       audioEl.pause();
+      keepAlive.destroy();
       saveResume();
       audioEl.src = "";
       // Ownership-scoped: a stale controller must not clear a session another

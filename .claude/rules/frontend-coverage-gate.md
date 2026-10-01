@@ -20,8 +20,11 @@ compiler injects, then asserts 100% on every file.
 `isPhantom(branchType, text, synthetic, duplicateRange)` in `coverage-gate.ts`
 classifies each uncovered sub-location:
 
-- **Synthetic or empty source range** → phantom (the compiler emitted a branch at
-  a position the user source never reached).
+- **Synthetic, empty, or whitespace-only source range** → phantom (the compiler
+  emitted a branch at a position the user source never reached). Whitespace-only
+  was added 2026-10-01: esrap 2.3+ (svelte 5.57.1) maps the compiled
+  `{expr}` → `expr ?? ""` fallback onto a single space where esrap 2.2 gave an
+  empty range, and no real operand is whitespace.
 - **cond-expr** (`?:`): phantom if the sub-location text is a JS literal (`null`,
   `undefined`, booleans, numbers, quoted strings), which Svelte 5 folds.
   Identifiers and property access stay real.
@@ -34,7 +37,7 @@ classifies each uncovered sub-location:
   expression, so the text is an identifier or call (`t(`, `showAddPhrase`) that
   (b) cannot see; a real source `a ?? b` always has two distinct operand ranges.
   Object literals that start with `{` and end with `}` stay real.
-- **if**: phantom only when the text is empty. Non-empty if-bodies are real.
+- **if**: phantom only when the text is empty (or whitespace). Non-empty if-bodies are real.
 - Unknown types stay real (conservative).
 
 Every classification is pinned by `frontend/tests/coverage-gate.test.ts` against
@@ -68,6 +71,16 @@ breaking the filter. Around any `svelte` / `@sveltejs/kit` /
    hiding.
 5. **If the filter drops something a test could exercise**, tighten the heuristic,
    then write the test for the real branch.
+
+**Drift is not only the filter's.** The esrap 2.2 → 2.3 sourcemap change (svelte
+5.57.0 → 5.57.1, 2026-10-01) moved drops 221 → 172. Almost none of that was a new
+phantom shape: esrap 2.2 had mapped ~45 **real** branches (mostly the `String(e)`
+arm of `e instanceof Error ? e.message : String(e)`) to empty ranges, so the
+filter dropped them and "100%" was partly an artifact. The fix was tests (and
+removing dead arms), not heuristic. Two lessons: bisect drift to the package that
+moved — it was the transitive `esrap`, not `svelte`, and reverting `svelte` alone
+does not downgrade it — and read the gate's per-file `branches: N/M` line, not just
+the `uncovered:` list, which is truncated per file.
 
 ## Don't bypass the gate
 

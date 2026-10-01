@@ -211,6 +211,18 @@ describe("ImageEditModal", () => {
     expect(await getByText("network boom")).toBeTruthy();
   });
 
+  it("shows a non-Error paste rejection as text", async () => {
+    mockSetFromUrl.mockRejectedValue("string paste error");
+    const item = makeSRSItemDetail({ id: 4 });
+    const { getByPlaceholderText, getByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+    const input = getByPlaceholderText(/https:\/\/example\.com/);
+    await fireEvent.input(input, { target: { value: "http://x/fail.jpg" } });
+    await fireEvent.click(getByText("Set"));
+    expect(await waitFor(() => getByText("string paste error"))).toBeTruthy();
+  });
+
   it("shows rate-limited message when response status is rate_limited", async () => {
     mockFetchCandidates.mockResolvedValue({
       query: "water",
@@ -395,6 +407,19 @@ describe("ImageEditModal", () => {
     Object.defineProperty(fileInput, "files", { value: [file] });
     await fireEvent.change(fileInput);
     expect(await getByText("upload failed")).toBeTruthy();
+  });
+
+  it("file upload shows a non-Error rejection as text", async () => {
+    mockUpload.mockRejectedValue("string upload error");
+    const item = makeSRSItemDetail({ id: 1 });
+    const { container, getByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["dummy"], "photo.jpg", { type: "image/jpeg" });
+    Object.defineProperty(fileInput, "files", { value: [file] });
+    await fireEvent.change(fileInput);
+    expect(await waitFor(() => getByText("string upload error"))).toBeTruthy();
   });
 
   it("paste URL with empty value does not call API", async () => {

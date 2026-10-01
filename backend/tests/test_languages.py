@@ -495,7 +495,12 @@ class TestGetLanguage:
         which is the only thing in the catalogue that is, so this catches the
         whole family rather than one name.
         """
-        for role, voice in get_language(code).tts_voice_map.items():
+        # The English cast too: it reads every translation, so a paid voice there
+        # bills on every English line. The COLON is the screen, not VoiceType —
+        # the catalogue reports 172 colon-named voices (Dragon, MAI-Voice-2) as
+        # plain "Neural" (read 2026-09-30).
+        lang = get_language(code)
+        for role, voice in [*lang.tts_voice_map.items(), *lang.tts_en_voice_map.items()]:
             assert ":" not in voice and "DragonHD" not in voice, (
                 f"{code} {role}={voice} is a paid Neural HD voice: separate billing line, "
                 "$22/1M, no free-tier allowance, and nondeterministic so untestable"
@@ -738,6 +743,8 @@ class TestCebuanoRegistration:
             "male-2": "ceb-PH-OrusGemini",
             "female": "ceb-PH-KoreGemini",
             "male": "ceb-PH-CharonGemini",
+            # Narration keeps the voice that read it as male-2 (tunatale-fx5n).
+            "narration": "ceb-PH-OrusGemini",
         }
 
     def test_every_cast_voice_has_its_measured_gain(self):

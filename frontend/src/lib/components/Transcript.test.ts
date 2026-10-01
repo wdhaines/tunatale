@@ -2564,6 +2564,42 @@ describe("Transcript", () => {
       const classB = chips[1].className;
       expect(classA).not.toBe(classB);
     });
+
+    // A narration line is read by the narrator, so it is not a speaker: the
+    // user read the first letter, "A", as the narrator when narration opened a
+    // lesson in a character's role (2026-09-30).
+    describe("narration lines", () => {
+      const [femaleLine, maleLine] = transcriptTwoSpeakers.dialogue_lines;
+      const withNarration: TranscriptData = {
+        ...transcriptTwoSpeakers,
+        dialogue_lines: [
+          { ...femaleLine, role: "narration" },
+          femaleLine,
+          maleLine,
+          { ...maleLine, role: "narration" },
+        ],
+      };
+
+      it("take no speaker letter, so A is the first character to speak", () => {
+        const { container } = render(Transcript, {
+          props: defaultProps({ transcript: withNarration }),
+        });
+        const chips = [...container.querySelectorAll(".dialogue-role-chip")];
+        expect(chips.map((c) => c.textContent?.trim())).toEqual(["N", "A", "B", "N"]);
+      });
+
+      it("are marked as the narrator's, not a speaker's", () => {
+        const { container } = render(Transcript, {
+          props: defaultProps({ transcript: withNarration }),
+        });
+        const chips = [...container.querySelectorAll(".dialogue-role-chip")];
+        expect(chips[0].classList.contains("narration")).toBe(true);
+        expect(chips[0].getAttribute("title")).toBe("Narrator");
+        expect(chips[0].getAttribute("aria-label")).toBe("Narrator");
+        expect([...chips[1].classList].some((c) => c.startsWith("speaker-"))).toBe(true);
+        expect(chips[1].classList.contains("narration")).toBe(false);
+      });
+    });
   });
 
   // ─── Synced subtitle tests (Phase 3) ────────────────────────────────

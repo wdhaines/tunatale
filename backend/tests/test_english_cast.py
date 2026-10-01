@@ -109,6 +109,7 @@ def test_norwegian_english_cast_is_the_one_the_user_approved():
         "male-4": "en-US-DustinMultilingualNeural",
         "female": "en-US-NancyMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,  # narration is the narrator's (tunatale-fx5n, 2026-09-30)
     }
 
 
@@ -230,6 +231,10 @@ def test_a_story_built_for_norwegian_uses_the_plugin_english_cast():
         # Stored lessons still pin Guy until they are rebuilt; 0.0 for him would
         # un-normalise every one of them on their next render.
         ("en-US-GuyNeural", -0.5),
+        # Cebuano male-1's English since 2026-10-01. Anchored to Adam's entry on
+        # the 13 lines of 'An Evening Wake in Jimenez' both voices read for at
+        # least 1.5 s: Adam -19.70 vs Brandon -20.23 LUFS, so -0.6 + 0.53.
+        ("en-US-BrandonMultilingualNeural", -0.1),
     ],
 )
 def test_english_gain_for_each_voice(voice_id, expected):
@@ -373,15 +378,20 @@ def test_the_renderer_factory_knows_the_english_locale():
 # the Norwegian rule: a Multilingual cast member reads its own English; a
 # native-only voice gets a stand-in. The stand-ins are one repertoire across
 # languages (Emma, Nancy, Amanda, Adam, Dustin), each already gain-measured.
+# Cebuano's male-1 left that repertoire for Brandon on 2026-10-01, by ear.
 
 _EN_CASTS = {
     "ceb": {
         "female-1": "en-US-EmmaMultilingualNeural",  # Kore 209.4 Hz
         "female-2": "en-US-NancyMultilingualNeural",  # Despina 185.5
-        "male-1": "en-US-AdamMultilingualNeural",  # Charon 107.2
+        # Not the pitch match (that was Adam, 105.9): the user's ear,
+        # 2026-10-01, found Adam too close to the narrator on this lesson's
+        # text and picked Brandon from a nine-voice audition (tunatale-fx5n).
+        "male-1": "en-US-BrandonMultilingualNeural",  # Charon 107.2
         "male-2": "en-US-DustinMultilingualNeural",  # Orus 139.2
         "female": "en-US-EmmaMultilingualNeural",
-        "male": "en-US-AdamMultilingualNeural",
+        "male": "en-US-BrandonMultilingualNeural",
+        "narration": _DAVIS,
     },
     "tl": {
         "female-1": "en-US-AmandaMultilingualNeural",  # Blessica, above Emma in tl too
@@ -390,6 +400,7 @@ _EN_CASTS = {
         "male-2": "en-US-SamuelMultilingualNeural",
         "female": "en-US-AmandaMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,
     },
     "sl": {
         "female-1": "en-US-AmandaMultilingualNeural",  # Petra 185.7, above Emma's 166.9 in sl
@@ -398,6 +409,7 @@ _EN_CASTS = {
         "male-2": "de-DE-FlorianMultilingualNeural",
         "female": "en-US-AmandaMultilingualNeural",
         "male": "en-US-AdamMultilingualNeural",
+        "narration": _DAVIS,
     },
 }
 

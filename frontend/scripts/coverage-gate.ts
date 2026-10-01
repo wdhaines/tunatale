@@ -46,7 +46,10 @@ type FileCoverage = {
 /**
  * Per-branch-type heuristic. Empirically validated on TunaTale 2026-05-20.
  *
- * - Empty/synthetic ranges → phantom (compiler emitted at a non-source location).
+ * - Empty/synthetic/whitespace-only ranges → phantom (compiler emitted at a
+ *   non-source location). Whitespace-only joined 2026-10-01: esrap 2.3+ maps a
+ *   compiler-made `?? ""` onto a single space where esrap 2.2 gave an empty
+ *   range, and no real operand can be whitespace.
  * - cond-expr (ternary): phantom if the sub-location is a JS literal
  *   (null/undefined/booleans/numbers/quoted strings). Svelte 5 folds these into
  *   the parent expression so v8 can't reach them. Identifier or property-access
@@ -75,8 +78,8 @@ export function isPhantom(
   synthetic: boolean,
   duplicateRange = false,
 ): boolean {
-  if (synthetic || text === "") return true;
   const trimmed = text.trim();
+  if (synthetic || trimmed === "") return true;
   if (branchType === "cond-expr") {
     return /^(null|undefined|true|false|-?\d+(\.\d+)?|['"`].*['"`])$/.test(
       trimmed,

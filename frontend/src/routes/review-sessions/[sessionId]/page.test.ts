@@ -673,6 +673,29 @@ describe("the reader", () => {
     }
   });
 
+  it("a non-Error status-read failure is shown as text when the poll gives up", async () => {
+    // The cap is the failure story — an uncapped loop would poll a dead server
+    // forever, so after enough consecutive failures the page releases.
+    vi.useFakeTimers();
+    try {
+      // First call resolves true (starting the poll on mount), then every poll
+      // call fails. The initial mount would otherwise swallow the rejection and
+      // never begin polling.
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true })
+        .mockRejectedValue("poll string error");
+      const { getByRole, findByText } = render(Page, { props: { data: data() } });
+
+      // 5 rejected polls at 2s each exhausts the cap.
+      await vi.advanceTimersByTimeAsync(2000 * 5);
+
+      await findByText(/poll string error/);
+      expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports a failed render instead of silently doing nothing", async () => {
     mockRender.mockRejectedValue(new Error("ffmpeg not found"));
     const { getByRole, findByText } = render(Page, { props: { data: data() } });
@@ -680,6 +703,15 @@ describe("the reader", () => {
     await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
 
     expect(await findByText(/ffmpeg not found/i)).toBeTruthy();
+  });
+
+  it("reports a non-Error render rejection as text", async () => {
+    mockRender.mockRejectedValue("render string error");
+    const { getByRole, findByText } = render(Page, { props: { data: data() } });
+
+    await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
+
+    expect(await findByText(/render string error/)).toBeTruthy();
   });
 
   it("plays straight away when the audio already exists", async () => {
@@ -782,6 +814,21 @@ describe("the reader", () => {
       await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
 
       expect(await findByText(/daily token budget exhausted/i)).toBeTruthy();
+      expect(getByRole("button", { name: /rewrite dialogue/i })).not.toHaveProperty(
+        "disabled",
+        true,
+      );
+    });
+
+    it("shows a non-Error rewrite rejection as text", async () => {
+      vi.mocked(api.regenerateReviewSession).mockRejectedValue("rewrite string error");
+      const { getByRole, findByText } = render(Page, {
+        props: { data: data() },
+      });
+
+      await fireEvent.click(getByRole("button", { name: /rewrite dialogue/i }));
+
+      expect(await findByText(/rewrite string error/)).toBeTruthy();
       expect(getByRole("button", { name: /rewrite dialogue/i })).not.toHaveProperty(
         "disabled",
         true,
@@ -1108,6 +1155,16 @@ describe("deleting the session", () => {
     await fireEvent.click(getByText("Confirm delete"));
 
     expect(await findByText("delete failed")).toBeTruthy();
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("shows a non-Error deletion rejection as text", async () => {
+    vi.mocked(api.deleteReviewSession).mockRejectedValue("delete string error");
+    const { getByText, findByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(getByText("Delete session"));
+    await fireEvent.click(getByText("Confirm delete"));
+
+    expect(await findByText("delete string error")).toBeTruthy();
     expect(mockGoto).not.toHaveBeenCalled();
   });
 
@@ -1542,5 +1599,16 @@ describe("repairing a session that lost its glosses", () => {
     await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
 
     expect((await findByRole("alert")).textContent).toContain("Groq is rate limited");
+  });
+
+  it("surfaces a non-Error regloss rejection as text", async () => {
+    // The whole epic is about a gloss loss that reported nothing. A repair that
+    // fails quietly would be the same bug wearing a button.
+    vi.mocked(api.reglossReviewSession).mockRejectedValue("regloss string error");
+    const { getByRole, findByRole } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect((await findByRole("alert")).textContent).toContain("regloss string error");
   });
 });

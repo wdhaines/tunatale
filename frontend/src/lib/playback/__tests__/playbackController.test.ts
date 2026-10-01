@@ -1129,6 +1129,24 @@ describe("playbackController", () => {
         expect(audioEl.playbackRate).toBe(1);
       });
 
+      it("swapping to a section with no cue manifest clears the active cues", () => {
+        // A section row without its own cues (e.g. audio rendered before the
+        // per-section manifest existed) must leave no stale cues or ref groups
+        // behind from the previous track.
+        const noSlowCues: LessonAudio = {
+          ...rateAudio,
+          sections: rateAudio.sections.map((s) =>
+            s.section_type === "slow_speed" ? { ...s, cues: undefined } : s,
+          ),
+        };
+        const ctrl = createController({ audio: noSlowCues });
+        ctrl.selectTrack("slow_speed");
+        expect(ctrl.activeSectionType).toBe("slow_speed");
+        expect(ctrl.activeCues).toBeNull();
+        expect(ctrl.currentCue).toBeNull();
+        expect(() => ctrl.nextCue()).not.toThrow();
+      });
+
       it("slow_speed plays at the slowed rate", () => {
         const ctrl = createController({ audio: rateAudio });
         ctrl.selectTrack("slow_speed");
@@ -3125,6 +3143,85 @@ describe("playbackController", () => {
       expect(lines.some((l) => l.includes("el:play"))).toBe(true);
       expect(lines.some((l) => l.includes("el:pause") && l.includes("swapping=0"))).toBe(true);
       expect(lines.some((l) => l.includes("el:ended"))).toBe(true);
+    });
+
+    // tunatale-bibo: the 2026-10-01 screen-off log showed a section change as
+    // ordinary playback (el:play, a clock advancing in real time) while the
+    // user heard it stall, and nothing in it said when the page was hidden or
+    // whether the element had run out of data. These lines are what that log
+    // was missing.
+    describe("what the page and the element were doing (bibo)", () => {
+      function setVisibility(state: DocumentVisibilityState) {
+        Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }
+
+      it("logs the page going hidden and coming back", () => {
+        const ctrl = createController();
+        // Controllers built by earlier tests are never destroyed and still
+        // listen on `document`, so read only THIS controller's lines: its id
+        // comes from a line only it can have written.
+        ctrl.play();
+        const id = /c=(\w+)/.exec(readMediaTrace().find((l) => l.includes("call:play"))!)![1];
+        try {
+          setVisibility("hidden");
+          setVisibility("visible");
+        } finally {
+          Object.defineProperty(document, "visibilityState", {
+            value: "visible",
+            configurable: true,
+          });
+        }
+        const lines = readMediaTrace().filter((l) => l.includes("vis:") && l.includes(`c=${id} `));
+        expect(lines).toHaveLength(2);
+        expect(lines[0]).toContain("vis:hidden");
+        expect(lines[1]).toContain("vis:visible");
+      });
+
+      it("logs the element running out of data, and playing again", () => {
+        createController();
+        audioEl.dispatchEvent(new Event("waiting"));
+        audioEl.dispatchEvent(new Event("playing"));
+        const lines = readMediaTrace();
+        expect(lines.some((l) => l.includes("el:waiting"))).toBe(true);
+        expect(lines.some((l) => l.includes("el:playing"))).toBe(true);
+      });
+
+      it("a seek's own waiting/playing pair is not logged: a scrub would flood the trace", () => {
+        createController();
+        Object.assign(audioEl, { seeking: true });
+        audioEl.dispatchEvent(new Event("waiting"));
+        Object.assign(audioEl, { seeking: false });
+        audioEl.dispatchEvent(new Event("playing"));
+        const lines = readMediaTrace();
+        expect(lines.some((l) => l.includes("el:waiting"))).toBe(false);
+        expect(lines.some((l) => l.includes("el:playing"))).toBe(false);
+      });
+
+      it("el:playing is logged once per starvation, not on every playing event", () => {
+        createController();
+        audioEl.dispatchEvent(new Event("waiting"));
+        audioEl.dispatchEvent(new Event("playing"));
+        audioEl.dispatchEvent(new Event("playing"));
+        expect(readMediaTrace().filter((l) => l.includes("el:playing"))).toHaveLength(1);
+      });
+
+      it("logs a media error with its code", () => {
+        createController();
+        Object.assign(audioEl, { error: { code: 3 } });
+        audioEl.dispatchEvent(new Event("error"));
+        expect(readMediaTrace().some((l) => l.includes("el:error") && l.includes("code=3"))).toBe(
+          true,
+        );
+      });
+
+      it("logs an error event that carries no MediaError", () => {
+        createController();
+        audioEl.dispatchEvent(new Event("error"));
+        expect(readMediaTrace().some((l) => l.includes("el:error") && l.includes("code=-"))).toBe(
+          true,
+        );
+      });
     });
 
     it("records the mediasession-ready line with the user agent", () => {

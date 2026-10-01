@@ -197,6 +197,15 @@ describe("making a review session", () => {
     expect(await findByText(/upstream exploded/i)).toBeTruthy();
   });
 
+  it("reports a non-Error failure as text", async () => {
+    mockCreateSession.mockRejectedValue("session string error");
+    const { findByRole, findByText } = render(Page);
+
+    await fireEvent.click(await findByRole("button", { name: /new review session/i }));
+
+    expect(await findByText(/session string error/)).toBeTruthy();
+  });
+
   it("does not leave the button looking stuck while it works", async () => {
     type Created = Awaited<ReturnType<typeof api.createReviewSession>>;
     let release!: (v: Created) => void;

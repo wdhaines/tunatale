@@ -117,6 +117,20 @@ describe("/login", () => {
     expect(alert.textContent).toContain("about 5 minutes");
   });
 
+  it("renders a short Retry-After wait in seconds", async () => {
+    const err = Object.assign(new Error("POST /api/auth/login: Too many failed login attempts"), {
+      retryAfter: 45,
+    });
+    mockLogin.mockRejectedValue(err);
+    const { getByLabelText, getByRole, findByRole } = render(Login);
+
+    await submit(getByLabelText, getByRole);
+
+    const alert = await findByRole("alert");
+    expect(alert.textContent).toContain("Too many failed login attempts");
+    expect(alert.textContent).toContain("Try again in 45 seconds");
+  });
+
   it("does not append an undefined string when Retry-After is absent", async () => {
     mockLogin.mockRejectedValue(new Error("POST /api/auth/login: Too many failed login attempts"));
     const { getByLabelText, getByRole, findByRole } = render(Login);

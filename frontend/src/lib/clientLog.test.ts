@@ -228,7 +228,6 @@ describe("touchTrace", () => {
     delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint;
     traceEvent(new MouseEvent("click", { clientX: 1, clientY: 2 }));
 
-    (document as unknown as { elementFromPoint: unknown }) = document as never;
     (document as unknown as { elementFromPoint: unknown }).elementFromPoint = () => {
       throw new Error("no layout");
     };

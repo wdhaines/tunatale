@@ -64,6 +64,7 @@ not like a translated textbook. Authenticity and natural idiom are the primary q
 - KEY_PHRASES section: always use female-1 only
 - Maintain character-to-voice consistency within each lesson
 - Narrator (English descriptions and translations): narrator voice only
+- Narration inside a scene (what no character says aloud, e.g. "They walked to the house."): a line with speaker "narration" — never a character's voice
 
 **JSON OUTPUT SCHEMA**
 Respond with ONLY a JSON object matching this schema (no markdown fences, no preamble):

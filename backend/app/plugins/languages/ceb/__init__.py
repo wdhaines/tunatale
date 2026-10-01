@@ -25,6 +25,10 @@ register(
             tts_locale="ceb-PH",
             tts_voice_map={
                 "narrator": NARRATOR_VOICE,
+                # Narration lines keep the Cebuano voice that read them before
+                # the role existed (Orus, lent by male-2); only their English
+                # moves to the narrator (user, 2026-09-30, tunatale-fx5n).
+                "narration": "ceb-PH-OrusGemini",
                 # Gemini-TTS voices (the user's decision, 2026-09-25,
                 # tunatale-u8nz.1), rendered through Cloud TTS with
                 # languageCode=ceb-PH by app/audio/gemini_tts.py. The id shape
@@ -58,13 +62,24 @@ register(
             # English median F0 on one dialogue line: Emma 204.1, Nancy 175.8,
             # Adam 105.9, Dustin 141.0 (vs Kore 209.4, Despina 185.5,
             # Charon 107.2, Orus 139.2 above).
+            # male-1 is the exception to the pitch match (tunatale-fx5n,
+            # 2026-10-01). Once narration's English moved to the narrator, the
+            # user found Adam too close to him on this lesson's own lines, and
+            # picked Brandon by ear from nine voices reading them. Pitch did
+            # not predict it: Adam sat 10 Hz below the narrator's line and
+            # Brandon 19 above (134.8 vs 115.6), but what the user heard was
+            # Adam's ACCENT changing with the text, the same voice sounding
+            # southern on a Norwegian lesson's English and not on this one's.
+            # Audition a stand-in on the lesson's own lines, beside the voice
+            # it has to differ from.
             tts_en_voice_map={
+                "narration": NARRATOR_VOICE,
                 "female-1": "en-US-EmmaMultilingualNeural",
                 "female-2": "en-US-NancyMultilingualNeural",
-                "male-1": "en-US-AdamMultilingualNeural",
+                "male-1": "en-US-BrandonMultilingualNeural",
                 "male-2": "en-US-DustinMultilingualNeural",
                 "female": "en-US-EmmaMultilingualNeural",
-                "male": "en-US-AdamMultilingualNeural",
+                "male": "en-US-BrandonMultilingualNeural",
             },
             # Per-voice loudness gains (dB) applied at assembly, target −20.0
             # LUFS: integrated loudness of the same 8 Cebuano sentences per
