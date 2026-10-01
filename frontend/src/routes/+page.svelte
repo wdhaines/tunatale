@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
+	import { pinReviewWords, pinnedReviewWords, unpinReviewWords } from '$lib/reviewDraft';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 
@@ -41,9 +42,6 @@
 	}
 	let sessions: ReviewSession[] = $state([]);
 	let creatingSession = $state(false);
-	// The pinned request from GET /prompt, held between copy and paste. Client-side
-	// on purpose — see the stateless rationale on bd tunatale-jmwb.
-	let draftWords: string[] = $state([]);
 	let sessionError = $state('');
 	// Held apart from sessionError on purpose: a 409 is not a failure. With
 	// nothing due there is genuinely nothing to review today, and styling that as
@@ -233,6 +231,27 @@
 		}
 	}
 
+	// Manual mode. The words are pinned, not just displayed: nothing server-side
+	// remembers the draft prompt, so the import has to be told them — and pinned
+	// outside this component, because the learner leaves the page to write the
+	// story and comes back to a fresh mount ($lib/reviewDraft).
+	async function copyDraftPrompt() {
+		const r = await api.getReviewSessionDraftPrompt();
+		pinReviewWords(r.review_words);
+		return r.system_prompt + '\n\n' + r.user_prompt;
+	}
+
+	async function importDraft(raw: string, idempotencyKey: string) {
+		const words = pinnedReviewWords();
+		// Said here rather than sent: the server can only answer an empty list
+		// with a validator message about a field the learner never typed.
+		if (words.length === 0) throw new Error(t('home.copyPromptFirst'));
+		const created = await api.createReviewSessionFromPaste(raw, words, idempotencyKey);
+		// Only a success unpins, so a retry of a failed import still has them.
+		unpinReviewWords();
+		return created;
+	}
+
 	function computeProgress(
 		curriculumId: string,
 		days: Array<{ day: number; position: number; lesson_id: string }>
@@ -382,15 +401,8 @@
 		<details class="manual-session">
 			<summary>{t('home.writeByHand')}</summary>
 			<ManualStoryPanel
-				copyPrompt={async () => {
-					// The words are stashed, not just displayed: nothing server-side
-					// remembers this request, so the import has to be told them.
-					const r = await api.getReviewSessionDraftPrompt();
-					draftWords = r.review_words;
-					return r.system_prompt + '\n\n' + r.user_prompt;
-				}}
-				importRaw={async (raw, idempotencyKey) =>
-					api.createReviewSessionFromPaste(raw, draftWords, idempotencyKey)}
+				copyPrompt={copyDraftPrompt}
+				importRaw={importDraft}
 				onImported={(id) => goto(`/review-sessions/${id}`)}
 			/>
 		</details>

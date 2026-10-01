@@ -23,6 +23,7 @@ const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
 vi.mock("$lib/api", () => ({
+  LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
     listCurricula: vi.fn(),
     startPlan: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock("$lib/stores/listened.svelte", () => ({
 }));
 
 import { api } from "$lib/api";
+import { unpinReviewWords } from "$lib/reviewDraft";
 const mockListCurricula = vi.mocked(api.listCurricula);
 const mockGetCurriculumProgress = vi.mocked(api.getCurriculumProgress);
 const mockListSessions = vi.mocked(api.listReviewSessions);
@@ -52,6 +54,9 @@ const STORY = '{"title":"By Hand","scenes":[]}';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The pin outlives a page on purpose, so it would outlive a test too.
+  unpinReviewWords();
+  localStorage.clear();
   mockListCurricula.mockResolvedValue([]);
   mockGetCurriculumProgress.mockResolvedValue([]);
   mockListSessions.mockResolvedValue([]);
@@ -116,6 +121,69 @@ describe("manual mode on the index", () => {
     await waitFor(() =>
       expect(mockFromPaste).toHaveBeenCalledWith(STORY, WORDS, expect.any(String)),
     );
+  });
+
+  it("still has the words after leaving the page and coming back", async () => {
+    // The 2026-10-01 failure, step for step: copy the prompt, open another page
+    // (the session auto mode had just made), come back, paste. The words were
+    // component state, so the remount sent an empty list and the server refused
+    // it.
+    mockFromPaste.mockResolvedValue({ id: "new-1", warnings: [] } as never);
+    const first = render(Page);
+    await first.findByText(/write one by hand instead/i);
+    await copyPrompt(first.getByTestId);
+    first.unmount();
+
+    const { findByText, getByTestId, getByPlaceholderText } = render(Page);
+    await findByText(/write one by hand instead/i);
+    await fireEvent.input(getByPlaceholderText(/paste story json/i), {
+      target: { value: STORY },
+    });
+    await fireEvent.click(getByTestId("import-btn"));
+
+    await waitFor(() =>
+      expect(mockFromPaste).toHaveBeenCalledWith(STORY, WORDS, expect.any(String)),
+    );
+  });
+
+  it("refuses a paste with no pinned words, and says how to recover", async () => {
+    const { findByText, getByTestId, getByPlaceholderText } = render(Page);
+    await findByText(/write one by hand instead/i);
+
+    await fireEvent.input(getByPlaceholderText(/paste story json/i), {
+      target: { value: STORY },
+    });
+    await fireEvent.click(getByTestId("import-btn"));
+
+    expect(await findByText(/copy the prompt again/i)).toBeTruthy();
+    // Not sent at all: the server would only answer with a validator message
+    // about a field the learner never typed.
+    expect(mockFromPaste).not.toHaveBeenCalled();
+  });
+
+  it("forgets the words once the session exists", async () => {
+    // Otherwise the next paste, written from no prompt at all, would be scored
+    // against this session's words.
+    mockFromPaste.mockResolvedValue({ id: "new-1", warnings: [] } as never);
+    const first = render(Page);
+    await first.findByText(/write one by hand instead/i);
+    await copyPrompt(first.getByTestId);
+    await fireEvent.input(first.getByPlaceholderText(/paste story json/i), {
+      target: { value: STORY },
+    });
+    await fireEvent.click(first.getByTestId("import-btn"));
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/review-sessions/new-1"));
+    first.unmount();
+
+    const { findByText, getByTestId, getByPlaceholderText } = render(Page);
+    await findByText(/write one by hand instead/i);
+    await fireEvent.input(getByPlaceholderText(/paste story json/i), {
+      target: { value: STORY },
+    });
+    await fireEvent.click(getByTestId("import-btn"));
+
+    expect(await findByText(/copy the prompt again/i)).toBeTruthy();
+    expect(mockFromPaste).toHaveBeenCalledTimes(1);
   });
 
   it("opens the session it just created", async () => {

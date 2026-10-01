@@ -68,3 +68,20 @@ def test_an_accepted_word_is_minted_as_a_cognate(dbs, capsys):
     main(["--dictionary", str(dictionary), "--apply", "--accept", "Amerikana"])
     assert "FALSE FRIENDS" not in capsys.readouterr().out
     assert target.get_collocation("Amerikana").syntactic_unit.note == "Tagalog cognate: Amerikana"
+
+
+def test_the_dialectal_where_is_never_minted(dbs, capsys):
+    """Tagalog saan reaches Cebuano saa by one letter and the same gloss, but saa is
+    dialectal: standard Cebuano says asa (3,136 uses in the frequency corpus to
+    saa's 25). It was minted on 2026-09-26, lapsed twice, and was removed on the
+    user's call (2026-10-01); the default reject list keeps a re-run from
+    minting it again."""
+    target, dictionary = dbs
+    SRSDatabase(settings.database_urls["tl"]).add_collocation(SyntacticUnit("saan?", "where?", 1, 1, "test"), "tl")
+    with dictionary.open("a", encoding="utf-8") as fh:
+        fh.write("\n" + json.dumps({"word": "saa", "senses": [{"glosses": ["Where"], "tags": ["dialectal"]}]}))
+
+    main(["--dictionary", str(dictionary), "--apply"])
+
+    assert target.get_collocation("saa") is None
+    assert "1 word(s) rejected by review." in capsys.readouterr().out

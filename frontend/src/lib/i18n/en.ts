@@ -439,6 +439,8 @@ export const en = {
   "home.working": "Working…",
   "home.newReviewSession": "+ New review session",
   "home.writeByHand": "Write one by hand instead",
+  "home.copyPromptFirst":
+    "No review words are saved in this browser for this language. Copy the prompt again, then import your story.",
   "home.rsBlurb":
     "Built from the words you are closest to forgetting, across everything you have learned — not from any one curriculum.",
   "home.noReviewSessions": "No review sessions yet.",
