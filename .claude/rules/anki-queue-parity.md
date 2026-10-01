@@ -258,7 +258,9 @@ frequent.
     (`rslib/.../bury_and_suspend.rs:44-50` — SQL `c.queue in (-3, -2)`). TT mirrors
     via `collocation_directions.bury_kind`:
     - `'sched'` → released by the daily sweep
-    - `'user'` → sticks across rollover (from `POST /api/srs/bury`)
+    - `'user'` → sticks across rollover. Nothing writes it today: `app/api` has
+      no bury route, and the only rows carrying it came from the one-time
+      backfill in `app/srs/migrations.py`
     - `NULL` → not buried
 
     The tri-state is declared as `domain=BURY_KIND_DOMAIN` in
@@ -484,14 +486,13 @@ it; verify it is still firing, then look for new edge cases.
 - Anki has the card at `queue=-2` while TT shows `'review'` or `'new'`. Causes:
   1. Sync hasn't run — expected.
   2. **Expected after rollover.** Both -2 and -3 map to `'sched'`, and both are
-     released at rollover. Not a bug unless it happens before rollover or you used
-     `POST /api/srs/bury`.
+     released at rollover. Not a bug unless it happens before rollover.
   3. `_bury_kind_from_queue` wasn't called on this write path — audit every
      `DirectionState` construction site in `sync_pull`.
   4. **Rollover plus a true user-bury.** `_bury_kind_from_queue` can't tell a
-     user-bury from a sibling-bury (both are -2). After rollover Anki releases it;
-     the only way to keep it buried in TT is `POST /api/srs/bury` (writes `'user'`
-     directly). Check `BURY_TRACE` for `buried_to_released_writes`.
+     user-bury from a sibling-bury (both are -2). After rollover Anki releases it, and
+     so does TT: no code path writes `'user'` today, so a card cannot be kept
+     buried in TT across a rollover. Check `BURY_TRACE` for `buried_to_released_writes`.
 
 **TT shows a stuck cohort of `state='buried' bury_kind='user'` rows:**
 - Buried rows backfilled to `'user'` without a matching Anki-side user-bury release

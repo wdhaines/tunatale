@@ -38,12 +38,12 @@ Two main packages:
 
 - **`backend/`** — FastAPI app (`app/main.py`), Python 3.14, `uv` for deps
   - `app/languages.py` — per-language plugin registry (`LanguageConfig`/`LanguageContext`)
-  - `app/cards/` — vocab-card notetypes (`vocab_notetype`, `field_map`) + media-fetch pipeline (Forvo/Pixabay/EdgeTTS); no `anki` runtime dep
+  - `app/cards/` — vocab-card notetypes (`vocab_notetype`, `field_map`) + media-fetch pipeline (Forvo/Pixabay/TTS); no `anki` runtime dep
   - `app/plugins/anki_sync/` — optional Anki collection reading & USN sync (use `safety.safe_open`, never raw sqlite3); gated on `sync_enabled` + package presence
   - `app/plugins/languages/` — language plugins (each subfolder is self-contained: registration, preprocessor, syllabifier, audio breakdown, vocab notetype); core never imports these directly
   - `app/api/` — FastAPI route modules
   - `app/common/` — cross-cutting helpers (guid generation)
-  - `app/audio/` — EdgeTTS + audio assembly pipeline
+  - `app/audio/` — TTS (Azure, Gemini) + audio assembly pipeline
   - `app/generation/` — Curriculum + story generation
   - `app/llm/` — Groq LLM client + cassette system
   - `app/media/` — in-app media import (Anki media → TT cache)

@@ -174,8 +174,11 @@ in `app/plugins/anki_sync/sync.py`. `sync.py` is the runner and re-export facade
 the `AnkiSync` engine is in `sync_engine.py`, collection I/O in
 `sync_reader.py`/`sync_writer.py`, leaf helpers in `sync_common.py`; import and
 patch through `app.plugins.anki_sync.sync`. It runs `warn_if_guid_collisions →
-detect_and_reset_orphans → sync_create_new → sync_push → sync_pull → (every
-refresh_* deck-config sync + Anki→TT media refresh + soak heartbeat)`.
+warn_if_recognition_only_deck → detect_and_reset_orphans → sync_create_new →
+sync_push → sync_pull → promote_production_cards → (every refresh_* deck-config
+sync + watch_fsrs_preset + Anki→TT media refresh + soak heartbeat)`. That list is
+a reading aid, not the contract: the order is whatever `sync.py::run_full_sync`
+does, and `tests/test_anki_sync_main.py::TestRunFullSync` pins it.
 
 `warn_if_guid_collisions` is a report-only tripwire (it runs on dry-runs too). It
 warns `GUID_COLLISION` when two Anki notes share the same `(text, POS)` and so

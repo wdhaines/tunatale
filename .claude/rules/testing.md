@@ -47,13 +47,15 @@ card is keyed on; it survived because every preview test was Slovene, where
 
 - **LLM calls**: always use `CassetteLLMClient` — never hit the live API in CI
 - **Database**: use `sqlite:///:memory:` for SRS tests
-- **EdgeTTS**: mock `edge_tts.Communicate` with pytest-mock
+- **TTS (Azure, Gemini)**: `respx` at the httpx transport
+  (`tests/test_azure_tts.py`, `tests/test_gemini_tts.py`)
 - **HTTP**: use `respx` for external HTTP calls in `LLMClient` tests
 
 ## Mock Boundaries (enforced)
 
 **Mock only at process/network boundaries** — the anki driver subprocess
-(`_run_driver`), EdgeTTS, Pixabay/Forvo, Groq, the macOS keychain. Never
+(`_run_driver`), the TTS vendors (Azure, Gemini), Pixabay/Forvo, Groq, the macOS
+keychain. Never
 `patch("app.…")` an internal function so that two halves of a flow are each
 tested against a fake of the other: each half goes green and the bug lives in the
 gap (the b0a4b8a regression class — seven regressions through a 100%-coverage
