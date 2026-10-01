@@ -55,3 +55,25 @@ def test_the_cache_dir_reaches_both_adapters(tmp_path):
     assert svc._cache_dir == cache
     assert svc._azure._cache_dir == cache
     assert svc._gemini._cache_dir == cache
+
+
+def test_the_enforcing_ledger_resets_in_the_configured_zone(tmp_path, monkeypatch):
+    """The ledger that REFUSES synthesis uses the same month boundary the readout shows.
+
+    The factory built it with no ``reset_tz``, so ``azure_tts_quota_reset_tz``
+    moved the usage display (``app/api/llm.py``) but not the enforcement. At
+    2026-09-30 12:00 UTC it is already October in Kiritimati (UTC+14): characters
+    spent seven hours earlier belong to September there and must not count.
+    """
+    from datetime import UTC, datetime
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "azure_tts_usage_ledger_path", tmp_path / "ledger.txt")
+    monkeypatch.setattr(settings, "azure_tts_quota_reset_tz", "Pacific/Kiritimati")
+    ledger = get_tts_service()._azure._ledger
+
+    now = datetime(2026, 9, 30, 12, 0, tzinfo=UTC).timestamp()
+    ledger.record(1000, now=datetime(2026, 9, 30, 5, 0, tzinfo=UTC).timestamp())
+
+    assert ledger.chars_used(now) == 0

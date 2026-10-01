@@ -34,7 +34,9 @@ def get_tts_service(cache_dir: Path | None = None) -> TTSService:
     from app.audio.char_ledger import AzureCharacterLedger
     from app.config import settings
 
-    ledger = AzureCharacterLedger(settings.azure_tts_usage_ledger_path)
+    # The same zone the usage readout uses (app/api/llm.py), so the month the UI
+    # shows is the month synthesis is refused in.
+    ledger = AzureCharacterLedger(settings.azure_tts_usage_ledger_path, reset_tz=settings.azure_tts_quota_reset_tz)
     azure = AzureTTSService(cache_dir=cache_dir, ledger=ledger)
     gemini = GeminiTTSService(cache_dir=cache_dir)
     return RoutingTTSService(azure, gemini, cache_dir=cache_dir)
