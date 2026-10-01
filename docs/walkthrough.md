@@ -3100,7 +3100,7 @@ Two TT-only refinements sit on top. `budget_neutral` marks a "Check your work" r
 | New-card gather, bury and order | 14, 24, 25, 28, 32, 33, 64, 65, 83, 84 | Gather order, cross-direction bury, Template sort, production gate, writer positions |
 | Sibling bury and unbury | 27, 35, 47, 56, 64, 67 | `bury_kind`, the daily sweep, the 04:00 window |
 | Badges and daily caps | 8a, 16, 26, 36, 73, 75 to 77, 79 | Counts from TT state only, `introduced_at`, review budget, new cap |
-| Sync merge and push/pull seams | 17 to 22, 30, 37, 58, 60 to 61, 68 to 74, 80, 86 | What the diff compares, Anki-ahead deferral, graves, revlog ids, per-grade push, suspension round trip |
+| Sync merge and push/pull seams | 17 to 22, 30, 37, 58, 60 to 61, 68 to 74, 80, 86, 87 | What the diff compares, Anki-ahead deferral, graves, revlog ids, per-grade push, suspension round trip |
 | Pending bucket and isolation | 81 (retired), 82 | Staged grades, per-language injection |
 | Seeded starter cards | 85 | A review card with no reps |
 
@@ -3109,10 +3109,10 @@ grep "^## Layer" docs/anki-parity-layers.md | tail -4 | cut -c1-110
 ```
 
 ```output
-## Layer 83 — the new-card limit was applied AFTER the Template sort, turning a ranking into a filter (and t
 ## Layer 84 — every card TunaTale writes was allocated to the BACK of the new queue (front-of-queue allocato
 ## Layer 85 — a seeded starter card is a REVIEW card with no reps, and "has a schedule" stopped meaning `rep
 ## Layer 86 — suspending and un-suspending a never-reviewed card from TunaTale was lossy in both directions
+## Layer 87 — suspending a REVIEWED card through TunaTale wrote a review nobody made
 ```
 
 **The oracle harness** pins TT against the real Anki scheduler rather than against TT's idea of it. A pytest fixture (`synthetic_collection`) builds a minimal modern `collection.anki2`, and a subprocess driver (`backend/tests/anki_oracle/oracle.py`, run with `uv run --with anki python`) opens it, enables the V3 scheduler, and answers JSON ops: queue order and counts, post-grade stability, `get_today`, `deck_today`, and so on. Tests are `backend/tests/test_parity_*.py`, marked `@pytest.mark.oracle`, opt-in via `--run-oracle`. The subprocess boundary is the architectural point: backend code and backend tests never `import anki`. Where the oracle and the Anki source disagree, trust the binary (Layer 38 was found that way). The harness mechanics, its fifteen gotchas and the CI wiring are in §10 and §14; the rule file is `.claude/rules/anki-oracle-harness.md`. Two CI facts belong here: `anki-gates` runs the oracle at the 04:00 rollover instead of the workflow's UTC, so a boundary-only failure there means TT and Anki genuinely disagree about the day (suspect product code first); and a finding that the harness surfaces is first filed `xfail(strict=True)` and fixed in its own commit.
