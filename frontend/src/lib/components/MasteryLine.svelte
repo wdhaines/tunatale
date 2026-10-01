@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { TranscriptData } from '$lib/api';
 	import { lessonMastery } from '$lib/mastery';
-	import type { SideResult } from '$lib/mastery';
+	import type { MasteryResult, SideResult } from '$lib/mastery';
 	import Tooltip from './Tooltip.svelte';
 
 	/**
@@ -41,14 +41,15 @@
 
 	const mastery = $derived(transcript ? lessonMastery(transcript) : null);
 
-	const sideRows = $derived<Array<readonly [string, SideResult]>>(
-		mastery
-			? [
-					['Understand', mastery.sides.understand],
-					['Produce', mastery.sides.produce]
-				]
-			: []
-	);
+	// Both lists are built only inside the `{:else if mastery ...}` guard below,
+	// so they take a non-null result. As `$derived(mastery ? [...] : [])` their
+	// null arms were unreachable — dead branches the coverage gate can see.
+	function sideRowsOf(m: MasteryResult): Array<readonly [string, SideResult]> {
+		return [
+			['Understand', m.sides.understand],
+			['Produce', m.sides.produce]
+		];
+	}
 
 	const BAND_ORDER = ['solid', 'months', 'weeks', 'days', 'learning', 'suspended', 'new', 'none'] as const;
 	function total(bands: Record<string, number>): number {
@@ -58,17 +59,15 @@
 		return p == null ? '—' : `${Math.round(p * 100)}%`;
 	}
 
-	const segments = $derived(
-		!mastery
-			? []
-			: [
-					{ key: 'new', count: mastery.counts.new, label: 'new', lemmas: mastery.lemmas?.new ?? [] },
-					{ key: 'learning', count: mastery.counts.learning, label: 'learning', lemmas: mastery.lemmas?.learning ?? [] },
-					{ key: 'due', count: mastery.counts.due, label: 'due', lemmas: mastery.lemmas?.due ?? [] },
-					{ key: 'review', count: mastery.counts.review, label: 'review', lemmas: mastery.lemmas?.review ?? [] },
-					{ key: 'known', count: mastery.counts.known, label: 'known', lemmas: mastery.lemmas?.known ?? [] }
-				].filter((s) => s.count > 0 || s.key === 'known')
-	);
+	function segmentsOf(m: MasteryResult) {
+		return [
+			{ key: 'new', count: m.counts.new, label: 'new', lemmas: m.lemmas.new },
+			{ key: 'learning', count: m.counts.learning, label: 'learning', lemmas: m.lemmas.learning },
+			{ key: 'due', count: m.counts.due, label: 'due', lemmas: m.lemmas.due },
+			{ key: 'review', count: m.counts.review, label: 'review', lemmas: m.lemmas.review },
+			{ key: 'known', count: m.counts.known, label: 'known', lemmas: m.lemmas.known }
+		].filter((s) => s.count > 0 || s.key === 'known');
+	}
 
 	const LEMMA_TOOLTIP_MAX = 15;
 	function formatLemmaTooltip(lemmas: string[]): string {
@@ -90,10 +89,10 @@
 	</div>
 {:else if mastery && mastery.pct !== null}
 	<p class="mastery-line">
-		{#each segments as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}{#if extra}<span class="mastery-sep">·</span><Tooltip translation={extra.tooltip}><span class="mastery-segment mastery-extra" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{extra.text}</span></Tooltip>{/if}
+		{#each segmentsOf(mastery) as seg, i (seg.key)}{#if i > 0}<span class="mastery-sep">·</span>{/if}{#if seg.lemmas.length > 0}<Tooltip translation={formatLemmaTooltip(seg.lemmas)}><span class="mastery-segment" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{seg.count} {seg.label}</span></Tooltip>{:else}<span class="mastery-segment">{seg.count} {seg.label}</span>{/if}{/each}{#if extra}<span class="mastery-sep">·</span><Tooltip translation={extra.tooltip}><span class="mastery-segment mastery-extra" role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') (e.currentTarget as HTMLElement).click(); }}>{extra.text}</span></Tooltip>{/if}
 	</p>
 	<div class="mastery-sides">
-		{#each sideRows as [label, side] (label)}
+		{#each sideRowsOf(mastery) as [label, side] (label)}
 			<span class="side-label">{label}</span>
 			<span class="side-bar" role="img" aria-label="{label}: {pctText(side.pct)}">
 				{#each BAND_ORDER as band (band)}{#if (side.bands[band] ?? 0) > 0}<i class="seg seg-{band}" style:width="{(100 * side.bands[band]) / total(side.bands)}%"></i>{/if}{/each}

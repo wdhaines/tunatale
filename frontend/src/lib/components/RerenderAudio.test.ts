@@ -131,6 +131,17 @@ describe("RerenderAudio", () => {
     await screen.findByText(/Re-render failed: Lesson not found/);
   });
 
+  it("a non-Error render rejection is shown as text", async () => {
+    setup({ rerender: vi.fn().mockRejectedValue("render string error") });
+    await fireEvent.click(await screen.findByRole("button", { name: /re-render/i }));
+    await screen.findByText(/render string error/);
+  });
+
+  it("a non-Error estimate rejection is shown as text", async () => {
+    setup({ estimate: vi.fn().mockRejectedValue("estimate string error") });
+    await screen.findByText(/Re-render failed: estimate string error/);
+  });
+
   it("a stale estimate does not overwrite a newer one", async () => {
     let slow!: (e: RenderEstimate) => void;
     const estimate = vi

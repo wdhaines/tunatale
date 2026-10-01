@@ -1129,6 +1129,24 @@ describe("playbackController", () => {
         expect(audioEl.playbackRate).toBe(1);
       });
 
+      it("swapping to a section with no cue manifest clears the active cues", () => {
+        // A section row without its own cues (e.g. audio rendered before the
+        // per-section manifest existed) must leave no stale cues or ref groups
+        // behind from the previous track.
+        const noSlowCues: LessonAudio = {
+          ...rateAudio,
+          sections: rateAudio.sections.map((s) =>
+            s.section_type === "slow_speed" ? { ...s, cues: undefined } : s,
+          ),
+        };
+        const ctrl = createController({ audio: noSlowCues });
+        ctrl.selectTrack("slow_speed");
+        expect(ctrl.activeSectionType).toBe("slow_speed");
+        expect(ctrl.activeCues).toBeNull();
+        expect(ctrl.currentCue).toBeNull();
+        expect(() => ctrl.nextCue()).not.toThrow();
+      });
+
       it("slow_speed plays at the slowed rate", () => {
         const ctrl = createController({ audio: rateAudio });
         ctrl.selectTrack("slow_speed");

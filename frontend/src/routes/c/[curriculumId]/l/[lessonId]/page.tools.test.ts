@@ -275,6 +275,28 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       expect(await findByText("audio fetch failed")).toBeTruthy();
       expect(mockGetLessonAudio).toHaveBeenCalledTimes(1);
     });
+
+    it("surfaces a non-Error getLessonAudio rejection as text", async () => {
+      mockGetLessonAudio.mockRejectedValue("audio string error");
+      (pipelineStore as any).status = {
+        active: true,
+        days: [
+          {
+            day: 1,
+            state: "ready",
+            has_audio: true,
+            lesson_id: null,
+            error: null,
+            retryable: null,
+            detail: null,
+          },
+        ],
+      };
+      const { findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio: null, transcript: null } },
+      });
+      expect(await findByText("audio string error")).toBeTruthy();
+    });
   });
 
   describe("lesson source panel", () => {
@@ -418,6 +440,18 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       await fireEvent.click(getByText("Confirm delete"));
 
       expect(await findByText("delete failed")).toBeTruthy();
+      expect(mockGoto).not.toHaveBeenCalled();
+    });
+
+    it("shows a non-Error deletion rejection as text", async () => {
+      mockDeleteCurriculumDay.mockRejectedValue("delete string error");
+      const { getByText, findByText } = render(Page, {
+        props: { data: { curriculum, lesson, audio, transcript } },
+      });
+      await fireEvent.click(getByText("Delete day 1"));
+      await fireEvent.click(getByText("Confirm delete"));
+
+      expect(await findByText("delete string error")).toBeTruthy();
       expect(mockGoto).not.toHaveBeenCalled();
     });
   });
@@ -730,6 +764,11 @@ describe("review coverage readout (bd tunatale-37xv)", () => {
     expect(queryByTestId("review-coverage")).toBeNull();
   });
 
+  it("counts a missing review_used as none reused", () => {
+    const { getByTestId } = renderWith({ review_requested: ["a", "b"] });
+    expect(getByTestId("review-coverage").textContent ?? "").toMatch(/0 of 2/);
+  });
+
   it("does not style a low number as a failure", async () => {
     // At NATURAL pressure the prompt tells the model that using none of them is
     // a correct answer — measured live, 1 of 12. Reading this as a grade would
@@ -894,6 +933,15 @@ describe("repairing a lesson that lost its glosses", () => {
     expect(await findByText("Groq is rate limited")).toBeTruthy();
     // Flag cleared → button back to its idle label, ready for a retry.
     await waitFor(() => expect(getByRole("button", { name: /restore glosses/i })).toBeTruthy());
+  });
+
+  it("surfaces a non-Error regloss rejection as text", async () => {
+    mockReglossLesson.mockRejectedValue("regloss string error");
+    const { getByRole, findByText } = render(Page, { props: { data: withCount(0) } });
+
+    await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
+
+    expect(await findByText("regloss string error")).toBeTruthy();
   });
 });
 

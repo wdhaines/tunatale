@@ -27,7 +27,7 @@ export interface MasteryResult {
     understand: SideResult;
     produce: SideResult;
   };
-  lemmas?: {
+  lemmas: {
     new: string[];
     learning: string[];
     due: string[];

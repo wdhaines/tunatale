@@ -150,6 +150,31 @@ describe("ManualStoryPanel", () => {
     });
   });
 
+  it("shows a non-Error copy rejection as text", async () => {
+    copyPrompt.mockRejectedValueOnce("copy string error");
+
+    const { getByText } = render(ManualStoryPanel, { props: PROPS });
+    await fireEvent.click(getByText("Copy story prompt"));
+
+    await waitFor(() => {
+      expect(getByText("copy string error")).toBeTruthy();
+    });
+  });
+
+  it("shows a non-Error import rejection as text", async () => {
+    importRaw.mockRejectedValueOnce("import string error");
+
+    const { container } = render(ManualStoryPanel, { props: PROPS });
+    const textarea = container.querySelector("textarea")!;
+    await fireEvent.input(textarea, { target: { value: '{"title":"X"}' } });
+    await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("import string error");
+    });
+    expect(onImported).not.toHaveBeenCalled();
+  });
+
   it("disables import button while import is loading", async () => {
     importRaw.mockReturnValue(new Promise(() => {}));
 
@@ -233,6 +258,17 @@ describe("ManualStoryPanel", () => {
       await fireEvent.click(getByText("Confirm delete"));
 
       expect(await findByText("delete failed")).toBeTruthy();
+    });
+
+    it("shows a non-Error deletion rejection as text", async () => {
+      onDelete.mockRejectedValueOnce("delete string error");
+      const { getByText, findByText } = render(ManualStoryPanel, {
+        props: PROPS,
+      });
+      await fireEvent.click(getByText("Delete this day"));
+      await fireEvent.click(getByText("Confirm delete"));
+
+      expect(await findByText("delete string error")).toBeTruthy();
     });
   });
 });
