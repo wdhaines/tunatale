@@ -24,6 +24,10 @@ Operations
 ``{"op": "check_database"}``
     Runs Tools → Check Database. Returns ``{"ran", "ok", "report"}``; assert on
     ``ok``, because a failed check returns rather than raises.
+``{"op": "set_due_date", "card_ids": [1], "days": "5"}``
+``{"op": "forget_cards", "card_ids": [1]}``
+    Anki's own Set Due Date and Forget. Read the manual revlog row each leaves
+    with ``get_revlog``.
 """
 
 from __future__ import annotations
@@ -322,6 +326,23 @@ def _op_get_revlog(col: Any, op: dict) -> list[dict]:
     ]
 
 
+def _op_set_due_date(col: Any, op: dict) -> dict:
+    """Run Anki's own Set Due Date on *card_ids* — a manual schedule change.
+
+    ``days`` is the string the dialog takes: ``"5"`` moves the due date and
+    ``"5!"`` also resets the interval. The revlog row this leaves behind is what
+    Anki itself records for a change that is not a review.
+    """
+    col.sched.set_due_date(op["card_ids"], str(op["days"]))
+    return {"ok": True}
+
+
+def _op_forget_cards(col: Any, op: dict) -> dict:
+    """Run Anki's Forget on *card_ids* (cards go back to new)."""
+    col.sched.schedule_cards_as_new(op["card_ids"])
+    return {"ok": True}
+
+
 def _op_add_review_cards(col: Any, op: dict) -> dict:
     """Add *count* overdue review cards (type=2, queue=2, due in the past) mid-session.
 
@@ -413,6 +434,8 @@ _OPERATIONS: dict[str, Any] = {
     "add_review_cards": _op_add_review_cards,
     "get_card": _op_get_card,
     "get_revlog": _op_get_revlog,
+    "set_due_date": _op_set_due_date,
+    "forget_cards": _op_forget_cards,
     "get_today": _op_get_today,
     "deck_today": _op_deck_today,
     "scheduling_states": _op_scheduling_states,

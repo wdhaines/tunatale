@@ -3712,6 +3712,9 @@ class TestRevlog:
         assert row["review_kind"] == 4
         assert row["collocation_id"] == 1
         assert row["direction"] == "recognition"
+        # Never 0: a manual row with factor 0 is Anki's Forget marker (Layer 88).
+        # 544 is manual_revlog_factor for a new direction's default difficulty, 5.0.
+        assert row["factor"] == 544
 
     def test_has_revision_near_detects_duplicate(self, srs_db):
         """has_revision_near returns True for a row within 5000ms with same ease."""

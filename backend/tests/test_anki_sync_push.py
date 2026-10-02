@@ -1736,7 +1736,7 @@ class TestSyncPushGuardsAgainstAnkiAhead:
         anki_conn.commit()
         writer = OfflineWriter(anki_conn)
         state = writer.get_current_card_state(90010)
-        assert state == {"queue": 1, "type": 1, "left": 1001, "mod": 0}
+        assert state == {"queue": 1, "type": 1, "left": 1001, "mod": 0, "due": 1, "ivl": 0}
 
     def test_offline_writer_get_current_card_state_unknown_card_id(self):
         anki_conn = _make_anki_full_db()

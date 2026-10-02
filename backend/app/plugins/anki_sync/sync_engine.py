@@ -50,7 +50,7 @@ from app.srs.anki_mirror.queue_stats import (
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
-from app.srs.fsrs import is_day_level_last_review
+from app.srs.fsrs import MANUAL_REVIEW_KIND, is_day_level_last_review, manual_revlog_row
 from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
 from app.srs.lemmatizer import headword_lemma
 
@@ -1206,7 +1206,9 @@ class AnkiSync:
             review_count = self._writer.count_reviews_today_for_deck(deck_id, today_4am_ms)
             self._writer.set_deck_studied_today(deck_id, day_index, new_count, review_count)
 
-    def _push_revlog_for_direction(self, guid: str, direction: Direction, ds: DirectionState) -> None:
+    def _push_revlog_for_direction(
+        self, guid: str, direction: Direction, ds: DirectionState, *, manual: bool = False
+    ) -> bool:
         """Push unpushed tt_revlog rows for *direction* to Anki's revlog.
 
         Per-grade push: each tt_revlog row with id > MAX(revlog.id) for the
@@ -1223,15 +1225,29 @@ class AnkiSync:
         above the watermark (pre-Layer-78 history, test helpers, or the
         accepted phone-grade-newer edge where a phone grade empties the
         candidate set).
+
+        Manual rows (``review_kind = 4``, Layer 88). A manual tt_revlog row is
+        TunaTale's own record of a hand change and is never sent as it stands:
+        the push writes Anki's manual row itself, from the card's interval before
+        and after (``_log_manual_change``). The one exception is a recovered
+        (re-minted) card, whose whole history is being restored and whose manual
+        rows came from Anki in the first place. Either way a manual row is not a
+        review, so it never counts towards ``reps``.
+
+        *manual*: nothing was graded, so with no rows to send there is no review
+        to derive either. Returns True when a row was written.
         """
         if ds.anki_card_id is None:
-            return
+            return False
         coll_id = self._db.get_collocation_id_by_guid(guid)
         if coll_id is None:
-            return
+            return False
         max_anki_id = self._writer.max_revlog_id_for_card(ds.anki_card_id)
         rows = self._db.get_unpushed_revlog_rows(coll_id, direction, max_anki_id)
+        if (guid, direction.value) not in self._recovered_directions:
+            rows = [r for r in rows if r.review_kind != MANUAL_REVIEW_KIND]
         if rows:
+            reviews = sum(1 for r in rows if r.review_kind != MANUAL_REVIEW_KIND)
             lapse_count = sum(1 for r in rows if r.review_kind == 1 and r.button_chosen == 1)
             for i, row in enumerate(rows):
                 is_last = i == len(rows) - 1
@@ -1245,37 +1261,64 @@ class AnkiSync:
                     type_=row.review_kind,
                     preferred_id=row.id,
                     is_lapse=(row.review_kind == 1 and row.button_chosen == 1),
-                    reps_bump=len(rows) if is_last else 0,
+                    reps_bump=reviews if is_last else 0,
                     lapses_bump=lapse_count if is_last else 0,
                     ds_reps=ds.reps if is_last else None,
                     ds_lapses=ds.lapses if is_last else None,
                 )
-        else:
-            learn_steps, _ = resolve_learning_steps(self._db)
-            relearn_steps, _ = resolve_relearning_steps(self._db)
-            type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
-            ease = ds.last_rating if ds.last_rating is not None else 3
-            # Anki writes factor = round(difficulty_shifted × 1000) where
-            # difficulty_shifted = (difficulty − 1.0)/9.0 + 0.1 (rslib/src/card/mod.rs:115-125).
-            # No clamp: Anki stores the raw shifted value; for real FSRS difficulty [1, 10]
-            # the result is always in [100, 1100].
-            difficulty_shifted = (ds.difficulty - 1.0) / 9.0 + 0.1
-            factor = round(difficulty_shifted * 1000)
-            preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
-            is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
-            self._writer.write_revlog(
-                cid=ds.anki_card_id,
-                ease=ease,
-                ivl=ivl,
-                last_ivl=last_ivl,
-                factor=factor,
-                time_ms=ds.last_review_time_ms,
-                type_=type_,
-                preferred_id=preferred_id,
-                is_lapse=is_lapse,
-                ds_reps=ds.reps,
-                ds_lapses=ds.lapses,
-            )
+            return True
+        if manual:
+            return False
+        learn_steps, _ = resolve_learning_steps(self._db)
+        relearn_steps, _ = resolve_relearning_steps(self._db)
+        type_, ivl, last_ivl = _derive_revlog_shape(ds, learn_steps, relearn_steps)
+        ease = ds.last_rating if ds.last_rating is not None else 3
+        # Anki writes factor = round(difficulty_shifted × 1000) where
+        # difficulty_shifted = (difficulty − 1.0)/9.0 + 0.1 (rslib/src/card/mod.rs:115-125).
+        # No clamp: Anki stores the raw shifted value; for real FSRS difficulty [1, 10]
+        # the result is always in [100, 1100].
+        difficulty_shifted = (ds.difficulty - 1.0) / 9.0 + 0.1
+        factor = round(difficulty_shifted * 1000)
+        preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
+        is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
+        self._writer.write_revlog(
+            cid=ds.anki_card_id,
+            ease=ease,
+            ivl=ivl,
+            last_ivl=last_ivl,
+            factor=factor,
+            time_ms=ds.last_review_time_ms,
+            type_=type_,
+            preferred_id=preferred_id,
+            is_lapse=is_lapse,
+            ds_reps=ds.reps,
+            ds_lapses=ds.lapses,
+        )
+        return True
+
+    def _log_manual_change(self, ds: DirectionState, before: dict) -> None:
+        """Write Anki's manual revlog row if the push moved the card's schedule.
+
+        Called once every card write of a push nobody graded is done, with the
+        snapshot taken before the first of them. Anki logs its own Set Due Date
+        as a ``type = 4`` row; a push that left ``due`` and ``ivl`` where they
+        were changed no schedule, and logs nothing.
+        """
+        after = self._capture_anki_card_state(ds.anki_card_id)
+        if after is None or (after.get("due"), after.get("ivl")) == (before.get("due"), before.get("ivl")):
+            return
+        row = manual_revlog_row(ivl_before=before["ivl"], ivl_after=after["ivl"], difficulty=ds.difficulty)
+        self._writer.write_revlog(
+            cid=ds.anki_card_id,
+            ease=row["ease"],
+            ivl=row["ivl"],
+            last_ivl=row["lastIvl"],
+            factor=row["factor"],
+            time_ms=row["time"],
+            type_=row["type"],
+            reps_bump=0,
+            lapses_bump=0,
+        )
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         # Deferred: lives in app.plugins.anki_sync.sync so it reads the patched _MEDIA_DIR.
@@ -1475,12 +1518,20 @@ class AnkiSync:
                 # of its own (type != 0), so TT has no schedule to add. A scheduled
                 # TT direction over a type-0 Anki card is NOT a relabel: that is a
                 # schedule Anki has never seen, and it takes the push below.
-                relabel = (
+                #
+                # `manual` is the wider fact the relabel is a case of (Layer 88):
+                # nothing was graded and Anki holds a scheduled card, whether or not
+                # something forces a schedule write. KNOWN and a restore are manual
+                # and forced: they move the due date, and Anki logs that as a manual
+                # row, not as a review. A recovered card is neither, because its
+                # card was re-minted and the fallback is how it gets `reps` back.
+                manual = (
                     ds.last_rating is None
-                    and not row_force_fsrs
                     and anki_state_before is not None
                     and anki_state_before["type"] != 0
+                    and (guid, direction.value) not in recovered
                 )
+                relabel = manual and not row_force_fsrs
                 if ds.state == SRSState.SUSPENDED:
                     self._writer.suspend([ds.anki_card_id])
                     # No schedule at all (Layer 85's test): on a new card `due` is
@@ -1489,7 +1540,14 @@ class AnkiSync:
                     queue_only = relabel or (ds.reps == 0 and ds.last_review is None)
                 else:
                     self._writer.unsuspend([ds.anki_card_id])
-                    queue_only = relabel and ds.state == SRSState.REVIEW and anki_state_before["queue"] == -1
+                    # A relabel to REVIEW has nothing to add to a card Anki holds
+                    # suspended (the un-suspension above is the whole change) or
+                    # already holds as a review card (no change at all).
+                    queue_only = (
+                        relabel
+                        and ds.state == SRSState.REVIEW
+                        and (anki_state_before["queue"] == -1 or anki_state_before["type"] == 2)
+                    )
                 if queue_only:
                     self._db.mark_direction_clean(guid, direction)
                     report.directions_pushed += 1
@@ -1541,8 +1599,7 @@ class AnkiSync:
                     # Review/new cards: use set_due_date (days since col_crt)
                     self._writer.set_due_date([ds.anki_card_id], days_str)
 
-                if ds.reps > 0:
-                    self._push_revlog_for_direction(guid, direction, ds)
+                reviewed = ds.reps > 0 and self._push_revlog_for_direction(guid, direction, ds, manual=manual)
                 schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
                 if schema_ok and (ds.reps > 0 or row_force_fsrs):
                     # Layer 70: every grade push carries the post-grade FSRS
@@ -1565,6 +1622,9 @@ class AnkiSync:
                         keys=["ivl", "factor"],
                         new_values=[str(ivl_val), str(factor_val)],
                     )
+                if manual and ds.reps > 0 and not reviewed:
+                    # Last, so the row carries the interval the card ends up with.
+                    self._log_manual_change(ds, anki_state_before)
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
 

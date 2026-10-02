@@ -303,9 +303,24 @@ class DbRevlogMixin:
 
         Used by promote_to_learning and similar admin operations that mutate
         state without going through ``schedule()``.
+
+        ``factor`` comes from the direction's difficulty and is never 0: a manual
+        row with ``factor = 0`` is Anki's Forget marker (Layer 88). These rows are
+        TunaTale's own record and the push does not send them, but a recovered
+        card's history is restored row for row, and there the shape would count.
         """
+        from app.srs.fsrs import MANUAL_REVIEW_KIND, manual_revlog_factor
+
         now_ms = int(_time.time() * 1000)
         dirs = [direction] if direction is not None else list(Direction)
+        with self._get_conn() as conn:
+            difficulties = {
+                r["direction"]: r["fsrs_difficulty"]
+                for r in conn.execute(
+                    "SELECT direction, fsrs_difficulty FROM collocation_directions WHERE collocation_id = ?",
+                    (collocation_id,),
+                )
+            }
         for d in dirs:
             self.append_revlog(
                 RevlogRow(
@@ -315,9 +330,9 @@ class DbRevlogMixin:
                     button_chosen=0,
                     interval=0,
                     last_interval=0,
-                    factor=0,
+                    factor=manual_revlog_factor(difficulties[d.value]),
                     taken_millis=0,
-                    review_kind=4,
+                    review_kind=MANUAL_REVIEW_KIND,
                     anki_card_id=anki_card_id,
                 )
             )
