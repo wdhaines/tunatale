@@ -406,4 +406,81 @@ test.describe("word popover (coarse pointer)", () => {
 			`the player occludes the popover: elementFromPoint(${r.probe?.x}, ${r.probe?.y}) inside the overlap resolved to ${r.hit}`,
 		).toBe(true);
 	});
+
+	/**
+	 * bd tunatale-nvbm — a LONG-PRESS-opened popover must stay inside the
+	 * transcript's clip edge, on both sides.
+	 *
+	 * `.transcript-wrapper` is `overflow-x: clip`, so a popover placed past its
+	 * content box is painted off, not scrolled to. Measured before the fix at
+	 * this width: a left-edge word's popover sat at x=0 against a clip edge at
+	 * x=37, cutting the gloss and the first action button.
+	 *
+	 * Why the existing guard (transcript-overflow.spec.ts, "a HOVER-revealed
+	 * tooltip near the left margin never leaves the transcript wrapper") could
+	 * not see it: that one runs at a FINE pointer, where the hover reveal is
+	 * displayed and the clamp measures a real box. At a coarse pointer the hover
+	 * reveal is `display: none`; the clamp ran on an all-zero rect when the
+	 * finger went down, then ran again when the long-press opened the popover and
+	 * measured a rect that already carried the first run's shift.
+	 *
+	 * Scoped to words INSIDE the wrapper: the mastery chips above it also render
+	 * `.tt-wrap`, and for those the viewport is the right boundary.
+	 */
+	test("nvbm: a long-press popover on an edge word stays inside the transcript's clip edge", async ({
+		page,
+		request,
+	}) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const { curriculumId } = await seed(request);
+		await openRead(page, curriculumId);
+
+		// The words nearest each margin, by GLOBAL `.tt-wrap` index (what
+		// `longPress` takes), limited to ones a pointer can actually reach now.
+		const targets = await page.evaluate(() => {
+			const all = [...document.querySelectorAll(".tt-wrap")];
+			const reachable = all
+				.map((el, i) => ({ el, i, r: el.getBoundingClientRect() }))
+				.filter(({ el, r }) => {
+					if (!el.closest(".transcript-wrapper") || !el.querySelector(".tt-btn") || r.width === 0)
+						return false;
+					const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+					return hit !== null && el.contains(hit);
+				});
+			const byLeft = [...reachable].sort((a, b) => a.r.left - b.r.left);
+			const byRight = [...reachable].sort((a, b) => b.r.right - a.r.right);
+			return [...new Set([...byLeft.slice(0, 3), ...byRight.slice(0, 3)].map((t) => t.i))];
+		});
+		expect(targets.length, "no reachable transcript word has a popover").toBeGreaterThan(0);
+
+		const failures: string[] = [];
+		for (const index of targets) {
+			expect(await longPress(page, index)).toBe(true);
+			const r = await page.evaluate(() => {
+				const tip = [...document.querySelectorAll(".tt")].find(
+					(el) => getComputedStyle(el).display !== "none",
+				);
+				const wrapper = document.querySelector(".transcript-wrapper")!;
+				const wr = wrapper.getBoundingClientRect();
+				const cs = getComputedStyle(wrapper);
+				const tr = tip?.getBoundingClientRect();
+				return {
+					shown: tip ? 1 : 0,
+					tipLeft: tr ? Math.round(tr.left * 100) / 100 : 0,
+					tipRight: tr ? Math.round(tr.right * 100) / 100 : 0,
+					clipLeft: wr.left + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth),
+					clipRight: wr.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth),
+				};
+			});
+			// A `display: none` popover has no box and would clear both checks vacuously.
+			expect(r.shown, `popover never opened for word ${index}`).toBe(1);
+			if (r.tipLeft < r.clipLeft)
+				failures.push(`word ${index}: popover left ${r.tipLeft} is outside the clip edge at ${r.clipLeft}`);
+			if (r.tipRight > r.clipRight)
+				failures.push(`word ${index}: popover right ${r.tipRight} is outside the clip edge at ${r.clipRight}`);
+			await closePopover(page);
+		}
+
+		expect(failures, failures.join("\n")).toEqual([]);
+	});
 });

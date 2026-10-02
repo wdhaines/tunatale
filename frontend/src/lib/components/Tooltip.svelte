@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import type { GradeRating, WordToken } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import { untrack } from 'svelte';
 
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
@@ -219,17 +220,40 @@
 		const vw = viewportWidth();
 		return { minLeft: EDGE_MARGIN_PX, maxRight: vw - EDGE_MARGIN_PX };
 	}
+	// Two things the measurement has to allow for (bd tunatale-nvbm), because
+	// this effect runs once per reveal CHANGE, not once per popover:
+	//
+	// - The popover may not be displayed. At a coarse pointer the hover reveal
+	//   is `display: none`, so `hovered` flips with no box to measure; the rect
+	//   is all zeros and "clamping" it invents a shift for a popover nobody sees.
+	// - The rect already includes the shift this effect applied last time. A
+	//   finger held for a long-press keeps `hovered` true while `open` flips, and
+	//   a desktop click flips `open` on a popover the hover already clamped.
+	//   Clamping the shifted rect as if it were unshifted cancelled the first
+	//   shift (touch: popover left at x=0, 37px past the transcript's clip edge)
+	//   or dropped it (desktop: a clamped popover sprang back off-screen on click).
+	//
+	// So clamp from the popover's NATURAL position: the measured rect minus the
+	// shift currently applied. `untrack` keeps `shiftX` out of the dependencies;
+	// the effect writes it and must not re-run on its own write.
 	$effect(() => {
 		if ((!open && !hovered) || !ttEl) {
 			shiftX = 0;
 			return;
 		}
 		const rect = ttEl.getBoundingClientRect();
+		if (rect.width === 0 && rect.height === 0) {
+			shiftX = 0;
+			return;
+		}
+		const applied = untrack(() => shiftX);
+		const naturalLeft = rect.left - applied;
+		const naturalRight = rect.right - applied;
 		const { minLeft, maxRight } = clampBounds();
-		if (rect.left < minLeft) {
-			shiftX = minLeft - rect.left;
-		} else if (rect.right > maxRight) {
-			shiftX = maxRight - rect.right;
+		if (naturalLeft < minLeft) {
+			shiftX = minLeft - naturalLeft;
+		} else if (naturalRight > maxRight) {
+			shiftX = maxRight - naturalRight;
 		} else {
 			shiftX = 0;
 		}

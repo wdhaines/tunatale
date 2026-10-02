@@ -941,6 +941,91 @@ describe("Tooltip", () => {
       }
     });
 
+    // bd tunatale-nvbm. The mocks above return one fixed rect, which is what a
+    // browser reports only the FIRST time the clamp runs. Once a shift is
+    // applied the popover has moved, so a second measurement includes it. These
+    // mocks follow the applied transform, and report an all-zero rect while the
+    // popover is not displayed (`display: none` has no box).
+    function mockLiveRect(
+      tt: HTMLElement,
+      natural: { left: number; right: number },
+      displayed: () => boolean,
+    ) {
+      tt.getBoundingClientRect = () => {
+        const applied = Number(/\+ (-?[\d.]+)px/.exec(tt.style.transform)?.[1] ?? 0);
+        const left = displayed() ? natural.left + applied : 0;
+        const right = displayed() ? natural.right + applied : 0;
+        return {
+          left,
+          right,
+          top: 0,
+          bottom: displayed() ? 20 : 0,
+          width: right - left,
+          height: displayed() ? 20 : 0,
+          x: left,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+    }
+
+    it("a long-press held on a touch screen clamps from where the popover really is", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { getByText, container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "press-me" },
+        });
+        const tt = container.querySelector<HTMLElement>(".tt")!;
+        const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+        // Coarse pointer: nothing is displayed on hover, only once `open`.
+        mockLiveRect(tt, { left: -80, right: 220 }, () => wrap.classList.contains("open"));
+
+        // A finger going down enters the wrap, and stays there for the hold.
+        await fireEvent.pointerEnter(wrap);
+        await tick();
+        // Not displayed yet, so there is nothing to clamp.
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 0px))");
+
+        await fireEvent.pointerDown(getByText("press-me"));
+        vi.advanceTimersByTime(500);
+        await tick();
+
+        // minLeft 8, natural left -80 → shift 88, popover left lands ON the margin.
+        expect(tt.style.transform).toBe("translateX(calc(-50% + 88px))");
+        expect(tt.getBoundingClientRect().left).toBe(8);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("clicking a hover-clamped popover open keeps it clamped", async () => {
+      vi.useFakeTimers();
+      try {
+        const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+        const { container } = render(TooltipTest, {
+          props: { translation: "hello", word, childText: "hover-then-click" },
+        });
+        const tt = container.querySelector<HTMLElement>(".tt")!;
+        const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+        // Fine pointer: the hover reveal IS displayed.
+        mockLiveRect(tt, { left: 900, right: 1020 }, () => true);
+
+        await fireEvent.pointerEnter(wrap);
+        await tick();
+        expect(tt.style.transform).toBe("translateX(calc(-50% + -4px))");
+
+        await fireEvent.click(wrap);
+        await tick();
+        expect(wrap.classList.contains("open")).toBe(true);
+        // Still clamped: re-measuring an already-shifted popover must not undo it.
+        expect(tt.style.transform).toBe("translateX(calc(-50% + -4px))");
+        expect(tt.getBoundingClientRect().right).toBe(1016);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("opening with no tooltip content (suppressed/empty) does not crash the clamp", async () => {
       vi.useFakeTimers();
       try {
