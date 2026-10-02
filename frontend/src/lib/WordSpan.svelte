@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WordToken } from './api';
+	import type { GradeRating, WordToken } from './api';
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
 	import { railPropsFor, isUnstarted, masterySides as masterySidesFn } from '$lib/masteryBands';
@@ -40,8 +40,8 @@
 	// Blur-as-cloze (bd tunatale-dvdm.3). A word whose PRODUCTION direction is a
 	// due review is blurred instead of bolded: recall it from the sentence and
 	// the gloss, then tap to check. The reveal is local and grades nothing; only
-	// Again / Good in the popover write, and they grade PRODUCTION through the
-	// review queue's own endpoint. A blur never touched grades nothing.
+	// the four ratings in the popover write, and they grade PRODUCTION through
+	// the review queue's own endpoint. A blur never touched grades nothing.
 	// `productionCloze` stays true after the reveal, until the refetch that
 	// follows a grade clears `production_due` — so a revealed word neither
 	// bolds nor offers the recognition grade in the meantime.
@@ -186,14 +186,11 @@
 	// see it's ahead of schedule (not the card the SRS is asking for).
 	const gradeVariant = $derived(!undoable && readAheadApplies ? 'ahead' : 'primary');
 
-	// Again / Good for a REVEALED production cloze; nothing while it is still
-	// blurred (the reveal comes first).
+	// The four ratings for a REVEALED production cloze; nothing while it is
+	// still blurred (the reveal comes first).
 	const productionGrade = $derived(
 		productionCloze && revealed && tooltipActions?.onProductionGrade
-			? {
-					onAgain: () => void tooltipActions!.onProductionGrade!(word, 'again'),
-					onGood: () => void tooltipActions!.onProductionGrade!(word, 'good')
-				}
+			? { onRate: (rating: GradeRating) => void tooltipActions!.onProductionGrade!(word, rating) }
 			: null
 	);
 

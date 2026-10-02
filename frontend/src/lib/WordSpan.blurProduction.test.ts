@@ -1,9 +1,9 @@
 /**
  * Blur-as-cloze reader (bd tunatale-dvdm.3): with the "practise production"
  * setting on, a word whose PRODUCTION direction is a due review renders
- * blurred instead of bold. Tapping reveals it; the popover then offers
- * Again / Good, which grade the PRODUCTION direction. A blur never touched
- * grades nothing.
+ * blurred instead of bold. Tapping reveals it; the popover then offers the
+ * review queue's four ratings (Again / Hard / Good / Easy, bd tunatale-dvdm.5),
+ * which grade the PRODUCTION direction. A blur never touched grades nothing.
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
@@ -25,6 +25,8 @@ function prodDue(overrides: Partial<WordToken> = {}): WordToken {
     ...overrides,
   });
 }
+
+const RATING_LABELS = ["Again", "Hard", "Good", "Easy"];
 
 function wordEl(container: HTMLElement): HTMLElement {
   return container.querySelector(".word") as HTMLElement;
@@ -76,13 +78,12 @@ describe("WordSpan blur-as-cloze", () => {
       },
     });
     expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
-    expect(queryByRole("button", { name: "Again" })).toBeNull();
-    expect(queryByRole("button", { name: "Good" })).toBeNull();
+    for (const name of RATING_LABELS) expect(queryByRole("button", { name })).toBeNull();
     expect(onProductionGrade).not.toHaveBeenCalled();
     expect(onWordClick).not.toHaveBeenCalled();
   });
 
-  it("tapping reveals the word and offers Again / Good, and the tap itself grades nothing", async () => {
+  it("tapping reveals the word and offers all four ratings, and the tap itself grades nothing", async () => {
     const onProductionGrade = vi.fn();
     const onWordClick = vi.fn();
     const { container, getByRole } = render(WordSpan, {
@@ -95,15 +96,16 @@ describe("WordSpan blur-as-cloze", () => {
     });
     await fireEvent.click(wordEl(container));
     expect(wordEl(container).classList.contains("word-blurred")).toBe(false);
-    expect(getByRole("button", { name: "Again" })).toBeTruthy();
-    expect(getByRole("button", { name: "Good" })).toBeTruthy();
+    for (const name of RATING_LABELS) expect(getByRole("button", { name })).toBeTruthy();
     expect(onProductionGrade).not.toHaveBeenCalled();
     expect(onWordClick).not.toHaveBeenCalled();
   });
 
   it.each([
     ["Again", "again"],
+    ["Hard", "hard"],
     ["Good", "good"],
+    ["Easy", "easy"],
   ])("%s grades the PRODUCTION direction with %s", async (label, rating) => {
     const onProductionGrade = vi.fn();
     const onWordClick = vi.fn();
@@ -117,6 +119,24 @@ describe("WordSpan blur-as-cloze", () => {
     expect(onProductionGrade).toHaveBeenCalledWith(word, rating);
     // Never the recognition path.
     expect(onWordClick).not.toHaveBeenCalled();
+  });
+
+  it("the four ratings lead the action row in the review queue's order, on the grid", async () => {
+    const { container } = render(WordSpan, {
+      props: {
+        word: prodDue(),
+        onWordClick: vi.fn(),
+        blurProduction: true,
+        tooltipActions: { onProductionGrade: vi.fn() },
+      },
+    });
+    await fireEvent.click(wordEl(container));
+    const actions = container.querySelector(".tt-actions") as HTMLElement;
+    const labels = [...actions.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(labels.slice(0, 4)).toEqual(RATING_LABELS);
+    // Four ratings alone already exceed one line at the coarse-pointer button
+    // size (F-17), so the row must be the two-column grid: a 2x2 rating block.
+    expect(actions.classList.contains("tt-actions-grid")).toBe(true);
   });
 
   it("Enter on a blurred word reveals it instead of grading", async () => {

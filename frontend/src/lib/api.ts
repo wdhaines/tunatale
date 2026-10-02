@@ -254,6 +254,8 @@ export type DayProgress = components["schemas"]["CurriculumProgressEntry"];
 // Mirrors the backend's rating domain for /listen (app/api/models.py::ListenRequest).
 // "good" is the default a listen stages; "skip" means "stage nothing for this item".
 export type WordRating = "again" | "hard" | "good" | "easy" | "skip";
+/** The four ratings that grade a card ("skip" is a listen-preview choice, not a grade). */
+export type GradeRating = Exclude<WordRating, "skip">;
 
 /** The three populations a listen commits, each with its own identity domain.
  *

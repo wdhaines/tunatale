@@ -25,7 +25,7 @@
  * turned a behaviour extraction into a rewrite of that page.
  */
 import { api } from "$lib/api";
-import type { TranscriptData, WordToken } from "$lib/api";
+import type { GradeRating, TranscriptData, WordToken } from "$lib/api";
 import { confirmDialog } from "$lib/components/ConfirmDialog.svelte";
 import { queueStatsStore } from "$lib/stores/queueStats.svelte";
 import { t } from "$lib/i18n/i18n.svelte";
@@ -225,7 +225,7 @@ export function createReadingActions(opts: ReadingActionsOptions) {
     // drill_feedback that writes the revlog row, marks the card dirty for the
     // sync push and advances the learning cutoff. Never a second grading path.
     // `lesson_review` stays false: this is a real review and is charged like one.
-    onProductionGrade: async (word: WordToken, rating: "again" | "good") => {
+    onProductionGrade: async (word: WordToken, rating: GradeRating) => {
       const itemId = word.srs_item_id;
       if (itemId == null || wordActionInFlight) return;
       wordActionInFlight = true;

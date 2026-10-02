@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { WordToken } from '$lib/api';
+	import type { GradeRating, WordToken } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	export interface TooltipActions {
@@ -19,7 +19,7 @@
 		onUndoGrade?: (word: WordToken) => Promise<void>;
 		// Blur-as-cloze reader (bd tunatale-dvdm.3): grade the word's PRODUCTION
 		// direction, through the review queue's own endpoint.
-		onProductionGrade?: (word: WordToken, rating: 'again' | 'good') => Promise<void>;
+		onProductionGrade?: (word: WordToken, rating: GradeRating) => Promise<void>;
 	}
 
 	interface Props {
@@ -41,9 +41,10 @@
 		// schedule rather than the card the SRS is asking for).
 		gradeVariant?: 'primary' | 'ahead';
 		onGrade?: (() => void) | null;
-		// A revealed blur-as-cloze word (bd tunatale-dvdm.3): Again / Good grade its
-		// PRODUCTION direction. Replaces the single grade button while present.
-		productionGrade?: { onAgain: () => void; onGood: () => void } | null;
+		// A revealed blur-as-cloze word (bd tunatale-dvdm.3): the review queue's
+		// four ratings grade its PRODUCTION direction (bd tunatale-dvdm.5). Replaces
+		// the single grade button while present.
+		productionGrade?: { onRate: (rating: GradeRating) => void } | null;
 		// "Words…" — the touch path into a phrase's individual words (what
 		// Alt+hover does on desktop). Only collocation popovers pass this.
 		onDrillIn?: (() => void) | null;
@@ -316,6 +317,9 @@
 		)
 	);
 
+	// The review queue's order (DrillCard), so the two surfaces read alike.
+	const PRODUCTION_RATINGS: readonly GradeRating[] = ['again', 'hard', 'good', 'easy'];
+
 	const showGrade = $derived(Boolean(gradeLabel && onGrade) && productionGrade == null);
 	const showProductionGrade = $derived(productionGrade != null);
 	const showDrillIn = $derived(Boolean(onDrillIn));
@@ -326,8 +330,8 @@
 	const actionCount = $derived(
 		[
 			showGrade,
-			showProductionGrade,
-			showProductionGrade,
+			// One entry per rating button: the count drives the layout.
+			...PRODUCTION_RATINGS.map(() => showProductionGrade),
 			showDrillIn,
 			showCreateInflection,
 			showIgnore,
@@ -385,16 +389,14 @@
 						>{gradeLabel}</button>
 					{/if}
 					{#if showProductionGrade}
-						<button
-							type="button"
-							class="tt-btn tt-btn-again"
-							onclick={() => productionGrade!.onAgain()}
-						>{t('tooltip.again')}</button>
-						<button
-							type="button"
-							class="tt-btn tt-btn-grade"
-							onclick={() => productionGrade!.onGood()}
-						>{t('tooltip.good')}</button>
+						{#each PRODUCTION_RATINGS as rating (rating)}
+							<button
+								type="button"
+								class="tt-btn"
+								class:tt-btn-grade={rating === 'good'}
+								onclick={() => productionGrade!.onRate(rating)}
+							>{t(`tooltip.${rating}`)}</button>
+						{/each}
 					{/if}
 					{#if showDrillIn}
 						<button

@@ -62,15 +62,18 @@ beforeEach(() => {
 });
 
 describe("readingActions.onProductionGrade", () => {
-  it.each(["again", "good"] as const)("grades the PRODUCTION direction with %s", async (rating) => {
-    const { actions, setTranscript } = setup();
-    await actions.tooltipActions.onProductionGrade(word, rating);
-    expect(mockSubmit).toHaveBeenCalledTimes(1);
-    // lesson_review stays false: this is a real review, charged like the queue's.
-    expect(mockSubmit).toHaveBeenCalledWith(11, "production", rating);
-    expect(mockTranscript).toHaveBeenCalledWith("l1");
-    expect(setTranscript).toHaveBeenCalledWith(EMPTY);
-  });
+  it.each(["again", "hard", "good", "easy"] as const)(
+    "grades the PRODUCTION direction with %s",
+    async (rating) => {
+      const { actions, setTranscript } = setup();
+      await actions.tooltipActions.onProductionGrade(word, rating);
+      expect(mockSubmit).toHaveBeenCalledTimes(1);
+      // lesson_review stays false: this is a real review, charged like the queue's.
+      expect(mockSubmit).toHaveBeenCalledWith(11, "production", rating);
+      expect(mockTranscript).toHaveBeenCalledWith("l1");
+      expect(setTranscript).toHaveBeenCalledWith(EMPTY);
+    },
+  );
 
   it("makes the production grade undoable, and the undo targets production", async () => {
     const { actions } = setup();
