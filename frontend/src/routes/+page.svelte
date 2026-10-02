@@ -7,6 +7,7 @@
 	import { pinReviewWords, pinnedReviewWords, unpinReviewWords } from '$lib/reviewDraft';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import { formatSessionDate } from '$lib/reading/sessionDate';
 
 	// Tagline names the active L2 (falls back to a generic line before the language
 	// list has loaded, or in a single-language deployment that hasn't resolved yet).
@@ -150,34 +151,6 @@
 		}
 		daysById = next;
 	});
-
-	const MONTHS = [
-		t('home.january'),
-		t('home.february'),
-		t('home.march'),
-		t('home.april'),
-		t('home.may'),
-		t('home.june'),
-		t('home.july'),
-		t('home.august'),
-		t('home.september'),
-		t('home.october'),
-		t('home.november'),
-		t('home.december')
-	];
-
-	/**
-	 * "2 September" from "2026-09-02", without going through Date.
-	 *
-	 * ⚠️ `new Date('2026-09-02')` is parsed as UTC MIDNIGHT, which renders as
-	 * 1 September in every negative-offset timezone — a wrong date for half the
-	 * world, and a bug that passes every test run in London. The value is a
-	 * calendar date, not an instant, so it is formatted as one.
-	 */
-	function formatSessionDate(iso: string): string {
-		const [, month, day] = iso.split('-').map(Number);
-		return `${day} ${MONTHS[month - 1]}`;
-	}
 
 	function coverageLine(s: ReviewSession): string | null {
 		// null is "never measured" and gets NO line. [] is a measured zero and
@@ -449,6 +422,10 @@
 					</li>
 				{/each}
 			</ul>
+			<!-- The index is the counterpart of a curriculum's day page, and the
+			     page a session's back link and delete return to. Absent when there
+			     are no sessions, so it is never a link to an empty page. -->
+			<a class="all-sessions" href="/review-sessions">{t('home.allReviewSessions')} →</a>
 		{/if}
 	</section>
 </main>
@@ -591,6 +568,18 @@
 		margin: 0;
 		font-size: 0.85rem;
 		color: var(--color-muted);
+	}
+	/* One step below the rows above it: the rows are the content, this is the way
+	   to the page that lists them. */
+	.all-sessions {
+		display: inline-block;
+		margin-top: 0.75rem;
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		text-decoration: none;
+	}
+	.all-sessions:hover {
+		color: var(--color-primary);
 	}
 	.progress-bar {
 		height: 6px;

@@ -88,6 +88,7 @@ find frontend/src/routes -name '+page.svelte' | sed 's|frontend/src/routes||; s|
 /cards
 /login
 /review
+/review-sessions
 /review-sessions/[sessionId]
 /settings
 ```
@@ -4091,6 +4092,7 @@ cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter("
 ./c/[curriculumId]/plan/+page.svelte
 ./cards/+page.svelte
 ./login/+page.svelte
+./review-sessions/+page.svelte
 ./review-sessions/[sessionId]/+page.svelte
 ./review/+page.svelte
 ./settings/+page.svelte
@@ -4103,6 +4105,7 @@ cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter("
 | `/c/[curriculumId]` | Curriculum overview and day picker, plus the generation pipeline card |
 | `/c/[curriculumId]/plan` | Chat planner (`PlannerChat`, `ProposedBatch`, review-pressure select) |
 | `/c/[curriculumId]/l/[lessonId]` | The lesson page: player, reader, listen actions, source panel |
+| `/review-sessions` | Every review session, newest first: the page a session's back link and delete return to |
 | `/review-sessions/[sessionId]` | A review session, rendered through the same reader shell as a lesson |
 | `/review` | The SRS drill; with `?lesson=<id>` a read-only "check your work" pass over one lesson's words |
 | `/cards` | Card viewer and admin; `?focus=<id>&q=<text>` deep-links from the drill |

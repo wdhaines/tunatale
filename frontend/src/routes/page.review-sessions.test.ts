@@ -149,6 +149,23 @@ describe("the review-session list", () => {
 
     expect(await findByText(/no review sessions yet/i)).toBeTruthy();
   });
+
+  it("links to the page that lists every session", async () => {
+    // bd tunatale-e6fq: one click from home reaches a session, one more
+    // reaches the index, the same two steps a lesson has.
+    mockListSessions.mockResolvedValue([session()]);
+    const { findByRole } = render(Page);
+
+    const all = await findByRole("link", { name: "All review sessions →" });
+    expect(all.getAttribute("href")).toBe("/review-sessions");
+  });
+
+  it("offers no such link while there are no sessions to list", async () => {
+    const { findByText, queryByRole } = render(Page);
+
+    await findByText(/no review sessions yet/i);
+    expect(queryByRole("link", { name: /all review sessions/i })).toBeNull();
+  });
 });
 
 describe("making a review session", () => {

@@ -453,18 +453,7 @@ export const en = {
   "home.nothingDue": "Nothing to review right now — no vocabulary is due in this language today.",
   "home.revisitDay": "Revisit Day {position}",
   "home.continueDay": "Continue → Day {position}",
-  "home.january": "January",
-  "home.february": "February",
-  "home.march": "March",
-  "home.april": "April",
-  "home.may": "May",
-  "home.june": "June",
-  "home.july": "July",
-  "home.august": "August",
-  "home.september": "September",
-  "home.october": "October",
-  "home.november": "November",
-  "home.december": "December",
+  "home.allReviewSessions": "All review sessions",
 
   // review/+page.svelte
   "review.confirmCommitGrades": {
@@ -559,7 +548,11 @@ export const en = {
   "reviewSessions.october": "October",
   "reviewSessions.november": "November",
   "reviewSessions.december": "December",
-  "reviewSessions.backToLessons": "Lessons",
+  "reviewSessions.backToSessions": "Review sessions",
+  "reviewSessions.sessionNavAria": "Session navigation",
+
+  // review-sessions/+page.svelte
+  "reviewSessionsIndex.title": "Review sessions",
   "reviewSessions.reusedOf": "reused {used} of {total}",
   "reviewSessions.reusedFraction": "{used}/{total} reused",
   "reviewSessions.coverageTooltip": "{coverage} words you were forgetting",
