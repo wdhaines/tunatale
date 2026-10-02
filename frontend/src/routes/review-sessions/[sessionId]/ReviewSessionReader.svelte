@@ -1,0 +1,737 @@
+<script lang="ts">
+	import Banner from '$lib/components/Banner.svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
+	import { api } from '$lib/api';
+	import type { LessonAudio, TranscriptData } from '$lib/api';
+	import LessonReader from '$lib/components/LessonReader.svelte';
+	import MasteryLine from '$lib/components/MasteryLine.svelte';
+	import ListenActions from '$lib/components/ListenActions.svelte';
+	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
+	import { createListenActions } from '$lib/reading/listenActions.svelte';
+	import { listenedStore } from '$lib/stores/listened.svelte';
+	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
+	import { createReadingActions } from '$lib/reading/readingActions.svelte';
+	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
+	import RerenderAudio from '$lib/components/RerenderAudio.svelte';
+	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
+	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
+	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
+	import { invalidateAll, goto } from '$app/navigation';
+	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
+	import { mediaTrace } from '$lib/mediaTrace';
+	import { nextSessionAfter } from '$lib/reading/nextReviewSession';
+	import type { SessionOrderable } from '$lib/reading/nextReviewSession';
+	import type { PageData } from './$types';
+
+	// The reader for a review session.
+	//
+	// ⚠️ IT RENDERS THROUGH THE SAME COMPONENTS AS A LESSON — LessonPlayer,
+	// Transcript, TranscriptPlaceholder — and that is the point. An earlier
+	// version hand-rolled its own list of dialogue lines because the transcript
+	// endpoint looked a session up in the lessons table and missed. A lookup is
+	// not a reason to fork a UI: the second one was worse immediately (it opened
+	// the scene with the narrator's "Natural Speed" section header) and would
+	// have drifted further every time either changed. The endpoint now has a
+	// session-shaped twin and this page reuses everything.
+	//
+	// What it does NOT have is the lesson page's day navigation, Regenerate or
+	// delete-day — a session has no day for those to act on.
+	//
+	// ONE INSTANCE PER SESSION: `+page.svelte` keys this component on the session
+	// id, so everything below may snapshot `data` once and run its fetches in
+	// onMount. A reload of the same session (invalidateAll) keeps the instance
+	// and only swaps `data`.
+	let { data }: { data: PageData } = $props();
+
+	let audio: LessonAudio | null = $state(untrack(() => data.audio));
+	let transcript: TranscriptData | null = $state(null);
+	let transcriptLoading = $state(true);
+	let preparing = $state(false);
+	let renderError = $state('');
+	let playbackController: PlaybackController | null = $state(null);
+	let error = $state('');
+	let regenerating = $state(false);
+	let reglossing = $state(false);
+	let showRegenHelp = $state(false);
+	let confirmingDeleteSession = $state(false);
+	let deletingSession = $state(false);
+
+	// The render outlives this page: navigating away aborts the fetch but not the
+	// server-side work, so on return the page polls the server until the render
+	// is done rather than guessing. `preparing` is still local state, but it is
+	// now SEEDED from and RELEASED by the server instead of being the only record
+	// that a render exists.
+	const RENDER_POLL_MS = 2000;
+	const RENDER_POLL_MAX_FAILURES = 5;
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let pollFailures = 0;
+
+	// ⚠️ THE SAME ACTIONS THE LESSON PAGE USES, from one implementation. Tapping
+	// a word grades it, the popovers create cards and cloze inflections, undo
+	// works — none of it re-implemented here. Only the SOURCE differs, which is
+	// the whole claim of this page.
+	// ONE binding, both factories. The accessors are created once — which also
+	// means the reading tests exercise the very same closures the listen path
+	// uses, rather than each page carrying two identical copies.
+	const contentBinding = {
+		get contentId() {
+			return data.session.id;
+		},
+		get languageCode() {
+			return data.session.language_code;
+		},
+		getTranscript: () => transcript,
+		setTranscript: (t: TranscriptData) => {
+			transcript = t;
+		},
+		setError: (m: string) => {
+			error = m;
+		}
+	};
+
+	const reading = createReadingActions(contentBinding);
+
+	// Sibling sessions, for the hands-free hand-off only. Fetched here rather
+	// than in `load` for the same reason the transcript is: it is side chrome,
+	// and a failure must leave the reader working. An empty list simply means
+	// the run stops at the end of this session.
+	let siblingSessions: SessionOrderable[] = $state([]);
+	onMount(async () => {
+		try {
+			siblingSessions = await api.listReviewSessions();
+		} catch {
+			// Non-critical: no successor is the same outcome as an unknown one.
+		}
+	});
+
+	// The session equivalent of the lesson page's next-day hand-off. A session
+	// has no day, so date order is the ordering — see nextReviewSession.ts.
+	//
+	// Re-read at the end rather than trusted from mount, and traced, for the
+	// same reasons as the lesson page's hand-off (tunatale-yoj4).
+	async function onSequenceEnd() {
+		try {
+			siblingSessions = await api.listReviewSessions();
+		} catch (err) {
+			mediaTrace(`handoff:map-failed err=${String(err)}`);
+		}
+		const next = nextSessionAfter(siblingSessions, data.session.id);
+		if (!next) {
+			mediaTrace(`handoff:none session=${data.session.id} known=${siblingSessions.length}`);
+			return;
+		}
+		mediaTrace(`handoff:goto to=${next.id}`);
+		handsFreePref.armHandoff();
+		void goto(`/review-sessions/${next.id}`);
+	}
+
+	const MONTHS = [
+		t('reviewSessions.january'),
+		t('reviewSessions.february'),
+		t('reviewSessions.march'),
+		t('reviewSessions.april'),
+		t('reviewSessions.may'),
+		t('reviewSessions.june'),
+		t('reviewSessions.july'),
+		t('reviewSessions.august'),
+		t('reviewSessions.september'),
+		t('reviewSessions.october'),
+		t('reviewSessions.november'),
+		t('reviewSessions.december')
+	];
+
+	/**
+	 * ⚠️ Formatted from the ISO parts, never through `new Date()`.
+	 * `new Date('2026-09-02')` is UTC midnight and renders as the previous day in
+	 * every negative-offset timezone. session_date is a calendar date, not an
+	 * instant.
+	 */
+	function formatSessionDate(iso: string): string {
+		const [, month, day] = iso.split('-').map(Number);
+		return `${day} ${MONTHS[month - 1]}`;
+	}
+
+	// Empty means UNMEASURABLE, not zero: no line at all rather than "reused 0 of
+	// 0", which would read as a grade instead of an observation.
+	const coverage = $derived(
+		data.session.review_requested.length > 0
+			? t('reviewSessions.reusedOf', {
+					used: data.session.review_used.length,
+					total: data.session.review_requested.length
+				})
+			: null
+	);
+
+	// Terse enough to keep the stats line on ONE row — the whole point of merging
+	// it — with the sentence it replaced kept as the tooltip.
+	//
+	// ⚠️ MEASURED, and the obvious wording does NOT fit. At 390px the line has
+	// 327px and its natural width with "12/12 reused" is 356 — it wrapped to two
+	// rows and the card got 5px TALLER than before the merge. The bare fraction
+	// is 42px narrower and lands at ~314. The word "reused" lives in the tooltip
+	// instead, which matches how the rest of this line already works: terse
+	// count, detail on tap.
+	const coverageSegment = $derived(
+		coverage === null
+			? null
+			: {
+					text: t('reviewSessions.reusedFraction', {
+						used: data.session.review_used.length,
+						total: data.session.review_requested.length
+					}),
+					tooltip: t('reviewSessions.coverageTooltip', { coverage })
+				}
+	);
+
+	// The same listen flow a lesson has: nothing about it was ever day-scoped,
+	// and /api/srs/content/{id}/… now resolves a session too.
+	const listen = createListenActions(contentBinding);
+
+	$effect(() => {
+		if (listenedStore.has(data.session.id)) listen.fetchQueue();
+	});
+
+	onMount(async () => {
+		// Client-side, not in `load`: the transcript runs the lemmatizer and can
+		// take seconds on a cold backend. The lesson page does the same, for the
+		// same reason — the shell renders at once and the words arrive after.
+		try {
+			transcript = await api.getTranscript(data.session.id);
+		} catch {
+			transcript = null;
+		} finally {
+			transcriptLoading = false;
+		}
+	});
+
+	// NOT appended to the onMount above — that one awaits the transcript first
+	// and can take seconds on a cold backend, and the render indicator must not
+	// wait behind it. On return to a page whose render is still running (it
+	// outlived the page), pick it back up.
+	onMount(async () => {
+		try {
+			const { rendering } = await api.getReviewSessionRenderStatus(data.session.id);
+			if (rendering) {
+				preparing = true;
+				pollFailures = 0;
+				pollRenderStatus();
+			}
+		} catch {
+			/* nothing in flight that we can see */
+		}
+	});
+
+	// Clearing the timer is not enough: a status read already waiting for its
+	// answer re-arms the poll when it lands, AFTER this ran, and that chain then
+	// polls for a page that no longer exists (bd tunatale-0wki).
+	let gone = false;
+	onDestroy(() => {
+		gone = true;
+		if (pollTimer) clearTimeout(pollTimer);
+	});
+
+	// setTimeout, never setInterval — a slow response must not overlap itself.
+	function pollRenderStatus() {
+		if (gone) return;
+		pollTimer = setTimeout(async () => {
+			try {
+				const { rendering } = await api.getReviewSessionRenderStatus(data.session.id);
+				if (rendering) {
+					pollFailures = 0;
+					pollRenderStatus();
+					return;
+				}
+				preparing = false;
+				audio = await api.getLessonAudio(data.session.id).catch(() => null);
+			} catch (e) {
+				const status = (e as Error & { status?: number }).status;
+				if (status === 404) {
+					// The session is gone; the render cannot finish.
+					preparing = false;
+					return;
+				}
+				pollFailures += 1;
+				if (pollFailures >= RENDER_POLL_MAX_FAILURES) {
+					// The cap is the failure story — an uncapped retry loop would
+					// poll forever against a dead server.
+					preparing = false;
+					renderError = e instanceof Error ? e.message : String(e);
+					return;
+				}
+				pollRenderStatus();
+			}
+		}, RENDER_POLL_MS);
+	}
+
+	/**
+	 * Re-run the gloss pass over this session's stored story.
+	 *
+	 * ⚠️ NOT `regenerateReviewSession`. A rewrite replaces the dialogue, which is
+	 * not what a reader missing hover translations is asking for — they want the
+	 * text they have, glossed. The route keeps the story and replaces only
+	 * `dialogue_glosses`.
+	 *
+	 * No confirm dialog: unlike a rewrite this destroys nothing. The story, the
+	 * cards and any rendered audio all survive.
+	 */
+	async function handleRegloss() {
+		reglossing = true;
+		error = '';
+		try {
+			await api.reglossReviewSession(data.session.id);
+			transcriptLoading = true;
+			await invalidateAll();
+			transcript = await api.getTranscript(data.session.id).catch(() => null);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			reglossing = false;
+			transcriptLoading = false;
+		}
+	}
+
+	/**
+	 * Rewrite this session's dialogue, keeping the session.
+	 *
+	 * ⚠️ NOT `createReviewSession()`. That mints a new id at a new URL and leaves
+	 * this one in the dated list — a second session, not a better one. The route
+	 * this calls preserves the id and the date.
+	 *
+	 * ⚠️ Unlike the lesson page's Regenerate, this does NOT go through the greedy
+	 * pipeline: `LessonPipeline` is keyed (language_code, curriculum_id, day) and
+	 * a session has none of those. The visible cost is that a 429 arrives here as
+	 * an error the user has to act on, rather than a wait-and-retry.
+	 */
+	async function handleRegenerate() {
+		const confirmed = await confirmDialog(t('reviewSessions.confirmRewrite'));
+		if (!confirmed) return;
+		regenerating = true;
+		error = '';
+		try {
+			await api.regenerateReviewSession(data.session.id);
+			// The server dropped the renders of the dialogue we just replaced, so
+			// the player must not keep offering them.
+			audio = null;
+			transcriptLoading = true;
+			await invalidateAll();
+			transcript = await api.getTranscript(data.session.id).catch(() => null);
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			regenerating = false;
+			transcriptLoading = false;
+		}
+	}
+
+	async function handlePasteImported() {
+		// Re-read the session so the page shows the new text and the new coverage
+		// line. NOT goto() — the id and URL are unchanged by design.
+		await invalidateAll();
+		transcriptLoading = true;
+		try {
+			transcript = await api.getTranscript(data.session.id);
+		} catch {
+			transcript = null;
+		}
+		transcriptLoading = false;
+	}
+
+	// Two-click confirm (same pattern as the lesson page's delete-day): first
+	// click arms it, second click deletes. Deleting a session removes its row
+	// and its generated audio and LEAVES the SRS review history intact — the
+	// reviews really happened, their grades already propagated into FSRS state
+	// and out to Anki.
+	async function handleDeleteSession() {
+		confirmingDeleteSession = false;
+		deletingSession = true;
+		error = '';
+		try {
+			// ⚠️ Clear the render poll BEFORE deleting/navigating. A status read
+			// after the session is gone answers 404 (the poll's own gave-up case,
+			// but serving it deliberately is the point — a poll firing against a
+			// deleted id is the obvious way to ship a console error). onDestroy
+			// clears it too on unmount, but the timer must not be live in the
+			// window between the delete reply and the navigation.
+			if (pollTimer) clearTimeout(pollTimer);
+			await api.deleteReviewSession(data.session.id);
+			// The home page, which is where sessions are LISTED (it links each as
+			// /review-sessions/{id}). There is no /review-sessions index route, and
+			// navigating there dropped the user on a 404 after a successful delete.
+			// Same shape as the lesson page's delete-day, which returns to the
+			// curriculum page that listed the day.
+			goto('/');
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+			deletingSession = false;
+		}
+	}
+
+	function handleDeleteSessionClick() {
+		if (confirmingDeleteSession) {
+			handleDeleteSession();
+		} else {
+			confirmingDeleteSession = true;
+		}
+	}
+
+	function handleDeleteSessionBlur() {
+		confirmingDeleteSession = false;
+	}
+
+	async function prepareAudio() {
+		preparing = true;
+		renderError = '';
+		try {
+			await api.renderReviewSession(data.session.id);
+			audio = await api.getLessonAudio(data.session.id);
+			preparing = false;
+		} catch (e) {
+			const status = (e as Error & { status?: number }).status;
+			if (status === 409) {
+				// Another tab or an earlier visit is already rendering this
+				// session — that is not an error. Keep preparing and poll until
+				// the render we cannot see finishes.
+				//
+				// Reset the budget with the chain, not only on a good poll: a
+				// chain that ended AT the cap never resets, so without this the
+				// next chain would give up after a single blip.
+				pollFailures = 0;
+				pollRenderStatus();
+				return;
+			}
+			renderError = e instanceof Error ? e.message : String(e);
+			preparing = false;
+		}
+	}
+</script>
+
+<main>
+	<!-- y0bk.3: a session whose gloss pass came back empty. The pass degrades
+	     silently on purpose, so this banner is the only trace of a total loss
+	     (two sessions shipped that way on 2026-09-08), and it carries the repair.
+	     ⚠️ `=== 0`, not falsy: null is a session stored before the count existed.
+	     The shared Banner since 2026-09-29, same as the lesson page. -->
+	{#if data.session.gloss_entry_count === 0}
+		<Banner
+			tone="warning"
+			actionLabel={t('reviewSessions.restoreGlosses')}
+			busyLabel={t('reviewSessions.restoring')}
+			busy={reglossing}
+			onaction={handleRegloss}
+		>
+			<span>{t('reviewSessions.glossNotice')}</span>
+			<span>{t('reviewSessions.keepsDialogue')}</span>
+		</Banner>
+	{/if}
+	<LessonReader
+		title={data.session.title}
+		content={data.session}
+		{audio}
+		{transcript}
+		{transcriptLoading}
+		{reading}
+		bind:controller={playbackController}
+		{onSequenceEnd}
+	>
+		{#snippet headerAbove()}
+			<!-- Back link and date share ONE row. Each was ~17px on its own line and
+			     neither fills a phone's width, so stacking them spent a whole row on
+			     whitespace above a title that already needs three. -->
+			<div class="crumb-row">
+				<a class="back" href="/">← {t('reviewSessions.backToLessons')}</a>
+				<p class="date">{formatSessionDate(data.session.session_date)}</p>
+			</div>
+		{/snippet}
+		{#snippet header()}
+			<div class="title-area">
+				<h1>{data.session.title}</h1>
+				{#if error}
+					<p class="error" role="alert">{error}</p>
+				{/if}
+			</div>
+		{/snippet}
+		{#snippet headerBelow()}
+			<!-- The reused figure rides the stats line instead of owning one. As its
+			     own paragraph it cost ~17px of a phone's first screen to carry a
+			     single number; the full phrasing survives in the tooltip. -->
+			<MasteryLine {transcript} loading={transcriptLoading} extra={coverageSegment} />
+		{/snippet}
+		{#snippet actions()}
+			<ListenActions
+				{listen}
+				reviewHref="/review?lesson={data.session.id}&back=/review-sessions/{data.session.id}"
+				hasError={error !== ''}
+			/>
+		{/snippet}
+		{#snippet noAudio()}
+			<div class="prepare">
+				<button type="button" class="btn-primary" onclick={prepareAudio} disabled={preparing}>
+					{preparing ? t('reviewSessions.preparing') : t('reviewSessions.prepareAudio')}
+				</button>
+				{#if renderError}
+					<p class="error" role="alert">{renderError}</p>
+				{/if}
+			</div>
+		{/snippet}
+	</LessonReader>
+	<!-- Same fold-away as the lesson reader's, with only the tools a session can
+	     actually have. No day pager, no curriculum breadcrumb, no delete-day and
+	     no source panel: every one of those acts on a POSITION IN A CURRICULUM,
+	     which a session does not have. The source panel is the near miss —
+	     `/api/story/{id}/source` reads the lessons table, and its importer needs a
+	     curriculumId and a day to write back to. -->
+	<details class="card tools-card">
+		<summary>{t('reviewSessions.sessionTools')}</summary>
+		<!-- The standing explainer lives HERE now. It is identical on every visit,
+		     so it was spending 48px of a 390px-wide phone's first screen to tell a
+		     returning reader something they already know. Still one tap away. -->
+		<p class="muted">{t('reviewSessions.sessionExplainer')}</p>
+		<AudioDownloads {audio} />
+		{#if audio}
+			<!-- The lesson reader's re-render (tunatale-9paa) on the session's own
+			     routes. They share the render marker with Prepare audio, so a
+			     re-render while another tab renders is a 409 shown here. -->
+			{#key data.session.id}
+				{@const sessionId = data.session.id}
+				<RerenderAudio
+					sections={audio.sections}
+					estimate={(types) => api.estimateReviewSessionRerender(sessionId, types)}
+					rerender={(types) => api.rerenderReviewSession(sessionId, types)}
+					onRendered={async (a) => {
+						if (data.session.id !== sessionId) return;
+						audio = a;
+						// Re-rendered sections moved their cue timings.
+						const fresh = await api.getTranscript(sessionId).catch(() => null);
+						if (fresh && data.session.id === sessionId) transcript = fresh;
+					}}
+				/>
+			{/key}
+		{/if}
+		<div class="regen-row">
+			<button class="regen-btn" onclick={handleRegenerate} disabled={regenerating}>
+				{regenerating ? t('reviewSessions.rewriting') : t('reviewSessions.rewriteDialogue')}
+			</button>
+			<!-- Rewriting hits the LLM, so the quota chip belongs beside the button
+			     that spends it — the same placement the lesson reader uses. -->
+			<RateLimitWidget />
+			<button
+				type="button"
+				class="help-toggle"
+				aria-label={t('reviewSessions.rewriteHelpAria')}
+				aria-expanded={showRegenHelp}
+				onclick={() => (showRegenHelp = !showRegenHelp)}>?</button
+			>
+		</div>
+		{#if showRegenHelp}
+			<p class="help-panel">
+				{t('reviewSessions.rewriteHelpLead')}<em>{t('reviewSessions.rewriteHelpEmphasis')}</em>{t('reviewSessions.rewriteHelpTail')}
+			</p>
+		{/if}
+		<ManualStoryPanel
+			copyPrompt={async () => {
+				const r = await api.getReviewSessionPrompt(data.session.id);
+				return r.system_prompt + '\n\n' + r.user_prompt;
+			}}
+			importRaw={async (raw) => api.importReviewSession(data.session.id, raw)}
+			onImported={handlePasteImported}
+		/>
+		<hr />
+		<div class="delete-session-row">
+			<button
+				type="button"
+				class="delete-session-btn"
+				class:confirming={confirmingDeleteSession}
+				onclick={handleDeleteSessionClick}
+				onblur={handleDeleteSessionBlur}
+				disabled={deletingSession}
+			>
+				{confirmingDeleteSession ? t('reviewSessionPage.confirmDelete') : t('reviewSessionPage.deleteSession')}
+			</button>
+		</div>
+	</details>
+</main>
+
+{#if listen.showPreview}
+	<ListenPreviewModal {...listen.previewProps} />
+{/if}
+
+<style>
+	/* Only what THIS page's snippets need. The sticky card, the header grid, the
+	   player, the mode gate and the transcript block all live in LessonReader —
+	   shared with the lesson page so the two cannot drift again. */
+
+	/* ⚠️ …except the page wrapper, which LessonReader does NOT own, because it
+	   sits OUTSIDE it. Scoping this block to "the remainder after LessonReader"
+	   is what left <main> unstyled: Svelte styles are component-scoped, so the
+	   lesson page's identical rule never applied here and the session rendered
+	   full-viewport-width — a phone layout on a desktop. Found by looking at the
+	   screen (2026-09-03), which is how all four of this page's drifts were
+	   found. Every other route that renders <main> styles it; this was the only
+	   one that did not. Keep this identical to the lesson page's rule: both are
+	   the reading surface, and 700px is the reading measure. The other widths in
+	   the app differ on purpose (760 index, 1100 cards). */
+	main {
+		max-width: 700px;
+		margin: 1.5rem auto;
+		padding: 0 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.back {
+		display: inline-block;
+		color: var(--color-muted);
+		font-size: 0.9rem;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.back:hover {
+		color: var(--color-primary);
+	}
+	.title-area {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		min-width: 0;
+	}
+	.date {
+		margin: 0;
+		font-variant-numeric: tabular-nums;
+		font-weight: 600;
+		color: var(--color-muted);
+		font-size: 0.9rem;
+	}
+	.crumb-row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+	h1 {
+		margin: 0;
+		font-size: 1.35rem;
+		text-wrap: balance;
+	}
+	/* A long session title ("The Rain and the Party at the Sports Club") runs to
+	   THREE lines at 1.35rem on a 390px phone — 78px, the single tallest thing
+	   in the card. 1.12rem lands it in two without making it stop reading as the
+	   heading. Measured, not guessed. */
+	@media (max-width: 430px) {
+		h1 {
+			font-size: 1.05rem;
+		}
+	}
+	.muted {
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		margin: 0.15rem 0 0;
+		max-width: 52ch;
+	}
+	.prepare {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem 0.9rem;
+	}
+	.error {
+		color: var(--color-danger, #9c2f2a);
+		margin: 0;
+		font-size: 0.9rem;
+	}
+	/* Muted, not danger-red: the session plays and reads fine, it is one
+	   enrichment that is missing. Styling it as an error would teach the reader
+	   to dismiss the row, which is the opposite of what it is for. */
+	/* The `<details>` chrome is duplicated from the lesson reader rather than
+	   shared, deliberately: a shared shell would have to style content each page
+	   passes IN, and Svelte scopes a slot's styles to the parent — so it could
+	   only work through `:global()` rules the compiler cannot verify. What is
+	   genuinely identical and leaf-like (the download row) IS shared, as
+	   AudioDownloads. See its header for the full reasoning. */
+	.tools-card summary {
+		cursor: pointer;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--color-muted);
+		padding: 0.25rem 0;
+		border-radius: 4px;
+		user-select: none;
+	}
+	.tools-card summary:hover {
+		color: var(--color-text);
+	}
+	.tools-card[open] summary {
+		margin-bottom: 0.75rem;
+	}
+	.regen-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+		margin-top: 0.75rem;
+	}
+	.regen-btn {
+		background: transparent;
+		color: var(--color-danger);
+		border: 1px solid var(--color-danger);
+		border-radius: 4px;
+		padding: 0.4rem 0.9rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.regen-btn:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+	.help-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.4rem;
+		height: 1.4rem;
+		padding: 0;
+		margin: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 50%;
+		background: transparent;
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+	.help-toggle:hover {
+		color: var(--color-text);
+		border-color: var(--color-text);
+	}
+	.help-panel {
+		margin: 0.5rem 0 0;
+		font-size: 0.85rem;
+		color: var(--color-muted);
+	}
+	.delete-session-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.75rem;
+	}
+	.delete-session-btn {
+		margin-top: 0;
+		padding: 0.5rem 1.1rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.delete-session-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.delete-session-btn.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
+	}
+</style>

@@ -114,6 +114,35 @@ class TestRealTree:
         )
 
 
+class TestWhichFilesAreChecked:
+    """A route's ``<main>`` can live in a component beside its ``+page.svelte``.
+
+    The review-session reader does (tunatale-0wki): ``+page.svelte`` became a
+    keyed wrapper and the markup moved to ``ReviewSessionReader.svelte``. A walk
+    limited to ``+page.svelte`` / ``+layout.svelte`` then passed on the very
+    page this checker was written for, having stopped reading it.
+    """
+
+    def _route(self, tmp_path: Path, reader_source: str) -> Path:
+        routes = tmp_path / "src" / "routes"
+        route = routes / "review-sessions" / "[sessionId]"
+        route.mkdir(parents=True)
+        (route / "+page.svelte").write_text("{#key data.id}<Reader {data} />{/key}", encoding="utf-8")
+        (route / "Reader.svelte").write_text(reader_source, encoding="utf-8")
+        return routes
+
+    def test_an_unstyled_main_in_a_component_beside_the_page_fails(self, tmp_path, capsys):
+        routes = self._route(tmp_path, "<main></main>")
+
+        assert do_check(routes) == 1
+        assert "routes/review-sessions/[sessionId]/Reader.svelte" in capsys.readouterr().out
+
+    def test_a_styled_main_in_a_component_beside_the_page_passes(self, tmp_path):
+        routes = self._route(tmp_path, "<main></main>\n<style>\nmain { max-width: 700px; }\n</style>")
+
+        assert do_check(routes) == 0
+
+
 class TestSelectorBoundaries:
     """Regressions found auditing the first implementation (2026-09-04).
 

@@ -546,7 +546,7 @@ export const en = {
   "lessonPage.restoring": "Restoring…",
   "lessonPage.keepsDialogue": "Keeps the dialogue — only the hover translations are rebuilt.",
 
-  // review-sessions/[sessionId]/+page.svelte
+  // review-sessions/[sessionId]/ReviewSessionReader.svelte
   "reviewSessions.january": "January",
   "reviewSessions.february": "February",
   "reviewSessions.march": "March",
@@ -583,7 +583,7 @@ export const en = {
   "reviewSessions.rewriteHelpTail":
     ", so the words it drills may differ from last time. Existing cards stay; any audio already rendered is discarded and can be prepared again.",
 
-  // review-sessions/[sessionId]/+page.svelte delete (tunatale-ncdm)
+  // review-sessions/[sessionId]/ReviewSessionReader.svelte delete (tunatale-ncdm)
   "reviewSessionPage.deleteSession": "Delete session",
   "reviewSessionPage.confirmDelete": "Confirm delete",
 

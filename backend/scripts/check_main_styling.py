@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Every ``+page.svelte`` (and ``+layout.svelte``) that renders ``<main>``
-must style that element — via the ``main`` element selector or via a class/id
-the element carries.
+"""Every ``.svelte`` file under ``routes/`` that renders ``<main>`` must style
+that element — via the ``main`` element selector or via a class/id the element
+carries.
+
+EVERY file, not only ``+page.svelte`` / ``+layout.svelte``: a route's ``<main>``
+can live in a component beside its page (the review-session reader's does,
+since tunatale-0wki), and a walk limited to the ``+`` files stopped reading the
+page this checker was written for while still exiting 0.
 
 WHY — a real bug, not a hypothetical (22fc16b, 2026-09-03)
   The review-session reader rendered at full viewport width: a phone layout on a
@@ -107,13 +112,11 @@ def evaluate(results: dict[str, list[str]]) -> tuple[int, list[str]]:
     return (1 if messages else 0), messages
 
 
-def do_check() -> int:
-    """Walk routes, check each +page.svelte / +layout.svelte, print results."""
+def do_check(routes: Path = _ROUTES) -> int:
+    """Walk *routes*, check every ``.svelte`` file under it, print results."""
     results: dict[str, list[str]] = {}
-    for svelte in sorted(_ROUTES.rglob("*.svelte")):
-        if svelte.name not in ("+page.svelte", "+layout.svelte"):
-            continue
-        rel = str(svelte.relative_to(_ROUTES.parent))
+    for svelte in sorted(routes.rglob("*.svelte")):
+        rel = str(svelte.relative_to(routes.parent))
         results[rel] = check_source(svelte.read_text(encoding="utf-8"))
     code, messages = evaluate(results)
     for msg in messages:

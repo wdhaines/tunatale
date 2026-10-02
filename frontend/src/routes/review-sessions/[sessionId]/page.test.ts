@@ -929,7 +929,7 @@ describe("the reader", () => {
       it("a render that lands after moving to another session is dropped", async () => {
         let finish!: (a: never) => void;
         vi.mocked(api.rerenderReviewSession).mockReturnValue(new Promise((r) => (finish = r)));
-        const { getByRole, rerender } = render(Page, {
+        const { getByRole, queryByRole, rerender } = render(Page, {
           props: { data: data({ audio: rendered("s1") }) },
         });
         await fireEvent.click(getByRole("button", { name: /re-render all sections/i }));
@@ -940,9 +940,10 @@ describe("the reader", () => {
         await new Promise((r) => setTimeout(r, 0));
 
         expect(mockSessionTranscript).not.toHaveBeenCalledWith("sess-1");
-        expect(getByRole("link", { name: "Natural Speed" }).getAttribute("href")).not.toBe(
-          "/audio/s9",
-        );
+        // sess-2 has no audio, so NO download link at all. This used to read
+        // `getByRole(...).not.toBe("/audio/s9")`, which could only pass because
+        // sess-1's own link was still on sess-2's page (bd tunatale-0wki).
+        expect(queryByRole("link", { name: "Natural Speed" })).toBeNull();
       });
 
       it("a failed transcript re-read still shows the new audio", async () => {
@@ -1610,5 +1611,273 @@ describe("repairing a session that lost its glosses", () => {
     await fireEvent.click(getByRole("button", { name: /restore glosses/i }));
 
     expect((await findByRole("alert")).textContent).toContain("regloss string error");
+  });
+});
+
+/**
+ * bd tunatale-0wki. SvelteKit REUSES this component when only the route param
+ * changes (/review-sessions/a → /review-sessions/b), which is exactly what the
+ * hands-free hand-off does. `rerender` with a different session is that
+ * navigation.
+ *
+ * The page's local state (audio, transcript, the render indicator, errors) was
+ * snapshotted once and never followed `data`, so the header changed and
+ * everything under it stayed on the session it came from. And because the
+ * player is keyed on the audio id, a hand-off never built the next session's
+ * player at all: the run stopped silently at every session boundary.
+ */
+describe("moving to another session in place", () => {
+  const audioFor = (sessionId: string, sectionAudioId: string) => ({
+    audio_id: `audio-${sessionId}`,
+    lesson_id: sessionId,
+    sections: [
+      {
+        audio_id: sectionAudioId,
+        section_index: 0,
+        section_type: "natural_speed",
+        title: "Natural Speed",
+      },
+    ],
+  });
+
+  // Shares no word with sess-1's text, in the transcript or in the sections,
+  // so a word on screen says which session it came from.
+  const TRANSCRIPT_B = {
+    lesson_id: "sess-2",
+    key_phrases: [],
+    dialogue_lines: [
+      {
+        role: "male-1",
+        sentence: "Bussen kommer snart.",
+        words: [
+          { surface: "Bussen", prefix_punct: "", suffix_punct: "", lemma: "buss" },
+          { surface: "snart", prefix_punct: "", suffix_punct: ".", lemma: "snart" },
+        ],
+      },
+    ],
+  } as never;
+
+  const sessionB = () =>
+    sessionBody({
+      id: "sess-2",
+      session_date: "2026-09-03",
+      title: "The Late Bus",
+      key_phrases: [],
+      sections: [
+        {
+          type: "natural_speed",
+          phrases: [
+            { text: "Bussen kommer snart.", role: "male-1", language_code: "no", voice_id: "v" },
+          ],
+        },
+      ],
+    });
+
+  const pageData = (overrides: Record<string, unknown> = {}) => ({
+    session: sessionBody(),
+    audio: null,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    mockSessionTranscript.mockImplementation(
+      async (id: string) => (id === "sess-2" ? TRANSCRIPT_B : TRANSCRIPT) as never,
+    );
+  });
+
+  it("offers the new session's audio, not the one it came from", async () => {
+    const { getByRole, rerender } = render(Page, {
+      props: { data: pageData({ audio: audioFor("sess-1", "a-natural") }) },
+    });
+    expect(getByRole("link", { name: "Natural Speed" }).getAttribute("href")).toBe(
+      "/audio/a-natural",
+    );
+
+    await rerender({
+      data: pageData({ session: sessionB(), audio: audioFor("sess-2", "b-natural") }),
+    });
+
+    expect(getByRole("link", { name: "Natural Speed" }).getAttribute("href")).toBe(
+      "/audio/b-natural",
+    );
+    expect(getByRole("link", { name: /download all sections/i }).getAttribute("href")).toBe(
+      "/audio/lesson/sess-2/zip",
+    );
+  });
+
+  it("a session with no audio yet does not inherit the previous one's", async () => {
+    const { queryByRole, getByRole, container, rerender } = render(Page, {
+      props: { data: pageData({ audio: audioFor("sess-1", "a-natural") }) },
+    });
+    expect(container.querySelector("section.player")).toBeTruthy();
+
+    await rerender({ data: pageData({ session: sessionB(), audio: null }) });
+
+    expect(queryByRole("link", { name: "Natural Speed" })).toBeNull();
+    expect(container.querySelector("section.player")).toBeNull();
+    expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
+  });
+
+  it("reads the new session's words", async () => {
+    const { findByText, queryByText, rerender } = render(Page, { props: { data: pageData() } });
+    expect(await findByText(/Toget/)).toBeTruthy();
+
+    await rerender({ data: pageData({ session: sessionB() }) });
+
+    expect(await findByText(/Bussen/)).toBeTruthy();
+    expect(queryByText(/Toget/)).toBeNull();
+    expect(mockSessionTranscript).toHaveBeenCalledWith("sess-2");
+  });
+
+  it("a transcript that arrives late for the session it left is not shown", async () => {
+    // The transcript runs the lemmatizer and can take seconds; a hand-off can
+    // outrun it. sess-1's answer lands AFTER sess-2's and must not replace it.
+    let finishA!: (t: never) => void;
+    mockSessionTranscript.mockImplementation((id: string) =>
+      id === "sess-2"
+        ? Promise.resolve(TRANSCRIPT_B)
+        : (new Promise((r) => (finishA = r)) as never),
+    );
+    const { findByText, queryByText, rerender } = render(Page, { props: { data: pageData() } });
+    await vi.waitFor(() => expect(mockSessionTranscript).toHaveBeenCalledWith("sess-1"));
+
+    await rerender({ data: pageData({ session: sessionB() }) });
+    expect(await findByText(/Bussen/)).toBeTruthy();
+    finishA(TRANSCRIPT);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(queryByText(/Toget/)).toBeNull();
+    expect(queryByText(/Bussen/)).toBeTruthy();
+  });
+
+  it("a failed render on one session is not reported on the next", async () => {
+    mockRender.mockRejectedValue(new Error("ffmpeg not found"));
+    const { getByRole, findByText, queryByText, rerender } = render(Page, {
+      props: { data: pageData() },
+    });
+    await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
+    expect(await findByText(/ffmpeg not found/i)).toBeTruthy();
+
+    await rerender({ data: pageData({ session: sessionB() }) });
+
+    expect(queryByText(/ffmpeg not found/i)).toBeNull();
+  });
+
+  it("a render running on one session does not show as preparing on the next", async () => {
+    mockRenderStatus.mockImplementation(async (id: string) => ({ rendering: id === "sess-1" }));
+    const { findByRole, getByRole, rerender } = render(Page, { props: { data: pageData() } });
+    expect(await findByRole("button", { name: /preparing/i })).toHaveProperty("disabled", true);
+
+    await rerender({ data: pageData({ session: sessionB() }) });
+
+    await vi.waitFor(() => expect(mockRenderStatus).toHaveBeenCalledWith("sess-2"));
+    expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
+  });
+
+  it("picks up a render already running on the session it arrives at", async () => {
+    mockRenderStatus.mockImplementation(async (id: string) => ({ rendering: id === "sess-2" }));
+    const { findByRole, getByRole, rerender } = render(Page, { props: { data: pageData() } });
+    await vi.waitFor(() => expect(mockRenderStatus).toHaveBeenCalledWith("sess-1"));
+    expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
+
+    await rerender({ data: pageData({ session: sessionB() }) });
+
+    expect(await findByRole("button", { name: /preparing/i })).toHaveProperty("disabled", true);
+  });
+
+  it("a prepare that finishes after the move does not hand its audio to the next session", async () => {
+    let finishRender!: (a: never) => void;
+    mockRender.mockReturnValue(new Promise((r) => (finishRender = r)) as never);
+    mockGetAudio.mockResolvedValue(audioFor("sess-1", "a-natural") as never);
+    const { getByRole, queryByRole, container, rerender } = render(Page, {
+      props: { data: pageData() },
+    });
+    await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
+
+    await rerender({ data: pageData({ session: sessionB() }) });
+    finishRender(audioFor("sess-1", "a-natural") as never);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(queryByRole("link", { name: "Natural Speed" })).toBeNull();
+    expect(container.querySelector("section.player")).toBeNull();
+    expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
+  });
+
+  it("a status read in flight when the page moves on does not start another poll", async () => {
+    // onDestroy clears the pending timer, but a read that was already waiting
+    // for its answer armed a NEW timer when it landed, after the clear. That
+    // chain belonged to no page and polled until the render ended.
+    vi.useFakeTimers();
+    try {
+      let finishPoll!: (s: { rendering: boolean }) => void;
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true }) // sess-1, on mount
+        .mockReturnValueOnce(new Promise((r) => (finishPoll = r)) as never) // sess-1's first poll
+        .mockResolvedValue({ rendering: false }); // sess-2, and anything after
+      const { findByRole, rerender } = render(Page, { props: { data: pageData() } });
+      await findByRole("button", { name: /preparing/i });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(mockRenderStatus).toHaveBeenCalledTimes(2);
+
+      await rerender({ data: pageData({ session: sessionB() }) });
+      await vi.waitFor(() => expect(mockRenderStatus).toHaveBeenCalledTimes(3));
+      finishPoll({ rendering: true });
+      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(mockRenderStatus).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe("a reload of the SAME session leaves the reader alone", () => {
+    // The other direction. Rewrite, re-gloss and paste all end in
+    // `invalidateAll()`, which hands the page a new `data` object for the same
+    // id; each handler re-reads what it needs. A fix that reset the page on
+    // every `data` change would blank it, and double every transcript fetch.
+    it("keeps the words on screen and does not fetch them again", async () => {
+      const { findByText, queryByText, getByText, rerender } = render(Page, {
+        props: { data: pageData() },
+      });
+      expect(await findByText(/Toget/)).toBeTruthy();
+      const fetches = mockSessionTranscript.mock.calls.length;
+
+      await rerender({
+        data: pageData({ session: sessionBody({ title: "A Missed Train, again" }) }),
+      });
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(getByText("A Missed Train, again")).toBeTruthy();
+      expect(queryByText(/Toget/)).toBeTruthy();
+      expect(mockSessionTranscript.mock.calls.length).toBe(fetches);
+    });
+
+    it("keeps a render indicator that is still true", async () => {
+      mockRenderStatus.mockResolvedValue({ rendering: true });
+      const { findByRole, getByRole, rerender } = render(Page, { props: { data: pageData() } });
+      expect(await findByRole("button", { name: /preparing/i })).toHaveProperty("disabled", true);
+
+      await rerender({
+        data: pageData({ session: sessionBody({ title: "A Missed Train, again" }) }),
+      });
+
+      expect(getByRole("button", { name: /preparing/i })).toHaveProperty("disabled", true);
+    });
+
+    it("keeps an error the reader has not acted on yet", async () => {
+      mockRender.mockRejectedValue(new Error("ffmpeg not found"));
+      const { getByRole, findByText, queryByText, rerender } = render(Page, {
+        props: { data: pageData() },
+      });
+      await fireEvent.click(getByRole("button", { name: /prepare audio/i }));
+      expect(await findByText(/ffmpeg not found/i)).toBeTruthy();
+
+      await rerender({
+        data: pageData({ session: sessionBody({ title: "A Missed Train, again" }) }),
+      });
+
+      expect(queryByText(/ffmpeg not found/i)).toBeTruthy();
+    });
   });
 });
