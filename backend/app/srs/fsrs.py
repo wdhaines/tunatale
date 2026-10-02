@@ -1737,3 +1737,42 @@ def build_revlog_row(
         anki_card_id=prev.anki_card_id,
         budget_neutral=budget_neutral,
     )
+
+
+MANUAL_REVIEW_KIND = 4
+
+
+def manual_revlog_factor(difficulty: float) -> int:
+    """``revlog.factor`` for a manual (``type = 4``) row: difficulty_shifted × 1000, TRUNCATED.
+
+    Anki's ``log_scheduled_review`` casts ``difficulty_shifted() * 1000.0`` to
+    ``u16`` (rslib/src/revlog/mod.rs), where the grade path rounds
+    (``build_revlog_row``). The arithmetic is f32: at d = 2.8 the binary writes 299
+    and f64 gives 300.
+
+    The value is never 0, and that matters more than its exact size: ``type = 4``
+    with ``factor = 0`` is the marker Anki writes for Forget
+    (``RevlogEntry::is_reset``), and its FSRS code discards a card's review
+    history before such a row. FSRS difficulty lives in [1, 10], which gives
+    [100, 1100]; a value outside that range is clamped into it so that no input
+    can produce the marker. Pinned against the binary by
+    tests/test_parity_manual_revlog_row.py.
+    """
+    shifted = (_F32(min(max(difficulty, 1.0), 10.0)) - _F32(1.0)) / _F32(9.0) + _F32(0.1)
+    return int(shifted * _F32(1000.0))
+
+
+def manual_revlog_row(*, ivl_before: int, ivl_after: int, difficulty: float) -> dict[str, int]:
+    """The revlog columns Anki writes for a schedule change that is not a review.
+
+    This is the row of Anki's own Set Due Date: no button, no time on the card,
+    the interval on each side of the change. Keys are Anki's column names.
+    """
+    return {
+        "ease": 0,
+        "ivl": ivl_after,
+        "lastIvl": ivl_before,
+        "factor": manual_revlog_factor(difficulty),
+        "time": 0,
+        "type": MANUAL_REVIEW_KIND,
+    }

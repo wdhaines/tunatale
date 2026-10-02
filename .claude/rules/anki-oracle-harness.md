@@ -69,6 +69,9 @@ post-grade `stability`/`difficulty`), `get_card`, `get_revlog`, `note_ords`,
   alongside `today` and the post-limit `new_count`. Anki charges the daily limit
   only when the stamp equals its own `today`, so the pair shows both what TT wrote
   and whether Anki accepted it.
+- `set_due_date` / `forget_cards` — Anki's own Set Due Date and Forget on
+  `card_ids`. Follow with `get_revlog` to read the manual (`type = 4`) row each
+  leaves; Forget's is the `factor = 0` one (Layer 88).
 
 ## Subprocess boundary — never violate
 

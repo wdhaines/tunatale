@@ -783,8 +783,12 @@ _POSITION = 4242  # its place in the new queue; no day number comes near it
 _SCHEDULE = "type, queue, due, ivl, factor, reps, lapses, left, odue, odid, data"
 
 
-def _norwegian_deck_with_a_new_card(tmp_path, *, queue: int):
-    """(db, conn, row_id) for a TT deck seeded from a collection holding one new card."""
+def _norwegian_deck_with_a_new_card(tmp_path, *, queue: int, reviewed_due: int | None = None):
+    """(db, conn, row_id) for a TT deck seeded from a collection holding one new card.
+
+    *reviewed_due* moves the fixture's reviewed card (30010, due on col-day 10 and
+    so long overdue) to that col-day before TT is seeded from the collection.
+    """
     import sqlite3
 
     from app.plugins.anki_sync.import_seed import import_seed
@@ -793,6 +797,8 @@ def _norwegian_deck_with_a_new_card(tmp_path, *, queue: int):
     col = build_norwegian_anki_db(tmp_path, with_homographs=True)
     setup = sqlite3.connect(str(col))
     setup.execute("UPDATE cards SET due = ?, queue = ? WHERE id = ?", (_POSITION, queue, _NEW_CARD))
+    if reviewed_due is not None:
+        setup.execute("UPDATE cards SET due = ? WHERE id = ?", (reviewed_due, _REVIEWED_CARD))
     setup.commit()
     setup.close()
     db_path = str(tmp_path / "tunatale_no.db")
@@ -902,9 +908,9 @@ _REVIEWED_NOTE = 3001
 _HISTORY = [1_750_000_000_000 + i * 86_400_000 for i in range(5)]
 
 
-def _reviewed_card_with_history(tmp_path):
+def _reviewed_card_with_history(tmp_path, *, reviewed_due: int | None = None):
     """(db, conn, row_id, guid) with the reviewed card's five reviews in Anki's revlog."""
-    db, conn, _ = _norwegian_deck_with_a_new_card(tmp_path, queue=0)
+    db, conn, _ = _norwegian_deck_with_a_new_card(tmp_path, queue=0, reviewed_due=reviewed_due)
     conn.executemany(
         "INSERT INTO revlog VALUES (?, ?, 0, 3, 21, 10, 2500, 4000, 1)", [(rid, _REVIEWED_CARD) for rid in _HISTORY]
     )
@@ -1002,5 +1008,273 @@ def test_a_grade_waiting_under_a_suspension_still_reaches_anki(tmp_path):
         assert (card["type"], card["queue"], card["reps"]) == (2, -1, 6)
         assert json.loads(card["data"])["s"] == 18.2671
         assert _reviewed_direction(db).state == SRSState.SUSPENDED
+    finally:
+        conn.close()
+
+
+# ── A schedule change nobody graded (tunatale-htjr, Layer 88) ─────────────────
+#
+# Marking a reviewed card known, restoring it, or relabelling it is not a review.
+# The push used to send each through the revlog fallback, which invented a "Good"
+# and bumped ``cards.reps``. What Anki writes for its own Set Due Date is a
+# ``type = 4`` row (pinned against the binary in test_parity_manual_revlog_row.py),
+# and only when the schedule actually moves.
+
+_COL_CRT = 1704067200  # the fixture collection's crt
+_DIFFICULTY_FACTOR = 955  # manual_revlog_row's factor for the fixture card's d = 8.7
+_MAX_IVL = 3650
+
+
+def _manual_rows(conn) -> list[dict]:
+    """The reviewed card's revlog rows after its five seeded reviews, in full."""
+    rows = conn.execute(
+        "SELECT id, usn, ease, ivl, lastIvl, factor, time, type FROM revlog WHERE cid = ? AND id > ? ORDER BY id",
+        (_REVIEWED_CARD, _HISTORY[-1]),
+    )
+    return [dict(r) for r in rows]
+
+
+def _due_in_days(days: int) -> int:
+    from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
+
+    return anki_today_col_day(_COL_CRT) + days
+
+
+def _mark_known(db, row_id) -> None:
+    from app.srs.anki_mirror.rollover import due_at_rollover_utc
+
+    db.mark_known(
+        row_id, due_at=due_at_rollover_utc(anki_today() + timedelta(days=_MAX_IVL)), stability=float(_MAX_IVL)
+    )
+
+
+def test_marking_a_reviewed_card_known_logs_a_manual_change_not_a_review(tmp_path):
+    """Known moves the due date, so Anki gets one ``type = 4`` row and no review.
+
+    The row carries the interval before and after, ``ease = 0``, ``time = 0``, the
+    moment of the push as its id, and a NON-ZERO factor: ``type = 4`` with
+    ``factor = 0`` is Anki's Forget marker, which makes its FSRS code drop the
+    card's history before the row.
+    """
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path, reviewed_due=_due_in_days(9))
+    try:
+        before, history = _reviewed_schedule(conn), _reviewed_revlog(conn)
+        assert (before["type"], before["reps"], before["ivl"], len(history)) == (2, 5, 21, 5)  # the control
+
+        _mark_known(db, row_id)
+        started_ms = int(datetime.now(UTC).timestamp() * 1000)
+        _sync(db, conn)
+
+        card = _reviewed_schedule(conn)
+        assert (card["type"], card["queue"], card["reps"], card["lapses"]) == (2, 2, 5, 0)
+        assert card["due"] - before["due"] == _MAX_IVL - 9
+        assert card["ivl"] == _MAX_IVL
+        (row,) = _manual_rows(conn)
+        assert row["id"] >= started_ms
+        assert {k: row[k] for k in ("usn", "ease", "ivl", "lastIvl", "factor", "time", "type")} == {
+            "usn": -1,
+            "ease": 0,
+            "ivl": _MAX_IVL,
+            "lastIvl": 21,
+            "factor": _DIFFICULTY_FACTOR,
+            "time": 0,
+            "type": 4,
+        }
+        known = _reviewed_direction(db)
+        assert (known.reps, known.dirty_fsrs) == (5, False)
+
+        _sync(db, conn)  # and it holds: nothing left to push, nothing more logged
+        assert _reviewed_schedule(conn) == card
+        assert len(_manual_rows(conn)) == 1
+        assert _reviewed_direction(db).reps == 5
+    finally:
+        conn.close()
+
+
+def test_restoring_a_known_card_logs_the_way_back_and_returns_its_due_date(tmp_path):
+    """Known then restore: two manual rows, the original due date, five reviews still.
+
+    Pinned to UTC because it asserts an absolute due day. The pull reads a due
+    day against the creation time's UTC date and the push writes it against the
+    local one; they agree for a real collection (created at 04:00 local) and
+    differ by a day for this fixture's midnight-UTC creation time read from a
+    zone west of UTC.
+    """
+    from tests._helpers.localtz import local_timezone
+
+    with local_timezone("UTC"):
+        db, conn, row_id, _ = _reviewed_card_with_history(tmp_path, reviewed_due=_due_in_days(9))
+        try:
+            before, history = _reviewed_schedule(conn), _reviewed_revlog(conn)
+            _mark_known(db, row_id)
+            _sync(db, conn)
+            assert _reviewed_schedule(conn)["ivl"] == _MAX_IVL  # the control: it really was pushed as known
+
+            db.restore_known(row_id)
+            _sync(db, conn)
+
+            card = _reviewed_schedule(conn)
+            assert (card["type"], card["queue"], card["reps"], card["lapses"]) == (2, 2, 5, 0)
+            assert card["due"] == before["due"]
+            assert json.loads(card["data"])["s"] == 15.78
+            marked, restored = _manual_rows(conn)
+            assert (restored["type"], restored["ease"], restored["time"]) == (4, 0, 0)
+            assert (restored["lastIvl"], restored["ivl"]) == (_MAX_IVL, card["ivl"])
+            assert restored["factor"] == _DIFFICULTY_FACTOR
+            assert restored["id"] > marked["id"]
+            assert [r for r in _reviewed_revlog(conn) if r[2] != 4] == history  # no review was added
+            after = _reviewed_direction(db)
+            assert (after.state, after.reps, after.dirty_fsrs) == (SRSState.REVIEW, 5, False)
+        finally:
+            conn.close()
+
+
+def test_marking_an_overdue_reviewed_card_known_logs_one_manual_change(tmp_path):
+    """The same on a card that is long overdue, where the fallback row hurt most.
+
+    ``lastIvl`` is the interval Anki held before the push, not one derived from
+    TunaTale's stability.
+    """
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path)
+    try:
+        before = _reviewed_schedule(conn)
+        assert before["due"] < _due_in_days(0)  # the control: overdue
+
+        _mark_known(db, row_id)
+        _sync(db, conn)
+
+        card = _reviewed_schedule(conn)
+        assert (card["reps"], card["ivl"], card["due"]) == (5, _MAX_IVL, _due_in_days(_MAX_IVL))
+        (row,) = _manual_rows(conn)
+        assert (row["type"], row["ease"], row["lastIvl"], row["ivl"], row["factor"]) == (
+            4,
+            0,
+            21,
+            _MAX_IVL,
+            _DIFFICULTY_FACTOR,
+        )
+        assert _reviewed_direction(db).reps == 5
+    finally:
+        conn.close()
+
+
+def test_relabelling_a_reviewed_card_as_review_changes_nothing_in_anki(tmp_path):
+    """A label with no reschedule behind it writes nothing: no row, same due, same ivl.
+
+    The state route's "review" is label-only in TunaTale. Anki already holds the
+    card as a review card with a schedule of its own, so there is nothing to send;
+    the push used to move this overdue card to today with ``ivl = 1`` and log a
+    review.
+    """
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path)
+    try:
+        before, history = _reviewed_schedule(conn), _reviewed_revlog(conn)
+
+        db.set_state_by_id(row_id, SRSState.REVIEW)
+        assert _reviewed_direction(db).dirty_fsrs is True  # the control: the push has something to look at
+        _sync(db, conn)
+
+        assert _reviewed_schedule(conn) == before
+        assert _reviewed_revlog(conn) == history
+        after = _reviewed_direction(db)
+        assert (after.state, after.reps, after.dirty_fsrs) == (SRSState.REVIEW, 5, False)
+    finally:
+        conn.close()
+
+
+def test_promoting_a_reviewed_card_to_learning_logs_one_manual_change(tmp_path):
+    """promote_to_learning reschedules to today: one manual row, and it is not a Forget.
+
+    Its own tt_revlog row (``review_kind = 4``) is TunaTale's record of the change.
+    Pushed as it stood (``factor = 0``, counted in ``reps``) it reached Anki as a
+    Forget marker plus a sixth "review".
+    """
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path, reviewed_due=_due_in_days(9))
+    try:
+        history = _reviewed_revlog(conn)
+
+        db.promote_to_learning(row_id, Direction.RECOGNITION)
+        _sync(db, conn)
+
+        card = _reviewed_schedule(conn)
+        assert (card["reps"], card["due"]) == (5, _due_in_days(0))
+        (row,) = _manual_rows(conn)
+        assert (row["type"], row["ease"], row["time"], row["lastIvl"], row["ivl"]) == (4, 0, 0, 21, card["ivl"])
+        assert row["factor"] == _DIFFICULTY_FACTOR
+        assert [r for r in _reviewed_revlog(conn) if r[2] != 4] == history
+        assert _reviewed_direction(db).reps == 5
+    finally:
+        conn.close()
+
+
+def test_marking_a_known_card_known_again_logs_nothing(tmp_path):
+    """A push that leaves ``due`` and ``ivl`` where they were is not a change to log."""
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path, reviewed_due=_due_in_days(9))
+    try:
+        _mark_known(db, row_id)
+        _sync(db, conn)
+        card = _reviewed_schedule(conn)
+        assert len(_manual_rows(conn)) == 1  # the control: the first mark was logged
+
+        _mark_known(db, row_id)
+        assert _reviewed_direction(db).dirty_fsrs is True  # the control: the push runs again
+        _sync(db, conn)
+
+        assert _reviewed_schedule(conn) == card
+        assert len(_manual_rows(conn)) == 1
+    finally:
+        conn.close()
+
+
+def test_a_recovered_card_gets_its_manual_rows_back_without_counting_them_as_reviews(tmp_path):
+    """Recovery restores a re-minted card's history row for row; ``reps`` counts reviews.
+
+    A manual row in that history came from Anki (its own Set Due Date or Forget)
+    and goes back as it was. It is not a review, and counting it gave the fresh
+    card one rep more than it had.
+    """
+    from app.models.srs_item import RevlogRow
+    from app.plugins.anki_sync.sync import OfflineReader
+
+    db, conn, _ = _norwegian_deck_with_a_new_card(tmp_path, queue=0)
+    try:
+        item = db.get_collocation_by_anki_note_id(_REVIEWED_NOTE)
+        rows, _ = db.list_collocations()
+        row_id = next(rid for rid, it, *_ in rows if it.guid == item.guid)
+        # The freshly minted card: no history and no reps of its own yet.
+        conn.execute("UPDATE cards SET reps = 0 WHERE id = ?", (_REVIEWED_CARD,))
+        conn.commit()
+        assert conn.execute("SELECT COUNT(*) FROM revlog WHERE cid = ?", (_REVIEWED_CARD,)).fetchone()[0] == 0
+        for rid, ease, kind, factor in ((_HISTORY[0], 3, 1, 956), (_HISTORY[1], 0, 4, 955), (_HISTORY[2], 3, 1, 956)):
+            db.append_revlog(
+                RevlogRow(
+                    id=rid,
+                    collocation_id=row_id,
+                    direction=Direction.RECOGNITION,
+                    button_chosen=ease,
+                    interval=21,
+                    last_interval=10,
+                    factor=factor,
+                    taken_millis=4000 if ease else 0,
+                    review_kind=kind,
+                    anki_card_id=_REVIEWED_CARD,
+                )
+            )
+        ds = item.directions[Direction.RECOGNITION]
+        ds.reps = 2
+        ds.dirty_fsrs = True
+        db.update_direction(item.guid, Direction.RECOGNITION, ds)
+
+        sync = AnkiSync(
+            db=db,
+            _reader=OfflineReader(conn, _NO_DECK, language_code="no"),
+            _writer=OfflineWriter(conn),
+            language_code="no",
+        )
+        sync._recovered_directions = {(item.guid, Direction.RECOGNITION.value)}
+        sync.sync_push()
+
+        assert _reviewed_revlog(conn) == [(_HISTORY[0], 3, 1), (_HISTORY[1], 0, 4), (_HISTORY[2], 3, 1)]
+        assert _reviewed_schedule(conn)["reps"] == 2
     finally:
         conn.close()

@@ -442,18 +442,20 @@ class OfflineWriter:
         self._conn.commit()
 
     def get_current_card_state(self, card_id: int) -> dict | None:
-        """Return Anki's current `queue`/`type`/`left`/`mod` for the card, or None
-        if the card doesn't exist. Used by sync_push (Fix 3) to skip writes when Anki
-        has more progress than TT; `mod` (epoch secs of Anki's last change) lets the
-        recency guard avoid discarding a NEWER TT grade (Layer 69).
+        """Return Anki's current `queue`/`type`/`left`/`mod`/`due`/`ivl` for the card,
+        or None if the card doesn't exist. Used by sync_push (Fix 3) to skip writes
+        when Anki has more progress than TT; `mod` (epoch secs of Anki's last change)
+        lets the recency guard avoid discarding a NEWER TT grade (Layer 69). `due`
+        and `ivl` are how the push tells whether a change nobody graded moved the
+        schedule, and so whether Anki gets a manual revlog row for it (Layer 88).
         """
         row = self._conn.execute(
-            "SELECT queue, type, IFNULL(left, 0), mod FROM cards WHERE id = ?",
+            "SELECT queue, type, IFNULL(left, 0), mod, due, ivl FROM cards WHERE id = ?",
             (card_id,),
         ).fetchone()
         if row is None:
             return None
-        return {"queue": row[0], "type": row[1], "left": row[2], "mod": row[3]}
+        return {"queue": row[0], "type": row[1], "left": row[2], "mod": row[3], "due": row[4], "ivl": row[5]}
 
     def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
         """Update a learning/relearning card's left, due, queue, type.
