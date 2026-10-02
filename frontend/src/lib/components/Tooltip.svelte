@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { untrack, type Snippet } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import type { WordToken } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import { untrack } from 'svelte';
 
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
