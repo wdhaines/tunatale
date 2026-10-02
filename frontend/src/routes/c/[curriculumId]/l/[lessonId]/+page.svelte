@@ -15,6 +15,7 @@
 	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
 	import { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import LessonReader from '$lib/components/LessonReader.svelte';
+	import PagerBand from '$lib/components/PagerBand.svelte';
 	import MasteryLine from '$lib/components/MasteryLine.svelte';
 	import ListenActions from '$lib/components/ListenActions.svelte';
 	import { createListenActions } from '$lib/reading/listenActions.svelte';
@@ -501,19 +502,12 @@
 				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
 				<!-- Day pager: its own full-width band directly under the curriculum link,
 				     prev hard left and next hard right, so it reads as one axis of travel
-				     rather than two links fighting the breadcrumb for the same corner.
-				     Hidden entirely (not rendered empty) when there is no neighbour — an
-				     empty nav would still cost a grid row and its gap. -->
-				{#if prevLesson || nextLesson}
-					<nav class="lesson-nav" aria-label={t('lessonPage.lessonNavAria')}>
-						{#if prevLesson}
-							<a class="lesson-nav-link" href="/c/{data.curriculum.id}/l/{prevLesson.lesson_id}">← {t('lessonPage.pagerDay', { position: prevLesson.position })}</a>
-						{/if}
-						{#if nextLesson}
-							<a class="lesson-nav-link lesson-nav-next" href="/c/{data.curriculum.id}/l/{nextLesson.lesson_id}">{t('lessonPage.pagerDay', { position: nextLesson.position })} →</a>
-						{/if}
-					</nav>
-				{/if}
+				     rather than two links fighting the breadcrumb for the same corner. -->
+				<PagerBand
+					prev={prevLesson ? { href: `/c/${data.curriculum.id}/l/${prevLesson.lesson_id}`, label: t('lessonPage.pagerDay', { position: prevLesson.position }) } : null}
+					next={nextLesson ? { href: `/c/${data.curriculum.id}/l/${nextLesson.lesson_id}`, label: t('lessonPage.pagerDay', { position: nextLesson.position }) } : null}
+					ariaLabel={t('lessonPage.lessonNavAria')}
+				/>
 		{/snippet}
 		{#snippet header()}
 				<div class="player-title-area">
@@ -657,34 +651,6 @@
 		text-decoration: none;
 	}
 	.breadcrumb:hover {
-		color: var(--color-primary);
-	}
-	/* Prev at the left edge, next at the right — the pager's own width IS the
-	   affordance. `margin-left: auto` on the next link (rather than
-	   space-between) keeps it hard right when prev is absent on day one. */
-	.lesson-nav {
-		display: flex;
-		align-items: baseline;
-		gap: 0.75rem;
-		/* The pager sits between two muted lines that both start with an arrow;
-		   without this it reads as a second breadcrumb glued to the first. */
-		margin: 0.15rem 0 0.35rem;
-	}
-	.lesson-nav-next {
-		margin-left: auto;
-	}
-	/* Same treatment as .breadcrumb, one step smaller — these are secondary to the
-	   "back to curriculum" link they sit opposite. */
-	.lesson-nav-link {
-		color: var(--color-muted);
-		font-size: 0.8rem;
-		/* One notch lighter than .breadcrumb (600): sibling navigation is
-		   secondary to the way back out. */
-		font-weight: 500;
-		text-decoration: none;
-		white-space: nowrap;
-	}
-	.lesson-nav-link:hover {
 		color: var(--color-primary);
 	}
 	h1 {

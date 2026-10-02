@@ -17,11 +17,13 @@
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
+	import PagerBand from '$lib/components/PagerBand.svelte';
 	import { invalidateAll, goto } from '$app/navigation';
 	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
 	import { mediaTrace } from '$lib/mediaTrace';
-	import { nextSessionAfter } from '$lib/reading/nextReviewSession';
+	import { nextSessionAfter, sessionNeighbours } from '$lib/reading/nextReviewSession';
 	import type { SessionOrderable } from '$lib/reading/nextReviewSession';
+	import { formatSessionDate } from '$lib/reading/sessionDate';
 	import type { PageData } from './$types';
 
 	// The reader for a review session.
@@ -110,6 +112,11 @@
 	//
 	// Re-read at the end rather than trusted from mount, and traced, for the
 	// same reasons as the lesson page's hand-off (tunatale-yoj4).
+	// The pager's links, from the SAME sibling list and the same order the
+	// hand-off walks, so "page to the next session" and "hand off to the next
+	// session" cannot name different sessions.
+	const neighbours = $derived(sessionNeighbours(siblingSessions, data.session.id));
+
 	async function onSequenceEnd() {
 		try {
 			siblingSessions = await api.listReviewSessions();
@@ -124,32 +131,6 @@
 		mediaTrace(`handoff:goto to=${next.id}`);
 		handsFreePref.armHandoff();
 		void goto(`/review-sessions/${next.id}`);
-	}
-
-	const MONTHS = [
-		t('reviewSessions.january'),
-		t('reviewSessions.february'),
-		t('reviewSessions.march'),
-		t('reviewSessions.april'),
-		t('reviewSessions.may'),
-		t('reviewSessions.june'),
-		t('reviewSessions.july'),
-		t('reviewSessions.august'),
-		t('reviewSessions.september'),
-		t('reviewSessions.october'),
-		t('reviewSessions.november'),
-		t('reviewSessions.december')
-	];
-
-	/**
-	 * ⚠️ Formatted from the ISO parts, never through `new Date()`.
-	 * `new Date('2026-09-02')` is UTC midnight and renders as the previous day in
-	 * every negative-offset timezone. session_date is a calendar date, not an
-	 * instant.
-	 */
-	function formatSessionDate(iso: string): string {
-		const [, month, day] = iso.split('-').map(Number);
-		return `${day} ${MONTHS[month - 1]}`;
 	}
 
 	// Empty means UNMEASURABLE, not zero: no line at all rather than "reused 0 of
@@ -355,12 +336,12 @@
 			// window between the delete reply and the navigation.
 			if (pollTimer) clearTimeout(pollTimer);
 			await api.deleteReviewSession(data.session.id);
-			// The home page, which is where sessions are LISTED (it links each as
-			// /review-sessions/{id}). There is no /review-sessions index route, and
-			// navigating there dropped the user on a 404 after a successful delete.
-			// Same shape as the lesson page's delete-day, which returns to the
-			// curriculum page that listed the day.
-			goto('/');
+			// The sessions index, which is where sessions are LISTED (it links each
+			// as /review-sessions/{id}). Before it existed this went to the home
+			// page, and then to a 404 route, after a successful delete. Same shape
+			// as the lesson page's delete-day, which returns to the curriculum page
+			// that listed the day.
+			goto('/review-sessions');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			deletingSession = false;
@@ -439,9 +420,17 @@
 			     neither fills a phone's width, so stacking them spent a whole row on
 			     whitespace above a title that already needs three. -->
 			<div class="crumb-row">
-				<a class="back" href="/">← {t('reviewSessions.backToLessons')}</a>
+				<a class="back" href="/review-sessions">← {t('reviewSessions.backToSessions')}</a>
 				<p class="date">{formatSessionDate(data.session.session_date)}</p>
 			</div>
+			<!-- Session pager: the same band the lesson page has under its
+			     breadcrumb, labelled by DATE because a session has no day
+			     number. Its order is the hands-free hand-off's (nextReviewSession.ts). -->
+			<PagerBand
+				prev={neighbours.prev ? { href: `/review-sessions/${neighbours.prev.id}`, label: formatSessionDate(neighbours.prev.session_date) } : null}
+				next={neighbours.next ? { href: `/review-sessions/${neighbours.next.id}`, label: formatSessionDate(neighbours.next.session_date) } : null}
+				ariaLabel={t('reviewSessions.sessionNavAria')}
+			/>
 		{/snippet}
 		{#snippet header()}
 			<div class="title-area">

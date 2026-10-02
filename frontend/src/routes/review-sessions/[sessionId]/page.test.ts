@@ -724,11 +724,13 @@ describe("the reader", () => {
     expect(queryByRole("button", { name: /prepare audio/i })).toBeNull();
   });
 
-  it("offers a way back to the list", () => {
+  it("offers a way back to the list of sessions", () => {
+    // The sessions index, the counterpart of a lesson's "← {curriculum}" link
+    // (bd tunatale-e6fq). It pointed at "/" while no index existed.
     const { getByRole } = render(Page, { props: { data: data() } });
 
-    const back = getByRole("link", { name: /lessons|back/i });
-    expect(back.getAttribute("href")).toBe("/");
+    const back = getByRole("link", { name: "← Review sessions" });
+    expect(back.getAttribute("href")).toBe("/review-sessions");
   });
 
   /**
@@ -1098,17 +1100,18 @@ describe("deleting the session", () => {
 
     await vi.waitFor(() => {
       expect(api.deleteReviewSession).toHaveBeenCalledWith("sess-1");
-      expect(mockGoto).toHaveBeenCalledWith("/");
+      // The sessions index (bd tunatale-e6fq), the page that lists what was
+      // just deleted. It was "/" while no index existed.
+      expect(mockGoto).toHaveBeenCalledWith("/review-sessions");
     });
   });
 
   it("navigates somewhere that actually EXISTS after deleting", async () => {
-    // The regression guard for the real defect. The literal assertion above
-    // cannot tell "/" from "/review-sessions" — both are strings, and the test
-    // that shipped the bug asserted a dead one under the name "navigates to the
-    // list". /review-sessions has no +page.svelte: sessions are listed on the
-    // home page (routes/+page.svelte links them as /review-sessions/{id}), so
-    // deleting one dropped the user on a 404.
+    // The regression guard for a real defect. A literal assertion cannot tell a
+    // live route from a dead one — both are strings — and the test that shipped
+    // the bug asserted "/review-sessions" under the name "navigates to the
+    // list" at a time when that route had no +page.svelte, so deleting a
+    // session dropped the user on a 404.
     //
     // This asserts the PROPERTY instead: whatever the delete path navigates to
     // must be a route this app actually serves. It stays true if the
@@ -1134,7 +1137,8 @@ describe("deleting the session", () => {
     // would pass on the dead route too, which is exactly how the bug survived.
     expect(routeExists("/")).toBe(true);
     expect(routeExists("/cards")).toBe(true);
-    expect(routeExists("/review-sessions")).toBe(false);
+    expect(routeExists("/review-sessions")).toBe(true);
+    expect(routeExists("/review-session")).toBe(false);
     expect(routeExists("/definitely-not-a-route")).toBe(false);
   });
 
@@ -1192,7 +1196,7 @@ describe("deleting the session", () => {
       await fireEvent.click(getByText("Delete session"));
       await fireEvent.click(getByText("Confirm delete"));
       await vi.advanceTimersByTimeAsync(0);
-      expect(mockGoto).toHaveBeenCalledWith("/");
+      expect(mockGoto).toHaveBeenCalledWith("/review-sessions");
 
       // A live poll would re-read the status every 2s; the delete path cleared it.
       await vi.advanceTimersByTimeAsync(2000 * 3);
@@ -1626,6 +1630,141 @@ describe("repairing a session that lost its glosses", () => {
  * player is keyed on the audio id, a hand-off never built the next session's
  * player at all: the run stopped silently at every session boundary.
  */
+/**
+ * bd tunatale-e6fq. The user: "I'd also like to be able to page through review
+ * sessions in order similar to how I do for lessons."
+ *
+ * The same band the lesson page has under its breadcrumb: previous hard left,
+ * next hard right, labelled by DATE because a session has no day number. The
+ * order is the one the hands-free hand-off follows (nextReviewSession.ts).
+ */
+describe("paging through sessions", () => {
+  const sibling = (id: string, session_date: string) => ({
+    id,
+    session_date,
+    language_code: "no",
+    title: `Session ${id}`,
+    review_requested: null,
+    review_used: null,
+  });
+  const pageData = (overrides: Record<string, unknown> = {}) => ({
+    session: sessionBody(),
+    audio: null,
+    ...overrides,
+  });
+  const listed = (...sessions: ReturnType<typeof sibling>[]) =>
+    vi.mocked(api.listReviewSessions).mockResolvedValue(sessions as never);
+
+  it("links the sessions either side of this one, by date", async () => {
+    // Deliberately out of order: the list endpoint sorts newest first.
+    listed(
+      sibling("sess-9", "2026-09-05"),
+      sibling("sess-1", "2026-09-02"),
+      sibling("sess-0", "2026-08-31"),
+    );
+    const { findByRole } = render(Page, { props: { data: pageData() } });
+
+    const nav = await findByRole("navigation", { name: "Session navigation" });
+    const links = Array.from(nav.querySelectorAll("a"));
+    expect(links.map((a) => [a.textContent?.trim(), a.getAttribute("href")])).toEqual([
+      ["← 31 August", "/review-sessions/sess-0"],
+      ["5 September →", "/review-sessions/sess-9"],
+    ]);
+  });
+
+  it("offers only the next session on the oldest", async () => {
+    listed(sibling("sess-1", "2026-09-02"), sibling("sess-9", "2026-09-05"));
+    const { findByRole } = render(Page, { props: { data: pageData() } });
+
+    const nav = await findByRole("navigation", { name: "Session navigation" });
+    expect(Array.from(nav.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual([
+      "/review-sessions/sess-9",
+    ]);
+  });
+
+  it("offers only the previous session on the newest", async () => {
+    listed(sibling("sess-0", "2026-08-31"), sibling("sess-1", "2026-09-02"));
+    const { findByRole } = render(Page, { props: { data: pageData() } });
+
+    const nav = await findByRole("navigation", { name: "Session navigation" });
+    expect(Array.from(nav.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual([
+      "/review-sessions/sess-0",
+    ]);
+  });
+
+  it("walks sessions that share a date in id order, the hand-off's order", async () => {
+    listed(
+      sibling("sess-2", "2026-09-02"),
+      sibling("sess-0", "2026-09-02"),
+      sibling("sess-1", "2026-09-02"),
+    );
+    const { findByRole } = render(Page, { props: { data: pageData() } });
+
+    const nav = await findByRole("navigation", { name: "Session navigation" });
+    expect(Array.from(nav.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual([
+      "/review-sessions/sess-0",
+      "/review-sessions/sess-2",
+    ]);
+  });
+
+  it("renders no band at all when this is the only session", async () => {
+    // Gone, not empty: an empty <nav> still costs a row of a phone's first
+    // screen. Same rule as the lesson pager.
+    listed(sibling("sess-1", "2026-09-02"));
+    const { queryByRole } = render(Page, { props: { data: pageData() } });
+    await vi.waitFor(() => expect(api.listReviewSessions).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(queryByRole("navigation", { name: "Session navigation" })).toBeNull();
+  });
+
+  it("renders no band, and no error, when the sibling list cannot be read", async () => {
+    vi.mocked(api.listReviewSessions).mockRejectedValue(new Error("backend down"));
+    const { queryByRole, queryByText, getByText } = render(Page, { props: { data: pageData() } });
+    await vi.waitFor(() => expect(api.listReviewSessions).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(getByText("A Missed Train")).toBeTruthy();
+    expect(queryByRole("navigation", { name: "Session navigation" })).toBeNull();
+    expect(queryByText(/backend down/)).toBeNull();
+  });
+
+  it("sits in the header band under the back link, above the title", async () => {
+    listed(sibling("sess-0", "2026-08-31"), sibling("sess-1", "2026-09-02"));
+    const { findByRole, container } = render(Page, { props: { data: pageData() } });
+    const nav = await findByRole("navigation", { name: "Session navigation" });
+
+    const band = container.querySelector(".player-header .header-band")!;
+    expect(band.contains(nav)).toBe(true);
+    const row = band.querySelector(".crumb-row")!;
+    expect(row.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector(".title-area")!.contains(nav)).toBe(false);
+  });
+
+  it("after paging, the links are the NEW session's neighbours", async () => {
+    // A pager click is an in-place navigation (bd tunatale-0wki): the page must
+    // re-centre on the session it arrived at, not keep the old one's links.
+    listed(
+      sibling("sess-0", "2026-08-31"),
+      sibling("sess-1", "2026-09-02"),
+      sibling("sess-9", "2026-09-05"),
+    );
+    const { findByRole, rerender } = render(Page, { props: { data: pageData() } });
+    await findByRole("navigation", { name: "Session navigation" });
+
+    await rerender({
+      data: pageData({ session: sessionBody({ id: "sess-9", session_date: "2026-09-05" }) }),
+    });
+
+    await vi.waitFor(async () => {
+      const nav = await findByRole("navigation", { name: "Session navigation" });
+      expect(Array.from(nav.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual([
+        "/review-sessions/sess-1",
+      ]);
+    });
+  });
+});
+
 describe("moving to another session in place", () => {
   const audioFor = (sessionId: string, sectionAudioId: string) => ({
     audio_id: `audio-${sessionId}`,

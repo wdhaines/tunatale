@@ -354,7 +354,7 @@ describe("prev/next lesson links in the player header", () => {
     const next = await findByText("Day 2 →");
     expect(next.getAttribute("href")).toBe("/c/cid-1/l/lid-2");
     await waitFor(() => {
-      const links = container.querySelectorAll(".lesson-nav-link");
+      const links = container.querySelectorAll(".pager-link");
       expect(links.length).toBe(1);
       expect(links[0].getAttribute("href")).toBe("/c/cid-1/l/lid-2");
     });
@@ -370,7 +370,7 @@ describe("prev/next lesson links in the player header", () => {
     const prev = await findByText("← Day 1");
     expect(prev.getAttribute("href")).toBe("/c/cid-1/l/lid-1");
     await waitFor(() => {
-      const links = container.querySelectorAll(".lesson-nav-link");
+      const links = container.querySelectorAll(".pager-link");
       expect(links.length).toBe(1);
       expect(links[0].getAttribute("href")).toBe("/c/cid-1/l/lid-1");
     });
@@ -398,11 +398,11 @@ describe("prev/next lesson links in the player header", () => {
 
     await waitFor(() => expect(mockGetProgress).toHaveBeenCalled());
     await waitFor(() => {
-      expect(container.querySelector(".lesson-nav-link")).toBeNull();
+      expect(container.querySelector(".pager-link")).toBeNull();
     });
     // The whole band is gone, not merely empty: an empty <nav> would still cost
     // a grid row and its gap between the breadcrumb and the title.
-    expect(container.querySelector(".lesson-nav")).toBeNull();
+    expect(container.querySelector(".pager-band")).toBeNull();
   });
 
   it("shows no error and no nav links when getCurriculumProgress rejects", async () => {
@@ -416,9 +416,9 @@ describe("prev/next lesson links in the player header", () => {
     expect(await findByText("Day 1: Coffee")).toBeTruthy();
     await waitFor(() => expect(mockGetProgress).toHaveBeenCalled());
     await waitFor(() => {
-      expect(container.querySelector(".lesson-nav-link")).toBeNull();
+      expect(container.querySelector(".pager-link")).toBeNull();
     });
-    expect(container.querySelector(".lesson-nav")).toBeNull();
+    expect(container.querySelector(".pager-band")).toBeNull();
     expect(queryByText("progress fetch failed")).toBeNull();
   });
 
@@ -475,7 +475,7 @@ describe("prev/next lesson links in the player header", () => {
 
     expect(idx(".header-band")).toBe(0);
     expect(children[0].querySelector(".breadcrumb")).toBeTruthy();
-    expect(children[0].querySelector(".lesson-nav")).toBeTruthy();
+    expect(children[0].querySelector(".pager-band")).toBeTruthy();
     expect(idx(".player-title-area")).toBe(1);
     expect(idx(".mode-row")).toBe(2);
     expect(children[2].querySelector(".toggle-pill")).toBeTruthy();
