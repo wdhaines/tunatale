@@ -132,9 +132,9 @@ def _check_untyped(schema: dict[str, object]) -> int:
 
 def do_check() -> int:
     try:
-        from app.main import app
+        from dump_openapi import build_schema
 
-        current = app.openapi()
+        current = build_schema()
     except Exception as exc:
         print(f"FAIL: could not generate OpenAPI schema: {exc}", file=sys.stderr)
         return 1

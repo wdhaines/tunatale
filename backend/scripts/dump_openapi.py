@@ -9,23 +9,42 @@ Usage::
 
     uv run python scripts/dump_openapi.py
 
+The result does not depend on the local ``backend/.env``: see
+:func:`build_schema`.
+
 Exit 0 = wrote schema; exit 1 = generation failed.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent / "frontend" / "src" / "lib" / "api-schema.json"
 
 
+def build_schema() -> dict[str, object]:
+    """The app's OpenAPI schema. The one place the dump and the check get it.
+
+    The snapshot describes the DEFAULT deployment, not this developer's.
+    ``app/main.py`` mounts the anki router only when ``settings.sync_enabled``
+    is true, and a laptop's ``backend/.env`` sets ``SYNC_ENABLED=false``
+    whenever production is the live AnkiWeb syncer. Left to that file, a dump
+    run by hand silently drops every ``/api/anki`` path. A process environment
+    variable outranks the ``.env`` file, so pin it here, before ``app`` is
+    imported and its settings are read.
+    """
+    os.environ["SYNC_ENABLED"] = "true"
+    from app.main import app
+
+    return app.openapi()
+
+
 def dump() -> int:
     try:
-        from app.main import app
-
-        schema = app.openapi()
+        schema = build_schema()
     except Exception as exc:
         print(f"FAIL: could not generate OpenAPI schema: {exc}", file=sys.stderr)
         return 1

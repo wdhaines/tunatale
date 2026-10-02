@@ -125,6 +125,13 @@ point: read the message rather than the exit status, which a pipe can mask. Chec
 `bd list --status in_progress` before starting work, and close what you claimed
 when it merges. The SessionStart hook lists current claims.
 
+Closing a claimed bead needs the same actor: `bd close <id> --actor
+"<worktree@branch it was claimed as>" --reason "..."`. A bare `bd close` is
+refused (`cannot close …: assignee is "tunatale@main", actor is "Your Name"`),
+and after a branch switch `$(git branch --show-current)` is no longer the name
+the claim was made under, so copy the assignee from the refusal or from
+`bd list --status in_progress`.
+
 ## Agent mail
 
 Mail is how a session ending its window hands off to its successor: it persists

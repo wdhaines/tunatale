@@ -181,3 +181,55 @@ class TestBinaryEndpointsDeclareNonJson:
         found = self._content_types()
         for op_id, media_type in self.BINARY_OPS.items():
             assert media_type in found[op_id], f"{op_id} missing {media_type}"
+
+
+# ── The snapshot must not depend on the developer's .env ─────────────────────
+
+
+class TestSnapshotIgnoresTheLocalSyncSwitch:
+    """``SYNC_ENABLED=false`` must not change what the dump or the check sees.
+
+    ``app/main.py`` mounts the anki router only when ``settings.sync_enabled``
+    is true. The laptop's ``backend/.env`` sets it false whenever production is
+    the live syncer, and ``./test.sh`` exports it true, so the two disagreed
+    about what the schema is: a dump run by hand (the command the stale-snapshot
+    failure prints as its fix) wrote a snapshot with every ``/api/anki`` path
+    and ``PeerSyncResponse`` missing, and the gate then failed on a 430-line
+    diff that had nothing to do with the change being made. Cost a full gate run
+    three times (2026-09-21 twice, 2026-10-01).
+
+    A subprocess, because the claim is about import-time environment: this test
+    process imported ``app`` long ago, under whatever the gate exported.
+    """
+
+    def _anki_paths(self, sync_enabled: str) -> list[str]:
+        import json
+        import os
+        import subprocess
+
+        backend = Path(__file__).resolve().parent.parent
+        code = (
+            "import json, sys; sys.path.insert(0, 'scripts'); "
+            "from dump_openapi import build_schema; "
+            "print(json.dumps(sorted(p for p in build_schema()['paths'] if p.startswith('/api/anki'))))"
+        )
+        proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
+            [sys.executable, "-c", code],
+            cwd=backend,
+            env={**os.environ, "SYNC_ENABLED": sync_enabled},
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+
+    def test_anki_routes_are_in_the_schema_with_sync_switched_off(self):
+        assert "/api/anki/peer-sync" in self._anki_paths("false")
+
+    def test_the_switch_changes_nothing(self):
+        """Control: off and on yield the same anki paths, and there are some."""
+        off, on = self._anki_paths("false"), self._anki_paths("true")
+        assert on, "no /api/anki path even with sync on — the probe is not looking at the anki router"
+        assert off == on
