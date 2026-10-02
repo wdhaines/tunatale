@@ -62,7 +62,7 @@ class _FakeWriter:
     def unsuspend(self, card_ids: list[int]) -> None:
         pass
 
-    def set_due_date(self, card_ids: list[int], days: str) -> None:
+    def set_due_date(self, card_ids: list[int], days: str, ivl: int | None = None) -> None:
         self.set_due_date_calls.append((list(card_ids), days))
 
     def set_learning_state(self, card_id: int, left: int, due_at: int, *, type_: int = 1) -> None:
@@ -598,7 +598,7 @@ def test_restore_known_push_force_writes_restored_stability_to_card_data():
     inflated cards.data.s. restore_known sets fsrs_force_next=1, and the push
     loop's row_force_fsrs must honor it so the restored stability lands in Anki's
     cards.data (proving it survives sync, not just TT). We use a restored
-    stability != the inflated value so the ivl/data override is OBSERVABLE.
+    stability != the inflated value so the data override is OBSERVABLE.
 
     Verifies via a REAL OfflineWriter against an in-memory collection (a
     _FakeWriter would only prove the method was called — the stub bug hid behind
@@ -653,7 +653,10 @@ def test_restore_known_push_force_writes_restored_stability_to_card_data():
     assert card is not None
     data = json.loads(card["data"]) if card["data"] else {}
     assert data.get("s") == restored_stability, f"expected restored data.s={restored_stability}, got {card['data']!r}"
-    assert card["ivl"] == round(restored_stability), f"expected ivl={round(restored_stability)}, got ivl={card['ivl']}"
+    # Layer 89: the interval is last review to due date. This card was reviewed two
+    # days ago and its restored due date is in the past, so it lands due today
+    # with ivl 2 — neither the known interval nor round(stability).
+    assert card["ivl"] == 2, f"expected ivl=2, got ivl={card['ivl']}"
     assert card["usn"] == -1, "row must be marked dirty (usn=-1) for AnkiWeb"
 
     # Force is one-shot: the direction is clean and the flag is cleared post-push.
@@ -1116,6 +1119,7 @@ def test_restoring_a_known_card_logs_the_way_back_and_returns_its_due_date(tmp_p
             card = _reviewed_schedule(conn)
             assert (card["type"], card["queue"], card["reps"], card["lapses"]) == (2, 2, 5, 0)
             assert card["due"] == before["due"]
+            assert card["ivl"] == before["ivl"]  # Layer 89: last review to due date, not round(stability)
             assert json.loads(card["data"])["s"] == 15.78
             marked, restored = _manual_rows(conn)
             assert (restored["type"], restored["ease"], restored["time"]) == (4, 0, 0)
@@ -1276,5 +1280,89 @@ def test_a_recovered_card_gets_its_manual_rows_back_without_counting_them_as_rev
 
         assert _reviewed_revlog(conn) == [(_HISTORY[0], 3, 1), (_HISTORY[1], 0, 4), (_HISTORY[2], 3, 1)]
         assert _reviewed_schedule(conn)["reps"] == 2
+    finally:
+        conn.close()
+
+
+# ── The interval a pushed due date leaves behind (tunatale-7qdt, Layer 89) ────
+
+
+def test_a_grade_pushed_days_after_it_was_made_keeps_its_interval(tmp_path):
+    """Graded three days ago with a ten-day interval: Anki gets ``ivl = 10``, not 7.
+
+    The push wrote ``ivl = days from today``, which is the interval only when the
+    push runs on the day of the grade. Anki's own Set Due Date counts from the
+    last review (pinned in test_parity_set_due_date_interval.py).
+    """
+    db, conn, _, guid = _reviewed_card_with_history(tmp_path)
+    try:
+        graded_at = datetime.now(UTC) - timedelta(days=3)
+        from app.srs.anki_mirror.rollover import due_at_rollover_utc
+
+        db.update_direction(
+            guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_at=due_at_rollover_utc(anki_today() + timedelta(days=7)),
+                stability=11.4,
+                difficulty=8.6,
+                reps=6,
+                lapses=0,
+                state=SRSState.REVIEW,
+                dirty_fsrs=True,
+                anki_card_id=_REVIEWED_CARD,
+                last_review=graded_at,
+                last_review_time_ms=4000,
+                last_rating=3,
+            ),
+        )
+
+        _sync(db, conn)
+
+        card = _reviewed_schedule(conn)
+        assert (card["reps"], card["due"]) == (6, _due_in_days(7))  # the control: the grade was pushed
+        assert card["ivl"] == 10
+    finally:
+        conn.close()
+
+
+# ── A reset pushed to Anki is a Forget (tunatale-qrbk, Layer 90) ──────────────
+
+
+def test_resetting_a_reviewed_card_logs_ankis_forget_row(tmp_path):
+    """A TunaTale reset forgets the card in Anki and logs the reset row Anki logs.
+
+    The card was forgotten but nothing was logged, so Anki's revlog still read as
+    five live reviews of a card both apps call new. ``type = 4, factor = 0`` is
+    the row that tells Anki's FSRS code to ignore them.
+    """
+    db, conn, row_id, _ = _reviewed_card_with_history(tmp_path)
+    try:
+        history = _reviewed_revlog(conn)
+        assert _reviewed_schedule(conn)["ivl"] == 21  # the control
+
+        db.reset_collocation(row_id)
+        _sync(db, conn)
+
+        card = _reviewed_schedule(conn)
+        assert (card["type"], card["queue"], card["ivl"], card["reps"], card["lapses"]) == (0, 0, 0, 0, 0)
+        (row,) = _manual_rows(conn)
+        assert {k: row[k] for k in ("usn", "ease", "ivl", "lastIvl", "factor", "time", "type")} == {
+            "usn": -1,
+            "ease": 0,
+            "ivl": 0,
+            "lastIvl": 21,
+            "factor": 0,
+            "time": 0,
+            "type": 4,
+        }
+        assert [r for r in _reviewed_revlog(conn) if r[2] != 4] == history  # the old reviews stay in the log
+        after = _reviewed_direction(db)
+        assert (after.state, after.reps, after.dirty_fsrs) == (SRSState.NEW, 0, False)
+
+        _sync(db, conn)  # and it holds: a card Anki already holds as new is not forgotten twice
+        assert len(_manual_rows(conn)) == 1
+        assert _reviewed_direction(db).state == SRSState.NEW
     finally:
         conn.close()

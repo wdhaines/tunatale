@@ -42,7 +42,7 @@ class FakeWriter:
     def unsuspend(self, card_ids):
         self.unsuspended.extend(card_ids)
 
-    def set_due_date(self, card_ids, days):
+    def set_due_date(self, card_ids, days, ivl=None):
         self.due_dates.append((list(card_ids), days))
 
     def set_learning_state(self, card_id, left, due, type_):
@@ -288,11 +288,13 @@ class TestSyncPushHonorsRecoveryFlag:
         sync.sync_push(force_fsrs=False)
 
         # force_fsrs path: data goes through update_card_memory_state (Layer 70
-        # merge-write); set_specific_value_of_card keeps ivl/factor.
+        # merge-write); set_specific_value_of_card keeps the factor. The interval
+        # is no longer forced for a direction with a last review: set_due_date
+        # wrote the real one (Layer 89).
         assert writer.specific_value_calls, "force_fsrs not invoked for recovered row"
         card_id, keys, _values = writer.specific_value_calls[0]
         assert card_id == 998  # the (still-linked-in-this-test) anki_card_id
-        assert keys == ["ivl", "factor"]
+        assert keys == ["factor"]
         assert writer.memory_state_calls and writer.memory_state_calls[0][0] == 998
 
     def test_push_does_not_force_fsrs_for_non_recovered_direction(self):

@@ -410,6 +410,31 @@ def _grade_elapsed_days(
     return max(0, (ref_now.date() - last_review).days)
 
 
+def review_interval_for_due(
+    last_review: datetime | date | None,
+    days_from_today: int,
+    col_crt: int | None = None,
+    now: datetime | None = None,
+) -> int | None:
+    """``cards.ivl`` for a review card whose due date is being set by hand or by a push.
+
+    Anki's own Set Due Date keeps the interval meaning "last review to due date":
+    it writes the days elapsed since the last review plus the days from today
+    (rslib ``Card::set_due_date``), with the elapsed days measured as its
+    answering path measures them — which is ``_grade_elapsed_days``. For a grade
+    pushed on the day it was made that is just the days from today; pushed three
+    days later, it is still the interval the grade scheduled.
+
+    Returns None when there is no last review to count from. Floored at 1, as a
+    review card's interval always has been on this path. Pinned against the
+    binary by tests/test_parity_set_due_date_interval.py.
+    """
+    if last_review is None:
+        return None
+    elapsed = _grade_elapsed_days(last_review, now if now is not None else datetime.now(tz=UTC), col_crt)
+    return max(1, elapsed + days_from_today)
+
+
 def compute_retrievability(
     direction_state: DirectionState,
     today: date,

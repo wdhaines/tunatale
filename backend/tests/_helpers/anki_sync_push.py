@@ -50,7 +50,7 @@ class FakeWriter:
     def unsuspend(self, card_ids: list[int]) -> None:
         self.calls.append(("unsuspend", list(card_ids)))
 
-    def set_due_date(self, card_ids: list[int], days: str) -> None:
+    def set_due_date(self, card_ids: list[int], days: str, ivl: int | None = None) -> None:
         self.calls.append(("set_due_date", list(card_ids), days))
 
     def forget_card(self, card_id: int) -> None:

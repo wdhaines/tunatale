@@ -1772,3 +1772,31 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 **Not changed, and worth knowing.** `OfflineWriter.set_due_date` writes `ivl = max(1, days from today)`, where Anki's own Set Due Date on an FSRS card writes days since the last review plus days from today; the manual row records whichever interval the push leaves. `OfflineWriter.forget_card` zeroes `reps` and `lapses` and writes no row, where Anki's Forget keeps both and logs the `factor = 0` row. And the pull reads a known card back as `review`; "known" survives in TT through the `known_prior_*` snapshot.
 
 **Files.** `app/plugins/anki_sync/sync_engine.py` (`sync_push`, `_push_revlog_for_direction`, `_log_manual_change`), `app/plugins/anki_sync/sync_writer.py` (`get_current_card_state` adds `due`, `ivl`), `app/srs/fsrs.py` (`manual_revlog_factor`, `manual_revlog_row`), `app/srs/db_revlog.py` (`append_manual_revlog`). Tests: `test_parity_manual_revlog_row.py` (the binary), `test_anki_sync_round_trip.py` (seven round trips on a real collection: known, known on an overdue card, restore, relabel, promote, known twice, recovery).
+
+## Layer 89 — a pushed due date wrote `ivl = days from today`, which is the interval only on the day of the grade
+
+**The report.** Found while building Layer 88. `OfflineWriter.set_due_date` wrote `new_ivl = max(1, days)`. A grade made three days ago with a ten-day interval reached Anki as `ivl = 7`; a card restored from known got `ivl = round(stability)` from the force write (16 where it had been 21); a late push of any kind shortened the stored interval by the delay.
+
+**What Anki writes (measured on the binary, 26.9.3).** Set Due Date on a review card with a last-review time writes `ivl = elapsed days since the last review + days from today`, where the elapsed days are `next_day_at.elapsed_days_since(lrt)` — a duration back from the next rollover, integer-divided by 86400, the same measure the answering path uses (the third of the "Three day rules"). Reviewed 7 days ago and set due in 5 → 12; reviewed 70 hours ago and set due in 10 → 12 or 13 depending on how far the next rollover is. With no `lrt` Anki adds the due-date shift to the old interval, which TunaTale's day-level branch reduces to algebraically. A new card or one with interval 0 keeps interval 0. Pinned by `test_parity_set_due_date_interval.py`.
+
+**Fix.** `fsrs.py::review_interval_for_due` is `max(1, _grade_elapsed_days(last_review) + days_from_today)` — the existing elapsed helper, not a second copy. `sync_push` computes it beside `days_str` and passes it as `set_due_date(..., ivl=)`; the writer falls back to `max(1, days)` only when the direction has never been reviewed. The force write (`recovered`, `KNOWN`, `fsrs_force_next`) still writes `factor`, and writes `ivl = round(stability)` only where there is nothing better: no last review, or `KNOWN`, whose interval is the far-future one it was marked with.
+
+**What `cards.ivl` is for.** TunaTale's pull never reads it. Anki does: the interval shown in the browser and card info, `lastIvl` on the card's next revlog row, the day-level fallback `review_day = due − ivl` for a card with no `lrt`, and Set Due Date's own no-`lrt` branch.
+
+**Files.** `app/srs/fsrs.py` (`review_interval_for_due`), `app/plugins/anki_sync/sync_writer.py` (`set_due_date`), `app/plugins/anki_sync/sync_engine.py` (`sync_push`). Tests: `test_parity_set_due_date_interval.py`; `test_anki_sync_round_trip.py` (`test_a_grade_pushed_days_after_it_was_made_keeps_its_interval`, and the restore round trip now asserts the interval comes back).
+
+## Layer 90 — a reset pushed to Anki forgot the card but logged nothing, so its old reviews still counted
+
+**The report.** Found while building Layer 88. A TunaTale reset of a reviewed card reaches Anki through `OfflineWriter.forget_card`, which reset the card's columns and wrote no revlog row. Anki's revlog then read as live reviews of a card both apps call new, and any Anki-side recompute from the revlog (Optimize with reschedule, a parameter change) had nothing telling it to stop at the reset.
+
+**What Anki's Forget leaves (measured on the binary, 26.9.3).** With "reset repetition and lapse counts" ticked, which is what a TunaTale reset means: `type = 0`, `queue = 0`, `ivl = 0`, `factor = 0`, `reps = 0`, `lapses = 0`, `left` untouched, and one revlog row — `type = 4`, `ease = 0`, `factor = 0`, `ivl = 0`, `lastIvl` = the old interval, `time = 0`. That row is `RevlogEntry::is_reset`, the same marker Layer 88 took care never to write by accident; here it is the point. With the box unticked Forget keeps `reps` and `lapses` (the Python API's default). Forgetting an already-new card still logs a row. Pinned by `test_parity_forget.py`, which runs Anki's Forget and `forget_card` on the same collection and compares the card and the row.
+
+**Fix.** `forget_card` logs the reset row through `write_revlog`, with `lastIvl` read before the card is cleared; a card that is missing is left alone. `sync_push` still calls it only for a card Anki holds as scheduled (`type != 0`), so a second sync logs nothing more.
+
+**A guard the row made necessary.** `count_first_grades_today_for_deck` counted any card whose first revlog row is from today as a new-card introduction. A reset (or a Layer 88 manual row) logged today on a card with no earlier row would have charged the deck's new-card limit for a card nobody studied. A first row of `type = 4` no longer counts.
+
+**Different on purpose, and asserted as such.** `due`: Anki takes the collection's next new-card position; `forget_card` puts the card after the last new card. `data`: Anki keeps `dr` and `lrt` and drops the memory state; `forget_card` writes `{}`. Neither leaves a memory state.
+
+**Not changed, and worth knowing.** TunaTale's own full replay (`rebuild_from_revlog` with no starting state, used by `replay_fsrs_from_revlog`) skips `type = 4` rows and so walks straight through a reset. The sync path replays only forward from the stored state, so it is unaffected.
+
+**Files.** `app/plugins/anki_sync/sync_writer.py` (`forget_card`, `count_first_grades_today_for_deck`). Tests: `test_parity_forget.py`; `test_anki_sync_round_trip.py::test_resetting_a_reviewed_card_logs_ankis_forget_row`; `test_anki_sync_offline_writer.py` (`TestForgetCard`, `TestCountFirstGradesTodayForDeck`).

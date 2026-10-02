@@ -158,7 +158,7 @@ class FakeCreateWriter:
     def unsuspend(self, card_ids):
         pass
 
-    def set_due_date(self, card_ids, days):
+    def set_due_date(self, card_ids, days, ivl=None):
         pass
 
     def write_revlog(self, **kw):
@@ -1408,7 +1408,7 @@ class _ReverseFakeWriter:
     def unsuspend(self, *a):
         pass
 
-    def set_due_date(self, *a):
+    def set_due_date(self, *a, **kw):
         pass
 
     def write_revlog(self, **kw):

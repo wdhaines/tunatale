@@ -71,7 +71,12 @@ post-grade `stability`/`difficulty`), `get_card`, `get_revlog`, `note_ords`,
   and whether Anki accepted it.
 - `set_due_date` / `forget_cards` — Anki's own Set Due Date and Forget on
   `card_ids`. Follow with `get_revlog` to read the manual (`type = 4`) row each
-  leaves; Forget's is the `factor = 0` one (Layer 88).
+  leaves; Forget's is the `factor = 0` one (Layer 88). `forget_cards` takes the
+  dialog's two checkboxes, `reset_counts` and `restore_position`, both off by
+  default as in the Python API.
+- `get_card_row` — the card's stored columns (`type`, `queue`, `due`, `ivl`,
+  `factor`, `reps`, `lapses`, `left`, `odue`, `odid`, `data`). `get_card` is the
+  scheduler's view; this is the row another program would have to write.
 
 ## Subprocess boundary — never violate
 
