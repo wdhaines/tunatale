@@ -92,7 +92,9 @@ export const en = {
   "tooltip.unmarkKnown": "Un-mark known",
   "tooltip.reset": "Reset",
   "tooltip.again": "Again",
+  "tooltip.hard": "Hard",
   "tooltip.good": "Good",
+  "tooltip.easy": "Easy",
   "wordSpan.hiddenWord": "Hidden word, due for production — tap to reveal",
 
   // DrillCard.svelte

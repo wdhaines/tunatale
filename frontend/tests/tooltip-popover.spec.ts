@@ -190,6 +190,38 @@ test.describe("word popover (coarse pointer)", () => {
 		);
 	}
 
+	/** The open popover's action buttons, grouped into visual lines. `shown: 0`
+	 *  when no popover is displayed, so a caller can tell "nothing to measure"
+	 *  from "measured and fine". */
+	async function measureActionLines(page: import("@playwright/test").Page) {
+		return page.evaluate(() => {
+			const tip = [...document.querySelectorAll(".tt")].find(
+				(el) => getComputedStyle(el).display !== "none",
+			);
+			if (!tip)
+				return { shown: 0, labels: [] as string[], lines: [] as Array<{ n: number; w: number }> };
+			// Group the buttons into visual lines by their top edge. Rounded to
+			// 2px: wrapped lines differ by a full row height, so no real grouping
+			// is at risk, while sub-pixel layout noise cannot split one line in two.
+			const byTop = new Map<number, DOMRect[]>();
+			const buttons = [...tip.querySelectorAll(".tt-btn")];
+			for (const b of buttons) {
+				const rect = b.getBoundingClientRect();
+				const key = Math.round(rect.top / 2) * 2;
+				(byTop.get(key) ?? byTop.set(key, []).get(key)!).push(rect);
+			}
+			const lines = [...byTop.entries()]
+				.sort((a, b) => a[0] - b[0])
+				.map(([, rects]) => ({
+					n: rects.length,
+					w: Math.round(
+						Math.max(...rects.map((x) => x.right)) - Math.min(...rects.map((x) => x.left)),
+					),
+				}));
+			return { shown: 1, labels: buttons.map((b) => (b.textContent ?? "").trim()), lines };
+		});
+	}
+
 	/**
 	 * F-17 — the action row must not leave a short stub line.
 	 *
@@ -231,30 +263,7 @@ test.describe("word popover (coarse pointer)", () => {
 		for (const index of targets) {
 			if (!(await longPress(page, index))) continue;
 
-			const r = await page.evaluate(() => {
-				const tip = [...document.querySelectorAll(".tt")].find(
-					(el) => getComputedStyle(el).display !== "none",
-				);
-				if (!tip) return { shown: 0, lines: [] as Array<{ n: number; w: number }> };
-				// Group the buttons into visual lines by their top edge. Rounded to
-				// 2px: wrapped lines differ by a full row height, so no real grouping
-				// is at risk, while sub-pixel layout noise cannot split one line in two.
-				const byTop = new Map<number, DOMRect[]>();
-				for (const b of tip.querySelectorAll(".tt-btn")) {
-					const rect = b.getBoundingClientRect();
-					const key = Math.round(rect.top / 2) * 2;
-					(byTop.get(key) ?? byTop.set(key, []).get(key)!).push(rect);
-				}
-				const lines = [...byTop.entries()]
-					.sort((a, b) => a[0] - b[0])
-					.map(([, rects]) => ({
-						n: rects.length,
-						w: Math.round(
-							Math.max(...rects.map((x) => x.right)) - Math.min(...rects.map((x) => x.left)),
-						),
-					}));
-				return { shown: 1, lines };
-			});
+			const r = await measureActionLines(page);
 
 			// A `display: none` popover has no boxes and clears every check vacuously.
 			expect(r.shown, `popover never opened for word ${index}`).toBe(1);
@@ -274,6 +283,49 @@ test.describe("word popover (coarse pointer)", () => {
 		}
 
 		expect(failures, failures.join("\n")).toEqual([]);
+	});
+
+	/**
+	 * bd tunatale-dvdm.5 — a revealed production cloze offers the review queue's
+	 * four ratings, and they must lay out as cleanly as F-17 demands of any other
+	 * action set. Four ratings plus the word's own actions is the LONGEST row the
+	 * popover has, so it is the one most likely to leave a stub.
+	 *
+	 * No extra seeding: `POST /items/{id}/state {learning}` moves BOTH directions
+	 * to learning, due today, so this spec's words are already production-due and
+	 * blur as soon as the reader setting is on.
+	 */
+	test("dvdm.5: a revealed production cloze's four ratings leave no stub line", async ({
+		page,
+		request,
+	}) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const { curriculumId } = await seed(request);
+		await page.addInitScript(() => localStorage.setItem("readerProduction", "on"));
+		await openRead(page, curriculumId);
+
+		const index = await page.evaluate(() =>
+			[...document.querySelectorAll(".tt-wrap")].findIndex((el) => el.querySelector(".word-blurred")),
+		);
+		expect(
+			index,
+			"no word is blurred — the seed is not production-due or the setting did not take, and this test would be vacuous",
+		).toBeGreaterThanOrEqual(0);
+
+		// Tap reveals (and grades nothing); the long-press then opens the popover.
+		await page.locator(".tt-wrap").nth(index).locator(".word").click();
+		await expect(page.locator(".tt-wrap").nth(index).locator(".word-blurred")).toHaveCount(0);
+		expect(await longPress(page, index)).toBe(true);
+
+		const r = await measureActionLines(page);
+		expect(r.shown, "popover never opened for the revealed word").toBe(1);
+		expect(r.labels.slice(0, 4)).toEqual(["Again", "Hard", "Good", "Easy"]);
+
+		const widest = Math.max(...r.lines.map((l) => l.w));
+		const ragged = r.lines.filter((l) => l.w < widest * 0.9);
+		expect(ragged, `action row is ragged: ${JSON.stringify(r.lines)}`).toEqual([]);
+		// The ratings are a 2x2 block: no rating shares a line with a non-rating.
+		expect(r.lines.slice(0, 2).map((l) => l.n)).toEqual([2, 2]);
 	});
 
 	/**
