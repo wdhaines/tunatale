@@ -586,6 +586,44 @@ class TestGradeElapsedDaysLAYER_50:
         now = _dt(2026, 5, 18, 12, 0, 0, tzinfo=UTC)
         assert _grade_elapsed_days(last, now) == 7
 
+    @pytest.mark.parametrize("local_hour", [1, 3, 12])
+    def test_day_level_marker_counts_from_ankis_today_before_the_rollover(self, local_hour):
+        """A no-lrt card's elapsed counts back from Anki's TODAY, at any hour.
+
+        The marker decodes to the col-day Anki stored (``due - ivl``), so for an
+        untouched card due today the answer is its interval. "Today" must be
+        ``anki_today_col_day``: ``compute_anki_day_index`` rolls over at local
+        midnight for a real collection (crt at 04:00 local), so between midnight
+        and 04:00 it is a day ahead and the elapsed came out one too many. Main's
+        CI went red on exactly that at 00:54 UTC (tunatale-46js).
+
+        Fixed instants in a fixed zone, so this fails on every run rather than
+        only when the wall clock sits in the band. Hour 12 is the control outside
+        the band, where both day counts agree.
+        """
+        from datetime import datetime as _dt
+
+        from app.plugins.anki_sync.sqlite_reader import _compute_last_review
+        from app.srs.anki_mirror.protobuf_wire import anki_today_col_day, compute_anki_day_index
+        from app.srs.fsrs import _grade_elapsed_days, review_interval_for_due
+        from tests._helpers.localtz import local_timezone
+
+        ivl = 10
+        with local_timezone("Etc/GMT+5"):  # UTC-5, no DST
+            col_crt = int(_dt(2024, 1, 1, 9, 0, tzinfo=UTC).timestamp())  # 04:00 local: a real collection's shape
+            now = _dt(2026, 5, 18, local_hour + 5, 30, tzinfo=UTC)
+            assert now.astimezone().hour == local_hour  # the control: the zone is the one intended
+            today = anki_today_col_day(col_crt, now)
+            in_band = local_hour < 4
+            # The control that makes this discriminate: inside the band the two
+            # day counts really do disagree, outside it they do not.
+            assert (compute_anki_day_index(col_crt, 4, now) != today) is in_band
+            marker = _compute_last_review(2, today, ivl, col_crt)  # an untouched card due today
+
+            assert _grade_elapsed_days(marker, now, col_crt=col_crt) == ivl
+            # Layer 89 builds on it: due in 3 days is 3 more than the interval.
+            assert review_interval_for_due(marker, 3, col_crt=col_crt, now=now) == ivl + 3
+
 
 class TestScheduledDaysForGradeLAYER_51:
     """Layer 51 (companion fix): scheduled_days must mirror Anki's

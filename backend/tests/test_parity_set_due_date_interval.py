@@ -10,12 +10,13 @@ compare it with ``review_interval_for_due``.
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.srs.anki_mirror.protobuf_wire import anki_today_col_day
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, review_interval_for_due
+from tests._helpers.localtz import local_timezone, timezone_with_local_hour
 from tests.anki_oracle.harness_fixtures import run_oracle
 from tests.anki_oracle.synthetic_collection import COL_CRT, SyntheticCollection
 
@@ -81,6 +82,55 @@ def test_anki_set_due_date_interval_matches_review_interval_for_due(synthetic_co
         last_review = datetime.fromtimestamp(now_secs - since_review, tz=UTC)
         tt_ivl = review_interval_for_due(last_review, days, col_crt=COL_CRT, now=now)
         assert card["ivl"] == tt_ivl, f"reviewed {since_review}s ago, due in {days}d: Anki={card['ivl']} TT={tt_ivl}"
+
+
+@pytest.mark.oracle
+@pytest.mark.parametrize("local_hour", [12, 1])
+def test_set_due_date_on_a_card_without_lrt_matches_at_any_hour(
+    synthetic_collection: SyntheticCollection, local_hour: int
+) -> None:
+    """A no-``lrt`` card: Anki adds the due-date shift to the old interval, and so must TT.
+
+    TunaTale reads such a card's last review as the day-level marker ``due - ivl``
+    and counts the days since it from today. That reduces to Anki's sum only if
+    "today" is Anki's today. Hour 1 is inside ``[local midnight, 04:00)``, where the
+    index domain is a day ahead; main's CI went red there on 2026-10-03
+    (tunatale-46js). The collection is created at 04:00 local, as a real one is.
+
+    What this does NOT cover: a card with ``lrt`` (the test above).
+    """
+    from app.plugins.anki_sync.sqlite_reader import _compute_last_review
+    from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
+
+    old_ivl, old_ahead, days = 40, 2, 5
+    with local_timezone(timezone_with_local_hour(local_hour)):
+        now = datetime.now(UTC)
+        col_crt = int(
+            (now.astimezone() - timedelta(days=800)).replace(hour=4, minute=0, second=0, microsecond=0).timestamp()
+        )
+        synthetic_collection.col_crt = col_crt
+        synthetic_collection.enable_fsrs(weights=DEFAULT_FSRS5_PARAMS.weights, retention=0.9)
+        today = anki_today_col_day(col_crt, now)
+        # The control: inside the band the index domain is a day ahead of Anki's today.
+        assert (compute_anki_day_index(col_crt, 4, now) != today) is (local_hour < 4)
+        synthetic_collection.add_note(id=2001, guid="g-ivl-nolrt", fields=["f", "back"])
+        # No last_review_secs: no `lrt` in cards.data, which is the whole point.
+        synthetic_collection.add_card(
+            id=20010, note_id=2001, ord=0, type=2, queue=2, due=today + old_ahead, ivl=old_ivl, reps=5,
+            stability=10.0, difficulty=5.5,
+        )  # fmt: skip
+        synthetic_collection.save()
+        raw = run_oracle(
+            synthetic_collection.path,
+            [{"op": "set_due_date", "card_ids": [20010], "days": str(days)}, {"op": "get_card_row", "card_id": 20010}],
+        ).raw()
+        marker = _compute_last_review(2, today + old_ahead, old_ivl, col_crt)
+        tt_ivl = review_interval_for_due(marker, days, col_crt=col_crt, now=now)
+
+    card = raw["get_card_row_1"]
+    assert card["due"] == today + days  # the control: the op ran and moved the due date
+    assert card["ivl"] == old_ivl + days - old_ahead  # Anki's rule for a card with no lrt
+    assert tt_ivl == card["ivl"], f"local hour {local_hour}: Anki={card['ivl']} TT={tt_ivl}"
 
 
 def test_review_interval_for_due_without_a_last_review_is_unknown() -> None:

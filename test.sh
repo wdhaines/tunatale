@@ -164,6 +164,8 @@ log_step() {
 
   log_step backend "Date today check" uv run python scripts/check_date_today.py
 
+  log_step backend "Anki day index check" uv run python scripts/check_anki_day_index.py
+
   log_step backend "Singular database_url check" uv run python scripts/check_singular_database_url.py
 
   log_step backend "Plugin import check" uv run python scripts/check_plugin_imports.py

@@ -802,6 +802,12 @@ def _norwegian_deck_with_a_new_card(tmp_path, *, queue: int, reviewed_due: int |
     setup.execute("UPDATE cards SET due = ?, queue = ? WHERE id = ?", (_POSITION, queue, _NEW_CARD))
     if reviewed_due is not None:
         setup.execute("UPDATE cards SET due = ? WHERE id = ?", (reviewed_due, _REVIEWED_CARD))
+    # The modern decks table a real collection has. Empty: with the crt that
+    # `_sync` now passes, the engine runs the deck's studied-today stamp, which
+    # leaves a deck with no row alone but cannot query a table that is missing.
+    setup.execute(
+        "CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT, mtime_secs INTEGER, usn INTEGER, common BLOB)"
+    )
     setup.commit()
     setup.close()
     db_path = str(tmp_path / "tunatale_no.db")
@@ -827,10 +833,16 @@ def _norwegian_deck_with_a_new_card(tmp_path, *, queue: int, reviewed_due: int |
 def _sync(db, conn) -> None:
     from app.plugins.anki_sync.sync import OfflineReader
 
+    # The collection's crt, read the way sync.py's runner reads it: production
+    # never builds the engine without it, and without it a day-level last review
+    # falls back to a UTC calendar-date difference that no live sync takes — a
+    # day ahead of Anki's between midnight and 04:00 (tunatale-46js).
+    col_crt = conn.execute("SELECT crt FROM col").fetchone()[0]
     sync = AnkiSync(
         db=db,
         _reader=OfflineReader(conn, _NO_DECK, language_code="no"),
         _writer=OfflineWriter(conn),
+        _anki_col_crt=col_crt,
         language_code="no",
     )
     sync.sync_push()
