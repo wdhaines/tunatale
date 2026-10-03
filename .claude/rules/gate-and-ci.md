@@ -51,7 +51,10 @@ none of these is a matrix.
   argument are in the comment above the job.
 - Three jobs override the workflow's `TZ: UTC`: `backend-hostile-tz` (offset),
   `backend-hostile-hour` (clock), and `anki-gates`, which runs both Anki gates at
-  the 04:00 rollover via `.github/actions/hostile-hour-tz`. The Anki gates need
+  the 04:00 rollover via `.github/actions/hostile-hour-tz`, then the oracle gate
+  again at 01:00 (`hour: "1"`), the side of the rollover where the local date and
+  Anki's day disagree (Layer 91: nothing sampled it, and a day-ahead "today"
+  reached main). The Anki gates need
   the rollover specifically: `backend-hostile-hour` is in the band on every run
   but passes no `--run-oracle`, so it cannot catch a parity bug there, and a
   parity job left at `TZ: UTC` would reach the band about once in 600 runs.

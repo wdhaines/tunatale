@@ -37,6 +37,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.models.srs_item import Rating
+from app.srs.anki_mirror.protobuf_wire import compute_anki_day_index
 from app.srs.fsrs import DEFAULT_FSRS5_PARAMS, _forgetting_curve, _next_stability_recall
 from tests._helpers.localtz import local_timezone, timezone_with_local_hour
 from tests.anki_oracle.harness_fixtures import run_oracle
@@ -103,17 +104,25 @@ def _tt_elapsed(col_crt: int, due: int, now: datetime) -> int:
 
 
 @pytest.mark.oracle
-def test_untouched_card_agrees(synthetic_collection: SyntheticCollection) -> None:
+@pytest.mark.parametrize("local_hour", [12, 1])
+def test_untouched_card_agrees(synthetic_collection: SyntheticCollection, local_hour: int) -> None:
     """Interval == gap since the last review: TT's `due - ivl` IS Anki's answer.
 
     This is the shape every real no-lrt card has, and the reason the divergence
     below was not worth chasing.
+
+    Hour 1 sits inside ``[local midnight, 04:00)``, where Anki's today is still
+    yesterday's date. Only hour 12 was measured until tunatale-46js, so TT's
+    "today" for this branch could run a day ahead there and nothing saw it.
     """
-    with local_timezone(timezone_with_local_hour(12)):
+    with local_timezone(timezone_with_local_hour(local_hour)):
         now = datetime.now(tz=UTC)
         card_id, col_crt, due = _build(synthetic_collection, now, revlog_days_back=_IVL)
         anki = _anki_states(synthetic_collection, card_id)
         tt_elapsed = _tt_elapsed(col_crt, due, now)
+        # The control: inside the band the index domain really is a day ahead of
+        # Anki's today, so a "today" taken from it cannot pass by accident.
+        assert (compute_anki_day_index(col_crt, 4, now) != due) is (local_hour < 4)
 
     assert tt_elapsed == _IVL, f"expected TT to read the interval back, got {tt_elapsed}"
     anki_s = anki["states"]["good"]["stability"]

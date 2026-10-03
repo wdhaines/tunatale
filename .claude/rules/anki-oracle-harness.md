@@ -42,6 +42,14 @@ at UTC, a parity run would land in that hour about once in 600 runs — and it w
 red the first time it did. `backend-hostile-hour` sits in the band on every run
 but does not pass `--run-oracle`, so it runs no parity tests.
 
+**It then runs the oracle suite again at local 01:xx** (`hour: "1"`, exported as
+`PRE_ROLLOVER_TZ`). Hour 4 is the hour *after* the rollover, where the two day
+domains agree; the band before it, `[local midnight, 04:00)`, is where a day count
+from the wrong domain runs a day ahead, and nothing sampled it until one reached
+main (Layer 91). A test that asserts a day fact in that band should still pin it
+with `timezone_with_local_hour(1)`, so it fails on every run and not only on CI's
+pass.
+
 **Triage is the opposite of `backend-hostile-tz`.** There, a boundary-only failure
 is usually a fixture encoding a wall-clock assumption. Here, suspect product code
 first: these tests compare against the real Anki backend, so a failure at the

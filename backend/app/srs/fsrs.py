@@ -277,6 +277,32 @@ def is_day_level_last_review(last_review: datetime | date) -> bool:
     return True
 
 
+def _day_level_elapsed_days(
+    last_review: datetime, ref_now: datetime, col_crt: int, rollover_hour: int = ANKI_ROLLOVER_HOUR
+) -> int:
+    """Days from a day-level ``last_review`` marker to Anki's today, at *ref_now*.
+
+    Asymmetric ON PURPOSE — the two terms answer different questions. `today` is
+    "which study day is it now?", which is Anki's local calendar-date rule
+    (`anki_today_col_day`). `review` is "decode the day-level marker
+    `_compute_last_review` wrote", and that marker is constructed to invert
+    `compute_anki_day_index` exactly, yielding `due_raw - ivl` — the very col-day
+    Anki recorded.
+
+    Using `compute_anki_day_index` for the `today` term made this a day too large
+    whenever col.crt's time-of-day was not the rollover hour in the reader's zone:
+    a real 4 AM-local crt put the skew at `[local midnight, 04:00)` daily, and
+    CI's TZ=UTC read of a UTC-5 collection put it at `[04:00, 05:00)` UTC. That
+    was fixed for queue-sort R on 2026-09-03 (anki-gates, Anki=127 vs TT=126) and
+    missed in the grade-time twin, which carried its own copy of this branch
+    until main's CI went red at 00:54 UTC on 2026-10-03 (tunatale-46js). One
+    helper, so the two cannot drift apart again.
+    """
+    today_col_day = anki_today_col_day(col_crt, ref_now)
+    review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
+    return max(0, today_col_day - review_col_day)
+
+
 def _elapsed_days_for_fsrs(
     last_review: datetime | date | None,
     ref_now: datetime,
@@ -298,9 +324,9 @@ def _elapsed_days_for_fsrs(
     sort.
 
     Layer 45: when *col_crt* is provided and the day-level branch is taken,
-    compute elapsed as ``today_col_day - review_col_day`` using
-    ``compute_anki_day_index``, which respects Anki's 4am-local rollover
-    boundary. When *col_crt* is ``None`` (pre-sync, no cache), fall back to
+    compute elapsed as ``today_col_day - review_col_day`` with
+    :func:`_day_level_elapsed_days`, shared with the grade-time twin. When
+    *col_crt* is ``None`` (pre-sync, no cache), fall back to
     UTC-date subtraction (the legacy behavior, preserved for backward compat).
     """
     if last_review is None:
@@ -308,23 +334,7 @@ def _elapsed_days_for_fsrs(
     if isinstance(last_review, datetime):
         is_day_level = is_day_level_last_review(last_review)
         if is_day_level and col_crt is not None:
-            # Asymmetric ON PURPOSE — the two terms answer different questions.
-            # `today` is "which study day is it now?", which is Anki's local
-            # calendar-date rule (`anki_today_col_day`). `review` is "decode the
-            # day-level marker `_compute_last_review` wrote", and that marker is
-            # constructed to invert `compute_anki_day_index` exactly, yielding
-            # `due_raw - ivl` — the very col-day Anki recorded. So the difference
-            # is Anki's `elapsed_days` bit-exact.
-            #
-            # Using `compute_anki_day_index` for the `today` term (pre-fix) made
-            # this wrong whenever col.crt's time-of-day was not the rollover hour
-            # in the reader's zone: a real 4 AM-local crt put the skew at
-            # `[local midnight, 04:00)` daily, and CI's TZ=UTC read of a UTC-5
-            # collection put it at `[04:00, 05:00)` UTC — where anki-gates went
-            # red on 2026-09-03 with Anki=127 vs TT=126.
-            today_col_day = anki_today_col_day(col_crt, ref_now)
-            review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
-            return max(0, today_col_day - review_col_day)
+            return _day_level_elapsed_days(last_review, ref_now, col_crt, rollover_hour)
         if is_day_level:
             return max(0, (ref_now.date() - last_review.date()).days)
         return max(0.0, (ref_now - last_review).total_seconds() / 86400.0)
@@ -390,9 +400,7 @@ def _grade_elapsed_days(
                 # `_direction_differs` turns into a push. Measured against the
                 # real databases: 2 of 3030 review rows are in this branch at
                 # all (tunatale-r5d1.4).
-                today_col_day = compute_anki_day_index(col_crt, rollover_hour, ref_now)
-                review_col_day = compute_anki_day_index(col_crt, rollover_hour, last_review)
-                return max(0, today_col_day - review_col_day)
+                return _day_level_elapsed_days(last_review, ref_now, col_crt, rollover_hour)
             # Real sub-day `lrt`. Anki measures from the NEXT rollover, as a
             # DURATION — `next_day_at.elapsed_days_since(lrt)` — which is neither
             # of TT's day-index domains. Using the index domain on both endpoints

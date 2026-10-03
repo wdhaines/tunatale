@@ -171,6 +171,9 @@ jobs:
       - name: Date today check
         run: uv run python scripts/check_date_today.py
 
+      - name: Anki day index check
+        run: uv run python scripts/check_anki_day_index.py
+
       - name: Singular database_url check
         run: uv run python scripts/check_singular_database_url.py
 
@@ -931,8 +934,8 @@ jobs:
         id: warm
         run: uv run --isolated --no-project --python 3.14 --with anki==26.9.3 python -c "import anki"
 
-      # ⚠️ Both gates below run at Anki's 04:00 rollover, NOT at the workflow's
-      # TZ=UTC. This is the point of the job, not a detail: parity with Anki is
+      # ⚠️ Both gates below run at Anki's 04:00 rollover (and the oracle gate
+      # again at 01:00, just before it), NOT at the workflow's TZ=UTC. This is the point of the job, not a detail: parity with Anki is
       # a LOCAL wall-clock property, and the boundary is where it breaks.
       #
       # Both must carry `TZ="$HOSTILE_TZ"` explicitly. A job-level `env:` cannot
@@ -950,6 +953,23 @@ jobs:
       # them apart, and only this job has one.
       - name: Oracle parity gate
         run: TZ="$HOSTILE_TZ" uv run pytest -m oracle --run-oracle -n auto --no-cov
+
+      # The other side of the rollover. Hour 4 is the hour AFTER it; in [00:00,
+      # 04:00) the local calendar date is already tomorrow while Anki's day is
+      # still today, so a day count taken from the wrong one is a day ahead there
+      # and only there. Nothing sampled that band until a push at 00:54 UTC went
+      # red on main (tunatale-46js: a no-lrt card's elapsed took "today" from
+      # compute_anki_day_index). A second pytest in this job rather than a matrix
+      # entry: job count drives CI's tail latency, and this job ends well inside
+      # it. Runs even when the 04:00 pass failed, for the same diagnostic reason
+      # as the peer-sync gate below.
+      - uses: ./.github/actions/hostile-hour-tz
+        with:
+          hour: "1"
+          env-name: PRE_ROLLOVER_TZ
+      - name: Oracle parity gate before the rollover
+        if: always() && steps.warm.outcome == 'success'
+        run: TZ="$PRE_ROLLOVER_TZ" uv run pytest -m oracle --run-oracle -n auto --no-cov
 
       # ⚠️ Runs even when the oracle gate above FAILED. Without this the merge
       # would quietly cost a diagnostic: two jobs always reported on both

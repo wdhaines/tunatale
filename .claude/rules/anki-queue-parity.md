@@ -388,8 +388,10 @@ drift on grades near the boundary, and review cards scheduled a day late in both
 apps.
 
 **When chasing a one-day discrepancy, first check which of the three the call site
-uses.** `anki-gates` runs at the rollover on every CI run so this class fails
-loudly; see `.claude/rules/anki-oracle-harness.md`.
+uses.** `scripts/check_anki_day_index.py` fails any `compute_anki_day_index` call in
+`app/` whose day argument is "now" or omitted (it reached `app/` three times;
+Layer 91). `anki-gates` runs the oracle at 04:xx and again at 01:xx on every CI
+run so this class fails loudly; see `.claude/rules/anki-oracle-harness.md`.
 
 ## Divergence playbook
 
