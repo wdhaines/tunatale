@@ -368,7 +368,14 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
 
-    def set_due_date(self, card_ids: list[int], days: str) -> None:
+    def set_due_date(self, card_ids: list[int], days: str, ivl: int | None = None) -> None:
+        """Make *card_ids* review cards due *days* from today.
+
+        *ivl* is the interval to store (Layer 89): the caller knows the last
+        review and passes ``review_interval_for_due``. Without it the interval
+        falls back to the days from today, which is right only when the card was
+        reviewed today.
+        """
         days_int = int(days)
         col_row = self._conn.execute("SELECT crt FROM col LIMIT 1").fetchone()
         col_crt = int(col_row[0] if isinstance(col_row, (tuple, list)) else col_row["crt"] or 0)
@@ -390,7 +397,7 @@ class OfflineWriter:
 
         days_since_crt = (anki_today() - _date.fromtimestamp(col_crt)).days
         new_due = days_since_crt + days_int
-        new_ivl = max(1, days_int)
+        new_ivl = ivl if ivl is not None else max(1, days_int)
         ts = int(_time.time())
         placeholders = ",".join("?" * len(card_ids))
         # Preserve suspension (queue=-1): only update due/ivl/mod/usn.
@@ -424,8 +431,20 @@ class OfflineWriter:
         Places the card at the tail of the new queue (``MAX(due)+1`` over
         existing new cards) and drops ``data`` to ``{}`` so it carries no FSRS
         ``s``/``d`` — NULL-R, like any never-graded card.
+
+        This is Anki's Forget with "reset repetition and lapse counts" ticked,
+        and like it, it logs the reset (Layer 90): a revlog row with ``type = 4``
+        and ``factor = 0``, ``lastIvl`` = the interval the card had. That row is
+        ``RevlogEntry::is_reset``, the marker Anki's FSRS code reads to ignore the
+        reviews before it; without it a recompute from the revlog would give a
+        card both apps call new its old memory state back. Pinned against the
+        binary by tests/test_parity_forget.py. A card that is missing is left
+        alone, row and all.
         """
         ts = int(_time.time())
+        before = self._conn.execute("SELECT ivl FROM cards WHERE id = ?", (card_id,)).fetchone()
+        if before is None:
+            return
         row = self._conn.execute("SELECT IFNULL(MAX(due), 0) FROM cards WHERE type = 0").fetchone()
         new_due = int(row[0] or 0) + 1
         self._conn.execute(
@@ -438,8 +457,18 @@ class OfflineWriter:
             """,
             (new_due, ts, card_id),
         )
-        self._bump_col(ts)
-        self._conn.commit()
+        # write_revlog bumps col.mod and commits.
+        self.write_revlog(
+            cid=card_id,
+            ease=0,
+            ivl=0,
+            last_ivl=int(before[0] or 0),
+            factor=0,
+            time_ms=0,
+            type_=4,
+            reps_bump=0,
+            lapses_bump=0,
+        )
 
     def get_current_card_state(self, card_id: int) -> dict | None:
         """Return Anki's current `queue`/`type`/`left`/`mod`/`due`/`ivl` for the card,
@@ -1078,14 +1107,20 @@ class OfflineWriter:
         Mirrors Anki's "newToday" semantic: a card transitions NEW→non-NEW on
         its first revlog entry, and that's the moment newToday increments.
         Subsequent grades of the same card do not bump it.
+
+        A first entry that is manual (``type = 4``: a reset, a hand reschedule)
+        is not an answer and does not count. ``first_type`` is the type of the
+        ``MIN(id)`` row: SQLite takes a bare column from the row that supplied the
+        aggregate's minimum.
         """
         try:
             row = self._conn.execute(
                 """
                 SELECT COUNT(*) FROM (
-                    SELECT r.cid FROM revlog r JOIN cards c ON c.id = r.cid AND c.did = ?
+                    SELECT r.cid, MIN(r.id), r.type AS first_type
+                    FROM revlog r JOIN cards c ON c.id = r.cid AND c.did = ?
                     GROUP BY r.cid HAVING MIN(r.id) >= ?
-                )
+                ) WHERE first_type != 4
                 """,
                 (deck_id, today_4am_ms),
             ).fetchone()

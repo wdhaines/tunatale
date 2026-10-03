@@ -125,7 +125,7 @@ class TestListDecksWithRevlogToday:
 class TestCountFirstGradesTodayForDeck:
     def test_counts_only_first_revlog_today(self):
         conn = _make_decks_db()
-        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER)")
+        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER, type INTEGER DEFAULT 0)")
         conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
         conn.execute("INSERT INTO cards VALUES (10, 1), (11, 1), (12, 1), (20, 2)")
         # cid=10: first-grade today (>= 1000) → counts.
@@ -133,7 +133,7 @@ class TestCountFirstGradesTodayForDeck:
         # cid=12: first-grade today → counts.
         # cid=20: in deck 2 → not in deck 1's count.
         conn.execute("""
-            INSERT INTO revlog VALUES
+            INSERT INTO revlog (id, cid) VALUES
               (1500, 10),
               (500, 11), (1600, 11),
               (1700, 12),
@@ -142,6 +142,25 @@ class TestCountFirstGradesTodayForDeck:
         conn.commit()
         writer = OfflineWriter(conn)
         assert writer.count_first_grades_today_for_deck(1, 1000) == 2
+
+    def test_a_manual_row_is_not_a_first_grade(self):
+        """A card whose first revlog row is manual (type 4) was not introduced today.
+
+        Anki bumps newToday when a new card is ANSWERED. A reset or a hand
+        reschedule logged today (Layers 88, 90) on a card with no earlier row
+        would otherwise charge the deck's new-card limit for a card nobody studied.
+        """
+        conn = _make_decks_db()
+        conn.execute("CREATE TABLE revlog (id INTEGER, cid INTEGER, type INTEGER)")
+        conn.execute("CREATE TABLE cards (id INTEGER, did INTEGER)")
+        conn.execute("INSERT INTO cards VALUES (10, 1), (11, 1), (12, 1)")
+        # cid=10: first row today is a review → counts.
+        # cid=11: only row today is manual → does NOT count.
+        # cid=12: manual row today, then answered today → first row is still the manual one.
+        conn.execute("INSERT INTO revlog VALUES (1500, 10, 0), (1600, 11, 4), (1700, 12, 4), (1800, 12, 1)")
+        conn.commit()
+        writer = OfflineWriter(conn)
+        assert writer.count_first_grades_today_for_deck(1, 1000) == 1
 
     def test_zero_when_no_cards(self):
         conn = _make_decks_db()
@@ -302,6 +321,10 @@ def _make_cards_db(col_usn: int = 5) -> sqlite3.Connection:
         "factor INTEGER, reps INTEGER, lapses INTEGER, left INTEGER, odue INTEGER, odid INTEGER, "
         "flags INTEGER, data TEXT)"
     )
+    conn.execute(
+        "CREATE TABLE revlog (id INTEGER PRIMARY KEY, cid INTEGER, usn INTEGER, ease INTEGER, "
+        "ivl INTEGER, lastIvl INTEGER, factor INTEGER, time INTEGER, type INTEGER)"
+    )
     conn.commit()
     return conn
 
@@ -365,3 +388,31 @@ class TestForgetCard:
         OfflineWriter(conn).forget_card(90011)
         row = conn.execute("SELECT due FROM cards WHERE id = 90011").fetchone()
         assert row["due"] == 1
+
+    def test_logs_the_reset_row(self):
+        """One revlog row, in the shape of Anki's Forget: type 4, factor 0 (Layer 90).
+
+        The same shape is compared with the binary in test_parity_forget.py; this
+        copy keeps the row covered where the oracle does not run.
+        """
+        conn = _make_cards_db()
+        _insert_review_card(conn, cid=90011)
+        OfflineWriter(conn).forget_card(90011)
+        (row,) = conn.execute("SELECT * FROM revlog").fetchall()
+        assert {k: row[k] for k in ("cid", "usn", "ease", "ivl", "lastIvl", "factor", "time", "type")} == {
+            "cid": 90011,
+            "usn": -1,
+            "ease": 0,
+            "ivl": 0,
+            "lastIvl": 8,
+            "factor": 0,
+            "time": 0,
+            "type": 4,
+        }
+        assert conn.execute("SELECT reps, lapses FROM cards WHERE id = 90011").fetchone()[:] == (0, 0)
+
+    def test_a_missing_card_logs_nothing(self):
+        conn = _make_cards_db()
+        OfflineWriter(conn).forget_card(404)
+        assert conn.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] == 0
+        assert conn.execute("SELECT mod FROM col").fetchone()[0] == 0

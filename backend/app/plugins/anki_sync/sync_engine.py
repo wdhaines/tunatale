@@ -50,7 +50,12 @@ from app.srs.anki_mirror.queue_stats import (
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
-from app.srs.fsrs import MANUAL_REVIEW_KIND, is_day_level_last_review, manual_revlog_row
+from app.srs.fsrs import (
+    MANUAL_REVIEW_KIND,
+    is_day_level_last_review,
+    manual_revlog_row,
+    review_interval_for_due,
+)
 from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
 from app.srs.lemmatizer import headword_lemma
 
@@ -1498,7 +1503,12 @@ class AnkiSync:
             # Anki's set-due-date interprets "days from today" against ITS rollover
             # day; computing the delta against calendar-today in [midnight, 4 AM)
             # lands the due date one day early.
-            days_str = str(max(0, (ds.due_at.date() - anki_today()).days))
+            days_from_today = max(0, (ds.due_at.date() - anki_today()).days)
+            days_str = str(days_from_today)
+            # The interval that goes with that due date (Layer 89): last review to
+            # due date, as Anki's own Set Due Date writes it. None when the
+            # direction has never been reviewed.
+            pushed_ivl = review_interval_for_due(ds.last_review, days_from_today, self._anki_col_crt)
             if not dry_run:
                 # Snapshot Anki's pre-push card state for the anki_ahead
                 # conflict-resolution check. Must be captured BEFORE
@@ -1597,7 +1607,7 @@ class AnkiSync:
                         continue
                 else:
                     # Review/new cards: use set_due_date (days since col_crt)
-                    self._writer.set_due_date([ds.anki_card_id], days_str)
+                    self._writer.set_due_date([ds.anki_card_id], days_str, ivl=pushed_ivl)
 
                 reviewed = ds.reps > 0 and self._push_revlog_for_direction(guid, direction, ds, manual=manual)
                 schema_ok = self._anki_col_ver is None or self._anki_col_ver <= KNOWN_ANKI_SCHEMA_VER
@@ -1615,13 +1625,16 @@ class AnkiSync:
                         desired_retention=push_desired_retention,
                     )
                 if row_force_fsrs and schema_ok:
-                    ivl_val = max(1, round(ds.stability))
                     factor_val = max(1300, min(13000, round(ds.difficulty * 1000)))
-                    self._writer.set_specific_value_of_card(
-                        ds.anki_card_id,
-                        keys=["ivl", "factor"],
-                        new_values=[str(ivl_val), str(factor_val)],
-                    )
+                    keys, new_values = ["factor"], [str(factor_val)]
+                    # The interval is forced to round(stability) only where the push
+                    # has nothing better: a direction never reviewed, or KNOWN, whose
+                    # interval is the far-future one it was marked with. Otherwise
+                    # set_due_date already wrote the real one (Layer 89), and
+                    # round(stability) would replace a restored card's 21 with 16.
+                    if pushed_ivl is None or ds.state == SRSState.KNOWN:
+                        keys, new_values = ["ivl", *keys], [str(max(1, round(ds.stability))), *new_values]
+                    self._writer.set_specific_value_of_card(ds.anki_card_id, keys=keys, new_values=new_values)
                 if manual and ds.reps > 0 and not reviewed:
                     # Last, so the row carries the interval the card ends up with.
                     self._log_manual_change(ds, anki_state_before)

@@ -19,7 +19,7 @@ class FakeWriter:
     def unsuspend(self, card_ids: list[int]) -> None:
         pass
 
-    def set_due_date(self, card_ids: list[int], days: str) -> None:
+    def set_due_date(self, card_ids: list[int], days: str, ivl: int | None = None) -> None:
         pass
 
     def max_revlog_id_for_card(self, card_id: int) -> int:

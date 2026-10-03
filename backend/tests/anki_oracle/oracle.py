@@ -25,9 +25,11 @@ Operations
     Runs Tools → Check Database. Returns ``{"ran", "ok", "report"}``; assert on
     ``ok``, because a failed check returns rather than raises.
 ``{"op": "set_due_date", "card_ids": [1], "days": "5"}``
-``{"op": "forget_cards", "card_ids": [1]}``
+``{"op": "forget_cards", "card_ids": [1], "reset_counts": false, "restore_position": false}``
     Anki's own Set Due Date and Forget. Read the manual revlog row each leaves
     with ``get_revlog``.
+``{"op": "get_card_row", "card_id": 1}``
+    The card's stored columns, as opposed to ``get_card``'s scheduler view.
 """
 
 from __future__ import annotations
@@ -338,9 +340,30 @@ def _op_set_due_date(col: Any, op: dict) -> dict:
 
 
 def _op_forget_cards(col: Any, op: dict) -> dict:
-    """Run Anki's Forget on *card_ids* (cards go back to new)."""
-    col.sched.schedule_cards_as_new(op["card_ids"])
+    """Run Anki's Forget on *card_ids* (cards go back to new).
+
+    ``reset_counts`` and ``restore_position`` are the dialog's two checkboxes;
+    both default to off here, as they do in the Python API.
+    """
+    col.sched.schedule_cards_as_new(
+        op["card_ids"],
+        restore_position=bool(op.get("restore_position", False)),
+        reset_counts=bool(op.get("reset_counts", False)),
+    )
     return {"ok": True}
+
+
+_CARD_ROW_COLUMNS = ("type", "queue", "due", "ivl", "factor", "reps", "lapses", "left", "odue", "odid", "data")
+
+
+def _op_get_card_row(col: Any, op: dict) -> dict:
+    """Read a card's stored columns as they sit in the ``cards`` table.
+
+    ``get_card`` reports the scheduler's view; this is the row another program
+    would have to write to leave the card in the same state.
+    """
+    row = col.db.first(f"SELECT {', '.join(_CARD_ROW_COLUMNS)} FROM cards WHERE id = ?", op["card_id"])
+    return dict(zip(_CARD_ROW_COLUMNS, row, strict=True))
 
 
 def _op_add_review_cards(col: Any, op: dict) -> dict:
@@ -436,6 +459,7 @@ _OPERATIONS: dict[str, Any] = {
     "get_revlog": _op_get_revlog,
     "set_due_date": _op_set_due_date,
     "forget_cards": _op_forget_cards,
+    "get_card_row": _op_get_card_row,
     "get_today": _op_get_today,
     "deck_today": _op_deck_today,
     "scheduling_states": _op_scheduling_states,
