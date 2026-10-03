@@ -233,14 +233,11 @@ if [ -n "$TS_HOST" ]; then
     CA_DIR="$(mkcert -CAROOT 2>/dev/null)"
     if [ -n "$CA_DIR" ] && [ -f "$CA_DIR/rootCA.pem" ]; then
         echo ""
+        # Never serve $CA_DIR itself: it also holds rootCA-key.pem, the CA's
+        # private key. serve-ca.sh serves a copy of the public cert only.
         echo "  First time on a phone? Install the mkcert CA there:"
-        echo "    Serve it:  python3 -m http.server 8080 -d \"$CA_DIR\""
-        echo "    On phone:  http://${TS_HOST}:8080/rootCA.pem"
-        echo "    Android:   Settings → Security → Install certificate → CA certificate"
-        echo "    iOS:       install the profile, THEN Settings → General → About →"
-        echo "               Certificate Trust Settings → enable full trust for it."
-        echo "               (iOS installs the profile but leaves it untrusted until"
-        echo "                that toggle — skipping it looks identical to a bad cert.)"
+        echo "    Run:       ./serve-ca.sh"
+        echo "    On phone:  http://${TS_HOST}:8080/   (the page walks through Android and iOS)"
     fi
 fi
 echo ""
