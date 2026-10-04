@@ -85,3 +85,28 @@ def test_the_dialectal_where_is_never_minted(dbs, capsys):
 
     assert target.get_collocation("saa") is None
     assert "1 word(s) rejected by review." in capsys.readouterr().out
+
+
+def _six(tmp_path):
+    """Tagalog sais, and a dictionary that heads the word at sayis, as kaikki's does."""
+    SRSDatabase(settings.database_urls["tl"]).add_collocation(SyntacticUnit("sais", "six", 1, 1, "test"), "tl")
+    dictionary = tmp_path / "six.jsonl"
+    dictionary.write_text(json.dumps({"word": "sayis", "senses": [{"glosses": ["six"]}]}), encoding="utf-8")
+    return dictionary
+
+
+def test_the_target_languages_spelling_variants_pick_the_minted_spelling(dbs, tmp_path):
+    """ceb/data/spelling_variants.tsv lists sayis as a variant of sais (2026-10-03)."""
+    target, _ = dbs
+    main(["--dictionary", str(_six(tmp_path)), "--apply"])
+    assert target.get_collocation("sais") is not None
+    assert target.get_collocation("sayis") is None
+
+
+def test_a_target_with_no_variant_list_mints_the_dictionarys_spelling(dbs, tmp_path, monkeypatch):
+    import scripts.seed_cognate_cards as script
+
+    target, _ = dbs
+    monkeypatch.setattr(script, "_PLUGINS", tmp_path / "no-plugins")
+    main(["--dictionary", str(_six(tmp_path)), "--apply"])
+    assert target.get_collocation("sayis") is not None

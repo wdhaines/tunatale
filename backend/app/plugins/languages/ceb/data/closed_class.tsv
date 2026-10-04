@@ -10,6 +10,12 @@
 # cards, so they get content UPOS here. Every function-word row below is either already a cloze in the
 # decks or not a card at all.
 # Lemmas: a surface keeps itself unless it is a contraction or case form of another word listed here.
+#
+# The last rows are not closed-class: they are default overrides for content words the same rule gets
+# wrong. Wiktionary heads some affixed verbs as nouns too (nagdala "the protagonist"), and a noun headword
+# keeps its own reading by default, so a lesson's nagdala never reached dala (the user, 2026-10-03). Each
+# is a verb in nearly every use; the noun stays as a non-default for the context resolver. sais is the
+# main spelling of six (sayis is its variant, spelling_variants.tsv), and Wiktionary has no sais at all.
 surface	upos	lemma	note
 ang	DET	ang	topic marker (Wiktionary: article; its only other reading was a PROPN)
 mga	DET	mga	plural marker
@@ -37,3 +43,9 @@ usab	ADV	usab	"also, again"
 sab	ADV	usab	"also" (short of usab)
 wala	VERB	wala	"there is none, did not"; a vocab card; was NUM "zero"
 wa	VERB	wala	short of wala
+sais	NUM	sais	"six" (Spanish-derived: clock time, prices); Wiktionary heads it at sayis, the rarer spelling
+nagdala	VERB	dala	"brought, carried"; Wiktionary's noun is "the protagonist"
+naghikog	VERB	hikog	"committed suicide"; Wiktionary's noun is "a suicide" (the person)
+nagbuhi	VERB	buhi	"raised, kept (a pet, a child)"; Wiktionary's noun is "the one who raises"
+gibuhi	VERB	buhi	"was raised, was kept"; Wiktionary's noun is "a pet" (or vulgar)
+gipangandoy	VERB	pangandoy	"wished for"; Wiktionary's noun "dreams" has the same root

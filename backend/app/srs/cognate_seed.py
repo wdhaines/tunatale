@@ -309,6 +309,22 @@ def _apply_acceptance(match: Match, target: str | None, dictionary: Dictionary) 
     return match
 
 
+def _apply_variant(match: Match, variants: Mapping[str, str]) -> Match:
+    """A target the language lists as a spelling variant becomes its main spelling.
+
+    The dictionary's headword can be the rarer spelling (kaikki heads "six" at
+    sayis, which Cebuano writers spell sais 93 to 9). When the main spelling is
+    the source word itself, the learner already produces it: a COGNATE.
+    """
+    if match.relation not in (Relation.COGNATE, Relation.NEAR_COGNATE):
+        return match
+    main = variants.get(normalize(match.target_text or ""))
+    if main is None:
+        return match
+    relation = Relation.COGNATE if normalize(main) == normalize(match.word.text) else Relation.NEAR_COGNATE
+    return Match(match.word, relation, main, match.target_glosses)
+
+
 def seed_for(relation: Relation, direction: Direction, known: KnownDirection | None) -> tuple[float, float] | None:
     """The (stability, difficulty) a direction starts with, or None to start it NEW."""
     if known is None or known.state not in _KNOWN_STATES or known.stability is None:
@@ -392,6 +408,7 @@ def plan(
     function_word: Callable[[str], bool] | None = None,
     started: frozenset[str] = frozenset(),
     occupied: Counter[int] | None = None,
+    variants: Mapping[str, str] | None = None,
 ) -> Plan:
     """Classify every known single word and schedule the cognates.
 
@@ -410,7 +427,8 @@ def plan(
     never starters, whatever matched. *function_word* (the target language's
     closed-class test) sends a match to ``function_words`` instead: a function
     word is a cloze in this app, and a cloze needs a sentence this plan does not
-    have. *occupied* is passed to ``schedule``.
+    have. *occupied* is passed to ``schedule``. *variants* maps a normalised
+    target spelling to the language's main spelling of it (``_apply_variant``).
     """
     out = Plan()
     kept: list[Match] = []
@@ -420,6 +438,7 @@ def plan(
             continue
         match = dictionary.classify(word)
         match = _apply_acceptance(match, (accept or {}).get(normalize(word.text)), dictionary)
+        match = _apply_variant(match, variants or {})
         if (
             match.relation in (Relation.COGNATE, Relation.NEAR_COGNATE)
             and function_word is not None

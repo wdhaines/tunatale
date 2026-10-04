@@ -82,3 +82,17 @@ def test_wiktionarys_own_readings_survive_as_non_defaults(table):
     readings = {(r.upos, r.lemma, r.is_default) for r in table.readings("apan")}
     assert ("NOUN", "apan", False) in readings
     assert ("CCONJ", "apan", True) in readings
+
+
+@pytest.mark.parametrize(
+    ("surface", "root"),
+    [("nagdala", "dala"), ("naghikog", "hikog"), ("nagbuhi", "buhi"), ("gibuhi", "buhi"), ("gipangandoy", "pangandoy")],
+)
+def test_an_affixed_verb_wiktionary_also_heads_as_a_noun_defaults_to_its_root(table, surface, root):
+    """Wiktionary heads ``nagdala`` as a noun ("the protagonist"), and a noun
+    headword keeps its own reading by default, so "Nagdala siya og bag" taught
+    nothing about ``dala`` (the user, 2026-10-03). The verb is the default now;
+    the noun survives for the context resolver to pick."""
+    readings = {(r.upos, r.lemma, r.is_default) for r in table.readings(surface)}
+    assert ("VERB", root, True) in readings
+    assert ("NOUN", surface, False) in readings
