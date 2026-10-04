@@ -26,9 +26,12 @@ class FakeWriter:
     note_exists: bool = True
     cloze_text_exists: bool = True
     cloze_text_raises: Exception | None = None
+    note_fields_raises: Exception | None = None
 
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
+    def update_note_fields(self, note_id: int, fields: dict[str, str], *, language_code: str) -> bool:
         self.calls.append(("update_note_fields", note_id, fields))
+        if self.note_fields_raises is not None:
+            raise self.note_fields_raises
         return self.note_exists
 
     def update_cloze_text(self, note_id: int, cloze_text: str, *, language_code: str) -> bool:

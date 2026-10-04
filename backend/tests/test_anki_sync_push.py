@@ -380,7 +380,7 @@ class TestOfflineWriter:
         conn.execute("UPDATE col SET usn = 7")
         conn.commit()
         writer = OfflineWriter(conn)
-        writer.update_note_fields(9001, {"English": "bank (financial)"})
+        writer.update_note_fields(9001, {"English": "bank (financial)"}, language_code="sl")
 
         row = conn.execute("SELECT flds, usn, mod FROM notes WHERE id=9001").fetchone()
         parts = row["flds"].split("\x1f")
@@ -410,7 +410,7 @@ class TestOfflineWriter:
         _seed_note_and_cards(conn, mid=999, flds=("banka", "bank", "", "", "", "", ""))
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="no fields for notetype 999"):
-            writer.update_note_fields(9001, {"English": "bank (financial)"})
+            writer.update_note_fields(9001, {"English": "bank (financial)"}, language_code="sl")
         row = conn.execute("SELECT flds, usn FROM notes WHERE id=9001").fetchone()
         assert row["flds"].split("\x1f")[1] == "bank"  # untouched
         assert row["usn"] == 0
@@ -419,7 +419,7 @@ class TestOfflineWriter:
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)
         with pytest.raises(ValueError, match="no fields for notetype 1"):
-            OfflineWriter(conn).update_note_fields(9001, {"English": "bank (financial)"})
+            OfflineWriter(conn).update_note_fields(9001, {"English": "bank (financial)"}, language_code="sl")
 
     def test_update_note_fields_with_cloze_notetype(self):
         """Cloze notetype path: update Back Extra via update_note_fields."""
@@ -437,6 +437,7 @@ class TestOfflineWriter:
         writer.update_note_fields(
             9001,
             {"Back Extra": '<i>every</i><br><br><span class="st">It is open every day</span>'},
+            language_code="sl",
         )
         row = conn.execute("SELECT flds, usn FROM notes WHERE id=9001").fetchone()
         parts = row["flds"].split("\x1f")
@@ -461,7 +462,7 @@ class TestOfflineWriter:
         )
         _seed_note_and_cards(conn, mid=200, flds=("snakke", "to speak", "", "", "", "", ""))
         writer = OfflineWriter(conn)
-        writer.update_note_fields(9001, {"Norwegian": "snakker", "Note": "Jeg snakker norsk."})
+        writer.update_note_fields(9001, {"Norwegian": "snakker", "Note": "Jeg snakker norsk."}, language_code="no")
         parts = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()["flds"].split("\x1f")
         assert parts[0] == "snakker"  # L2 field (index 0) — would raise under the old Slovene roster
         assert parts[5] == "Jeg snakker norsk."  # Note field (index 5)
@@ -526,7 +527,7 @@ class TestOfflineWriter:
         conn = _make_anki_full_db()
         _seed_note_and_cards(conn)
         writer = OfflineWriter(conn)
-        writer.update_note_fields(99999, {"English": "nope"})
+        writer.update_note_fields(99999, {"English": "nope"}, language_code="sl")
         row = conn.execute("SELECT flds FROM notes WHERE id=9001").fetchone()
         # Original note untouched.
         assert row["flds"].split("\x1f")[1] == "bank"
@@ -539,7 +540,7 @@ class TestOfflineWriter:
         _seed_note_and_cards(conn)
         writer = OfflineWriter(conn)
         with pytest.raises(ValueError, match="Unknown field"):
-            writer.update_note_fields(9001, {"Back": "bank"})
+            writer.update_note_fields(9001, {"Back": "bank"}, language_code="sl")
 
     def test_set_due_date_preserves_suspension(self):
         from datetime import timedelta
@@ -4067,7 +4068,7 @@ class TestMissingNoteDoesNotConsumeTheEdit(TestSyncPushImage):
         conn.row_factory = sqlite3.Row
         writer = OfflineWriter(conn)
 
-        assert writer.update_note_fields(999_999_999_999, {"Front": "x"}) is False
+        assert writer.update_note_fields(999_999_999_999, {"Front": "x"}, language_code="sl") is False
 
     def test_missing_note_keeps_the_flag_and_is_not_counted(self):
         """The consequence: nothing reached Anki, so the edit stays pending and
@@ -4409,3 +4410,141 @@ def test_a_translation_edit_on_the_norwegian_deck_lands_in_its_english_translati
         conn.close()
     assert flds == ["1", "være", "verb", "", "to exist"]
     assert db.get_dirty_fields(guid) == ""
+
+
+class TestUpdateNoteFieldsKeepsDerivedColumns:
+    """A note's field-0 edit carries its sort field, checksum and guid (2026-10-03).
+
+    ``update_note_fields`` wrote ``flds`` alone. On TT's vocab notetype field 0
+    is the L2 and the sort field, so renaming a card (sayis -> sais) left
+    ``sfld`` (the browser's sort column and duplicate check), ``csum`` (Anki's
+    checksum of the first field) and the text-derived ``guid`` describing the
+    old word: the defect ``update_cloze_text`` fixed for clozes (tunatale-keb0).
+    The guid is rewritten only when it IS text-derived; a note that came from
+    the user's own Anki deck keeps the guid Anki gave it.
+    """
+
+    @staticmethod
+    def _conn(*, guid: str | None = None, flds: tuple[str, ...] = ("banka", "bank", "", "", "", "", "")):
+        from app.common.guid import compute_guid
+
+        conn = _make_anki_full_db()
+        _seed_vocab_notetype(conn)
+        _seed_note_and_cards(conn, guid=guid or compute_guid(flds[0], "sl", flds[6]), flds=flds)
+        return conn
+
+    @staticmethod
+    def _csum(text: str) -> int:
+        return int(hashlib.sha1(text.encode()).hexdigest()[:8], 16)
+
+    def test_an_l2_edit_moves_sfld_csum_and_guid_with_the_field(self):
+        from app.common.guid import compute_guid
+
+        conn = self._conn()
+        assert OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke"}, language_code="sl") is True
+
+        row = conn.execute("SELECT flds, sfld, csum, guid, usn FROM notes WHERE id=9001").fetchone()
+        assert row["flds"].split("\x1f")[:2] == ["banke", "bank"]
+        assert row["sfld"] == "banke"
+        assert row["csum"] == self._csum("banke")
+        assert row["guid"] == compute_guid("banke", "sl", "")
+        assert row["usn"] == -1
+
+    def test_the_disambig_key_stays_folded_into_the_guid(self):
+        from app.common.guid import compute_guid
+
+        conn = self._conn(flds=("banka", "bank", "", "", "", "", "noun"))
+        OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke"}, language_code="sl")
+
+        assert conn.execute("SELECT guid FROM notes").fetchone()["guid"] == compute_guid("banke", "sl", "noun")
+
+    def test_markup_is_stripped_from_the_sort_field_and_its_checksum(self):
+        conn = self._conn()
+        OfflineWriter(conn).update_note_fields(9001, {"Slovene": "<b>banke</b>"}, language_code="sl")
+
+        row = conn.execute("SELECT sfld, csum FROM notes").fetchone()
+        assert (row["sfld"], row["csum"]) == ("banke", self._csum("banke"))
+
+    def test_a_note_anki_made_keeps_its_own_guid(self):
+        conn = self._conn(guid="Anki+Own/Guid")
+        OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke"}, language_code="sl")
+
+        row = conn.execute("SELECT sfld, csum, guid FROM notes").fetchone()
+        assert row["guid"] == "Anki+Own/Guid"
+        assert (row["sfld"], row["csum"]) == ("banke", self._csum("banke"))
+
+    def test_an_edit_off_field_0_leaves_the_derived_columns_alone(self):
+        conn = self._conn()
+        conn.execute("UPDATE notes SET csum = 12345")
+        before = dict(conn.execute("SELECT sfld, csum, guid FROM notes").fetchone())
+        OfflineWriter(conn).update_note_fields(9001, {"English": "a bank"}, language_code="sl")
+
+        assert dict(conn.execute("SELECT sfld, csum, guid FROM notes").fetchone()) == before
+
+    def test_a_sort_field_other_than_field_0_is_left_alone(self):
+        """Anki's csum is always the first field's; sfld is the SORT field's."""
+        conn = self._conn()
+        conn.execute("UPDATE notes SET sfld = 'bank'")  # this notetype sorts by English
+        OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke"}, language_code="sl")
+
+        row = conn.execute("SELECT sfld, csum FROM notes").fetchone()
+        assert (row["sfld"], row["csum"]) == ("bank", self._csum("banke"))
+
+    def test_an_edit_that_would_take_another_notes_guid_is_refused_and_writes_nothing(self):
+        from app.common.guid import compute_guid
+
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (9002, ?, 1, 100, 0, '', 'banke', 'banke', 0, 0, '')",
+            (compute_guid("banke", "sl", ""),),
+        )
+        conn.commit()
+
+        with pytest.raises(DuplicateNoteError):
+            OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke"}, language_code="sl")
+
+        row = conn.execute("SELECT flds, usn FROM notes WHERE id=9001").fetchone()
+        assert (row["flds"].split("\x1f")[0], row["usn"]) == ("banka", 0)
+
+    def test_scheduling_is_untouched(self):
+        conn = self._conn()
+        query = "SELECT id, due, ivl, queue, type, reps, lapses, factor FROM cards ORDER BY id"
+        before = [dict(r) for r in conn.execute(query)]
+        OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke"}, language_code="sl")
+
+        assert [dict(r) for r in conn.execute(query)] == before
+
+
+class TestVocabTextPush:
+    """A renamed word card reaches Anki as the same note under its new guid."""
+
+    def test_the_anki_guid_follows_tts_renamed_guid(self):
+        db = _make_tt_db()
+        old_guid, note_id, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(old_guid)
+        db.update_collocation_fields(coll_id, text="banke", translation="bank")
+        new_guid = db.get_collocation_by_id(coll_id)[1].guid
+
+        anki_conn = _make_anki_full_db()
+        _seed_vocab_notetype(anki_conn)
+        _seed_note_and_cards(anki_conn, note_id=note_id, guid=old_guid)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(anki_conn)).sync_push()
+
+        row = anki_conn.execute("SELECT sfld, guid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        assert (row["sfld"], row["guid"]) == ("banke", new_guid)
+        assert db.get_dirty_fields(new_guid) == ""
+
+    def test_dirty_flag_survives_a_guid_collision(self, caplog):
+        """A refused rewrite is not a push: keep the flag (the tunatale-7p4f discipline)."""
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        db.set_dirty_fields(guid, "text")
+        writer = FakeWriter()
+        writer.note_fields_raises = DuplicateNoteError(4242)
+
+        report = AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert db.get_dirty_fields(guid) == "text"
+        assert (report.write_noop, report.notes_pushed) == (1, 0)
+        assert "NOTE_TEXT_COLLISION nid=9001" in caplog.text

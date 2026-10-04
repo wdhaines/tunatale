@@ -1450,7 +1450,21 @@ class AnkiSync:
                     if not wrote:
                         report.write_noop += 1
                         continue
-                if fields and not self._writer.update_note_fields(anki_note_id, fields):
+                try:
+                    wrote = not fields or self._writer.update_note_fields(
+                        anki_note_id, fields, language_code=self._language_code
+                    )
+                except DuplicateNoteError as exc:
+                    # The edited field 0 would give this note another note's guid.
+                    # Keep the flag, as for a cloze collision above.
+                    _log.warning(
+                        "NOTE_TEXT_COLLISION nid=%d — its new text's guid already belongs to note %d; keeping the flag",
+                        anki_note_id,
+                        exc.note_id,
+                    )
+                    report.write_noop += 1
+                    continue
+                if not wrote:
                     # The note is not in the collection being written — during
                     # peer-sync that is tt_collection, not the user's. Nothing
                     # reached Anki, so KEEP the flag for a later sync and do not
