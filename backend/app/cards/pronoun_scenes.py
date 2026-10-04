@@ -302,11 +302,13 @@ def _person(x: float, lit: bool, marker: str | None = None) -> str:
                 f'stroke="{_ACCENT}" stroke-width="2.5" fill="none"/>'
             )
         else:
-            # A stroke up and to the right off the ring, with an arrowhead.
+            # A stroke up and to the right off the ring, with an arrowhead whose
+            # two arms meet AT the stroke's tip (2026-10-04: it once started a
+            # unit right of the ring, which left the corner two short of the tip).
             parts.append(
                 f'<path d="M{_n(cx + _MARK_DIAGONAL)} {_n(cy - _MARK_DIAGONAL)} '
                 f"l{_MARK_ARROW} -{_MARK_ARROW} "
-                f"M{_n(cx + _MARK_DIAGONAL + 1)} {_n(cy - _MARK_DIAGONAL - _MARK_ARROW)} "
+                f"M{_n(cx + _MARK_DIAGONAL + _MARK_ARROW / 2)} {_n(cy - _MARK_DIAGONAL - _MARK_ARROW)} "
                 f'h{_MARK_ARROW / 2} v{_MARK_ARROW / 2}" '
                 f'stroke="{_ACCENT}" stroke-width="2.5" fill="none" stroke-linecap="round"/>'
             )

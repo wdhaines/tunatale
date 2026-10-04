@@ -707,7 +707,7 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
 _BASE_RENDERS_AT_HEAD: dict[str, str] = {
     "i": "9c40bf84971d",
     "you_one": "0f2d8e5294b5",
-    "he": "be9ebb5ad3df",
+    "he": "ed7a7f2ba692",  # re-pinned 2026-10-04: the ♂ arrowhead now caps its tip
     "she": "3d9f884dc58c",
     "third_one": "9f9af7a1d14c",
     "it": "c2938fdf9209",
@@ -834,6 +834,55 @@ def test_the_gender_mark_sits_over_the_other_and_says_which_gender(concept: str)
     assert not host.inside and host.lit
     assert host.symbol == _GENDER_MARK[concept]
     assert host.mark_cx is not None and abs(host.mark_cx - host.cx) <= 2, "the circle is above ITS head"
+
+
+def _male_arrows(svg: bytes) -> list[list[list[tuple[float, float]]]]:
+    """Every ♂ stroke path in *svg*, over a head or in a bag, as subpaths.
+
+    Found by direction rather than by colour, so the referent's mark and the
+    owned thing's mark are held to one rule: the first stroke goes up and right.
+    """
+    found = []
+    for el in _root(svg).iter():
+        if el.tag != f"{_SVG}path" or el.get("fill") != "none" or not el.get("d"):
+            continue
+        subpaths, _ = _paths(el.get("d"))
+        if _mark_kind(subpaths) == "m" and el.get("stroke-dasharray") is None:
+            found.append(subpaths)
+    return found
+
+
+def _arrowhead_arms(subpaths: list[list[tuple[float, float]]]) -> list[tuple[tuple[float, float], ...]]:
+    """The segments after the shaft: the strokes that make the arrowhead."""
+    segments = [(a, b) for part in subpaths for a, b in zip(part, part[1:], strict=False)]
+    return segments[1:]
+
+
+def _touches(arm: tuple[tuple[float, float], ...], point: tuple[float, float]) -> bool:
+    """True if one of *arm*'s endpoints is *point*."""
+    return any(abs(px - point[0]) < 1e-6 and abs(py - point[1]) < 1e-6 for px, py in arm)
+
+
+@pytest.mark.parametrize(("concept", "owned"), [("he", None), ("he_poss", None), ("i_poss", "m"), ("he_poss", "m")])
+def test_the_male_arrowhead_caps_the_tip_of_its_shaft(concept: str, owned: str | None) -> None:
+    """♂'s arrowhead is one horizontal and one vertical arm that MEET at the tip.
+
+    The head mark shipped with its arrowhead two units left of the shaft's end
+    (the user, 2026-10-04: "the male symbol misaligned") — a corner floating
+    beside the arrow rather than capping it, which every count in this file
+    passed. So the claim is geometric: each arm has an endpoint on the tip.
+    """
+    arrows = _male_arrows(render_pronoun_svg(concept, owned=owned))
+    assert arrows, "the render draws a ♂"
+    for subpaths in arrows:
+        tip = subpaths[0][1]
+        arms = _arrowhead_arms(subpaths)
+        horizontal = [arm for arm in arms if abs(arm[0][1] - arm[1][1]) < 1e-6]
+        vertical = [arm for arm in arms if abs(arm[0][0] - arm[1][0]) < 1e-6]
+        assert len(horizontal) == 1 and len(vertical) == 1 and len(arms) == 2, arms
+        assert _touches(horizontal[0], tip) and _touches(vertical[0], tip), f"arms {arms} do not meet at the tip {tip}"
+        assert horizontal[0][0][0] <= tip[0] + 1e-6 and horizontal[0][1][0] <= tip[0] + 1e-6, "arm points back"
+        assert vertical[0][0][1] >= tip[1] - 1e-6 and vertical[0][1][1] >= tip[1] - 1e-6, "arm points down"
 
 
 @pytest.mark.parametrize("concept", [c for c in PRONOUN_CONCEPTS if c not in _GENDERED])
@@ -1540,7 +1589,7 @@ def test_the_checker_rejects_the_cats_bag_floating_off_the_ground() -> None:
 _OWNED_NONE_AT_HEAD: dict[str, str] = {
     "i": "9c40bf84971d",
     "you_one": "0f2d8e5294b5",
-    "he": "be9ebb5ad3df",
+    "he": "ed7a7f2ba692",  # re-pinned 2026-10-04: the ♂ arrowhead now caps its tip
     "she": "3d9f884dc58c",
     "third_one": "9f9af7a1d14c",
     "it": "c2938fdf9209",
@@ -1554,7 +1603,7 @@ _OWNED_NONE_AT_HEAD: dict[str, str] = {
     "they_many": "5df66a7f9448",
     "i_poss": "7862b3800699",
     "you_one_poss": "1ddd51f36731",
-    "he_poss": "e28cb4caf173",
+    "he_poss": "6dca9ae7bcee",  # re-pinned 2026-10-04, as "he"
     "she_poss": "75ec093cc41b",
     "third_one_poss": "4689b7dc0ed5",
     "it_poss": "dfa6f3d55844",
