@@ -58,6 +58,11 @@ _PRODUCTION_BAND_FLOOR = -1_000_000
 _PRODUCTION_BAND_CEILING = 0
 
 
+def _strip_markup(field: str) -> str:
+    """A field as its sort value: tags removed, trimmed (how ``create_note`` derives ``sfld``)."""
+    return re.sub(r"<[^>]+>", "", field).strip()
+
+
 def bump_col_mod(conn: sqlite3.Connection) -> None:
     """Mark the collection changed: ``col.mod`` = now, in MILLISECONDS.
 
@@ -231,7 +236,7 @@ class OfflineWriter:
         }
         return {role: name for role, name in wanted.items() if name in field_names}
 
-    def update_note_fields(self, note_id: int, fields: dict[str, str]) -> bool:
+    def update_note_fields(self, note_id: int, fields: dict[str, str], *, language_code: str) -> bool:
         """Write *fields* into *note_id*. Returns whether anything was written.
 
         A note absent from THIS collection returns ``False`` rather than raising:
@@ -240,23 +245,51 @@ class OfflineWriter:
         returning ``None`` either way let ``sync_push`` clear ``dirty_fields``
         and count a push for a write that never happened (tunatale-7p4f).
 
+        A write that changes field 0 also moves what Anki derives from it, as
+        ``create_note`` does: ``csum`` (always the first field's checksum),
+        ``sfld`` when the note sorts by field 0, and the ``guid`` when it is
+        text-derived (``compute_guid`` of field 0, ``language_code`` and
+        ``DisambigKey``). Writing ``flds`` alone left a renamed word card
+        (sayis -> sais, 2026-10-03) sorted, duplicate-checked and identified as
+        the old word — the defect ``update_cloze_text`` fixed for clozes. A note
+        from the user's own deck keeps the guid Anki gave it. Raises
+        :class:`DuplicateNoteError`, writing nothing, when the new guid belongs
+        to a DIFFERENT note.
         """
-        row = self._conn.execute("SELECT flds, mid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        import hashlib
+
+        row = self._conn.execute("SELECT flds, mid, sfld, guid FROM notes WHERE id = ?", (note_id,)).fetchone()
         if row is None:
             return False
         field_names = self._field_names_for_mid(row["mid"])
         parts = row["flds"].split("\x1f")
+        old_first = _strip_markup(parts[0])
         name_to_idx = {name: i for i, name in enumerate(field_names)}
         for name, value in fields.items():
             idx = name_to_idx.get(name)
             if idx is None:
                 raise ValueError(f"Unknown field name {name!r} for note {note_id}")
             parts[idx] = value
-        new_flds = "\x1f".join(parts)
+        new_first = _strip_markup(parts[0])
+        sfld, guid = row["sfld"], row["guid"]
+        csum = None
+        if new_first != old_first:
+            csum = int(hashlib.sha1(new_first.encode()).hexdigest()[:8], 16)
+            if str(sfld) == old_first:
+                sfld = new_first
+            disambig_idx = name_to_idx.get("DisambigKey")
+            disambig = parts[disambig_idx] if disambig_idx is not None else ""
+            if guid == compute_guid(old_first, language_code, disambig):
+                guid = compute_guid(new_first, language_code, disambig)
+                clash = self._conn.execute(
+                    "SELECT id FROM notes WHERE guid = ? AND id != ?", (guid, note_id)
+                ).fetchone()
+                if clash is not None:
+                    raise DuplicateNoteError(clash[0])
         ts = int(_time.time())
         self._conn.execute(
-            "UPDATE notes SET flds = ?, mod = ?, usn = -1 WHERE id = ?",
-            (new_flds, ts, note_id),
+            "UPDATE notes SET flds = ?, sfld = ?, csum = COALESCE(?, csum), guid = ?, mod = ?, usn = -1 WHERE id = ?",
+            ("\x1f".join(parts), sfld, csum, guid, ts, note_id),
         )
         self._bump_col(ts)
         self._conn.commit()
@@ -271,9 +304,10 @@ class OfflineWriter:
         revlog, which is the whole point: the history is worth more than the
         sentence it was earned on.
 
-        ⚠️ **NOT expressible as ``update_note_fields({"Text": …})``.** That writes
-        ``flds``/``mod``/``usn`` only, and a cloze's ``Text`` is field 0, from
-        which ``create_cloze_note`` derives three more columns:
+        ⚠️ **Why a cloze rewrite had its own method.** ``update_note_fields``
+        wrote ``flds``/``mod``/``usn`` only (it now moves the derived columns
+        too, since 2026-10-03), and a cloze's ``Text`` is field 0, from which
+        ``create_cloze_note`` derives three more columns:
 
         - ``sfld`` — the browser's sort column and Anki's duplicate-check input.
           Left stale, the browser lists the note under a sentence it no longer
@@ -782,7 +816,7 @@ class OfflineWriter:
             r["name"] for r in self._conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,))
         ]
         sort_field = field_names[0]
-        sfld = re.sub(r"<[^>]+>", "", fields.get(sort_field, "")).strip()
+        sfld = _strip_markup(fields.get(sort_field, ""))
         disambig = fields.get("DisambigKey", "")
         anki_guid = compute_guid(sfld, language_code, disambig)
 
