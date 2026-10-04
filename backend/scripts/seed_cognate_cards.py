@@ -41,6 +41,7 @@ from app.languages import resolve_language_context
 from app.srs import cognate_seed
 from app.srs.database import SRSDatabase
 from app.srs.function_words import is_function_word
+from scripts.build_cebuano_lemma_table import load_spelling_variants
 
 # Tagalog words a person reviewed one by one and judged to mean the same thing in
 # Cebuano, though the automatic tests said otherwise (parse_accept syntax).
@@ -69,6 +70,19 @@ REVIEWED_REJECTS = "eroplano,buwan,saan"
 
 _BACKEND = Path(__file__).resolve().parents[1]
 DEFAULT_DICTIONARY = _BACKEND / "scripts/local/kaikki/Cebuano.jsonl"
+_PLUGINS = _BACKEND / "app/plugins/languages"
+
+
+def _spelling_variants(language_code: str) -> dict[str, str]:
+    """The target plugin's hand-kept variant -> main spelling list, if it has one.
+
+    A dictionary headword can be the rarer spelling (sayis for sais); the seed
+    mints the main one, so a renamed card is not planned again under the old.
+    """
+    path = _PLUGINS / language_code / "data/spelling_variants.tsv"
+    if not path.exists():
+        return {}
+    return {cognate_seed.normalize(v): main for v, main in load_spelling_variants(path)}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         function_word=lambda w: is_function_word(w, args.target),
         started=cognate_seed.started_texts(db),
         occupied=cognate_seed.review_load(db, now=now),
+        variants=_spelling_variants(args.target),
     )
     _print_plan(plan)
 

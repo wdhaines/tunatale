@@ -106,3 +106,13 @@ def test_sayal_and_saya_stay_two_words(table, surface):
     """
     assert {r.lemma for r in table.readings(surface)} == {surface}
     assert surface not in dict(load_spelling_variants(SPELLING_VARIANTS))
+
+
+@pytest.mark.parametrize("surface", ["sais", "sayis"])
+def test_six_reads_as_sais(table, surface):
+    """Wiktionary heads "six" at ``sayis``, so the cognate seed minted a ``sayis``
+    card, and the number table and style.md say ``sais``: the card got no clock
+    face (the user, 2026-10-03). Cebuano writers use ``sais`` 93 to 9
+    (cebuano_frequency.tsv.gz), so ``sais`` is the main spelling."""
+    default = next(r for r in table.readings(surface) if r.is_default)
+    assert (default.upos, default.lemma) == ("NUM", "sais")

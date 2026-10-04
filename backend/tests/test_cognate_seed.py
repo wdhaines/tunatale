@@ -446,3 +446,31 @@ class TestFunctionWordsAreNotVocab:
         p = cs.plan(words, DICTIONARY, function_word=lambda w: w == "asawa")
         assert [st.match.target_text for st in p.starters] == ["tubig"]
         assert [m.target_text for m in p.function_words] == ["asawa"]
+
+
+class TestSpellingVariants:
+    """Wiktionary heads "six" at sayis, so Tagalog sais reached it as a near-cognate
+    and the seed minted the minority spelling (sais 93, sayis 9 in the frequency
+    corpus). A listed variant is never minted; its main spelling is (2026-10-03)."""
+
+    D = cs.Dictionary(cs.load_dictionary([_entry("sayis", "six")]))
+
+    def test_without_the_list_the_dictionarys_spelling_is_minted(self):
+        [st] = cs.plan([_word("sais", "six")], self.D).starters
+        assert (st.match.target_text, st.match.relation) == ("sayis", cs.Relation.NEAR_COGNATE)
+
+    def test_a_variant_target_is_minted_as_its_main_spelling(self):
+        """The main spelling IS the Tagalog word, so it is a cognate: both directions carry."""
+        [st] = cs.plan([_word("sais", "six")], self.D, variants={"sayis": "sais"}).starters
+        assert (st.match.target_text, st.match.relation) == ("sais", cs.Relation.COGNATE)
+        assert st.match.target_glosses == ("six",)
+        assert set(st.seeds) == {REC, PROD}
+
+    def test_a_main_spelling_unlike_the_source_stays_a_near_cognate(self):
+        [st] = cs.plan([_word("sayes", "six")], self.D, variants={"sayis": "sais"}).starters
+        assert (st.match.target_text, st.match.relation) == ("sais", cs.Relation.NEAR_COGNATE)
+
+    def test_a_card_renamed_to_the_main_spelling_is_not_planned_again(self):
+        p = cs.plan([_word("sais", "six")], self.D, variants={"sayis": "sais"}, started=frozenset({"sais"}))
+        assert p.starters == []
+        assert p.already_started == 1
