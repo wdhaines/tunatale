@@ -425,6 +425,12 @@ it; verify it is still firing, then look for new edge cases.
   effective_review_budget(daily_review_cap, reviews_today, introduced_today))`,
   where the budget is `max(0, daily_review_cap − reviews_today −
   introduced_today)`.
+  - **Compare against Anki's deck OVERVIEW (click into the deck), never the deck
+    list.** The deck list counts due review *cards*; the overview and TT count
+    *notes* after sibling-bury. Signature: Anki's deck list exceeds TT by exactly
+    the number of notes with two review cards due (`cards WHERE queue=2 AND
+    due<=today GROUP BY nid HAVING COUNT(*)>1`). Confirmed 2026-10-04: list 201,
+    overview 200, TT 200, one note (innlegg) with both cards due.
   - **Layer 76:** new cards introduced today also charge the review-per-day limit
     (Anki `rslib/src/decks/limits.rs:104-108`, gated on
     `new_cards_ignore_review_limit`), so the budget nets out
