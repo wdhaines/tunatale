@@ -166,6 +166,76 @@ class TestForvoDisabled:
         assert r.audio_source == "forvo"
 
 
+# ── TestAudioMode ──────────────────────────────────────────────────────────────
+
+
+class TestAudioMode:
+    """`audio=` lets a caller ask only for the audio it will use.
+
+    Every caller used to get Forvo-then-TTS whether or not it wanted audio. The
+    image pre-stage wants a picture alone, so each pre-staged image also made a
+    Forvo request and a TTS render and threw both away; and a card minted by a
+    sync is not seen for weeks, so rendering a METERED voice for it at mint
+    spends money on audio nobody hears (the user's call, 2026-10-06).
+    """
+
+    @staticmethod
+    def _exploding(name):
+        def _fn(*_a, **_k):
+            raise AssertionError(f"{name} was called")
+
+        return _fn
+
+    async def _run(self, audio, *, forvo_returns=None, tts_fn=None, forvo_fn=None):
+        fake_forvo, fake_tts, search_fn, dl_fn, norm_fn = _make_fakes(
+            forvo_returns=forvo_returns,
+            tts_returns=b"tts_mp3",
+            search_returns=PixabaySearch(hits=[_HIT_1], status="ok"),
+            download_returns=(b"IMG", "jpg", _IMG_URL),
+        )
+        return await fetch_card_media(
+            "natt",
+            "night tree",
+            pixabay_key="key",
+            language_code="no",
+            audio=audio,
+            _forvo_fn=forvo_fn or fake_forvo,
+            _tts_fn=tts_fn or fake_tts,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+        )
+
+    async def test_none_makes_no_forvo_request_and_no_tts_render(self):
+        r = await self._run("none", forvo_fn=self._exploding("Forvo"), tts_fn=self._exploding("TTS"))
+        assert (r.audio_bytes, r.audio_source, r.audio_status) == (None, None, "skipped")
+        assert r.image_bytes == b"IMG", "the picture is still fetched"
+
+    async def test_forvo_only_keeps_a_recording_it_finds(self):
+        r = await self._run("forvo", forvo_returns=b"forvo_mp3", tts_fn=self._exploding("TTS"))
+        assert (r.audio_bytes, r.audio_source, r.audio_status) == (b"forvo_mp3_norm", "forvo", "found")
+
+    async def test_forvo_only_never_falls_back_to_tts(self):
+        r = await self._run("forvo", forvo_returns=None, tts_fn=self._exploding("TTS"))
+        assert (r.audio_bytes, r.audio_source, r.audio_status) == (None, None, "no_pronunciation")
+
+    async def test_full_is_the_default_and_still_falls_back_to_tts(self):
+        """The control: with these fakes the default does render TTS."""
+        fake_forvo, fake_tts, search_fn, dl_fn, norm_fn = _make_fakes(tts_returns=b"tts_mp3")
+        r = await fetch_card_media(
+            "natt",
+            "night",
+            pixabay_key="key",
+            language_code="no",
+            _forvo_fn=fake_forvo,
+            _tts_fn=fake_tts,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+        )
+        assert (r.audio_bytes, r.audio_source) == (b"tts_mp3_norm", "tts")
+
+
 # ── TestLanguageThreading ──────────────────────────────────────────────────────
 
 

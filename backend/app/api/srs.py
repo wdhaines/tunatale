@@ -3465,7 +3465,9 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
     status_code=200,
     response_model=ReviewQueueResponse,
 )
-async def get_review_queue(request: Request, response: Response, session_start: bool = False) -> dict:
+async def get_review_queue(
+    request: Request, response: Response, background_tasks: BackgroundTasks, session_start: bool = False
+) -> dict:
     """Return the entire ordered review queue in one shot.
 
     Implements Anki's queue construction: combined new-card cap across directions,
@@ -3487,6 +3489,21 @@ async def get_review_queue(request: Request, response: Response, session_start: 
 
     db = request.state.srs_db
     ordered = assemble_review_queue(db, session_start=session_start)
+
+    # A deck open is the other moment to top up word audio (the first is the end
+    # of a sync): it is the only one a learner without Anki ever has, and it
+    # covers a card that came due between syncs. Not on the per-grade refetch —
+    # once per session is enough, and the pass does nothing when no card lacks
+    # audio. Never touches the Anki collection.
+    if session_start and settings.prestage_audio_limit > 0:
+        from app.cards.media.audio_prestage import prestage_card_audio
+
+        background_tasks.add_task(
+            app_state.background_work(request.app).track("prestage_audio", prestage_card_audio),
+            db,
+            language_code=request.state.language_code,
+            limit=settings.prestage_audio_limit,
+        )
 
     # POS is a disambiguator: show it only where a surface spans >=2 word classes.
     # Computed once per language present in the queue, then passed per item.

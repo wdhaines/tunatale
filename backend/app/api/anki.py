@@ -10,8 +10,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.api import app_state
 from app.api.models import PeerSyncResponse, PresetChangeResponse
+from app.cards.media.audio_prestage import prestage_card_audio
 from app.cards.media.pipeline import fetch_card_media
 from app.cards.media.query_llm import generate_image_query
+from app.languages import resolve_language_context
 from app.srs.anki_mirror.preset_watch import PRESET_CHANGE_KEY, PresetChangeAlert
 
 router = APIRouter(prefix="/api/anki", tags=["anki"])
@@ -68,14 +70,27 @@ async def dismiss_preset_change(request: Request):
     return {"change": None}
 
 
-def _build_media_fn(llm, db):
+def _build_media_fn(llm, db, language_code: str):
     """Build the create-time media generator (LLM image query → Pixabay/TTS fetch).
 
     Called by peer-sync so TT-added cards get audio + images.
+
+    *language_code* is the language being SYNCED — it picks the Forvo section
+    and the TTS voice. It is a required argument on purpose: this used to read
+    the global ``settings.target_language`` on the belief that peer sync set it
+    per request, but ``_tt_settings`` sets it on a ``model_copy`` only. On a
+    multi-language instance that voiced every sync-minted card in the .env
+    default language (a Cebuano deck in Norwegian, 2026-10-06) and nothing
+    failed, because a wrong voice still returns audio.
     """
     from app.config import settings
 
-    async def _media_fn(word, english, *, used_image_urls, source_sentence="", grammar="", skip_image=False):
+    async def _media_fn(
+        word, english, *, used_image_urls, source_sentence="", grammar="", skip_image=False, audio="full"
+    ):
+        # `audio`: how much audio the caller will use (`pipeline.AudioMode`) —
+        # the image pre-stage wants none, and asking anyway cost it a Forvo
+        # request and a TTS render per picture.
         # `skip_image`: the caller already has the picture (a drawn number), so
         # spend neither the LLM image query nor a Pixabay search. "" is
         # `fetch_card_media`'s documented skip sentinel.
@@ -95,13 +110,11 @@ def _build_media_fn(llm, db):
             word,
             english,
             pixabay_key=settings.pixabay_api_key,
-            # settings.target_language is the language being synced (peer_sync's
-            # _tt_settings sets it per request) — resolve the TTS voice / Forvo
-            # section from it so a Norwegian card isn't voiced in Slovene.
-            language_code=settings.target_language,
+            language_code=language_code,
             used_image_urls=used_image_urls,
             image_query=image_query,
             llm=llm,
+            audio=audio,
         )
 
     return _media_fn
@@ -127,10 +140,13 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
 
     db = request.state.srs_db
     llm = app_state.llm(request)
-    media_fn = _build_media_fn(llm, db)
     # Sync the language the UI is on (X-TT-Language, resolved by the middleware),
     # not the .env default — otherwise a Slovene grade pushes the Norwegian deck.
     language_code = getattr(request.state, "language_code", None)
+    # The media generator gets the language the reconcile will actually run in,
+    # resolved by the same rule `_tt_settings` applies inside `peer_sync`.
+    sync_language = resolve_language_context(language_code, settings).target_language
+    media_fn = _build_media_fn(llm, db, sync_language)
 
     try:
         report = await run_in_threadpool(lambda: peer_sync(dry_run, media_fn=media_fn, language_code=language_code))
@@ -157,6 +173,21 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
             media_fn,
             language_code=language_code or settings.target_language,
             limit=settings.prestage_images_limit,
+        )
+
+    # Word audio for the cards about to be heard. The mint above no longer
+    # renders a metered voice (a minted card is NEW and may be weeks away), so
+    # this is what gives such a card its audio in time; what it stores reaches
+    # the note on the NEXT sync, through the `audio` flag `sync_push` reads.
+    # `fetch_card_media` is passed from this module so the one designated
+    # network boundary covers it.
+    if not dry_run and settings.prestage_audio_limit > 0:
+        background_tasks.add_task(
+            app_state.background_work(request.app).track("prestage_audio", prestage_card_audio),
+            db,
+            language_code=sync_language,
+            limit=settings.prestage_audio_limit,
+            fetch_fn=fetch_card_media,
         )
 
     # Same reason, different tier: a word whose own note carries no clozable

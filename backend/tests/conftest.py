@@ -139,6 +139,12 @@ def _settings_overrides(monkeypatch, tmp_path):
     # not set") instead of silently succeeding against the live endpoint. Tests
     # that exercise the adapter pass an explicit key (see test_azure_tts.py).
     monkeypatch.setattr(settings, "azure_speech_key", "")
+    # The audio pre-stage (app.cards.media.audio_prestage) runs in the background
+    # after a sync and on a deck open, and its fetch is the REAL media pipeline:
+    # a Forvo request and a TTS render per card. Off by default, so no endpoint
+    # test reaches either by accident; the tests that exercise it set the limit
+    # and stand in for the network boundary.
+    monkeypatch.setattr(settings, "prestage_audio_limit", 0)
     # TT's canonical media dir (served by the frontend; written by sync media gen
     # and the add-time vocab_media path). Pin to tmp so tests never write the real
     # backend/media. Hardcoded module constants, so patch every module's view:

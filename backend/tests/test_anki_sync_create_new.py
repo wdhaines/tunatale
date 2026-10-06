@@ -2126,3 +2126,57 @@ class TestCreateNewDrawsNumbers:
 
         assert "skip_image" not in media_kwargs[0]
         assert db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation("båt").guid)) == "img_boat.jpg"
+
+
+class TestCreateNewDefersMeteredAudio:
+    """A sync mint does not render a METERED voice (tunatale-r8hk).
+
+    A minted card is NEW, and a seeded list is weeks of new cards. Forvo is
+    free, so the mint still asks for that; the TTS render waits for
+    ``prestage_card_audio``, which reaches the card when it is about to be seen.
+    Which voices are metered is ``settings.deferred_card_tts_providers``.
+    """
+
+    @staticmethod
+    async def _mint(language_code, media):
+        db = _make_db()
+        _add_item(db, "gabii", "night")
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code=language_code).sync_create_new(
+            deck_name="deck", model_name="model", _media_fn=media
+        )
+        return db, next(c for c in writer.calls if c[0] == "create_note")[3]
+
+    async def test_a_metered_language_asks_the_mint_for_forvo_only(self):
+        media_kwargs: list[dict] = []
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            media_kwargs.append(kwargs)
+            return MediaResult(audio_status="no_pronunciation", image_status="no_results")
+
+        db, fields = await self._mint("ceb", media)
+
+        assert media_kwargs[0]["audio"] == "forvo"
+        assert fields["Audio"] == "", "no recording and no render: the note is minted without audio"
+        assert db.get_audio_filename(db.get_collocation_id_by_guid(db.get_collocation("gabii").guid)) is None
+
+    async def test_a_forvo_recording_found_at_mint_is_still_attached(self):
+        async def media(word, english, *, used_image_urls, **kwargs):
+            return MediaResult(audio_bytes=b"HUMAN", audio_source="forvo", audio_status="found")
+
+        _db, fields = await self._mint("ceb", media)
+
+        assert fields["Audio"] == "[sound:ceb_gabii.mp3]"
+
+    async def test_an_unmetered_language_is_still_rendered_at_mint(self):
+        """The control: Norwegian's card voice is not metered, so nothing changes."""
+        media_kwargs: list[dict] = []
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            media_kwargs.append(kwargs)
+            return MediaResult(audio_bytes=b"AUD", audio_source="tts")
+
+        _db, fields = await self._mint("no", media)
+
+        assert "audio" not in media_kwargs[0]
+        assert fields["Audio"] == "[sound:tts_gabii.mp3]"

@@ -109,4 +109,7 @@ def test_public_method_count_pinned() -> None:
     #  resolves to the meaning its sentence uses — tunatale-u8nz.22)
     # -is_media_filename_referenced (tunatale-ja9q: no caller once swaps stopped
     #  deleting files — its one-DB answer was the bug)
-    assert count == 138
+    # +list_seen_vocab_missing_word_audio (the audio pre-stage's "already met"
+    #  queue: metered TTS is rendered when a card is about to be heard, not at
+    #  mint — tunatale-r8hk)
+    assert count == 139

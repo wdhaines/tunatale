@@ -17,6 +17,7 @@ from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
 from app.cards.drawn_picture import drawn_picture
+from app.cards.media.audio_prestage import mint_audio_mode
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
@@ -1404,7 +1405,18 @@ class AnkiSync:
                     fields[by_role["image"]] = f'<img src="{img}">' if img else ""
                     if img and not dry_run:
                         _copy_tt_media_to_anki(self._writer, img)
-                unwritable = dirty_set & ({"text", "translation", "source_sentence", "image"} - by_role.keys())
+                if "audio" in dirty_set and "audio" in by_role:
+                    # The word's recording changed in TT after the note existed:
+                    # the audio pre-stage rendered it late (metered TTS is not
+                    # spent at mint on a card nobody has seen), or a repair
+                    # replaced or dropped a wrong one. Same contract as the image
+                    # above — the field AND the bytes, so the media refresh finds
+                    # the file referenced. No TT audio clears the field.
+                    audio = self._db.get_audio_filename(coll_id)
+                    fields[by_role["audio"]] = f"[sound:{audio}]" if audio else ""
+                    if audio and not dry_run:
+                        _copy_tt_media_to_anki(self._writer, audio)
+                unwritable = dirty_set & ({"text", "translation", "source_sentence", "image", "audio"} - by_role.keys())
                 if unwritable:
                     _log.warning(
                         "PUSH_FIELD_DROPPED nid=%d roles=%s — the note's notetype has no field for them",
@@ -1904,6 +1916,12 @@ class AnkiSync:
 
             media = None
             if _media_fn is not None and (existing_audio is None or existing_image is None):
+                # A minted card is NEW and may not be seen for weeks, so a
+                # METERED voice is not rendered here: the mint asks for Forvo
+                # alone and `prestage_card_audio` renders the rest when the card
+                # is about to be heard (tunatale-r8hk). Sent only when it narrows
+                # the request, like `skip_image`.
+                audio_mode = mint_audio_mode(self._language_code)
                 media = await _media_fn(
                     word,
                     english,
@@ -1911,6 +1929,7 @@ class AnkiSync:
                     grammar=item.syntactic_unit.grammar,
                     used_image_urls=used_image_urls,
                     **({"skip_image": True} if picture is not None else {}),
+                    **({"audio": audio_mode} if audio_mode != "full" else {}),
                 )
 
             if existing_audio is not None:

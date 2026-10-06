@@ -26,6 +26,11 @@ from app.srs.anki_mirror.protobuf_wire import (
 )
 from app.srs.anki_mirror.rollover import anki_today
 
+#: The field of TT's own vocab notetypes that holds the word's recording
+#: (``app.cards.vocab_notetype``). An imported notetype without a field of this
+#: name simply has no ``audio`` role.
+AUDIO_FIELD = "Audio"
+
 _FIELD_SEP = "\x1f"
 
 
@@ -207,7 +212,8 @@ class OfflineWriter:
         """The Anki field each TT-editable role of *note_id* lives in.
 
         Roles are TT's names for what ``sync_push`` writes back: ``text`` (the
-        L2), ``translation``, ``source_sentence`` and ``image``. A notetype with
+        L2), ``translation``, ``source_sentence``, ``image`` and ``audio`` (the
+        word's own recording). A notetype with
         a field-role profile (read for *language_code*) says where its L2 and
         gloss live; one without keeps TT's own vocab layout (the L2 in the ord-0
         field, then ``English``). A role whose field the notetype does not have
@@ -233,6 +239,7 @@ class OfflineWriter:
             "translation": profile.translation if profile else "English",
             "source_sentence": "Note",
             "image": IMAGE_FIELD,
+            "audio": AUDIO_FIELD,
         }
         return {role: name for role, name in wanted.items() if name in field_names}
 
