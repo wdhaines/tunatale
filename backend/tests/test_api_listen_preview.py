@@ -468,6 +468,7 @@ class TestListenPreview:
                 surfaces={"biti": {"sem"}},
                 first_surface={"biti": "sem"},
                 surface_upos={"sem": "AUX"},
+                phrase_cards={},
             )
 
         monkeypatch.setattr(srs_mod, "_analyze_lesson_words", fake_analyze)

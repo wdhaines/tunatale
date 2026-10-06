@@ -201,6 +201,31 @@ def _build_surface_collocation_index(collocations: list[tuple[int, str, str | No
     return {tuple(t.casefold() for t in tokenize(text)): coll_id for coll_id, text, _ in collocations}
 
 
+def build_phrase_index(
+    db: SRSDatabase, lemmatizer: Lemmatizer, language_code: str
+) -> tuple[dict[tuple[str, ...], int], bool]:
+    """The multi-word card index for *language_code*, and whether it is keyed by
+    exact surface form (``get_phrase_match_exact_form``) rather than by lemma.
+
+    THE one index: the reader paints its spans from it and a listen decides from
+    it which occurrences belong to a phrase card, so the two cannot disagree
+    about where a phrase is (bd tunatale-ceuc). Pair it with ``phrase_span_keys``.
+    """
+    raw_collocations = db.get_collocations_with_lemma_key(language_code, min_word_count=2)
+    exact_form = get_phrase_match_exact_form(language_code)
+    index = (
+        _build_surface_collocation_index(raw_collocations)
+        if exact_form
+        else _build_collocation_index(db, raw_collocations, lemmatizer, language_code)
+    )
+    return index, exact_form
+
+
+def phrase_span_keys(surfaces: list[str], lemmas: list[str], exact_form: bool) -> list[str]:
+    """One line's tokens in the key space ``build_phrase_index`` used."""
+    return [t.casefold() for t in surfaces] if exact_form else lemmas
+
+
 def resolve_active_direction(item: object) -> Direction:
     """Return the direction the LESSON surfaces read and grade for *item*.
 
@@ -516,13 +541,7 @@ def extract_transcript(
     gloss_map: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
 
     # Pre-load multi-word collocations for span detection
-    raw_collocations = db.get_collocations_with_lemma_key(lesson.language_code, min_word_count=2)
-    exact_form_phrases = get_phrase_match_exact_form(lesson.language_code)
-    collocation_index = (
-        _build_surface_collocation_index(raw_collocations)
-        if exact_form_phrases
-        else _build_collocation_index(db, raw_collocations, lemmatizer, lesson.language_code)
-    )
+    collocation_index, exact_form_phrases = build_phrase_index(db, lemmatizer, lesson.language_code)
     # Card-less ignore list
     ignored_lemmas = db.get_ignored_lemmas(lesson.language_code)
     # Spelling-variant cards ('mot, imot') keyed by each accepted surface form
@@ -821,8 +840,7 @@ def extract_transcript(
                 )
 
             # Annotate collocation spans
-            span_keys = [t.casefold() for t in surfaces] if exact_form_phrases else lemmas
-            span_annotations = match_spans(span_keys, collocation_index)
+            span_annotations = match_spans(phrase_span_keys(surfaces, lemmas, exact_form_phrases), collocation_index)
             span_cache: dict[int, tuple[str, str, str | None, float | None, bool, str, str]] = {}
             for word, (span_id, is_start) in zip(words, span_annotations, strict=True):
                 word.collocation_span_id = span_id
