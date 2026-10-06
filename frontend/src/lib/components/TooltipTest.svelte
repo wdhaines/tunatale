@@ -5,6 +5,7 @@
 	import type { TooltipActions } from './Tooltip.svelte';
 	interface Props {
 		translation?: string | null;
+		cardTranslation?: string | null;
 		childText?: string;
 		word?: WordToken;
 		sentence?: string;
@@ -20,6 +21,7 @@
 	}
 	let {
 		translation,
+		cardTranslation = null,
 		childText = 'child',
 		word,
 		sentence,
@@ -35,7 +37,7 @@
 	}: Props = $props();
 </script>
 
-<Tooltip {translation} {word} {sentence} {actions} {suppressed} {gradeLabel} {gradeVariant} {onGrade} {onDrillIn} {masteryLabel} {masterySides}>
+<Tooltip {translation} {cardTranslation} {word} {sentence} {actions} {suppressed} {gradeLabel} {gradeVariant} {onGrade} {onDrillIn} {masteryLabel} {masterySides}>
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<span onclick={onChildClick}>{childText}</span>
 </Tooltip>

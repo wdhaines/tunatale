@@ -208,6 +208,7 @@ class TestTranscriptEndpoint:
             "srs_state",
             "srs_item_id",
             "translation",
+            "gloss",
             "collocation_span_id",
             "collocation_start",
             "collocation_srs_state",

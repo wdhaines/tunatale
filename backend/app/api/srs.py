@@ -2331,6 +2331,7 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
                         "srs_state": w.srs_state,
                         "srs_item_id": w.srs_item_id,
                         "translation": w.translation,
+                        "gloss": w.gloss,
                         "collocation_span_id": w.collocation_span_id,
                         "collocation_start": w.collocation_start,
                         "collocation_srs_state": w.collocation_srs_state,

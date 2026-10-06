@@ -82,6 +82,7 @@ export const en = {
   "transcript.translationPlaceholder": "translation",
 
   // Tooltip.svelte
+  "tooltip.cardTranslation": "card: {translation}",
   "tooltip.due": "Due",
   "tooltip.notDue": "Not Due",
   "tooltip.words": "Words…",

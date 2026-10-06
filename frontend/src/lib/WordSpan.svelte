@@ -4,6 +4,7 @@
 	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
 	import { railPropsFor, isUnstarted, masterySides as masterySidesFn } from '$lib/masteryBands';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import { wordGloss } from '$lib/wordGloss';
 
 	interface Props {
 		word: WordToken;
@@ -194,6 +195,8 @@
 			: null
 	);
 
+	const gloss = $derived(wordGloss(word));
+
 	const onGrade = $derived(
 		undoable
 			? () => void tooltipActions!.onUndoGrade!(word)
@@ -204,7 +207,8 @@
 </script>
 
 <Tooltip
-	translation={word.translation}
+	translation={gloss.shown}
+	cardTranslation={gloss.card}
 	{word}
 	{sentence}
 	actions={tooltipActions}
@@ -218,7 +222,7 @@
 >
 	<span
 		class="word-wrapper"
-		class:word-wrapper-gloss={showGloss && word.translation}
+		class:word-wrapper-gloss={showGloss && gloss.shown}
 	>
 		<span
 			class="word {colorClass}"
@@ -237,8 +241,8 @@
 			onclick={blurred ? reveal : undefined}
 			onkeydown={handleKeydown}
 		><span class="punct">{word.prefix_punct ?? ''}</span>{word.surface}<span class="punct">{word.suffix_punct ?? ''}</span></span>
-		{#if showGloss && word.translation}
-			<span class="word-gloss">{word.translation}</span>
+		{#if showGloss && gloss.shown}
+			<span class="word-gloss">{gloss.shown}</span>
 		{/if}
 	</span>
 </Tooltip>

@@ -469,6 +469,41 @@ describe("WordSpan", () => {
     });
   });
 
+  describe("lesson gloss before the card's translation (tunatale-ceuc)", () => {
+    const gang = () =>
+      makeWordToken({
+        surface: "gang",
+        lemma: "gang",
+        gloss: "time",
+        translation: "hall",
+        srs_item_id: 5,
+      });
+
+    it("popover leads with the lesson's gloss and names the card's translation second", () => {
+      const { container } = render(WordSpan, { props: { word: gang() } });
+      expect(container.querySelector(".tt-translation")!.textContent).toBe("time");
+      expect(container.querySelector(".tt-card-translation")!.textContent).toBe("card: hall");
+    });
+
+    it("popover has no card line when the card agrees with the lesson", () => {
+      const word = makeWordToken({ gloss: "time", translation: "time", srs_item_id: 5 });
+      const { container } = render(WordSpan, { props: { word } });
+      expect(container.querySelector(".tt-translation")!.textContent).toBe("time");
+      expect(container.querySelector(".tt-card-translation")).toBeNull();
+    });
+
+    it("the Gloss row shows the lesson's gloss, not the card's translation", () => {
+      const { container } = render(WordSpan, { props: { word: gang(), showGloss: true } });
+      expect(container.querySelector(".word-gloss")!.textContent).toBe("time");
+    });
+
+    it("the Gloss row still shows the card's translation when the lesson has no gloss", () => {
+      const word = makeWordToken({ gloss: null, translation: "hall", srs_item_id: 5 });
+      const { container } = render(WordSpan, { props: { word, showGloss: true } });
+      expect(container.querySelector(".word-gloss")!.textContent).toBe("hall");
+    });
+  });
+
   it("shows translation text in tooltip element", () => {
     const { container } = render(WordSpan, {
       props: { word: makeWordToken({ translation: "hello", srs_state: "new" }) },

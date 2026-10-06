@@ -4278,7 +4278,7 @@ export interface components {
      * TranscriptWord
      * @description One element of TranscriptDialogueLine.words.
      *
-     *     The 32 fields the handler projects out of ``transcript.WordToken``. Note
+     *     The 36 fields the handler projects out of ``transcript.WordToken``. Note
      *     that ``WordToken.collocation_is_due`` is deliberately NOT among them — it is
      *     computed but never serialized, and adding it here would not surface it (the
      *     model can only filter, never invent).
@@ -4306,6 +4306,8 @@ export interface components {
       collocation_translation: string | null;
       /** Collocation Understand Band */
       collocation_understand_band: string | null;
+      /** Gloss */
+      gloss: string | null;
       /** Inflectable */
       inflectable: boolean;
       /** Inflection Feature */

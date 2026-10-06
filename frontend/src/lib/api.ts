@@ -303,6 +303,9 @@ export interface WordToken {
   srs_state: string;
   srs_item_id: number | null;
   translation: string | null;
+  // The lesson's own in-context gloss, shown before the card's `translation`
+  // (see wordGloss). Optional: offline-cached transcripts predate the field.
+  gloss?: string | null;
   collocation_span_id: number | null;
   collocation_start: boolean;
   collocation_srs_state: string | null;

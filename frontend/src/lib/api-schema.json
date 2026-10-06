@@ -4626,7 +4626,7 @@
         "type": "object"
       },
       "TranscriptWord": {
-        "description": "One element of TranscriptDialogueLine.words.\n\nThe 32 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
+        "description": "One element of TranscriptDialogueLine.words.\n\nThe 36 fields the handler projects out of ``transcript.WordToken``. Note\nthat ``WordToken.collocation_is_due`` is deliberately NOT among them \u2014 it is\ncomputed but never serialized, and adding it here would not surface it (the\nmodel can only filter, never invent).",
         "properties": {
           "active_direction": {
             "anyOf": [
@@ -4734,6 +4734,17 @@
               }
             ],
             "title": "Collocation Understand Band"
+          },
+          "gloss": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gloss"
           },
           "inflectable": {
             "title": "Inflectable",
@@ -4924,6 +4935,7 @@
           "srs_state",
           "srs_item_id",
           "translation",
+          "gloss",
           "collocation_span_id",
           "collocation_start",
           "collocation_srs_state",

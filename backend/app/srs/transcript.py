@@ -31,6 +31,11 @@ class WordToken:
     suffix_punct: str = ""  # non-word characters after the surface in the raw token
     srs_item_id: int | None = None  # database id of the SRS card, if one exists
     translation: str | None = None  # L1 translation: DB value wins over gloss map
+    # The lesson's own in-context gloss (surface key, then lemma), whatever the
+    # card says. The reader shows this first: one card's translation is one
+    # sense, and a lesson may use another ('gang' = hall on the card, "time" in
+    # every line). `translation` stays card-first because card creation reads it.
+    gloss: str | None = None
     collocation_span_id: int | None = None  # DB id of multi-word collocation this token belongs to
     collocation_start: bool = False  # True if this is the first token in its collocation span
     collocation_srs_state: str | None = None  # SRS state of the enclosing collocation
@@ -777,9 +782,8 @@ def extract_transcript(
 
                 # DB translation wins; fall back to gloss map — prefer surface-specific
                 # (e.g. "boste" → "you will") over lemma-generic (e.g. "biti" → "am").
-                translation = (
-                    db_translation if db_translation else (gloss_map.get(surface.lower()) or gloss_map.get(lemma))
-                )
+                gloss = gloss_map.get(surface.lower()) or gloss_map.get(lemma) or None
+                translation = db_translation if db_translation else gloss
 
                 known_marked_flag = resolved_item_id is not None and db.is_known_marked(resolved_item_id)
 
@@ -792,6 +796,7 @@ def extract_transcript(
                         srs_state=srs_state,
                         srs_item_id=resolved_item_id,
                         translation=translation,
+                        gloss=gloss,
                         card_type=card_type,
                         active_state=active_state_val,
                         active_direction=active_direction_str,

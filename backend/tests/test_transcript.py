@@ -2938,3 +2938,84 @@ class TestDirectionBands:
         assert off_span.collocation_span_id is None
         assert off_span.collocation_understand_band is None
         assert off_span.collocation_produce_band is None
+
+
+class TestLessonGloss:
+    """``WordToken.gloss`` is the lesson's OWN in-context gloss, carried beside
+    the card's translation rather than hidden behind it (bd tunatale-ceuc).
+
+    The live case: Norwegian ``gang`` is one card, "hall", and every lesson use
+    is "time" (``med en gang``, ``den gangen``). The gloss pass got it right each
+    time and the reader showed "hall", because ``translation`` is card-first.
+    ``translation`` deliberately stays card-first — card creation reads it — so
+    the reader gets the gloss as a second field and shows that one first.
+    """
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def _add_gang(self) -> None:
+        unit = SyntacticUnit(
+            text="gang",
+            translation="hall",
+            word_count=1,
+            difficulty=1,
+            source="anki",
+            lemma="gang",
+            disambig_key="noun",
+        )
+        self.db.add_collocation(unit, language_code="no")
+
+    def test_gloss_is_carried_beside_a_disagreeing_card_translation(self):
+        self._add_gang()
+        lesson = _make_lesson([("female-1", "en gang til")], lang="no")
+        lesson.generation_metadata = {"token_glosses": {"gang": "time"}}
+        word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[1]
+        assert word.srs_item_id is not None
+        assert word.gloss == "time"
+        # Regression guard: the card-first field is unchanged.
+        assert word.translation == "hall"
+
+    def test_gloss_is_none_when_the_lesson_has_no_gloss_for_the_word(self):
+        self._add_gang()
+        lesson = _make_lesson([("female-1", "en gang til")], lang="no")
+        lesson.generation_metadata = {"token_glosses": {"til": "more"}}
+        word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[1]
+        assert word.gloss is None
+        assert word.translation == "hall"
+
+    def test_gloss_is_none_for_a_lesson_with_no_generation_metadata(self):
+        self._add_gang()
+        lesson = _make_lesson([("female-1", "gang")], lang="no")
+        word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0]
+        assert word.gloss is None
+
+    def test_untracked_word_carries_its_gloss_in_both_fields(self):
+        lesson = _make_lesson([("female-1", "gang")], lang="no")
+        lesson.generation_metadata = {"token_glosses": {"gang": "time"}}
+        word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0]
+        assert word.srs_item_id is None
+        assert word.gloss == "time"
+        assert word.translation == "time"
+
+    def test_surface_gloss_beats_the_lemma_gloss(self):
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence("den gangen", [TokenAnalysis(surface="den", lemma="den"), TokenAnalysis("gangen", "gang")])
+        lesson = _make_lesson([("female-1", "den gangen")], lang="no")
+        lesson.generation_metadata = {"token_glosses": {"gangen": "the time", "gang": "time"}}
+        word = extract_transcript(lesson, self.db, stub).dialogue_lines[0].words[1]
+        assert word.lemma == "gang"
+        assert word.gloss == "the time"
+
+    def test_lemma_gloss_is_the_fallback_for_an_unglossed_surface(self):
+        from tests._helpers.lemmatizer import StubLemmatizer
+
+        stub = StubLemmatizer()
+        stub.set_sentence("den gangen", [TokenAnalysis(surface="den", lemma="den"), TokenAnalysis("gangen", "gang")])
+        lesson = _make_lesson([("female-1", "den gangen")], lang="no")
+        lesson.generation_metadata = {"token_glosses": {"gang": "time"}}
+        word = extract_transcript(lesson, self.db, stub).dialogue_lines[0].words[1]
+        assert word.gloss == "time"
