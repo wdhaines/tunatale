@@ -2248,6 +2248,68 @@ class TestAdminMutations:
         with pytest.raises(ValueError, match="already exists"):
             srs_db.update_collocation_fields(id_b, text="a", translation="dup")
 
+    @staticmethod
+    def _word(text: str, translation: str, lemma: str | None = None) -> SyntacticUnit:
+        return SyntacticUnit(
+            text=text, translation=translation, word_count=1, difficulty=1, source="corpus", lemma=lemma
+        )
+
+    @staticmethod
+    def _lemma_columns(srs_db, row_id: int) -> tuple[str | None, str | None]:
+        with srs_db._get_conn() as conn:
+            row = conn.execute("SELECT lemma, lemma_key FROM collocations WHERE id = ?", (row_id,)).fetchone()
+            return row["lemma"], row["lemma_key"]
+
+    def test_rename_moves_a_lemma_that_was_derived_from_the_text(self, srs_db):
+        """A renamed word card is found by its NEW spelling, as a lesson looks it up.
+
+        The live miss: Cebuano ``sayis`` renamed to ``sais`` kept lemma ``sayis``,
+        so ``sais`` in a lesson matched no card while ``sayis`` still did.
+        """
+        srs_db.add_collocation(self._word("sayis", "six"), language_code="no")
+        row_id = _id_for_text(srs_db, "sayis")
+        srs_db.update_collocation_fields(row_id, text="Sais", translation="six")
+        assert self._lemma_columns(srs_db, row_id)[0] == "sais"
+        assert [rid for rid, _ in srs_db.get_collocations_by_lemma_with_id("sais")] == [row_id]
+        assert srs_db.get_collocations_by_lemma_with_id("sayis") == []
+
+    def test_rename_keeps_a_lemma_that_was_set_apart_from_the_text(self, srs_db):
+        """An inflected card (``nagdala`` under ``dala``) keeps its root through a rename."""
+        srs_db.add_collocation(self._word("nagdala", "brought", lemma="dala"), language_code="no")
+        row_id = _id_for_text(srs_db, "nagdala")
+        srs_db.update_collocation_fields(row_id, text="nagdalag", translation="brought")
+        assert self._lemma_columns(srs_db, row_id)[0] == "dala"
+
+    def test_translation_only_edit_leaves_the_lemma_alone(self, srs_db):
+        srs_db.add_collocation(self._word("hund", "dog"), language_code="no")
+        row_id = _id_for_text(srs_db, "hund")
+        srs_db.update_collocation_fields(row_id, text="hund", translation="a dog")
+        assert self._lemma_columns(srs_db, row_id)[0] == "hund"
+
+    def test_rename_to_a_variant_front_clears_the_derived_lemma(self, srs_db):
+        """``mot, imot`` is matched per surface, so it carries no lemma, as at insert."""
+        srs_db.add_collocation(self._word("mot", "against"), language_code="no")
+        row_id = _id_for_text(srs_db, "mot")
+        srs_db.update_collocation_fields(row_id, text="mot, imot", translation="against")
+        assert self._lemma_columns(srs_db, row_id)[0] is None
+
+    def test_rename_from_a_variant_front_derives_the_lemma(self, srs_db):
+        srs_db.add_collocation(self._word("mot, imot", "against"), language_code="no")
+        row_id = _id_for_text(srs_db, "mot, imot")
+        assert self._lemma_columns(srs_db, row_id)[0] is None  # the control: insert left it unset
+        srs_db.update_collocation_fields(row_id, text="mot", translation="against")
+        assert self._lemma_columns(srs_db, row_id)[0] == "mot"
+
+    def test_rename_drops_the_cached_phrase_lemma_key(self, srs_db):
+        """The span-match key was built from the old words; NULL makes the reader rebuild it."""
+        srs_db.add_collocation(_unit("god dag", "good day"), language_code="no")
+        row_id = _id_for_text(srs_db, "god dag")
+        srs_db.set_lemma_key(row_id, "god dag")
+        srs_db.update_collocation_fields(row_id, text="god dag", translation="good day!")
+        assert self._lemma_columns(srs_db, row_id) == (None, "god dag")  # the control: same text keeps it
+        srs_db.update_collocation_fields(row_id, text="god kveld", translation="good evening")
+        assert self._lemma_columns(srs_db, row_id) == (None, None)
+
     def test_delete_collocation_removes_row(self, srs_db):
         srs_db.add_collocation(_unit("nasvidenje", "goodbye"), language_code="sl")
         rows, _ = srs_db.list_collocations()

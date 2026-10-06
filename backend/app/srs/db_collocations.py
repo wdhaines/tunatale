@@ -15,6 +15,17 @@ from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 
 
+def _derived_lemma(language_code: str, text: str, word_count: int) -> str | None:
+    """The lemma a card gets from its own front when nothing sets one explicitly.
+
+    A single word is found by its casefolded text. A variant front (``mot, imot``)
+    and a phrase carry none: the reader matches those per surface and per span.
+    """
+    if word_count == 1 and len(card_surface_variants(language_code, text)) == 1:
+        return text.casefold()
+    return None
+
+
 class DbCollocationsMixin:
     """Collocation CRUD. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
 
@@ -32,8 +43,8 @@ class DbCollocationsMixin:
             from app.config import settings
 
             language_code = settings.target_language
-        if not unit.lemma and unit.word_count == 1 and len(card_surface_variants(language_code, unit.text)) == 1:
-            unit.lemma = unit.text.casefold()
+        if not unit.lemma:
+            unit.lemma = _derived_lemma(language_code, unit.text, unit.word_count) or unit.lemma
         disambig = unit.disambig_key
         guid = compute_guid(unit.text, language_code, disambig)
         is_new = False
@@ -241,11 +252,18 @@ class DbCollocationsMixin:
 
         When `text` changes, the computed guid updates accordingly.
         Changed fields are appended to dirty_fields for sync tracking.
+
+        A rename also moves the lemma when that lemma came from the old text, so
+        a lesson finds the card under its new spelling (Cebuano ``sayis`` renamed
+        ``sais`` kept lemma ``sayis`` and stopped matching ``sais``). A lemma set
+        apart from the text (an inflected card under its root) is left alone. The
+        cached phrase ``lemma_key`` is dropped; the reader rebuilds a NULL one.
         """
         try:
             with self._get_conn() as conn:
                 cur = conn.execute(
-                    "SELECT language_code, text, translation, dirty_fields, disambig_key FROM collocations WHERE id = ?",
+                    "SELECT language_code, text, translation, dirty_fields, disambig_key, lemma, lemma_key, word_count"
+                    " FROM collocations WHERE id = ?",
                     (row_id,),
                 ).fetchone()
                 if cur is None:
@@ -259,10 +277,16 @@ class DbCollocationsMixin:
                     changed.add("translation")
                 existing = {f for f in (cur["dirty_fields"] or "").split(",") if f}
                 merged = ",".join(sorted(existing | changed))
+                lemma, lemma_key = cur["lemma"], cur["lemma_key"]
+                if "text" in changed:
+                    lemma_key = None
+                    language, word_count = cur["language_code"], cur["word_count"]
+                    if not lemma or lemma == _derived_lemma(language, cur["text"], word_count):
+                        lemma = _derived_lemma(language, text, word_count)
                 conn.execute(
-                    "UPDATE collocations SET text = ?, translation = ?, guid = ?, "
+                    "UPDATE collocations SET text = ?, translation = ?, guid = ?, lemma = ?, lemma_key = ?, "
                     "dirty_fields = ?, updated_at = datetime('now') WHERE id = ?",
-                    (text, translation, new_guid, merged, row_id),
+                    (text, translation, new_guid, lemma, lemma_key, merged, row_id),
                 )
                 self._commit(conn)
         except sqlite3.IntegrityError as exc:
@@ -466,8 +490,8 @@ class DbCollocationsMixin:
         # Backfill missing single-word lemma so by-lemma lookups keep working;
         # mirrors add_collocation. Empty strings count as missing. Variant fronts
         # ('mot, imot') are exempt — matched via the reader's per-surface index.
-        if not unit.lemma and unit.word_count == 1 and len(card_surface_variants(language_code, unit.text)) == 1:
-            unit.lemma = unit.text.casefold()
+        if not unit.lemma:
+            unit.lemma = _derived_lemma(language_code, unit.text, unit.word_count) or unit.lemma
         with self._get_conn() as conn:
             row = conn.execute("SELECT id, lemma FROM collocations WHERE guid = ?", (guid,)).fetchone()
             if row is None:
