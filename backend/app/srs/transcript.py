@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from typing import NamedTuple
 
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels, upos_for_disambig
@@ -17,6 +18,7 @@ from app.srs.database import SRSDatabase
 from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
 from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import band_stability, compute_mastery_progress, direction_band, is_well_known, side_progress
+from app.srs.sense_match import sense_overlap
 from app.srs.tokenizer import tokenize
 
 
@@ -405,31 +407,73 @@ def _build_inflection_index(db: SRSDatabase, language_code: str) -> dict[str, in
 _UPOS_CLASS = {"SCONJ": "CCONJ"}
 
 
-def resolve_lemma_card(db: SRSDatabase, lemma: str, upos: str | None) -> tuple[int, SRSItem] | None:
-    """The card for *lemma* as used in a sentence whose tagger says *upos*.
+class LemmaCard(NamedTuple):
+    """``choose_lemma_card``'s answer."""
 
-    One spelling can be several cards: Norwegian ``om`` is "if", "again" and
-    "about", three vocab rows told apart by the deck's Word class
-    (``disambig_key``). Every lookup used to be first-by-id, so each ``om`` in a
-    lesson graded "if" (tunatale-u8nz.22). When exactly ONE vocab row's Word
-    class matches *upos*, that is the card. Anything less certain — no UPOS, a
-    single card, no match, two matches (Slovene twins share a POS) — keeps the
-    old first-by-id answer, so nothing that resolved before resolves worse.
+    card: tuple[int, SRSItem] | None
+    # The spelling has several cards, the lesson glossed the word, and the gloss
+    # singled out none of them. ``card`` is then the old answer, kept so the
+    # reader still shows the word as tracked — a listen must not GRADE it.
+    undecided: bool
+
+
+def choose_lemma_card(db: SRSDatabase, lemma: str, upos: str | None, gloss: str | None) -> LemmaCard:
+    """The card for *lemma* as used in a sentence tagged *upos* and glossed *gloss*.
+
+    One spelling can be several cards, told apart by ``disambig_key``. Two kinds
+    of key exist in the decks, and they need different evidence:
+
+    * a WORD CLASS — Norwegian ``om`` is "if" (conjunction), "again" (adverb)
+      and "about" (preposition). The tagger reads the sentence, so when exactly
+      one card's class matches *upos* and no other card could, that is the card
+      (tunatale-u8nz.22).
+    * a SENSE label — Slovene ``ura`` is "hour" / "clock", both nouns. No tag
+      separates them; the lesson's own gloss does, by sharing a content word
+      with one card's translation (``sense_match.py``, bd tunatale-ceuc).
+
+    A sense-keyed card has no class, so it stays a candidate beside a
+    class-keyed one: Norwegian ``gang`` "hall" (keyed "noun") must not win on
+    its class before the gloss "time" has been asked about the "time" card.
+
+    Anything less certain keeps the old answer, so nothing that resolved before
+    resolves worse: no gloss, a gloss matching no candidate, or one matching two
+    equally. The last two are reported as ``undecided``. A LONE card is never
+    judged against the gloss — overlap can choose, it cannot convict.
 
     THE one resolver for a lemma: the transcript and ``/listen`` both call it,
     so the reader and a listen can never disagree about which card a word is.
     """
     rows = db.get_collocations_by_lemma_with_id(lemma)
     if not rows:
-        return None
+        return LemmaCard(None, False)
+    vocab = [r for r in rows if r[1].syntactic_unit.card_type == "vocab"]
+    if len(vocab) < 2:
+        return LemmaCard(rows[0], False)
+    legacy, pool = rows[0], vocab
     if upos:
         wanted = _UPOS_CLASS.get(upos, upos)
-        vocab = [r for r in rows if r[1].syntactic_unit.card_type == "vocab"]
-        if len(vocab) > 1:
-            hits = [r for r in vocab if _card_upos(r[1]) == wanted]
-            if len(hits) == 1:
-                return hits[0]
-    return rows[0]
+        hits = [r for r in vocab if _card_upos(r[1]) == wanted]
+        if len(hits) == 1:
+            legacy = hits[0]
+        # A card whose key is not a word class could be any class.
+        pool = [r for r in vocab if _card_upos(r[1]) in (wanted, None)] or vocab
+    if len(pool) == 1:
+        return LemmaCard(pool[0], False)
+    if not gloss:
+        return LemmaCard(legacy, False)
+    scores = [sense_overlap(gloss, r[1].syntactic_unit.translation or "") for r in pool]
+    best = max(scores)
+    winners = [r for r, score in zip(pool, scores, strict=True) if score == best]
+    if best > (0, 0) and len(winners) == 1:
+        return LemmaCard(winners[0], False)
+    return LemmaCard(legacy, True)
+
+
+def resolve_lemma_card(
+    db: SRSDatabase, lemma: str, upos: str | None, gloss: str | None = None
+) -> tuple[int, SRSItem] | None:
+    """``choose_lemma_card``'s card, for callers that only place the word."""
+    return choose_lemma_card(db, lemma, upos, gloss).card
 
 
 def _card_upos(item: SRSItem) -> str | None:
@@ -467,12 +511,13 @@ def _resolve_base_card(
     db: SRSDatabase,
     surface: str,
     lemma: str,
-    base_cache: dict[tuple[str, str], tuple | None],
-    surface_base_cache: dict[tuple[str, str], tuple | None],
+    base_cache: dict[tuple[str, str, str], tuple | None],
+    surface_base_cache: dict[tuple[str, str, str], tuple | None],
     variant_index: dict[str, tuple[int, SRSItem]],
     inflection_index: dict[str, int],
     language_code: str,
     upos: str = "",
+    gloss: str = "",
 ) -> tuple[int, SRSItem] | None:
     """Step 2 of the per-token resolution order: the base card for a lemma.
 
@@ -482,8 +527,9 @@ def _resolve_base_card(
     with the identical lookup the base branch uses — ``understand_band`` must
     never resolve by a second path. (bd tunatale-yh47)
 
-    *upos* is the token's tag: a homograph (``om`` = if / about) resolves to the
-    meaning in THIS sentence, so both caches are keyed by (key, upos).
+    *upos* is the token's tag and *gloss* the lesson's gloss for it: a homograph
+    (``om`` = if / about, ``ura`` = hour / clock) resolves to the meaning in
+    THIS sentence, so both caches are keyed by (key, upos, gloss).
     """
     # Clozes-only verbs (e.g. biti) have no base card by LEMMA — but steps 2b
     # and 2c below still run for them, exactly as they did before this helper
@@ -491,18 +537,18 @@ def _resolve_base_card(
     result: tuple | None
     if is_clozes_only_verb(lemma, language_code):
         result = None
-    elif (lemma, upos) in base_cache:
-        result = base_cache[(lemma, upos)]
+    elif (lemma, upos, gloss) in base_cache:
+        result = base_cache[(lemma, upos, gloss)]
     else:
-        result = resolve_lemma_card(db, lemma, upos)
+        result = resolve_lemma_card(db, lemma, upos, gloss)
         if result is None and surface.lower() != lemma:
-            surface_key = (surface.lower(), upos)
+            surface_key = (surface.lower(), upos, gloss)
             if surface_key in surface_base_cache:
                 result = surface_base_cache[surface_key]
             else:
-                result = resolve_lemma_card(db, surface.lower(), upos)
+                result = resolve_lemma_card(db, surface.lower(), upos, gloss)
                 surface_base_cache[surface_key] = result
-        base_cache[(lemma, upos)] = result
+        base_cache[(lemma, upos, gloss)] = result
     if result is None:
         result = variant_index.get(surface.casefold())
     if result is None:
@@ -557,14 +603,14 @@ def extract_transcript(
         # Cache inflection clozes per lemma (one gather per unique lemma)
         inflection_cache: dict[str, list[tuple[int, object]]] = {}
         # Cache base-collocation lookups per lemma (finding #6)
-        base_cache: dict[tuple[str, str], tuple | None] = {}
+        base_cache: dict[tuple[str, str, str], tuple | None] = {}
         # Surface-fallback lookups (lemma missed, surface hit) in their OWN
         # cache: base_cache is read by lemma, so a surface key must never be
         # able to satisfy a lemma read. Sharing one dict let a verb surface
         # ('gaar', lemma 'gaa') hand its card to a later token whose lemma is
         # genuinely 'gaar' — the same sentence rendered a different card by
         # position alone. (tunatale-klh)
-        surface_base_cache: dict[tuple[str, str], tuple | None] = {}
+        surface_base_cache: dict[tuple[str, str, str], tuple | None] = {}
         # Cache "does this word have a base cloze carrying its production?" per
         # collocation id. Keyed by id rather than lemma because that is what the
         # link records — a lemma cannot tell two homographs apart. `None` is a
@@ -596,6 +642,10 @@ def extract_transcript(
                 prefix_punct, suffix_punct = punct_pairs[i]
                 token_analysis = analysis_by_surface.get(surface.lower())
                 token_upos = getattr(token_analysis, "upos", "") or ""
+                # The lesson's own gloss — prefer surface-specific (e.g. "boste" →
+                # "you will") over lemma-generic (e.g. "biti" → "am"). Read BEFORE
+                # the card is resolved: it is what picks among a spelling's senses.
+                gloss = gloss_map.get(surface.lower()) or gloss_map.get(lemma) or None
                 # Resolution order: 1) exact-surface inflection cloze, 2) base, 3) unknown
                 resolved_item: object = None
                 resolved_item_id: int | None = None
@@ -638,6 +688,7 @@ def extract_transcript(
                         inflection_index,
                         lesson.language_code,
                         token_upos,
+                        gloss or "",
                     )
                     if result is not None:
                         item_id, item = result
@@ -728,6 +779,7 @@ def extract_transcript(
                             inflection_index,
                             lesson.language_code,
                             token_upos,
+                            gloss or "",
                         )
                         rail_rec = (
                             base_result[1].directions.get(Direction.RECOGNITION) if base_result is not None else None
@@ -799,9 +851,7 @@ def extract_transcript(
                         inflectable_flag = True
                         inflection_feature_val = feature_str
 
-                # DB translation wins; fall back to gloss map — prefer surface-specific
-                # (e.g. "boste" → "you will") over lemma-generic (e.g. "biti" → "am").
-                gloss = gloss_map.get(surface.lower()) or gloss_map.get(lemma) or None
+                # DB translation wins; fall back to the lesson's gloss.
                 translation = db_translation if db_translation else gloss
 
                 known_marked_flag = resolved_item_id is not None and db.is_known_marked(resolved_item_id)
