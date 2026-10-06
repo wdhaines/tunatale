@@ -416,8 +416,7 @@
 						{#each PRODUCTION_RATINGS as rating (rating)}
 							<button
 								type="button"
-								class="tt-btn"
-								class:tt-btn-grade={rating === 'good'}
+								class="tt-btn tt-btn-{rating}"
 								onclick={() => productionGrade!.onRate(rating)}
 							>{t(`tooltip.${rating}`)}</button>
 						{/each}
@@ -618,12 +617,13 @@
 	}
 	/* An odd last button spans both columns rather than sitting in a half-width
 	   cell with a hole beside it — the 5-action case (an inflectable word adds
-	   "Create inflection card") would otherwise reproduce F-17 one row lower. */
+	   "Inflect") would otherwise reproduce F-17 one row lower. */
 	.tt-actions-grid > :last-child:nth-child(odd) {
 		grid-column: 1 / -1;
 	}
-	/* Cells are equal fractions, so a label wider than half the popover ("Create
-	   inflection card") has to wrap inside its cell instead of overflowing it. */
+	/* Cells are equal fractions, so a label wider than half the popover (the
+	   inflect button's old "Create inflection card") has to wrap inside its cell
+	   instead of overflowing it. */
 	.tt-actions-grid > .tt-btn {
 		white-space: normal;
 	}
@@ -648,6 +648,38 @@
 	}
 	.tt-btn-grade:hover {
 		background: var(--color-primary-hover, #1d4ed8);
+	}
+	/* The four production ratings take the review card's colours (DrillCard's
+	   .btn-again / -hard / -good / -easy), so a rating looks the same wherever it
+	   is given. Good used to be the lone accent-blue button here, which is Easy's
+	   colour on the review card. */
+	.tt-btn-again,
+	.tt-btn-again:hover {
+		background: var(--color-danger);
+		border-color: var(--color-danger);
+	}
+	.tt-btn-hard,
+	.tt-btn-hard:hover {
+		background: var(--color-warning);
+		border-color: var(--color-warning);
+	}
+	.tt-btn-good,
+	.tt-btn-good:hover {
+		background: var(--color-success);
+		border-color: var(--color-success);
+	}
+	.tt-btn-easy,
+	.tt-btn-easy:hover {
+		background: var(--color-primary);
+		border-color: var(--color-primary);
+	}
+	/* The :hover selectors above outrank .tt-btn:hover's translucent white, so
+	   the colour holds under the pointer and only brightens. */
+	.tt-btn-again:hover,
+	.tt-btn-hard:hover,
+	.tt-btn-good:hover,
+	.tt-btn-easy:hover {
+		filter: brightness(1.12);
 	}
 	/* Read-ahead review of a not-due word — subtler than the due grade (outlined
 	   accent, not filled) so it reads as "ahead of schedule," not the SRS's ask. */

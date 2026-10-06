@@ -326,6 +326,33 @@ test.describe("word popover (coarse pointer)", () => {
 		expect(ragged, `action row is ragged: ${JSON.stringify(r.lines)}`).toEqual([]);
 		// The ratings are a 2x2 block: no rating shares a line with a non-rating.
 		expect(r.lines.slice(0, 2).map((l) => l.n)).toEqual([2, 2]);
+
+		// Each rating is PAINTED the review card's colour for it. The cascade is
+		// the engine's verdict: a class on the button proves nothing if another
+		// rule outranks it, which is what `.tt-btn:hover` did to the first
+		// version of these colours. So read the computed colour, at rest and
+		// under the pointer, against the token resolved by the same engine.
+		const tokenOf = { Again: "--color-danger", Hard: "--color-warning", Good: "--color-success", Easy: "--color-primary" };
+		const wanted = await page.evaluate((tokens) => {
+			const probe = document.createElement("span");
+			document.body.append(probe);
+			const out: Record<string, string> = {};
+			for (const [label, token] of Object.entries(tokens)) {
+				probe.style.backgroundColor = `var(${token})`;
+				out[label] = getComputedStyle(probe).backgroundColor;
+			}
+			probe.remove();
+			return out;
+		}, tokenOf);
+		expect(new Set(Object.values(wanted)).size, `tokens did not resolve: ${JSON.stringify(wanted)}`).toBe(4);
+		const tip = page.locator(".tt-wrap").nth(index).locator(".tt");
+		for (const label of Object.keys(tokenOf)) {
+			const button = tip.getByRole("button", { name: label, exact: true });
+			const paint = () => button.evaluate((el) => getComputedStyle(el).backgroundColor);
+			expect(await paint(), `${label} at rest`).toBe(wanted[label]);
+			await button.hover();
+			expect(await paint(), `${label} under the pointer`).toBe(wanted[label]);
+		}
 	});
 
 	/**

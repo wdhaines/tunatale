@@ -83,22 +83,22 @@ describe("Tooltip", () => {
 
   // --- Action buttons ---
 
-  it('shows "Create inflection card" button when word is inflectable', () => {
+  it('shows "Inflect" button when word is inflectable', () => {
     const word = makeWordToken({ inflectable: true, active_state: "new", srs_item_id: 1 });
     const actions = { onCreateInflection: vi.fn() };
     const { getByRole } = render(TooltipTest, {
       props: { word, actions, childText: "test" },
     });
-    expect(getByRole("button", { name: /create inflection card/i })).toBeTruthy();
+    expect(getByRole("button", { name: "Inflect" })).toBeTruthy();
   });
 
-  it('does not show "Create inflection card" when word is not inflectable', () => {
+  it('does not show "Inflect" when word is not inflectable', () => {
     const word = makeWordToken({ inflectable: false, active_state: "new", srs_item_id: 1 });
     const actions = { onCreateInflection: vi.fn() };
     const { queryByRole } = render(TooltipTest, {
       props: { word, actions, childText: "test" },
     });
-    expect(queryByRole("button", { name: /create inflection card/i })).toBeNull();
+    expect(queryByRole("button", { name: "Inflect" })).toBeNull();
   });
 
   it("shows Ignore button for tracked states", () => {
@@ -204,7 +204,7 @@ describe("Tooltip", () => {
         childText: "test",
       },
     });
-    await getByRole("button", { name: /create inflection card/i }).click();
+    await getByRole("button", { name: "Inflect" }).click();
     expect(onCreateInflection).toHaveBeenCalledWith(word, "to be or not to be");
   });
 

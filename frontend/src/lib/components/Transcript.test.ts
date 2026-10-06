@@ -539,7 +539,7 @@ describe("Transcript", () => {
         }),
       });
       // Suppressed by default — the action button is not rendered yet.
-      expect(queryByText("Create inflection card")).toBeNull();
+      expect(queryByText("Inflect")).toBeNull();
 
       // The per-word sentence binding must track the line reactively.
       await rerender(
@@ -553,7 +553,7 @@ describe("Transcript", () => {
 
       // With Alt held, the inner word's populated popover exposes its action,
       // wired with the current line sentence.
-      await fireEvent.click(getByText("Create inflection card"));
+      await fireEvent.click(getByText("Inflect"));
       expect(onCreateInflection).toHaveBeenCalledWith(
         expect.objectContaining({ lemma: "center" }),
         "blizu centra mesta",

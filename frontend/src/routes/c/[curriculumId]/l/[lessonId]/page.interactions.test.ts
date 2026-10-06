@@ -1627,7 +1627,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       return render(Page, { props: { data: { curriculum, lesson, audio, transcript: t } } });
     };
 
-    it("Create inflection card button calls createInflectionCloze with the line sentence", async () => {
+    it("Inflect button calls createInflectionCloze with the line sentence", async () => {
       const t = makeInflectableTranscript();
       mockCreateInflectionCloze.mockResolvedValue({
         id: 9,
@@ -1648,7 +1648,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       });
       const { findByRole } = renderInflectable(t);
 
-      await fireEvent.click(await findByRole("button", { name: "Create inflection card" }));
+      await fireEvent.click(await findByRole("button", { name: "Inflect" }));
 
       await waitFor(() => {
         expect(mockCreateInflectionCloze).toHaveBeenCalledWith({
@@ -1769,7 +1769,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
       mockCreateInflectionCloze.mockRejectedValue(new Error("inflect boom"));
       const { findByRole, findByText } = renderInflectable(t);
 
-      await fireEvent.click(await findByRole("button", { name: "Create inflection card" }));
+      await fireEvent.click(await findByRole("button", { name: "Inflect" }));
 
       expect(await findByText("inflect boom")).toBeTruthy();
     });

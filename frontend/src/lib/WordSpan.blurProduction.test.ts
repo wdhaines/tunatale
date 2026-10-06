@@ -139,6 +139,27 @@ describe("WordSpan blur-as-cloze", () => {
     expect(actions.classList.contains("tt-actions-grid")).toBe(true);
   });
 
+  it("each rating carries its own colour class, as on the review card", async () => {
+    const { container, getByRole } = render(WordSpan, {
+      props: {
+        word: prodDue(),
+        onWordClick: vi.fn(),
+        blurProduction: true,
+        tooltipActions: { onProductionGrade: vi.fn() },
+      },
+    });
+    await fireEvent.click(wordEl(container));
+    for (const label of RATING_LABELS) {
+      const classes = [...getByRole("button", { name: label }).classList];
+      const rating = label.toLowerCase();
+      // Exactly its own colour: Good used to be the one accent-blue button,
+      // which is Easy's colour in the review queue.
+      expect(classes.filter((c) => /^tt-btn-(again|hard|good|easy|grade)$/.test(c))).toEqual([
+        `tt-btn-${rating}`,
+      ]);
+    }
+  });
+
   it("Enter on a blurred word reveals it instead of grading", async () => {
     const onWordClick = vi.fn();
     const onProductionGrade = vi.fn();
