@@ -115,6 +115,31 @@ def test_no_anki_refuses_a_deck_linked_to_anki(env, capsys):
     assert collection.read_bytes() == before
 
 
+def test_position_refuses_when_a_planned_card_is_no_longer_new_in_the_collection(env, capsys):
+    """For a new card ``due`` is its queue position; for a review card it is the
+    due DAY. TunaTale plans from its own state, so a card it still calls new but
+    the collection has moved on must stop the run, not have its due date
+    overwritten with a position."""
+    db, collection, list_path = env
+    main(["--language", "ceb", "--list", str(list_path), "--add", "2", "--apply"])
+    iring = db.get_collocation("iring")
+    db.set_anki_ids(iring.guid, 7, {Direction.RECOGNITION: 70, Direction.PRODUCTION: 71})
+    conn = sqlite3.connect(collection)
+    conn.execute("UPDATE cards SET type = 2, queue = 2, due = 4700 WHERE id = 71")
+    conn.commit()
+    conn.close()
+    capsys.readouterr()
+
+    assert main(["--language", "ceb", "--list", str(list_path), "--position", "--apply"]) == 2
+    out = capsys.readouterr().out
+    assert "REFUSING" in out and "1 planned card(s)" in out and "71" in out
+    conn = sqlite3.connect(collection)
+    # Nothing moved: not the review card, and not the new card planned beside it.
+    assert conn.execute("SELECT id, due, usn FROM cards ORDER BY id").fetchall() == [(70, -1000300, 0), (71, 4700, 0)]
+    conn.close()
+    assert db.get_collocation("iring").directions[Direction.RECOGNITION].anki_due != BACK_BASE + 2
+
+
 def test_position_refuses_a_descending_deck(env, capsys):
     db, _, list_path = env
     db.set_anki_state_cache("new_card_gather_priority", "2")
