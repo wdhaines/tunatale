@@ -59,6 +59,35 @@ class DbMediaMixin:
             ).fetchone()
         return row["filename"] if row is not None else None
 
+    def list_seen_vocab_missing_word_audio(self, *, exclude_source: str) -> list[tuple[int, Any]]:
+        """``(id, SRSItem)`` for vocab cards in rotation that have no word audio.
+
+        "In rotation" is any direction a learner has met and will meet again —
+        not NEW (never shown), not suspended or known (never shown again). Rows
+        whose ``source`` is *exclude_source* are left out: the audio pre-stage
+        passes the imported-note source, whose audio is the deck's own business.
+        Oldest first, so a backlog drains in a stable order across passes.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.* FROM collocations c
+                WHERE c.card_type = 'vocab'
+                  AND c.source != ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM media m
+                    WHERE m.collocation_id = c.id AND m.kind IN ('audio_forvo', 'audio_tts')
+                  )
+                  AND EXISTS (
+                    SELECT 1 FROM collocation_directions d
+                    WHERE d.collocation_id = c.id AND d.state NOT IN ('new', 'suspended', 'known')
+                  )
+                ORDER BY c.id ASC
+                """,
+                (exclude_source,),
+            ).fetchall()
+            return [(row["id"], self._row_to_item(conn, row)) for row in rows]
+
     def get_sentence_audio_filename(self, collocation_id: int) -> str | None:
         """Return filename of the audio_tts_sentence media row, or None."""
         with self._get_conn() as conn:

@@ -478,7 +478,13 @@ class TestOfflineWriter:
         _seed_vocab_notetype(conn)
         _seed_note_and_cards(conn)
         roles = OfflineWriter(conn).note_fields_by_role(9001, language_code="sl")
-        assert roles == {"text": "Slovene", "translation": "English", "source_sentence": "Note", "image": "Image"}
+        assert roles == {
+            "text": "Slovene",
+            "translation": "English",
+            "source_sentence": "Note",
+            "image": "Image",
+            "audio": "Audio",
+        }
 
     def test_suspend_sets_queue_minus_one_and_usn_minus_one(self):
         conn = _make_anki_full_db()
@@ -4047,6 +4053,134 @@ class TestSyncPushImage:
 
         assert db.get_image_filename(coll_id) is None  # collapsed
         assert results["collapsed_media"] == 1
+
+
+class TestSyncPushAudio:
+    """A vocab card's word audio that changed in TT reaches the Anki note.
+
+    Audio used to reach Anki at exactly one moment, the mint. That was enough
+    while every card got its audio there; it stopped being enough once metered
+    TTS is rendered only for cards about to be seen (the audio pre-stage), and
+    it was never enough for a repair — 690 Cebuano cards voiced in the wrong
+    language (2026-10-06) had no path to a corrected ``Audio`` field.
+
+    The same shape as ``TestSyncPushImage``: write the field AND copy the bytes,
+    so the media refresh later in the sync finds the file referenced.
+    """
+
+    @staticmethod
+    def _add_audio(db, coll_id, tmp_path, name="tts_banka_ab12cd34.mp3", kind="audio_tts"):
+        (tmp_path / name).write_bytes(b"mp3-bytes")
+        db.add_media(
+            collocation_id=coll_id,
+            kind=kind,
+            filename=name,
+            path=f"media/{name}",
+            anki_filename=name,
+            sha256="deadbeef",
+            size_bytes=9,
+        )
+
+    def test_dirty_audio_pushes_the_audio_field_and_copies_the_file(self, tmp_path, monkeypatch):
+        import app.plugins.anki_sync.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "_MEDIA_DIR", tmp_path)
+        db = _make_tt_db()
+        guid, note_id, *_ = _add_banka_with_anki_ids(db)
+        self._add_audio(db, db.get_collocation_id_by_guid(guid), tmp_path)
+        db.set_dirty_fields(guid, "audio")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[1] == note_id
+        assert call[2] == {"Audio": "[sound:tts_banka_ab12cd34.mp3]"}
+        assert ("store_media_file", "tts_banka_ab12cd34.mp3", 9) in writer.calls
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dirty_audio_with_no_tt_audio_clears_the_field(self):
+        """A repair that drops wrong audio before the right audio exists."""
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        db.set_dirty_fields(guid, "audio")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        call = next(c for c in writer.calls if c[0] == "update_note_fields")
+        assert call[2] == {"Audio": ""}
+        assert "store_media_file" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == ""
+
+    def test_dry_run_keeps_the_flag_and_writes_nothing(self, tmp_path, monkeypatch):
+        import app.plugins.anki_sync.sync as sync_mod
+
+        monkeypatch.setattr(sync_mod, "_MEDIA_DIR", tmp_path)
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        self._add_audio(db, db.get_collocation_id_by_guid(guid), tmp_path)
+        db.set_dirty_fields(guid, "audio")
+
+        writer = FakeWriter()
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push(dry_run=True)
+
+        assert "update_note_fields" not in writer.action_names()
+        assert "store_media_file" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == "audio"
+
+    def test_a_notetype_without_an_audio_field_drops_the_flag_loudly(self, caplog):
+        """An imported notetype TT cannot write audio into: the edit is dropped
+        and said so, rather than pinning the flag across every future sync."""
+        db = _make_tt_db()
+        guid, note_id, *_ = _add_banka_with_anki_ids(db)
+        db.set_dirty_fields(guid, "audio")
+
+        class _NoAudioField(FakeWriter):
+            def note_fields_by_role(self, note_id, *, language_code):
+                return {"text": "Front", "translation": "Back"}
+
+        writer = _NoAudioField()
+        with caplog.at_level("WARNING"):
+            AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert "update_note_fields" not in writer.action_names()
+        assert db.get_dirty_fields(guid) == ""
+        assert f"PUSH_FIELD_DROPPED nid={note_id} roles=audio" in caplog.text
+
+    def test_the_pushed_audio_reference_survives_the_media_refresh(self, tmp_path):
+        """What the field write is FOR: the refresh later in the same sync keeps
+        a TT audio row only when the note references its file."""
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
+
+        db = _make_tt_db()
+        guid, *_ = _add_banka_with_anki_ids(db)
+        coll_id = db.get_collocation_id_by_guid(guid)
+        data = b"the-new-audio"
+        fname = "tts_banka_ab12cd34.mp3"
+        db.add_media(
+            collocation_id=coll_id,
+            kind="audio_tts",
+            filename=fname,
+            path=f"media/{fname}",
+            anki_filename=fname,
+            sha256=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+        )
+        anki_dir = tmp_path / "anki_media"
+        anki_dir.mkdir()
+        (anki_dir / fname).write_bytes(data)
+        media_dir = tmp_path / "media"
+        media_dir.mkdir()
+        results = {"new_media": 0, "updated_media": 0, "unchanged_media": 0, "collapsed_media": 0}
+
+        _refresh_media_for_collocation(anki_dir, [f"[sound:{fname}]"], coll_id, media_dir, db, results)
+        assert db.get_audio_filename(coll_id) == fname
+        assert results["collapsed_media"] == 0
+
+        # The mirror: an unreferenced row is what the refresh removes.
+        _refresh_media_for_collocation(anki_dir, [""], coll_id, media_dir, db, results)
+        assert db.get_audio_filename(coll_id) is None
 
 
 class TestMissingNoteDoesNotConsumeTheEdit(TestSyncPushImage):

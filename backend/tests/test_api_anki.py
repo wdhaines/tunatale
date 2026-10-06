@@ -338,7 +338,7 @@ class TestBuildMediaFn:
             return None
 
         with patch("app.api.anki.fetch_card_media", fake_fetch):
-            media_fn = _build_media_fn(None, db)
+            media_fn = _build_media_fn(None, db, "no")
             await media_fn("voda", "water", used_image_urls=set())
 
         assert media_calls == ["voda"]
@@ -378,7 +378,7 @@ class TestBuildMediaFn:
             return None
 
         with patch("app.api.anki.fetch_card_media", fake_fetch):
-            media_fn = _build_media_fn(fake_llm, db)
+            media_fn = _build_media_fn(fake_llm, db, "no")
             await media_fn(
                 "sodišče",
                 "court",
@@ -417,10 +417,96 @@ class TestBuildMediaFn:
             return None
 
         with patch("app.api.anki.fetch_card_media", fake_fetch):
-            media_fn = _build_media_fn(_ExplodingLLM(), app.state.srs_db)
+            media_fn = _build_media_fn(_ExplodingLLM(), app.state.srs_db, "no")
             await media_fn("fem", "five", used_image_urls=set(), skip_image=True)
 
         assert captured == [""]
+
+
+class TestSyncMediaUsesTheSyncedLanguage:
+    """Card media is fetched for the language being SYNCED, not the .env default.
+
+    The media generator used to read the global ``settings.target_language``. Its
+    comment said peer sync set that per request, but ``_tt_settings`` only ever
+    set it on a ``model_copy`` — so on a multi-language instance every card a
+    sync minted was looked up in the DEFAULT language's Forvo section and voiced
+    by the default language's card voice. Measured 2026-10-06 on a Cebuano deck
+    with ``TARGET_LANGUAGE=no``: 702 seeded cards, the 12 that got "Forvo" audio
+    all had a Norwegian recording (8 of them no Cebuano one at all), and 689 of
+    the 690 TTS clips were Azure calls although Cebuano's card voice is not an
+    Azure voice. The second learner heard it (`gabii`).
+    """
+
+    async def test_the_media_fn_fetches_in_the_language_it_was_built_for(self, monkeypatch):
+        from app.api.anki import _build_media_fn
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "target_language", "sl")
+        asked: list[str | None] = []
+
+        async def fake_fetch(word, english, *, language_code=None, **kw):
+            asked.append(language_code)
+            return None
+
+        with patch("app.api.anki.fetch_card_media", fake_fetch):
+            media_fn = _build_media_fn(None, app.state.srs_db, "no")
+            await media_fn("natt", "night", used_image_urls=set())
+
+        assert asked == ["no"]
+
+    async def test_the_media_fn_passes_the_audio_mode_through(self):
+        from app.api.anki import _build_media_fn
+
+        asked: list[str | None] = []
+
+        async def fake_fetch(word, english, *, audio=None, **kw):
+            asked.append(audio)
+            return None
+
+        with patch("app.api.anki.fetch_card_media", fake_fetch):
+            media_fn = _build_media_fn(None, app.state.srs_db, "no")
+            await media_fn("natt", "night", used_image_urls=set())
+            await media_fn("natt", "night", used_image_urls=set(), audio="forvo")
+
+        assert asked == ["full", "forvo"]
+
+    async def test_a_sync_of_a_non_default_language_fetches_media_in_that_language(
+        self, monkeypatch, tmp_path, fake_driver
+    ):
+        """Through the real endpoint: the default is Slovene, the sync is Norwegian.
+
+        The evidence is the ``language_code`` the network boundary is asked for —
+        the value that picks the Forvo section and the TTS voice.
+        """
+        from app.config import settings
+        from app.languages import get_deck_name
+        from tests.anki_oracle.synthetic_collection import SyntheticCollection
+
+        monkeypatch.setattr(settings, "target_language", "sl")
+        monkeypatch.setattr(
+            settings,
+            "database_urls",
+            {"sl": f"sqlite:///{tmp_path / 'tt_sl.db'}", "no": f"sqlite:///{tmp_path / 'tt_no.db'}"},
+        )
+        coll = SyntheticCollection(settings.tt_collection_path)
+        coll.set_deck(get_deck_name("no"), 1)
+        coll.add_notetype(1704067201, "Cloze", ("Text", "Back Extra"), template_count=1)
+        coll.save()
+        monkeypatch.setattr(settings, "anki_model_name", "Cloze")
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        TestPreStagesNextSyncsImages._seed_awaiting_production(app.state.srs_db, language_code="no")
+
+        asked: list[str | None] = []
+
+        async def fake_fetch(word, english, *, language_code=None, **kw):
+            asked.append(language_code)
+            return None
+
+        with patch("app.api.anki.fetch_card_media", fake_fetch):
+            response = await _post_peer_sync(headers={"X-TT-Language": "no"})
+
+        assert response.status_code == 200
+        assert asked == ["no"]
 
 
 class TestPreStagesNextSyncsImages:
@@ -439,7 +525,9 @@ class TestPreStagesNextSyncsImages:
     """
 
     @staticmethod
-    def _seed_awaiting_production(db, word="beslutning", english="decision", note_id=1000, card_id=10000):
+    def _seed_awaiting_production(
+        db, word="beslutning", english="decision", note_id=1000, card_id=10000, language_code="sl"
+    ):
         from datetime import datetime
 
         from app.models.srs_item import Direction, DirectionState, SRSState
@@ -456,7 +544,7 @@ class TestPreStagesNextSyncsImages:
         )
         return db.upsert_by_guid(
             unit,
-            "sl",
+            language_code,
             {
                 Direction.RECOGNITION: DirectionState(
                     direction=Direction.RECOGNITION,
@@ -479,7 +567,10 @@ class TestPreStagesNextSyncsImages:
         class _M:
             image_bytes, image_ext, audio_bytes, audio_source = b"IMGBYTES", "jpg", None, None
 
-        async def _fake_fetch(*a, **k):
+        audio_modes: list[str | None] = []
+
+        async def _fake_fetch(*a, audio=None, **k):
+            audio_modes.append(audio)
             return _M()
 
         with patch("app.api.anki.fetch_card_media", _fake_fetch):
@@ -489,6 +580,9 @@ class TestPreStagesNextSyncsImages:
         filename = db.get_image_filename(coll_id)
         assert filename is not None, "the background pre-stage did not store an image"
         assert (tmp_path / "media" / filename).read_bytes() == b"IMGBYTES"
+        # It wants a picture alone. Asking for audio too made a Forvo request and
+        # a TTS render per image and discarded both.
+        assert audio_modes == ["none"]
 
     @pytest.mark.usefixtures("sociable_tt_collection")
     async def test_the_prestage_is_visible_as_background_work(self, fake_driver, tmp_path, monkeypatch):
@@ -546,6 +640,122 @@ class TestPreStagesNextSyncsImages:
 
         assert response.status_code == 200
         assert db.get_image_filename(coll_id) is None
+
+
+class TestPreStagesCardAudio:
+    """The sync also schedules the word-audio pre-stage (tunatale-r8hk).
+
+    Sociable, the same shape as ``TestPreStagesNextSyncsImages``: the REAL
+    ``prestage_card_audio`` runs, driven by the real endpoint, with only
+    ``fetch_card_media`` (the designated network boundary) faked.
+
+    What it proves: after a sync, a card TunaTale minted without audio — a
+    metered voice is no longer rendered at mint — has its audio in TT, fetched
+    in the language that was synced, and flagged for the next sync to push.
+    """
+
+    @staticmethod
+    def _seed_seen_without_audio(db, word="natt"):
+        from datetime import datetime
+
+        from app.models.srs_item import Direction, DirectionState, SRSState
+        from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+
+        unit = SyntacticUnit(text=word, translation="night", word_count=1, difficulty=1, source="base-list")
+        db.upsert_by_guid(
+            unit,
+            "no",
+            {
+                Direction.RECOGNITION: DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=due_at_rollover_utc(anki_today()),
+                    state=SRSState.REVIEW,
+                    reps=3,
+                    anki_card_id=20000,
+                    last_review=datetime.fromisoformat("2026-10-01T12:00:00+00:00"),
+                )
+            },
+            anki_note_id=2000,
+        )
+        return db.get_collocation_id_by_guid(db.get_collocation(word).guid)
+
+    @staticmethod
+    def _fake_fetch(calls):
+        from app.cards.media.pipeline import MediaResult
+
+        async def _fetch(word, english, *, language_code=None, audio=None, **kw):
+            # The image pre-stage shares this boundary (the seeded word also
+            # awaits a production card) and asks for no audio; only the audio
+            # pass's own requests are recorded.
+            if audio == "none":
+                return MediaResult()
+            calls.append((word, language_code, audio))
+            return MediaResult(audio_bytes=b"NATT", audio_source="tts")
+
+        return _fetch
+
+    async def test_a_real_sync_stages_audio_in_the_synced_language(self, fake_driver, tmp_path, monkeypatch):
+        from app.api.app_state import background_work
+        from app.config import settings
+        from app.languages import get_deck_name
+        from tests.anki_oracle.synthetic_collection import SyntheticCollection
+
+        monkeypatch.setattr(settings, "target_language", "sl")
+        monkeypatch.setattr(
+            settings,
+            "database_urls",
+            {"sl": f"sqlite:///{tmp_path / 'tt_sl.db'}", "no": f"sqlite:///{tmp_path / 'tt_no.db'}"},
+        )
+        coll = SyntheticCollection(settings.tt_collection_path)
+        coll.set_deck(get_deck_name("no"), 1)
+        coll.add_notetype(1704067201, "Cloze", ("Text", "Back Extra"), template_count=1)
+        coll.save()
+        monkeypatch.setattr(settings, "anki_model_name", "Cloze")
+        monkeypatch.setattr(settings, "prestage_audio_limit", 5)
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path / "media")
+        db = app.state.srs_db
+        coll_id = self._seed_seen_without_audio(db)
+        before = background_work(app).snapshot()["completed"].get("prestage_audio", 0)
+        calls: list[tuple] = []
+
+        with patch("app.api.anki.fetch_card_media", self._fake_fetch(calls)):
+            response = await _post_peer_sync(headers={"X-TT-Language": "no"})
+
+        assert response.status_code == 200
+        assert calls == [("natt", "no", "full")]
+        filename = db.get_audio_filename(coll_id)
+        assert filename is not None, "the background pre-stage did not store audio"
+        assert (tmp_path / "media" / filename).read_bytes() == b"NATT"
+        assert db.get_dirty_fields(db.get_collocation("natt").guid) == "audio"
+        assert background_work(app).snapshot()["completed"].get("prestage_audio", 0) == before + 1
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_a_dry_run_stages_nothing(self, fake_driver, monkeypatch):
+        monkeypatch.setattr("app.config.settings.prestage_audio_limit", 5)
+        db = app.state.srs_db
+        coll_id = self._seed_seen_without_audio(db)
+        calls: list[tuple] = []
+
+        with patch("app.api.anki.fetch_card_media", self._fake_fetch(calls)):
+            response = await _post_peer_sync(params={"dry_run": "true"})
+
+        assert response.status_code == 200
+        assert calls == []
+        assert db.get_audio_filename(coll_id) is None
+
+    @pytest.mark.usefixtures("sociable_tt_collection")
+    async def test_the_limit_setting_can_disable_it(self, fake_driver):
+        """0 is the off switch, and what the suite's conftest pins."""
+        db = app.state.srs_db
+        coll_id = self._seed_seen_without_audio(db)
+        calls: list[tuple] = []
+
+        with patch("app.api.anki.fetch_card_media", self._fake_fetch(calls)):
+            response = await _post_peer_sync()
+
+        assert response.status_code == 200
+        assert calls == []
+        assert db.get_audio_filename(coll_id) is None
 
 
 class TestPreStagesClozeSentences:

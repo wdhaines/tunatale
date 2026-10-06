@@ -84,4 +84,10 @@ def test_a_minted_vocab_note_reads_back_by_field_name(tmp_path, code, notetype, 
 def test_a_push_writes_each_role_into_its_own_field(tmp_path, code, notetype, root, word):
     conn = _collection(tmp_path, notetype, root, word)
     roles = OfflineWriter(conn).note_fields_by_role(7001, language_code=code)
-    assert roles == {"text": notetype.l2_field, "translation": "English", "source_sentence": "Note", "image": "Image"}
+    assert roles == {
+        "text": notetype.l2_field,
+        "translation": "English",
+        "source_sentence": "Note",
+        "image": "Image",
+        "audio": "Audio",
+    }

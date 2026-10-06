@@ -6,7 +6,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 
@@ -17,6 +17,12 @@ from .forvo import ForvoOutcome, ForvoResult, fetch_forvo_pronunciation
 from .normalize import normalize_audio
 from .pixabay import PixabaySearch, _tag_overlap, best_hit, build_query, download_hit, search_pixabay
 from .tts import generate_tts_audio
+
+#: How much audio a caller wants. ``"full"`` is Forvo, then TTS when Forvo has
+#: nothing. ``"forvo"`` stops after Forvo: a human recording is free, a metered
+#: TTS render is not, and a card minted by a sync may not be seen for weeks.
+#: ``"none"`` makes no audio request at all — for a caller that wants a picture.
+AudioMode = Literal["full", "forvo", "none"]
 
 
 @dataclass
@@ -68,6 +74,7 @@ async def fetch_card_media(
     image_query: str | None = None,
     llm: Any = None,
     forvo_enabled: bool | None = None,
+    audio: AudioMode = "full",
     _forvo_fn: Callable[..., ForvoResult] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _search_fn: Callable[..., Any] | None = None,
@@ -79,6 +86,9 @@ async def fetch_card_media(
 
     Tries Forvo first, falls back to TTS. Image from Pixabay.
     Pass used_image_urls (a shared set) across cards to prevent duplicate images.
+
+    ``audio`` narrows the audio half (see :data:`AudioMode`); the image half is
+    unaffected by it.
 
     ``image_query`` controls image selection (see ``query_llm`` contract):
       * ``None`` — legacy: Pixabay derives the query from ``english``.
@@ -109,7 +119,13 @@ async def fetch_card_media(
 
         forvo_enabled = settings.forvo_enabled
 
-    if not forvo_enabled:
+    if audio == "none":
+        # The caller wants no audio: no Forvo request and no TTS render. Its own
+        # status, so a card left without audio on purpose is never read as one
+        # whose fetch failed.
+        forvo = ForvoResult(ForvoOutcome.NO_PRONUNCIATION)
+        result.audio_status = "skipped"
+    elif not forvo_enabled:
         # Skip the request entirely rather than make a doomed one. Forvo blocks
         # datacenter IPs (measured 2026-09-11: found from home, HTTP 403 + an
         # anti-bot challenge from the production box), and production accepts
@@ -122,10 +138,10 @@ async def fetch_card_media(
             partial(forvo_fn, word, language_code=language_code, http_client=http_client)
         )
         result.audio_status = forvo.outcome.value
-    if forvo_enabled and forvo.outcome is ForvoOutcome.FOUND:
+    if forvo.outcome is ForvoOutcome.FOUND:
         result.audio_source = "forvo"
         result.audio_bytes = forvo.audio
-    else:
+    elif audio == "full":
         # Every non-FOUND outcome still falls back to TTS — the card must not be
         # blocked on a nice-to-have. audio_status is what keeps that fallback
         # from being silent.

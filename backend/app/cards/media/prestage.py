@@ -342,6 +342,9 @@ async def prestage_production_images(
                 source_sentence=unit.source_sentence or "",
                 grammar=unit.grammar or "",
                 used_image_urls=used_image_urls,
+                # A picture alone. The default also made a Forvo request and a
+                # TTS render for every image, and both were thrown away.
+                audio="none",
             )
 
     # Pass 2 — fetch concurrently. Safe here for the reason in the module

@@ -75,3 +75,19 @@ The queryable metrics are unreliable for this: `TotalCalls` has returned 0 for a
 day with hundreds of syntheses, and `Ratelimit` returned no data. A
 `BlockedCalls` of 0 therefore proves nothing, and nothing cloud-side will catch a
 mistake in your local estimate — the local estimate is the instrument.
+
+## Card audio on a metered voice is rendered late, on purpose
+
+A card's word audio is Forvo first, TTS when Forvo has nothing. For a language
+whose card voice belongs to a provider in `settings.deferred_card_tts_providers`
+(Gemini; Azure is F0 and absent), a sync mint asks for Forvo alone and the TTS
+render waits for `audio_prestage.py::prestage_card_audio`, which runs after a
+sync and on a deck open and reaches cards already met plus the next
+`AUDIO_LOOKAHEAD` new ones. This is the user's call (2026-10-06): a seeded list
+is weeks of new cards, and audio nobody has heard is not worth paying for. Don't
+"fix" a freshly minted card that has no audio by rendering it at mint.
+
+Every caller of `pipeline.py::fetch_card_media` says how much audio it will use
+(`audio="full" | "forvo" | "none"`). The image pre-stage passes `"none"`; before
+it did, each pre-staged picture also made a Forvo request and a TTS render and
+discarded both.

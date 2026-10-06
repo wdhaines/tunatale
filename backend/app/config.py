@@ -189,6 +189,18 @@ class Settings(BaseSettings):
     # not change how many cards are minted, which is a settled pedagogical pacing
     # decision (2026-08-15), not a performance one.
     prestage_images_limit: int = 20
+    #: Word-audio fetches per pass for `prestage_card_audio`
+    #: (app.cards.media.audio_prestage): cards already met first, then the next
+    #: few in new-card order. A fetch here can be a metered TTS render, so this
+    #: is a spend ceiling per pass as well as a latency knob. 0 disables it.
+    prestage_audio_limit: int = 20
+    #: TTS providers (``app.audio.tts_router.provider_for``) whose card audio is
+    #: NOT rendered when a sync mints a card, only by the audio pre-stage when
+    #: the card is about to be seen. The metered ones: a seeded list of hundreds
+    #: of words is weeks of new cards, and the user does not want to pay for
+    #: audio nobody has heard yet (2026-10-06). Azure is absent because the
+    #: Speech resource is F0, which throttles rather than bills.
+    deferred_card_tts_providers: list[str] = ["gemini"]
     #: Words per pass for `prestage_cloze_sentences` (tunatale-keb0). Lower than
     #: the image limit because each candidate is TWO Groq calls (generate, then
     #: judge) rather than one Groq call plus a Pixabay fetch, and because the

@@ -45,7 +45,13 @@ class FakeWriter:
 
         A read, so not recorded in ``calls`` (which tests treat as the writes),
         the same as ``get_current_card_state``."""
-        return {"text": "Slovene", "translation": "English", "source_sentence": "Note", "image": "Image"}
+        return {
+            "text": "Slovene",
+            "translation": "English",
+            "source_sentence": "Note",
+            "image": "Image",
+            "audio": "Audio",
+        }
 
     def suspend(self, card_ids: list[int]) -> None:
         self.calls.append(("suspend", list(card_ids)))
