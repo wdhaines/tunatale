@@ -73,7 +73,7 @@ from app.languages import (
 from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import ClozeVerdict, generate_cloze_sentence, judge_cloze
 from app.llm.translate import generate_word_gloss, translate_term
-from app.models.lesson import project_key_phrases
+from app.models.lesson import KeyPhraseInfo, project_key_phrases
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.queue_engine import assemble_review_queue
@@ -91,6 +91,7 @@ from app.srs.anki_mirror.queue_stats import (
     resolve_relearning_steps,
 )
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
+from app.srs.collocation_matcher import match_spans
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
@@ -112,7 +113,9 @@ from app.srs.tokenizer import tokenize
 from app.srs.transcript import (
     _build_inflection_index,
     _build_variant_index,
+    build_phrase_index,
     extract_transcript,
+    phrase_span_keys,
     resolve_lemma_card,
     resolve_via_inflection_index,
 )
@@ -727,7 +730,7 @@ def _listen_deferred_reason(
 
 def _kp_claimed_collocation_ids(
     db,
-    lesson,
+    key_phrases: list[KeyPhraseInfo],
     ignored: set[str],
     today_start: datetime.datetime,
     today_end: datetime.datetime,
@@ -764,7 +767,7 @@ def _kp_claimed_collocation_ids(
     is one function, and the same bug class (``6a5c718``) if it were two.
     """
     claimed: set[int] = set()
-    for kp in lesson.key_phrases:
+    for kp in key_phrases:
         if kp.phrase.lower() in ignored:
             continue
         item = db.get_collocation(kp.phrase)
@@ -954,6 +957,10 @@ class _LessonWords(NamedTuple):
     surfaces: dict[str, set[str]]
     first_surface: dict[str, str]
     surface_upos: dict[str, str]
+    # Ids of the phrase cards the lesson's lines matched, in first-appearance
+    # order (a dict used as an ordered set). An occurrence inside one of these
+    # is counted HERE and in none of the lemma maps above.
+    phrase_cards: dict[int, None]
 
 
 def _analyze_lesson_words(lesson, db) -> _LessonWords:
@@ -969,7 +976,7 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
     """
     from app.models.lesson import SectionType
 
-    words = _LessonWords(Counter(), {}, {}, {}, {})
+    words = _LessonWords(Counter(), {}, {}, {}, {}, {})
     natural_speed = next(
         (s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED),
         None,
@@ -978,6 +985,10 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
         return words
     lemmatizer = get_lemmatizer(lesson.language_code)
     model_version = model_version_for(lemmatizer)
+    # The reader's own span index, so a listen and the reader agree on where a
+    # phrase card is. `match_spans` is greedy longest-first: nested phrases
+    # yield the OUTERMOST card only.
+    phrase_index, exact_form = build_phrase_index(db, lemmatizer, lesson.language_code)
     for phrase in natural_speed.phrases:
         if phrase.language_code != lesson.language_code:
             continue
@@ -987,8 +998,18 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
         )
         for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
             words.surface_upos.setdefault(ta.surface.casefold(), ta.upos)
+        spans = match_spans(phrase_span_keys(surfaces, phrase_lemmas, exact_form), phrase_index)
         previous_surface = ""
-        for surface, lemma in zip(surfaces, phrase_lemmas, strict=True):
+        for (surface, lemma), (span_id, _) in zip(zip(surfaces, phrase_lemmas, strict=True), spans, strict=True):
+            # Inside a phrase card the word is part of the phrase, not a use of
+            # its own card: `gang` in "med en gang" (at once) is not the card
+            # "hall" (bd tunatale-ceuc). The phrase card is graded instead — see
+            # `_listen_key_phrases`. Per occurrence: a word the lesson also uses
+            # on its own is still counted there.
+            if span_id is not None:
+                words.phrase_cards.setdefault(span_id, None)
+                previous_surface = surface
+                continue
             # "i går" is *yesterday*; the lemmatizer reads the second token as a
             # standalone NOUN and TT would card it as the verb `gå`. Suppress this
             # occurrence only — the word is still cardable where it stands alone.
@@ -1002,6 +1023,52 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
                 words.first_surface[lemma] = surface
             words.surfaces.setdefault(lemma, set()).add(surface)
     return words
+
+
+def _listen_key_phrases(lesson, words: _LessonWords, db) -> list[KeyPhraseInfo]:
+    """The phrases a listen grades: the lesson's key phrases, then every phrase
+    card its lines matched.
+
+    A matched phrase card rides the key-phrase rails — same gates, same budget,
+    same ``kp_ratings`` keyed by the row's text — rather than a third pass that
+    would have to re-derive all of them. Before this a listen graded a phrase
+    card only when the lesson happened to name it a key phrase, which on the
+    live decks was never (0 of 75 Norwegian key phrases had a card, 2026-10-06).
+
+    Called by ``get_listen_preview`` and ``mark_lesson_listened`` alike, and its
+    result is what ``_kp_claimed_collocation_ids`` reads: one list, three
+    readers, so the preview cannot show a phrase row the commit will not stage
+    (the 6a5c718 class).
+
+    A matched card the lesson already names is not listed twice. Identity is
+    the collocation id, never the text.
+
+    ⚠️ A matched card that has never been introduced (recognition NEW) is left
+    out: a listen REVIEWS a matched phrase, it does not introduce one. On the
+    key-phrase rails a NEW row leads the daily introduction budget ahead of
+    every frequency-ranked word (``_allocate_intro_pool``), which is right for
+    the handful of phrases a lesson is built around and wrong for whatever
+    deck phrase a line happens to contain — the Tagalog deck holds 327 phrase
+    cards, and one lesson matched 12 of them. A lesson's OWN key phrase keeps
+    its lead. Its words stay out of the lemma maps either way: `gang` in
+    "med en gang" is not the card "hall" whether or not the phrase is learned.
+    """
+    phrases = list(lesson.key_phrases)
+    named: set[int] = set()
+    for kp in phrases:
+        item = db.get_collocation(kp.phrase)
+        if item is not None:
+            named.add(db.get_collocation_id_by_guid(item.guid))
+    for coll_id in words.phrase_cards:
+        if coll_id in named:
+            continue
+        item = db.get_collocation_by_id(coll_id)[1]
+        rec = item.directions.get(Direction.RECOGNITION)
+        if rec is not None and rec.state == SRSState.NEW:
+            continue
+        unit = item.syntactic_unit
+        phrases.append(KeyPhraseInfo(phrase=unit.text, translation=unit.translation or ""))
+    return phrases
 
 
 def _card_key_for_lemma(
@@ -1185,6 +1252,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # blocking (classla) pass runs on a worker thread so the event loop
     # doesn't stall; the await means no concurrent access to the maps.
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+    listen_phrases = _listen_key_phrases(lesson, words, db)
     lemma_occurrences = words.occurrences
     lemma_to_sentence = words.first_sentence
     # An existing cloze is matched to THIS lesson by its own sentence, never by its
@@ -1308,7 +1376,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     # Resolved BEFORE the word loop although the key-phrase loop runs after it:
     # the word pass has to know which cards it must not touch, and pass order is
     # what made the pre-fix behaviour so quiet (last writer won the upsert).
-    kp_claimed_ids = _kp_claimed_collocation_ids(db, lesson, ignored, today_start, today_end, end_of_day_utc)
+    kp_claimed_ids = _kp_claimed_collocation_ids(db, listen_phrases, ignored, today_start, today_end, end_of_day_utc)
 
     # Build variant index once for this listen request — mirrors the transcript's
     # _build_variant_index usage so /listen resolves the same cards the transcript
@@ -1464,7 +1532,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 staged_count += 1
 
     # ── Key phrase staging (existing cards only; creation deferred) ─────
-    for kp in lesson.key_phrases:
+    for kp in listen_phrases:
         if kp.phrase.lower() in ignored:
             continue
         existing = db.get_collocation(kp.phrase)
@@ -1978,6 +2046,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     db = request.state.srs_db
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+    listen_phrases = _listen_key_phrases(lesson, words, db)
     # Same predicate mark_lesson_listened resolves, for the same reason: a
     # truncated lemma must not be the name on a row the commit path would key
     # somewhere else.
@@ -1999,7 +2068,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
 
     # Same call, same arguments as mark_lesson_listened — a single-word key
     # phrase owns its card and the word pass below stands down for it.
-    kp_claimed_ids = _kp_claimed_collocation_ids(db, lesson, ignored, today_start, today_end, end_of_day_utc)
+    kp_claimed_ids = _kp_claimed_collocation_ids(db, listen_phrases, ignored, today_start, today_end, end_of_day_utc)
 
     from app.srs.mastery import band_stability, compute_mastery_progress, direction_band
 
@@ -2157,7 +2226,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
                 candidates.append(row)
 
     # ── Key phrase candidates (tracked only; creation deferred) ──────────
-    for kp in lesson.key_phrases:
+    for kp in listen_phrases:
         if kp.phrase.lower() in ignored:
             continue
         item = db.get_collocation(kp.phrase)
