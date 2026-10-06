@@ -192,7 +192,12 @@ def fetch_forvo_pronunciation(
 
 def _fetch(client: httpx.Client, word: str, language_code: str) -> ForvoResult:
     encoded = urllib.parse.quote(word)
-    resp = client.get(f"{_FORVO_BASE}/word/{encoded}/", timeout=15)
+    # Redirects followed, per request so an injected client behaves the same:
+    # Forvo files a word under its lowercase spelling and answers a capitalized
+    # one with a 301 to it (`/word/Lunes/` -> `/word/lunes/`, 2026-10-06). Left
+    # unfollowed that read as `request_failed`, and no capitalized card — a
+    # month, a weekday, a proper noun — could be given a human recording.
+    resp = client.get(f"{_FORVO_BASE}/word/{encoded}/", timeout=15, follow_redirects=True)
     outcome, detail = _classify_page(resp.status_code, resp.text, language_code)
     if outcome is not ForvoOutcome.FOUND:
         return ForvoResult(outcome, detail=detail)

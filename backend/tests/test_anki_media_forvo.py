@@ -194,6 +194,34 @@ class TestFetchForvoPronunciation:
         assert result.outcome is ForvoOutcome.REQUEST_FAILED
         assert "ConnectError" in result.detail
 
+    def test_a_redirect_to_the_words_canonical_page_is_followed(self):
+        """Forvo files a word under its lowercase spelling and answers a
+        capitalized one with a 301 to it.
+
+        Measured 2026-10-06: ``/word/Lunes/`` -> 301 -> ``/word/lunes/``, which
+        carries a Cebuano recording. Unfollowed, the 301 was classified
+        ``request_failed``, so no capitalized card — a month, a weekday, a
+        proper noun — could ever be given a human recording.
+        """
+        mp3_bytes = b"\xff\xfb\x90\x00mandag"
+        page = f"<div id='language-container-no'><article>Play(1,'{_b64('1/2/mandag.mp3')}'</article></div>"
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            if request.url.path == "/word/Mandag/":
+                return httpx.Response(301, headers={"location": "https://forvo.com/word/mandag/"})
+            if request.url.path == "/word/mandag/":
+                return httpx.Response(200, text=page)
+            return httpx.Response(200, content=mp3_bytes)
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        result = fetch_forvo_pronunciation("Mandag", language_code="no", http_client=client)
+
+        assert seen[:2] == ["/word/Mandag/", "/word/mandag/"]
+        assert result.outcome is ForvoOutcome.FOUND
+        assert result.audio == mp3_bytes
+
     def test_url_encodes_non_ascii_word(self):
         """Words like 'živ' must be URL-encoded in the Forvo path."""
         recorded_urls: list[str] = []
@@ -212,7 +240,7 @@ class TestFetchForvoPronunciation:
         calls: list[str] = []
 
         class FakeClient:
-            def get(self, url, *, timeout):
+            def get(self, url, *, timeout, follow_redirects=False):
                 calls.append(url)
                 raise RuntimeError("network disabled in test")
 
@@ -222,7 +250,8 @@ class TestFetchForvoPronunciation:
         monkeypatch.setattr("app.cards.media.forvo._make_client", lambda: FakeClient())
         result = fetch_forvo_pronunciation("voda", language_code="sl")
         assert result.outcome is ForvoOutcome.REQUEST_FAILED
-        assert "close" in calls
+        assert "RuntimeError" in result.detail, "failed for the staged reason, not a signature mismatch"
+        assert calls == ["https://forvo.com/word/voda/", "close"]
 
     def test_defaults_language_to_configured_target(self, monkeypatch):
         monkeypatch.setattr("app.config.settings.target_language", "sl")
