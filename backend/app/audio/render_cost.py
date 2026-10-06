@@ -14,21 +14,20 @@ from pathlib import Path
 
 from app.audio import gemini_tts
 from app.audio.azure_tts import AzureTTSService
-from app.audio.enunciation import ENUNCIATED_SECTIONS, line_phonemes, plan_line
 from app.audio.gemini_tts import GeminiTTSService, enunciates, resolve_ipa
 from app.audio.ports import Enunciation
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import PARENT_RATE
+from app.audio.synth_plan import MemoKey, plan_section
 from app.audio.tts_router import provider_for
 from app.languages import (
     PhonemePlanner,
-    get_ipa_for_enunciated_lines,
     get_phoneme_planner,
     get_preprocessor,
     get_slow_word,
     get_tts_locale,
 )
-from app.models.lesson import Lesson, Phrase, SectionType
+from app.models.lesson import Lesson, SectionType
 
 # The Azure F0 tier's monthly allowance. Both the report's share line and the
 # reader's "is this affordable" judgement hang off this one literal.
@@ -57,12 +56,9 @@ _GEMINI_USD_PER_MILLION_AUDIO_TOKENS = 10.0  # gemini-2.5-flash-tts on Cloud TTS
 # denominator supports; re-measure it with the speaking rate above.
 _GEMINI_ENUNCIATED_LENGTH_FACTOR = 2.0
 
-# The renderer's dedupe key: (processed text, voice, rate, sorted phoneme
-# mapping, speak locale, enunciation) — renderer.py::_synth. None of the last
-# three is an attribute of the text; each changes the audio AND the cache key.
-_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None]
-# The value carried for a key: same fields, phonemes in the dict form
-# ``_cache_path`` / ``_billable_body`` expect.
+# The value carried for a key (``synth_plan.MemoKey``, the renderer's own dedupe
+# key): the same fields, phonemes in the dict form ``_cache_path`` /
+# ``_billable_body`` expect.
 _SynthValue = tuple[str, str, str, Mapping[str, str] | None, str | None, Enunciation | None]
 
 
@@ -167,56 +163,6 @@ class RenderCost:
         return self.gemini_audio_tokens / 1_000_000 * _GEMINI_USD_PER_MILLION_AUDIO_TOKENS
 
 
-def _phrase_phonemes(
-    planner: PhonemePlanner | None,
-    language_code: str,
-    phrase: Phrase,
-) -> Mapping[str, str] | None:
-    """Mirror of renderer.py::_phrase_phonemes: when would this phrase carry IPA?
-
-    ``None`` for plain synthesis — and the ONLY two conditions that matter for
-    cost are: no planner, or a phrase without BOTH ``source_word`` and
-    ``syllable_span`` (or in another language). This is the condition the dead
-    probe had inverted; the inversion is exactly the branch where
-    ``source_word is None``, which crashes loudly in
-    ``norwegian_breakdown.flat_syllables`` (verified 2026-09-15).
-    """
-    if planner is None:
-        return None
-    if phrase.language_code != language_code:
-        return None
-    if phrase.source_word is None or phrase.syllable_span is None:
-        return None
-    result = planner.plan_chunk(
-        phrase.source_word,
-        phrase.syllable_span,
-        upos=phrase.upos or None,
-        chunk_text=phrase.text,
-    )
-    if result is None:
-        return None
-    return {phrase.text.lower(): result}
-
-
-def _memo_key(
-    text: str,
-    voice_id: str,
-    rate: str,
-    phonemes: Mapping[str, str] | None,
-    speak_locale: str | None,
-    enunciation: Enunciation | None = None,
-) -> _MemoKey:
-    """The renderer's key tuple, exactly as renderer.py::_synth builds it."""
-    return (
-        text,
-        voice_id,
-        rate,
-        tuple(sorted(phonemes.items())) if phonemes else None,
-        speak_locale,
-        enunciation,
-    )
-
-
 @dataclass(frozen=True)
 class RenderKeys:
     """Every distinct synthesis key a scope would send, split by provider leg.
@@ -234,9 +180,9 @@ class RenderKeys:
     one would put the address space in the wrong place.
     """
 
-    phrase: dict[_MemoKey, _SynthValue] = field(default_factory=dict)
+    phrase: dict[MemoKey, _SynthValue] = field(default_factory=dict)
     slicer: dict[tuple[str, str], _SynthValue] = field(default_factory=dict)
-    gemini_phrase: dict[_MemoKey, _SynthValue] = field(default_factory=dict)
+    gemini_phrase: dict[MemoKey, _SynthValue] = field(default_factory=dict)
     gemini_slicer: dict[tuple[str, str], _SynthValue] = field(default_factory=dict)
 
     @property
@@ -268,11 +214,14 @@ def collect_keys(
     parent_rate: str,
     slow_word_fn: Callable[[str], str] | None,
 ) -> RenderKeys:
-    """The synthesis keys *lessons* would send, mirroring ``_render_section``.
+    """The synthesis keys *lessons* would send: the renderer's own requests.
 
-    Every rule of the key derivation lives here, unchanged and in the renderer's
-    order, and NO cache is touched: a key is a function of the lessons and the
-    injected resolvers alone. :func:`price_lessons` is this plus the cache
+    What each phrase is sent as comes from ``synth_plan.plan_section``, the
+    function ``LessonRenderer._synthesize_section`` calls, so the two cannot
+    name different clips. What is added here is what the renderer does AFTER
+    planning (the dedupe across a scope, the slicer's parent words) and the
+    split by provider. NO cache is touched: a key is a function of the lessons
+    and the injected resolvers alone. :func:`price_lessons` is this plus the cache
     question, and a caller that only wants to ADDRESS a key (which file is it?)
     must be able to ask without opening a cache — the address space is the
     adapter's ``_cache_path``, and it is the adapter's alone.
@@ -287,53 +236,52 @@ def collect_keys(
     an Enunciated line is keyed and billed by where its words are cut.
     """
     keys = RenderKeys()
-    line_ipa = get_ipa_for_enunciated_lines(language_code)
+
+    def locale_for(code: str) -> str | None:
+        """The target locale for the scope's language, the registry's for any other.
+
+        Rule 3: a phrase declares its own language's locale — the target locale
+        for the section's language, en-US for an English line. For an en-US
+        voice that changes neither the SSML nor the cache key.
+        """
+        return target_locale if code == language_code else get_tts_locale(code)
 
     for lesson in lessons:
         for section in lesson.sections:
-            # ipa_indices and phoneme_maps are per-section, exactly as
-            # renderer.py::_render_section computes them before _apply_slicing.
-            ipa_indices: set[int] = set()
-            phoneme_maps: list[Mapping[str, str] | None] = []
-            for i, phrase in enumerate(section.phrases):
-                ph_map = _phrase_phonemes(planner, language_code, phrase)
-                phoneme_maps.append(ph_map)
-                if ph_map is not None:
-                    ipa_indices.add(i)
+            # Rules 1-3, the phoneme plan and the Enunciated cut are NOT derived
+            # here: ``plan_section`` is the function the renderer itself calls,
+            # so what is priced is what is sent (tests/test_synth_plan_parity.py).
+            requests = plan_section(
+                section,
+                language_code,
+                preprocessor=preprocessor,
+                planner=planner,
+                locale_for=locale_for,
+                slow_word=slow_word_fn,
+            )
+            # Exactly as renderer.py::_synthesize_section computes it before _apply_slicing.
+            ipa_indices = {i for i, request in enumerate(requests) if request.phonemes is not None}
 
-            for i, (phrase, ph_map) in enumerate(zip(section.phrases, phoneme_maps, strict=True)):
-                # Rule 1: the synthesized text is PREPROCESSED text,
-                # never phrase.text itself.
-                text = preprocessor.preprocess(phrase.text, section.section_type)
-                # An Enunciated line is cut into words here exactly as the
-                # renderer cuts it — the same two functions, not a copy of
-                # them — and what is sent as text is the line as written.
-                line = (
-                    plan_line(text, slow_word_fn)
-                    if section.section_type in ENUNCIATED_SECTIONS and phrase.language_code == language_code
-                    else None
-                )
-                enunciation = None
-                if line is not None:
-                    text, enunciation = line.text, line.words
-                    ph_map = line_phonemes(line, planner) if line_ipa else None
-                # Rule 3: a phrase declares its own language's locale — the
-                # target locale for the section's language, en-US for an English
-                # line (renderer.py::_phrase_locale). For an en-US voice that
-                # changes neither the SSML nor the cache key.
-                speak_locale = (
-                    target_locale if phrase.language_code == language_code else get_tts_locale(phrase.language_code)
-                )
-                # Rule 4: dedupe by the key tuple, render-scoped (here: whole scope).
-                key = _memo_key(text, phrase.voice_id, phrase.rate, ph_map, speak_locale, enunciation)
-                # The tuple is the same dedupe key for BOTH providers — it is
-                # the renderer's, and the renderer is what chooses the adapter.
-                # Only the PRICING splits, by the voice id's own suffix: a Gemini
-                # key billed as Azure characters would be wrong by two
-                # multipliers at once, and would also move the Azure allowance
-                # line for a request Azure never receives.
+            for i, (phrase, request) in enumerate(zip(section.phrases, requests, strict=True)):
+                # Rule 4: dedupe by the request's own key, render-scoped (here:
+                # whole scope). It is the same dedupe key for BOTH providers —
+                # it is the renderer's, and the renderer is what chooses the
+                # adapter. Only the PRICING splits, by the voice id's own
+                # suffix: a Gemini key billed as Azure characters would be
+                # wrong by two multipliers at once, and would also move the
+                # Azure allowance line for a request Azure never receives.
                 leg = keys.gemini_phrase if provider_for(phrase.voice_id) == "gemini" else keys.phrase
-                leg.setdefault(key, (text, phrase.voice_id, phrase.rate, ph_map, speak_locale, enunciation))
+                leg.setdefault(
+                    request.key,
+                    (
+                        request.text,
+                        request.voice_id,
+                        request.rate,
+                        request.phonemes,
+                        request.speak_locale,
+                        request.enunciation,
+                    ),
+                )
 
                 # Rule 5: the slicer is a second, MUTUALLY EXCLUSIVE cost source.
                 # _apply_slicing skips every phrase with planned phonemes.

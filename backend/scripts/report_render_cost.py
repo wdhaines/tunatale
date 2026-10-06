@@ -31,21 +31,20 @@ providers, so ``--cache-dir <empty dir>`` still gives the true cold price and th
 differing numbers between the two providers are the providers', not this
 script's.
 
-The two legs mirror ``LessonRenderer._render_section`` exactly — this script
-WIRES the renderer's existing functions, it does not re-derive their rules:
+The two legs are the requests ``LessonRenderer`` makes — this script WIRES the
+renderer's own functions, it does not re-derive their rules:
 
-- **phrase leg**: one key per tuple ``(processed_text, voice_id, rate,
+- **phrase leg**: one key per request ``(processed_text, voice_id, rate,
   sorted(phonemes), speak_locale, enunciation)`` — the renderer's ``synth_memo``
-  key — where the text is ``preprocess(phrase.text, section.section_type)``,
-  phonemes are planned only when BOTH ``source_word`` and ``syllable_span`` are
-  present (``_phrase_phonemes``), and ``speak_locale`` is the target locale for
-  phrases whose ``language_code`` matches and the phrase's OWN language's
-  locale otherwise (an English line declares en-US). A target-language line in
-  an Enunciated section is cut into words by ``app.audio.enunciation.plan_line``
-  — the function the renderer calls, with the language's own long-word cut —
-  and that cut is the last field: Azure bills the ``<break>`` it becomes (21
-  characters a word gap, most of such a request), and Gemini's line is priced
-  at about twice its natural length.
+  key — as planned by ``app.audio.synth_plan.plan_section``, which is the very
+  function ``_synthesize_section`` calls. Every rule about what a phrase is sent
+  as lives there and nowhere else: the preprocessed text, the chunk and
+  drill-phrase readings, the locale (and when an IPA-bearing phrase drops it),
+  and the Enunciated cut. This used to be a copy, and it had drifted:
+  ``tests/test_synth_plan_parity.py`` renders through the real renderer and
+  compares. For an Enunciated line Azure bills the ``<break>`` the cut becomes
+  (21 characters a word gap, most of such a request), and Gemini's line is
+  priced at about twice its natural length.
 - **slicer leg**: one key per ``(source_word, voice_id)`` — the slicer's
   ``_words`` memo key — for every provenance phrase the renderer's
   ``_apply_slicing`` hands to ``ChunkSlicer._build_parent``, which synthesizes
@@ -89,8 +88,6 @@ from app.audio.render_cost import (  # noqa: E402, F401
     LegStats,
     RenderCost,
     RenderKeys,
-    _memo_key,
-    _phrase_phonemes,
     _SynthValue,
     collect_keys,
     gemini_cache_path,

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import tempfile
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,18 +16,14 @@ import soundfile as sf
 
 from app.audio import assembly as _assembly
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
-from app.audio.enunciation import ENUNCIATED_SECTIONS, EnunciatedLine, line_phonemes, plan_line
 from app.audio.pause_calculator import NaturalPauseCalculator
-from app.audio.ports import Enunciation, TTSService
+from app.audio.ports import TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
+from app.audio.synth_plan import MemoKey, SynthRequest, plan_section
 from app.audio.transcode import encode_audio_stream
-from app.generation.section_builder import _SENTENCE_PUNCTUATION
 from app.languages import (
     PhonemePlanner,
-    get_ipa_for_drill_phrases,
-    get_ipa_for_enunciated_lines,
-    get_ipa_read_in_voice_locale,
     get_phoneme_planner,
     get_preprocessor,
     get_slow_word,
@@ -36,17 +31,12 @@ from app.languages import (
     get_tts_voice_gain_db,
 )
 from app.models.language import Language
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import Lesson, Section
 
 if TYPE_CHECKING:
     from app.config import Settings
 
 logger = logging.getLogger(__name__)
-
-# (text, voice_id, rate, phoneme mapping, speak locale, enunciation) — none of
-# the last three is an attribute of the text, and each changes the audio. See
-# _synth.
-_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None]
 
 
 def _report_nowhere(done: int, total: int) -> None:
@@ -97,14 +87,6 @@ class _ClipTally:
     def report(self) -> None:
         """Publish the counts. Unconditional — the reporter is always callable."""
         self.on_progress(self.done, self.total)
-
-
-# Leading/trailing characters that are not part of a word ("bing?" -> "bing").
-_WORD_EDGES = re.compile(r"^\W+|\W+$")
-
-
-def _bare_word(text: str) -> str:
-    return _WORD_EDGES.sub("", text.lower())
 
 
 _SAMPLE_DTYPE = "float32"
@@ -400,7 +382,7 @@ class LessonRenderer:
         tmp: Path,
         section_idx: int,
         language_code: str,
-        synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]],
+        synth_memo: dict[MemoKey, tuple[Path, asyncio.Task]],
         memo_lock: asyncio.Lock,
         tally: _ClipTally | None = None,
     ) -> tuple[_Audio, list[tuple[int, int, int]]]:
@@ -426,7 +408,7 @@ class LessonRenderer:
         tmp: Path,
         section_idx: int,
         language_code: str,
-        synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]],
+        synth_memo: dict[MemoKey, tuple[Path, asyncio.Task]],
         memo_lock: asyncio.Lock,
         tally: _ClipTally | None = None,
     ) -> tuple[list[Path], list[Path]]:
@@ -440,8 +422,8 @@ class LessonRenderer:
             tmp: Temp directory for intermediate TTS files.
             section_idx: Index used for temp file naming.
             language_code: Language code for preprocessor lookup.
-            synth_memo: Render-scoped cache mapping ``(processed_text, voice_id,
-                rate)`` → ``(canonical_file, synth_task)``. Shared across all
+            synth_memo: Render-scoped cache mapping ``SynthRequest.key`` →
+                ``(canonical_file, synth_task)``. Shared across all
                 sections so an identical utterance (e.g. the same L2 line in the
                 translated and en_translated sections) is synthesized once and
                 its audio file reused, not re-spoken.
@@ -461,179 +443,42 @@ class LessonRenderer:
             raise ValueError(
                 f"No preprocessor configured for language {language_code!r}; renderer has {sorted(self._preprocessors)}"
             )
-        preprocessor = self._preprocessors[language_code]
-        processed_texts = [preprocessor.preprocess(phrase.text, section.section_type) for phrase in section.phrases]
+        # WHAT each phrase is sent as is decided by ``plan_section``, which the
+        # cost report calls too, so the two cannot disagree about which clips a
+        # lesson needs. What follows here is only the sending.
+        requests = plan_section(
+            section,
+            language_code,
+            preprocessor=self._preprocessors[language_code],
+            planner=self._phoneme_planners.get(language_code),
+            locale_for=self._tts_locales.get,
+            slow_word=self._slow_word_fns.get(language_code),
+        )
+        ipa_indices = {i for i, request in enumerate(requests) if request.phonemes is not None}
 
-        # Stage 2d: sub-word chunks get IPA from the lexicon; whole phrases
-        # and whole words are the TTS's job.
-        planner = self._phoneme_planners.get(language_code)
-
-        # An Enunciated section says each of its target-language lines one
-        # word at a time. Where the words are (and where a long one is cut) is
-        # decided HERE, at render time, from the line as stored — so a lesson
-        # stored before this existed is said the new way after a re-render. How
-        # the pause is made is the adapter's: see ``app.audio.enunciation``.
-        slow_word = self._slow_word_fns.get(language_code)
-        lines: list[EnunciatedLine | None] = [
-            plan_line(text, slow_word)
-            if section.section_type in ENUNCIATED_SECTIONS and phrase.language_code == language_code
-            else None
-            for text, phrase in zip(processed_texts, section.phrases, strict=True)
-        ]
-        # What goes to the voice as text is the line as written, with none of
-        # the stored `` ... `` notation in it.
-        processed_texts = [
-            line.text if line is not None else text for line, text in zip(lines, processed_texts, strict=True)
-        ]
-        line_ipa = get_ipa_for_enunciated_lines(language_code)
-
-        def _phrase_phonemes(phrase: Phrase, line: EnunciatedLine | None) -> Mapping[str, str] | None:
-            """Compute phonemes for a sub-word chunk, or None for plain synthesis."""
-            if planner is None:
-                return None
-            if line is not None:
-                # The reading of the whole line, for a language whose voice is
-                # told how a line sounds. Never a chunk's: an Enunciated line
-                # has no provenance, and for every other language it is plain.
-                return line_phonemes(line, planner) if line_ipa else None
-            if phrase.language_code != language_code:
-                return None
-            if phrase.source_word is None or phrase.syllable_span is None:
-                return _drill_phrase_phonemes(phrase)
-            result = planner.plan_chunk(
-                phrase.source_word, phrase.syllable_span, upos=phrase.upos or None, chunk_text=phrase.text
-            )
-            if result is None:
-                return None
-            # Keyed by the bare word: the adapter looks up word TOKENS, so a
-            # chunk stored with its punctuation ("bing?") would otherwise match
-            # nothing and silently play as text (tunatale-w4m7.16).
-            return {_bare_word(phrase.text): result}
-
-        def _drill_phrase_phonemes(phrase: Phrase) -> Mapping[str, str] | None:
-            """Per-word IPA for a whole multi-word DRILL step, or ``None``.
-
-            The path above plans a chunk of a word, and a key phrase is not one:
-            it arrives with no ``source_word`` and no ``syllable_span``, so the
-            whole step used to fall through to plain text. A Cebuano drill
-            phrase rendered as plain text was heard as "ilubong uglak" rather
-            than "ilubong ugma" (the user's blind A/B, 2026-09-25: "ugma" wrong
-            2 of 3 plain, 2 of 2 right once the reading was given).
-
-            Four conditions, each a refusal rather than a guess:
-
-            * a KEY_PHRASES section — dialogue is a full sentence, and phrase IPA
-              on one is untested, so it stays plain for every language;
-            * a language that asked for this (``get_ipa_for_drill_phrases``) —
-              the channel is the adapter's, and another language's Azure voice
-              would wrap every word of the step in ``<phoneme>``;
-            * a planner that can read a WHOLE word (``plan_word``) — a
-              lexicon-backed planner has no such method, and is never asked for
-              one, only skipped;
-            * at least two words — a lone word is the other path's business, and
-              the adapter's own instruction for a single word names a "syllable
-              or word", which a phrase must not be asked to say about itself.
-
-            One word the planner cannot read refuses the WHOLE map rather than
-            leaving a gap: a half-read phrase is a phrase whose words were
-            aligned to the wrong readings, and a wrong reading is worse than the
-            plain render this replaces.
-            """
-            if section.section_type != SectionType.KEY_PHRASES:
-                return None
-            if not get_ipa_for_drill_phrases(language_code):
-                return None
-            plan_word = getattr(planner, "plan_word", None)
-            if plan_word is None:
-                return None
-            words = phrase.text.strip(_SENTENCE_PUNCTUATION).split()
-            if len(words) < 2:
-                return None
-            planned = [(word, plan_word(word)) for word in words]
-            if any(ipa is None for _, ipa in planned):
-                return None
-            return {_bare_word(word): ipa for word, ipa in planned}
-
-        ipa_indices: set[int] = set()
-        phoneme_maps: list[Mapping[str, str] | None] = []
-        for i, (ph, line) in enumerate(zip(section.phrases, lines, strict=True)):
-            ph_map = _phrase_phonemes(ph, line)
-            phoneme_maps.append(ph_map)
-            if ph_map is not None:
-                ipa_indices.add(i)
-
-        # Resolved once per section, and applied only to phrases in the
-        # section's own language: a narrator line is English, and declaring it
-        # as the target locale would tell Azure to read English text as
-        # Norwegian. Same discriminator ``_phrase_phonemes`` already uses.
-        target_locale = self._tts_locales.get(language_code)
-
-        # A locale whose front end ignores IPA would swallow it: an IPA-bearing
-        # utterance in such a language is read by the voice's own front end.
-        ipa_unwrapped = get_ipa_read_in_voice_locale(language_code)
-
-        def _phrase_locale(phrase: Phrase, phonemes: Mapping[str, str] | None) -> str | None:
-            # A phrase in another language (English) declares ITS OWN locale:
-            # an it-IT Multilingual voice reading an English translation must
-            # be told it is English. For an en-US voice the adapter emits no
-            # wrapper and the cache key is unchanged (_lang_locale).
-            if phrase.language_code != language_code:
-                return self._tts_locales.get(phrase.language_code)
-            if phonemes and ipa_unwrapped:
-                return None
-            return target_locale
-
-        async def _synth(
-            phrase_idx: int,
-            text: str,
-            voice_id: str,
-            rate: str,
-            phonemes: Mapping[str, str] | None = None,
-            speak_locale: str | None = None,
-            enunciation: Enunciation | None = None,
-        ) -> Path:
+        async def _synth(phrase_idx: int, request: SynthRequest) -> Path:
             """Synthesize (or reuse) one phrase; returns its audio file path.
 
-            The first requester of a given (text, voice, rate) key synthesizes it
-            into this phrase's natural ``s{section_idx}_p{i}.mp3`` file and records
-            the task; later requesters await that same task and reuse the file.
+            The first requester of a given request key synthesizes it into this
+            phrase's natural ``s{section_idx}_p{i}.mp3`` file and records the
+            task; later requesters await that same task and reuse the file.
             the TTS adapter's _semaphore still caps global TTS concurrency.
+            What makes two requests the same clip is ``SynthRequest.key``.
             """
-            # The mapping is PART of the key, not an attribute of the text.
-            # Two phrases can share (text, voice, rate) and still deserve
-            # different audio: the same surface string appears as a standalone
-            # buildup rung (planned) and as a breakdown chunk carrying slicing
-            # provenance (never planned). Keying on the triple alone lets
-            # whichever is submitted first serve both — measured on a real
-            # lesson, "en" collided six ways and the plain render won, so the
-            # planned rung silently played un-tagged audio. The inverse is
-            # worse: a provenance chunk inheriting IPA audio and then being
-            # sliced. Same class as 2b's cache-key collision, one level up.
-            # The enunciation is part of it for the same reason, and the
-            # collision it prevents is certain rather than occasional: every
-            # Enunciated line has the natural-speed section's (text, voice,
-            # rate), so whichever section was submitted first would voice both.
-            key = (
-                text,
-                voice_id,
-                rate,
-                tuple(sorted(phonemes.items())) if phonemes else None,
-                speak_locale,
-                enunciation,
-            )
+            key = request.key
             async with memo_lock:
                 entry = synth_memo.get(key)
                 if entry is None:
                     canonical = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
                     task = asyncio.ensure_future(
                         self._tts.synthesize(
-                            text,
-                            voice_id,
+                            request.text,
+                            request.voice_id,
                             canonical,
-                            rate=rate,
-                            phonemes=phonemes,
-                            speak_locale=speak_locale,
-                            enunciation=enunciation,
+                            rate=request.rate,
+                            phonemes=request.phonemes,
+                            speak_locale=request.speak_locale,
+                            enunciation=request.enunciation,
                         )
                     )
                     entry = (canonical, task)
@@ -658,31 +503,14 @@ class LessonRenderer:
                     "TTS failed for section %d phrase %d (voice=%s, rate=%s): %r",
                     section_idx,
                     phrase_idx,
-                    voice_id,
-                    rate,
-                    text,
+                    request.voice_id,
+                    request.rate,
+                    request.text,
                 )
                 raise
             return canonical
 
-        phrase_files = list(
-            await asyncio.gather(
-                *[
-                    _synth(
-                        i,
-                        text,
-                        phrase.voice_id,
-                        phrase.rate,
-                        phonemes=ph_map,
-                        speak_locale=_phrase_locale(phrase, ph_map),
-                        enunciation=line.words if line is not None else None,
-                    )
-                    for i, (text, phrase, ph_map, line) in enumerate(
-                        zip(processed_texts, section.phrases, phoneme_maps, lines, strict=True)
-                    )
-                ]
-            )
-        )
+        phrase_files = list(await asyncio.gather(*[_synth(i, request) for i, request in enumerate(requests)]))
 
         # Assemble in phrase order while tracking frame positions.
         # Offsets are accumulated in frames (not ms) to avoid cumulative drift.
@@ -752,7 +580,7 @@ class LessonRenderer:
         returns them, because that is the form ``derive_section_cues`` stores.
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
-            synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]] = {}
+            synth_memo: dict[MemoKey, tuple[Path, asyncio.Task]] = {}
             audio, cues = await self._render_section(
                 section, Path(tmp_dir), section_idx, language_code, synth_memo, asyncio.Lock()
             )
@@ -827,7 +655,7 @@ class LessonRenderer:
             # sections (e.g. the shared L2 line + English gloss in the translated
             # and en_translated sections) instead of re-running TTS for each.
             t0 = time.perf_counter()
-            synth_memo: dict[_MemoKey, tuple[Path, asyncio.Task]] = {}
+            synth_memo: dict[MemoKey, tuple[Path, asyncio.Task]] = {}
             memo_lock = asyncio.Lock()
             tally = _ClipTally(on_progress=on_progress or _report_nowhere)
             section_tasks = [
