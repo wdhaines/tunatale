@@ -3,7 +3,6 @@
 import asyncio
 import contextlib
 import subprocess
-import threading
 import time
 import wave
 from io import BytesIO
@@ -927,23 +926,30 @@ class TestEventLoopResponsiveness:
     Without ``asyncio.to_thread`` offloading, synchronous file I/O (soundfile
     reads/writes, ffmpeg subprocess calls) starves concurrent coroutines.
 
-    Uses a thread-based monitor to detect event-loop starvation during the
-    encode phase — the previous tick-counter approach was decorative because
-    ``asyncio.sleep`` timers fire in real time and accumulate post-hoc,
-    masking the blocking.
+    The measurement is taken INSIDE the faked encode, by the encode itself. Two
+    earlier shapes of this test measured from outside and each went wrong:
+
+    * a tick counter read after the render was decorative — ``asyncio.sleep``
+      timers fire in real time and accumulate post-hoc, masking the blocking;
+    * a monitor thread sampling a wall-clock window (0.2 s to 0.8 s after the
+      start) was right only while the encode outlasted that window. It stopped
+      doing so when a render with no section paths stopped encoding section
+      files: one 0.25 s encode left about 80 ms of overlap, after which the
+      test's own ``monitor_thread.join()`` blocked the loop. On an idle machine
+      80 ms is seven ticks and passes; at load 18 it was fewer than three, and
+      the gate went red on a tree whose renderer had not changed
+      (tunatale-a0yw, 2026-10-06).
     """
 
     async def test_render_does_not_block_event_loop(self, tmp_path, monkeypatch):
-        """A separate OS thread monitors ticker progress during the render.
+        """The loop keeps ticking for as long as the encode is running.
 
-        A slow fake replaces ``subprocess.run`` at the ffmpeg boundary so the
-        render spends ~1.5s in the sync encode phase.  A concurrent ticker
-        advances every 10ms on the event loop.  A dedicated monitor thread
-        checks whether the ticker made progress *during* the encode window.
-
-        Without to_thread offloading the event loop is starved (ticker stalls);
-        with offloading the loop stays responsive (ticker advances freely while
-        encode runs in the thread pool).
+        A slow fake stands at the ffmpeg boundary. While it "encodes" it reads
+        the ticker before and after its own sleep — so the window IS the encode,
+        whatever the machine is doing and however long the rest of the render
+        takes. Offloaded, the fake runs on a worker thread and the loop ticks
+        behind it. Not offloaded, the fake runs on the loop's own thread, the
+        loop cannot tick at all while it sleeps, and the difference is zero.
         """
         phrases_per_section = 8
         lesson = Lesson(
@@ -971,10 +977,18 @@ class TestEventLoopResponsiveness:
 
         mock_tts.synthesize = fake_synthesize
 
-        # Slow fake at the subprocess.Popen / subprocess.run boundary —
-        # each call sleeps 250ms to simulate ffmpeg encode time.
+        ticks = 0
+        ticks_during_encode: list[int] = []
+
+        def slow_encode() -> None:
+            """Stand in for ffmpeg: take a while, and count the loop's ticks meanwhile."""
+            before = ticks
+            time.sleep(0.5)
+            ticks_during_encode.append(ticks - before)
+
+        # Faked at the subprocess.Popen / subprocess.run boundary.
         def fake_run(cmd, *args, **kwargs):
-            time.sleep(0.25)
+            slow_encode()
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=b"faked opus data")
 
         class _SlowPopen:
@@ -982,13 +996,10 @@ class TestEventLoopResponsiveness:
             testing anything (bd tunatale-rwkz.2).
 
             The full-lesson export streams through ``subprocess.Popen`` now, not
-            ``subprocess.run``, so faking only ``run`` left the encode fast. The
-            render then finished before the monitor thread's measurement window
-            closed, and the ``monitor_thread.join()`` below — which blocks the
-            loop by design — became what the ticker measured. The test failed
-            claiming the loop was blocked during the encode, when the encode had
-            already finished. A green here means nothing unless the fake covers
-            the boundary the code actually uses.
+            ``subprocess.run``, so faking only ``run`` left the encode fast and
+            unmeasured. The assertion below that an encode was seen at all is
+            what turns that from a silent pass into a failure: a green here
+            means nothing unless the fake covers the boundary the code uses.
             """
 
             def __init__(self, cmd, *args, **kwargs):
@@ -1005,11 +1016,11 @@ class TestEventLoopResponsiveness:
                 # encode_audio moved to Popen+communicate so its child could be
                 # reniced; without this the fake loses the buffered path and the
                 # test measures a real, fast ffmpeg instead of a slow one.
-                time.sleep(0.25)
+                slow_encode()
                 return b"faked opus data", b""
 
             def wait(self):
-                time.sleep(0.25)
+                slow_encode()
                 return 0
 
             def kill(self):  # pragma: no cover - only the mono guard calls this
@@ -1026,40 +1037,31 @@ class TestEventLoopResponsiveness:
         )
         output = tmp_path / "lesson.opus"
 
-        state: dict = {"ticks": 0, "blocked": False}
-
         async def ticker():
+            nonlocal ticks
             while True:
                 await asyncio.sleep(0.01)
-                state["ticks"] += 1
-
-        def monitor():
-            """Wait for the encode phase, then check if ticks advanced."""
-            try:
-                time.sleep(0.2)
-                before = state["ticks"]
-                time.sleep(0.6)
-                after = state["ticks"]
-                if after - before < 3:
-                    state["blocked"] = True
-            except Exception:
-                state["blocked"] = True  # fail-safe: any error → blocked
+                ticks += 1
 
         ticker_task = asyncio.create_task(ticker())
-        monitor_thread = threading.Thread(target=monitor, daemon=True)
-        monitor_thread.start()
 
         await rdr.render(lesson, output)
 
-        monitor_thread.join(timeout=5)
         ticker_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await ticker_task
 
-        assert not state["blocked"], (
-            "Event loop was blocked during render — ticker stalled during the encode phase. "
-            f"Without to_thread offloading the sync subprocess.run calls starve the loop "
-            f"(ticks={state['ticks']})"
+        assert ticks_during_encode, (
+            "No encode was seen: the fake no longer stands at the boundary the renderer "
+            "uses, so nothing about the event loop was measured"
+        )
+        # 0.5 s of encode is fifty ticks on an idle machine. Three leaves room
+        # for a starved one and is still infinitely more than a blocked loop's
+        # zero.
+        assert min(ticks_during_encode) >= 3, (
+            "Event loop was blocked during render — the ticker stalled while an encode ran. "
+            "Without to_thread offloading the sync subprocess calls starve the loop "
+            f"(ticks during each encode: {ticks_during_encode})"
         )
 
 
