@@ -145,10 +145,21 @@ def sampa_to_ipa(sampa: str) -> str:
 
 
 def strip_tone(ipa: str) -> str:
-    """Remove tone-2 marks, leaving primary (ˈ) and secondary (ˌ) stress.
+    """Remove tone-2 marks. Any ˈ / ˌ already in *ipa* is left alone.
 
     Required before the IPA reaches ``<phoneme>``; never applied to IPA headed
     for a caption, which wants the mark.
+
+    ⚠️ For a tone-2 word the tone mark is the ONLY stress mark the conversion
+    emits, so the result carries no stress mark at all: ``lurer`` comes out
+    ``lʉː.rər``, and every chunk the breakdown planner cuts from a tone-2 word
+    is unstressed IPA (``hyggelig`` (0,2) -> ``hʏ.gə``), while tone-1 words keep
+    theirs (``kommer`` (0,1) -> ``ˈkɔ``). This is known and deliberately left:
+    on the native voice the mark changes nothing (Pernille, A vs B within the
+    repeat-render noise floor), and on a Multilingual voice, where it does
+    change the samples, the user heard no difference in an ear A/B (Emma,
+    2026-10-06). Do not "restore" the mark without a new ear test — it would
+    re-render every cached tone-2 chunk for no audible gain (bd tunatale-wat3).
     """
     return ipa.replace(_TONE_MARK, "")
 
