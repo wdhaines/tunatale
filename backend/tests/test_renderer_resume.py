@@ -190,7 +190,14 @@ class _BlockingTTS:
         self.completed = 0
 
     async def synthesize(
-        self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes=None, speak_locale=None
+        self,
+        text: str,
+        voice_id: str,
+        output_path: Path,
+        rate: str = "+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
     ) -> None:
         self.started += 1
         if text == self._failing:

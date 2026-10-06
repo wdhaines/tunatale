@@ -867,7 +867,9 @@ class TestRendererPassesUpos:
                 return text
 
         class _FakeTTS:
-            async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+            async def synthesize(
+                self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+            ):
                 import io
                 import struct
 

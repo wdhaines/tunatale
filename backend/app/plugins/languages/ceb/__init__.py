@@ -137,6 +137,11 @@ register(
         # per-word map would wrap every word in <phoneme> and change audio
         # nobody has listened to.
         ipa_for_drill_phrases=True,
+        # Enunciated lines carry the whole line's reading (tunatale-tyfk, the
+        # user's ear, 2026-10-06): the voice is asked to pause after each word
+        # and told how the line sounds, in one request. Per-word requests
+        # "sounded American", and the reading is what the heard version had.
+        ipa_for_enunciated_lines=True,
         # Onset maximization with Cebuano phonotactics (tunatale-u8nz.6): `ng`
         # opens a syllable (pa|nga|lan) and loan clusters do too (es|kwe|la|han),
         # where the generic default cut pan|ga|lan and esk|we|la|han. The

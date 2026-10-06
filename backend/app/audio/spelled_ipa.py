@@ -52,6 +52,7 @@ class SpelledPhonemePlanner:
         syllabify: Callable[[str], list[str]],
         onset_vowels: str = "aeiou",
         whole_word_ipa: Mapping[str, str] | None = None,
+        line_word_ipa: Mapping[str, str] | None = None,
     ) -> None:
         """
         Args:
@@ -67,12 +68,16 @@ class SpelledPhonemePlanner:
                 cannot produce (a written form that omits sounds). Used only
                 when a span covers the WHOLE word, and returned verbatim;
                 a span inside such a word is still spelled.
+            line_word_ipa: lowercase whole words whose reading INSIDE A LINE
+                the spelling gets wrong — borrowed names, mostly. Used only by
+                :meth:`plan_line_word`; a chunk of the same word is unaffected.
         """
         self._letter_ipa = letter_ipa
         self._digraph_ipa = digraph_ipa
         self._syllabify = syllabify
         self._onset_vowels = onset_vowels
         self._whole_word_ipa = dict(whole_word_ipa or {})
+        self._line_word_ipa = dict(line_word_ipa or {})
 
     def _spell(self, syllable: str) -> str:
         """The IPA of one syllable, written out. Never called on an empty piece
@@ -134,3 +139,29 @@ class SpelledPhonemePlanner:
         or all-punctuation word refuses exactly as an empty span does.
         """
         return self.plan_chunk(word, (0, len(self._syllabify(_bare(word)))))
+
+    def plan_line_word(self, word: str) -> str | None:
+        """The IPA of *word* as one word of a spoken LINE, or ``None``.
+
+        :meth:`plan_word`, with the two things a sentence changes
+        (tunatale-tyfk, the user's listening test of 2026-10-06):
+
+        * The lone syllable's stress mark is dropped. :meth:`plan_chunk` marks a
+          one-syllable piece so a drilled fragment is said with weight; in a
+          line the one-syllable words are the particles (``sa``, ``si``, ``ka``,
+          ``ang``), and marking them and nothing else stresses the line exactly
+          backwards.
+        * ``line_word_ipa`` is consulted first, for the words a line contains
+          and a drill mostly does not: names.
+
+        ``None`` for a word with nothing to read, a digit included: a bare
+        stress mark is not a reading, and the caller refuses the whole line
+        rather than send one with a hole in it.
+        """
+        fixed = self._line_word_ipa.get(_bare(word).lower())
+        if fixed is not None:
+            return fixed
+        ipa = self.plan_word(word)
+        if ipa is None:
+            return None
+        return ipa.removeprefix("ˈ") or None

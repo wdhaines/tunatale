@@ -638,7 +638,9 @@ async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
         def __init__(self):
             self._semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
 
-        async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def synthesize(
+            self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             nonlocal in_flight, observed_max
             async with self._semaphore:
                 in_flight += 1
@@ -1208,3 +1210,159 @@ def test_billable_body_is_byte_identical_to_the_voice_inner():
         '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="nb-NO">'
         f'<voice name="nb-NO-FinnNeural">{body}</voice></speak>'
     )
+
+
+# ---------------------------------------------------------------------------
+# Enunciated lines: the pauses are written into the SSML (tunatale-tyfk)
+# ---------------------------------------------------------------------------
+#
+# The oracles are the requests the user LISTENED to on 2026-10-06 and chose
+# (scripts/local/ipa_ab, comparison page), copied verbatim. They were sent by a
+# scratch script that swapped a sentinel for the element after escaping, because
+# the adapter had no way to say a pause; these tests are what make the product
+# path send the same bytes. A row that disagrees with the code is a FINDING.
+
+_TL_LINE = "Magandang gabi po. Nakikiramay po ako."
+_TL_WORDS = (("Magandang",), ("gabi",), ("po.",), ("Nakiki", "ramay"), ("po",), ("ako.",))
+_TL_HEARD = (
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="fil-PH">'
+    '<voice name="fil-PH-AngeloNeural"><prosody rate="+0%">'
+    'Magandang<break time="450ms"/> gabi<break time="450ms"/> po.<break time="450ms"/> '
+    'Nakiki<break time="150ms"/>ramay<break time="450ms"/> po<break time="450ms"/> ako.'
+    "</prosody></voice></speak>"
+)
+_NO_LINE = "mappen ble jo overført til en annen avdeling for mange år siden."
+_NO_WORDS = (
+    ("mappen",),
+    ("ble",),
+    ("jo",),
+    ("over", "ført"),
+    ("til",),
+    ("en",),
+    ("annen",),
+    ("avdeling",),
+    ("for",),
+    ("mange",),
+    ("år",),
+    ("siden.",),
+)
+_NO_HEARD = (
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="nb-NO">'
+    '<voice name="nb-NO-IselinNeural"><prosody rate="+0%">'
+    'mappen<break time="450ms"/> ble<break time="450ms"/> jo<break time="450ms"/> '
+    'over<break time="150ms"/>ført<break time="450ms"/> til<break time="450ms"/> en<break time="450ms"/> '
+    'annen<break time="450ms"/> avdeling<break time="450ms"/> for<break time="450ms"/> '
+    'mange<break time="450ms"/> år<break time="450ms"/> siden.'
+    "</prosody></voice></speak>"
+)
+_EMMA_LINE = "Mark, may masamang balita ako."
+_EMMA_WORDS = (("Mark,",), ("may",), ("masamang",), ("balita",), ("ako.",))
+_EMMA_HEARD = (
+    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">'
+    '<voice name="en-US-EmmaMultilingualNeural"><lang xml:lang="fil-PH"><prosody rate="+0%">'
+    'Mark,<break time="450ms"/> may<break time="450ms"/> masamang<break time="450ms"/> '
+    'balita<break time="450ms"/> ako.'
+    "</prosody></lang></voice></speak>"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "voice_id", "locale", "words", "heard"),
+    [
+        pytest.param(_TL_LINE, "fil-PH-AngeloNeural", "fil-PH", _TL_WORDS, _TL_HEARD, id="tagalog-long-word"),
+        pytest.param(_NO_LINE, "nb-NO-IselinNeural", "nb-NO", _NO_WORDS, _NO_HEARD, id="norwegian-compound"),
+        pytest.param(_EMMA_LINE, "en-US-EmmaMultilingualNeural", "fil-PH", _EMMA_WORDS, _EMMA_HEARD, id="wrapped"),
+    ],
+)
+def test_an_enunciated_line_is_the_request_the_user_chose(text, voice_id, locale, words, heard):
+    """One request per line: a pause after every word, a shorter one in a split word."""
+    assert AzureTTSService._build_ssml(text, voice_id, "+0%", None, locale, words) == heard
+
+
+def test_the_text_of_an_enunciated_line_is_still_escaped():
+    """Markup enters through the argument's STRUCTURE, never through its text."""
+    body = AzureTTSService._billable_body("a<b c&d", _VOICE, "+0%", enunciation=(("a<b",), ("c&d",)))
+
+    assert body == '<prosody rate="+0%">a&lt;b<break time="450ms"/> c&amp;d</prosody>'
+
+
+def test_an_enunciated_line_bills_its_breaks():
+    """Markup is billable, and here it is most of the request: each word gap
+    costs 22 characters where the old " ... " cost 5. The estimate has to be
+    made from this string or it understates an Enunciated section by half."""
+    plain = AzureTTSService._billable_body(_TL_LINE, "fil-PH-AngeloNeural", "+0%")
+    enunciated = AzureTTSService._billable_body(_TL_LINE, "fil-PH-AngeloNeural", "+0%", enunciation=_TL_WORDS)
+
+    assert len(plain) == 68
+    # The space after each word stays, so a break is 21 characters ADDED: five
+    # word gaps, and one more inside the split word.
+    assert len(enunciated) == 68 + 5 * 21 + 21
+
+
+def test_phoneme_markup_composes_with_the_breaks():
+    """The all-IPA shape that was also heard (and judged identical to plain).
+    Nothing asks for it today; the two arguments must still not fight."""
+    body = AzureTTSService._billable_body(
+        "Jeg må", _VOICE, "+0%", {"jeg": "ˈjæ͡ɪ", "må": "ˈmoː"}, enunciation=(("Jeg",), ("må",))
+    )
+
+    assert body == (
+        '<prosody rate="+0%"><phoneme alphabet="ipa" ph="ˈjæ͡ɪ">Jeg</phoneme><break time="450ms"/> '
+        '<phoneme alphabet="ipa" ph="ˈmoː">må</phoneme></prosody>'
+    )
+
+
+@pytest.mark.parametrize("enunciation", [None, ()], ids=["none", "empty"])
+@pytest.mark.parametrize("text,rate,digest", _ORACLE_DIGESTS)
+def test_cache_digests_unchanged_without_an_enunciation(tmp_path, enunciation, text, rate, digest):
+    """The new argument must not orphan a clip that never used it."""
+    path = _svc(cache_dir=tmp_path)._cache_path(text, _VOICE, rate, None, None, enunciation)
+
+    assert path.name == f"{digest}.mp3"
+    assert AzureTTSService._build_ssml("hagen", _VOICE, "+0%", enunciation=enunciation) == _PLAIN_SSML
+
+
+def test_an_enunciated_line_never_shares_a_clip_with_the_natural_one(tmp_path):
+    """Same text, same voice, same rate — the natural-speed section's line. A
+    shared key would play the natural clip in the Enunciated section, silently,
+    for as long as the cache held."""
+    svc = _svc(cache_dir=tmp_path)
+    natural = svc._cache_path(_TL_LINE, "fil-PH-AngeloNeural", "+0%")
+    enunciated = svc._cache_path(_TL_LINE, "fil-PH-AngeloNeural", "+0%", None, None, _TL_WORDS)
+    whole_word = svc._cache_path(
+        _TL_LINE, "fil-PH-AngeloNeural", "+0%", None, None, tuple(("".join(w),) for w in _TL_WORDS)
+    )
+
+    assert len({natural.name, enunciated.name, whole_word.name}) == 3
+
+
+@respx.mock
+async def test_synthesize_sends_the_breaks_to_the_wire_and_caches_the_clip(tmp_path):
+    """From the keyword argument to the posted SSML, then a hit on the same line."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"a"))
+    svc = _svc(cache_dir=tmp_path / "cache")
+
+    for name in ("one.mp3", "two.mp3"):
+        await svc.synthesize(
+            _TL_LINE, "fil-PH-AngeloNeural", tmp_path / name, speak_locale="fil-PH", enunciation=_TL_WORDS
+        )
+    await svc.synthesize(_TL_LINE, "fil-PH-AngeloNeural", tmp_path / "natural.mp3", speak_locale="fil-PH")
+
+    assert route.call_count == 2
+    assert route.calls[0].request.content.decode() == _TL_HEARD
+    assert "<break" not in route.calls[1].request.content.decode()
+    assert (tmp_path / "two.mp3").read_bytes() == b"a"
+
+
+@respx.mock
+async def test_the_ledger_records_the_breaks_it_was_billed_for(tmp_path):
+    """The monthly allowance is counted from the body that was SENT."""
+    from app.audio.char_ledger import AzureCharacterLedger
+
+    respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"a"))
+    ledger = AzureCharacterLedger(tmp_path / "usage.log")
+    svc = _svc(ledger=ledger, chars_per_month_limit=500_000, now=lambda: 1_700_000_000.0)
+
+    await svc.synthesize(_TL_LINE, "fil-PH-AngeloNeural", tmp_path / "o.mp3", enunciation=_TL_WORDS)
+
+    assert ledger.budget(chars_limit=500_000, now=1_700_000_000.0).chars_used == 68 + 6 * 21

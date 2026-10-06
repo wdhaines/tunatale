@@ -160,3 +160,60 @@ def test_a_word_with_nothing_to_read_gets_no_ipa(planner, word):
     """Nothing to spell: an empty or all-punctuation word is plain text, and a
     caller that treated it as an empty reading would speak a silence."""
     assert planner.plan_word(word) is None
+
+
+# ---------------------------------------------------------------------------
+# A word inside a LINE (tunatale-tyfk): the Enunciated sections give the voice
+# the reading of the whole line, and two things about a word change there.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        # The lone syllable's stress mark is dropped. It marks sa, si, ka, ang
+        # and nothing else, which in a sentence is exactly backwards: those are
+        # the words nobody stresses.
+        ("sa", "sa"),
+        ("si", "si"),
+        ("ka", "ka"),
+        ("ang", "ʔaŋ"),
+        # Longer words read as they always did.
+        ("Buntag", "buntaɡ"),
+        ("Naglakaw", "naɡlakaw"),
+        ("Maayong", "maʔajoŋ"),
+        ("Kumusta", "kumusta"),
+        ("kanus-a", "kanusʔa"),
+        # The override keeps its own mark: that one is inside the word.
+        ("mga", "maˈŋa"),
+    ],
+)
+def test_a_word_in_a_line_is_read_without_the_lone_syllable_mark(planner, word, expected):
+    assert planner.plan_line_word(word) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected", "spelled"),
+    [
+        ("Jimenez", "himɛnɛs", "dʒimɛnɛz"),
+        ("Paul", "pol", "paʔul"),
+        ("Liza", "lisa", "liza"),
+    ],
+)
+def test_a_name_the_spelling_misreads_has_its_line_reading(planner, name, expected, spelled):
+    """The three the user heard corrected, in every round of the listening test.
+
+    Borrowed names keep their own spelling, and the letter rules read it as
+    Cebuano. The correction applies to a word in a LINE only: the key-phrase
+    drill is unchanged by this work, so a whole-word chunk still reads as
+    spelled until someone has listened to that too.
+    """
+    assert planner.plan_line_word(name) == expected
+    assert planner.plan_line_word(f"{name}.") == expected
+    assert planner.plan_word(name) == spelled
+
+
+@pytest.mark.parametrize("word", ["", "?", "3", "..."])
+def test_a_line_word_with_nothing_to_read_gets_no_ipa(planner, word):
+    """A bare stress mark is not a reading; the caller refuses the whole line."""
+    assert planner.plan_line_word(word) is None

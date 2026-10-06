@@ -39,6 +39,7 @@ from scripts.report_render_cost import (
     _memo_key,
     _phrase_phonemes,
     _print_report,
+    collect_keys,
     main,
     price_lessons,
 )
@@ -146,6 +147,7 @@ def _price(
     syllabify_fn=None,
     slicer_enabled: bool = False,
     parent_rate: str = PARENT_RATE,
+    slow_word_fn=None,
     cache_dir: Path,
 ) -> RenderCost:
     return price_lessons(
@@ -157,6 +159,7 @@ def _price(
         syllabify_fn=syllabify_fn,
         slicer_enabled=slicer_enabled,
         parent_rate=parent_rate,
+        slow_word_fn=slow_word_fn,
         cache_dir=cache_dir,
     )
 
@@ -616,6 +619,7 @@ def _price_ceb(
         syllabify_fn=syllabify_fn,
         slicer_enabled=slicer_enabled,
         parent_rate=PARENT_RATE,
+        slow_word_fn=None,
         cache_dir=cache_dir,
     )
 
@@ -849,3 +853,154 @@ def test_print_report_says_nothing_about_gemini_when_there_is_none(capsys, tmp_p
 
     assert "gemini" not in out
     assert out.splitlines()[-1] == "monthly_allowance\t500000\tshare=0.0%"
+
+
+# ---------------------------------------------------------------------------
+# Enunciated lines (tunatale-tyfk). The renderer cuts a line into words and the
+# adapters pause between them; the report has to derive the SAME key and, for
+# Azure, count the SAME body, or it quotes a render that is not the one sent.
+# The breaks are not small change: a five-word line more than doubles.
+# ---------------------------------------------------------------------------
+
+
+def _slow(*phrases: Phrase, section_type: SectionType = SectionType.SLOW_SPEED) -> Section:
+    return Section(section_type, list(phrases))
+
+
+def test_an_enunciated_line_is_its_own_key_and_bills_its_breaks(tmp_path: Path) -> None:
+    """Same text, voice and rate as the natural line, and still two requests.
+
+    Natural: ``<prosody rate="+0%">Hei du</prosody>`` = 36. Enunciated: the same
+    with one 21-character ``<break time="450ms"/>`` after the first word = 57.
+    """
+    cost = _price([_lesson([_natural(_phrase("Hei du")), _slow(_phrase("Hei du"))])], cache_dir=tmp_path / "cache")
+
+    assert cost.phrase.distinct == 2
+    assert cost.phrase.misses == 2
+    assert cost.phrase.billable_chars == 36 + 57
+
+
+def test_a_one_word_enunciated_line_is_the_natural_lines_key(tmp_path: Path) -> None:
+    """Nothing to separate, so the renderer sends nothing new and neither may this."""
+    cost = _price([_lesson([_natural(_phrase("Hei")), _slow(_phrase("Hei"))])], cache_dir=tmp_path / "cache")
+
+    assert cost.phrase.distinct == 1
+    assert cost.phrase.billable_chars == 33
+
+
+def test_an_english_line_in_an_enunciated_section_is_priced_plain(tmp_path: Path) -> None:
+    """Only the target language is enunciated. The English line is the request
+    its natural-speed twin already is: one key between them, and no break in it
+    (30 of wrapper, 12 of text, and the 30-character ``<lang>`` an English line
+    on a Norwegian voice has always carried)."""
+    english = Phrase("Good morning", FINN, "en")
+
+    cost = _price([_lesson([_natural(english), _slow(english)])], cache_dir=tmp_path / "cache")
+
+    assert cost.phrase.distinct == 1
+    assert cost.phrase.billable_chars == 72
+
+
+def test_the_languages_cut_is_priced_as_the_short_break_it_becomes(tmp_path: Path) -> None:
+    """``fly<break time="150ms"/>plassen<break time="450ms"/> er`` in the
+    30-character prosody wrapper: 3 + 21 + 7 + 21 + 1 + 2 = 55, + 30 = 85. An
+    injected resolver, like the others: without it the compound is priced whole."""
+    lesson = _lesson([_slow(_phrase("flyplassen er"))])
+    cut = {"flyplassen": "fly, plassen"}
+
+    whole = _price([lesson], cache_dir=tmp_path / "cache")
+    split = _price([lesson], slow_word_fn=lambda word: cut.get(word, word), cache_dir=tmp_path / "cache")
+
+    assert whole.phrase.billable_chars == 30 + len("flyplassen") + 21 + 1 + len("er")
+    assert split.phrase.billable_chars == 85
+
+
+def test_a_line_stored_in_the_old_notation_is_the_same_key_as_the_natural_one(tmp_path: Path) -> None:
+    """A lesson stored before the change and one stored after say the same
+    thing, so across a curriculum they are one request, not two."""
+    cost = _price(
+        [
+            _lesson([_slow(_phrase("Hei ... du"))]),
+            _lesson([_slow(_phrase("Hei du"), section_type=SectionType.SLOW_TRANSLATED)]),
+        ],
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert cost.phrase.distinct == 1
+    assert cost.phrase.billable_chars == 57
+
+
+def test_an_enunciated_line_is_a_hit_only_on_its_own_clip(tmp_path: Path) -> None:
+    """The natural clip of the same line is in the cache of every lesson already
+    rendered. It must not read as a hit, or a re-render is quoted as free."""
+    cache_dir = tmp_path / "cache"
+    lesson = _lesson([_slow(_phrase("Hei du"))])
+    tts = AzureTTSService(cache_dir=cache_dir, key="k", region="r")
+
+    natural = tts._cache_path("Hei du", FINN, "+0%", None, TARGET_LOCALE)
+    natural.parent.mkdir(parents=True, exist_ok=True)
+    natural.write_bytes(b"x")
+    assert _price([lesson], cache_dir=cache_dir).phrase.misses == 1
+
+    tts._cache_path("Hei du", FINN, "+0%", None, TARGET_LOCALE, (("Hei",), ("du",))).write_bytes(b"x")
+    warm = _price([lesson], cache_dir=cache_dir)
+    assert (warm.phrase.hits, warm.phrase.misses, warm.phrase.billable_chars) == (1, 0, 0)
+
+
+def test_collect_keys_carries_the_cut_for_a_caller_that_addresses_a_clip() -> None:
+    keys = collect_keys(
+        [_lesson([_slow(_phrase("Hei ... du"))])],
+        language_code="no",
+        preprocessor=_PASS_THROUGH,
+        planner=None,
+        target_locale=TARGET_LOCALE,
+        syllabify_fn=None,
+        slicer_enabled=False,
+        parent_rate=PARENT_RATE,
+        slow_word_fn=None,
+    )
+
+    assert list(keys.phrase.values()) == [("Hei du", FINN, "+0%", None, TARGET_LOCALE, (("Hei",), ("du",)))]
+
+
+_CEB_LINE = "Buntag sa Jimenez. Naglakaw si Paul."
+_CEB_LINE_IPA = "buntaɡ sa himɛnɛs. naɡlakaw si pol."
+
+
+def _price_ceb_line(cache_dir: Path) -> RenderCost:
+    from app.languages import get_phoneme_planner
+
+    lesson = Lesson(title="A Cebuano lesson", language_code="ceb", sections=[_slow(_ceb_phrase(_CEB_LINE))])
+    return _price_ceb([lesson], planner=get_phoneme_planner("ceb"), cache_dir=cache_dir)
+
+
+def test_an_enunciated_gemini_line_is_priced_at_the_length_it_runs_to(tmp_path: Path) -> None:
+    """Asked to stop after each word, the voice takes about twice as long over
+    the line (measured 2026-10-06: 8.3 s against about 4 s at natural speed),
+    and this provider bills the audio, not the text."""
+    cost = _price_ceb_line(tmp_path / "cache")
+
+    assert cost.gemini_phrase.misses == 1
+    assert cost.gemini_phrase.chars == len(_CEB_LINE)
+    assert cost.gemini_phrase.audio_tokens == pytest.approx(len(_CEB_LINE) / 11 * 25 * 2)
+
+
+def test_an_enunciated_gemini_line_is_a_hit_only_on_the_clip_made_from_its_reading(tmp_path: Path) -> None:
+    """The reading and the instruction are both in the file's name. The
+    report's key has to arrive at the reading the RENDERER would send — through
+    the real planner, names corrected and particles unstressed — or every
+    Enunciated Cebuano line reads as a miss forever."""
+    cache_dir = tmp_path / "cache"
+    gemini = GeminiTTSService(cache_dir=cache_dir)
+    for wrong in (
+        gemini._cache_path(_CEB_LINE, KORE, "+0%"),
+        gemini._cache_path(_CEB_LINE, KORE, "+0%", _CEB_LINE_IPA),
+        gemini._cache_path(_CEB_LINE, KORE, "+0%", None, True),
+    ):
+        wrong.parent.mkdir(parents=True, exist_ok=True)
+        wrong.write_bytes(b"x")
+    assert _price_ceb_line(cache_dir).gemini_phrase.misses == 1
+
+    gemini._cache_path(_CEB_LINE, KORE, "+0%", _CEB_LINE_IPA, True).write_bytes(b"x")
+    warm = _price_ceb_line(cache_dir)
+    assert (warm.gemini_phrase.hits, warm.gemini_phrase.misses, warm.gemini_phrase.audio_tokens) == (1, 0, 0)

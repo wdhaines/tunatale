@@ -9,7 +9,14 @@ class MockTTSService:
     """Mock implementation satisfying the TTSService Protocol."""
 
     async def synthesize(
-        self, text: str, voice_id: str, output_path: Path, rate: str = "+0%", phonemes=None, speak_locale=None
+        self,
+        text: str,
+        voice_id: str,
+        output_path: Path,
+        rate: str = "+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
     ) -> None:
         output_path.write_bytes(b"fake audio")
 

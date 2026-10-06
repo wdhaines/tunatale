@@ -33,6 +33,12 @@ class TTSQuotaExceeded(RuntimeError):
     """
 
 
+# A line cut up to be said one word at a time: its words in order, each as the
+# parts a SHORT pause separates (one part for a word said whole). A tuple of
+# tuples so it can sit in a dedupe key as it is.
+Enunciation = tuple[tuple[str, ...], ...]
+
+
 @runtime_checkable
 class TTSService(Protocol):
     """Protocol for text-to-speech synthesis services."""
@@ -45,6 +51,7 @@ class TTSService(Protocol):
         rate: str = "+0%",
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> None:
         """Synthesize *text*, optionally wrapping known tokens in ``<phoneme>``.
 
@@ -58,6 +65,14 @@ class TTSService(Protocol):
         must behave identically to a provider without the capability, cache key
         included; an adapter that cannot emit the markup degrades with a warning
         rather than raising.
+
+        *enunciation* asks for *text* one word at a time, with a pause after
+        every word and a shorter one between the parts of a split word. *text*
+        is still the whole line as written. How the pause is produced is each
+        adapter's own business — one writes it into its markup from the parts,
+        another asks for it in an instruction and says *text* — which is why
+        both travel. ``None`` must behave identically to a provider without the
+        capability, cache key included.
         """
         ...
 

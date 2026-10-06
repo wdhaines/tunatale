@@ -62,6 +62,7 @@ from app.languages import (  # noqa: E402
     get_alignment,
     get_phoneme_planner,
     get_preprocessor,
+    get_slow_word,
     get_tts_locale,
     resolve_db_path,
 )
@@ -83,8 +84,8 @@ _NEAR_MATCH_LIMIT = 20
 def _describe(path: Path, value: _SynthValue) -> str:
     """One key as a block of ``field<TAB>value`` lines — the shape this repo's
     reports already print, so it diffs and greps like the rest."""
-    text, voice_id, rate, phonemes, _speak_locale = value
-    ipa, _phrase = resolve_ipa(text, phonemes)
+    text, voice_id, rate, phonemes, _speak_locale, enunciation = value
+    ipa, _phrase = resolve_ipa(text, phonemes, enunciation)
     return "\n".join(
         [
             f"digest\t{path.stem}",
@@ -169,6 +170,7 @@ def main(argv: list[str] | None = None, *, now: Callable[[], datetime] | None = 
         syllabify_fn=alignment.syllabify_fn if alignment is not None else None,
         slicer_enabled=alignment_installed() and alignment is not None,
         parent_rate=PARENT_RATE,
+        slow_word_fn=get_slow_word(code),
     )
     gemini = GeminiTTSService(cache_dir=cache_dir)
     candidates: list[_SynthValue] = list(keys.gemini_values)
@@ -265,7 +267,7 @@ def main(argv: list[str] | None = None, *, now: Callable[[], datetime] | None = 
         "text": value[0],
         "voice_id": value[1],
         "rate": value[2],
-        "ipa": resolve_ipa(value[0], value[3])[0],
+        "ipa": resolve_ipa(value[0], value[3], value[5])[0],
         "evicted_to": str(destination),
     }
     with (reroll_dir / LOG_NAME).open("a", encoding="utf-8") as log:

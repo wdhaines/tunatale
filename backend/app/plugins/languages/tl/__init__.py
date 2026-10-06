@@ -10,6 +10,7 @@ from app.plugins.languages.tl.a1_morphology import TAGALOG_A1_MORPHOLOGY
 from app.plugins.languages.tl.hyphenation import normalize_affix_hyphens
 from app.plugins.languages.tl.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.tl.preprocessor import TagalogPreprocessor
+from app.plugins.languages.tl.slow_word import slow_tagalog_word
 from app.plugins.languages.tl.syllabify import syllabify_tagalog_word
 from app.plugins.languages.tl.verb_headword import verb_headword
 
@@ -160,6 +161,9 @@ register(
         ),
         wordfreq_lang="fil",
         syllabifier_fn=syllabify_tagalog_word,
+        # A long affixed word is cut once when a line is enunciated
+        # (Nakaka + lungkot), the user's call on 2026-10-06 (tunatale-tyfk).
+        slow_word_fn=slow_tagalog_word,
         lemma_table_path=_DATA / "tagalog_lemmas.tsv.gz",
         lemmatizer_type="table",
         verb_headword_fn=verb_headword,

@@ -34,13 +34,18 @@ script's.
 The two legs mirror ``LessonRenderer._render_section`` exactly — this script
 WIRES the renderer's existing functions, it does not re-derive their rules:
 
-- **phrase leg**: one key per 5-tuple ``(processed_text, voice_id, rate,
-  sorted(phonemes), speak_locale)`` — the renderer's ``synth_memo`` key — where
-  the text is ``preprocess(phrase.text, section.section_type)``, phonemes are
-  planned only when BOTH ``source_word`` and ``syllable_span`` are present
-  (``_phrase_phonemes``), and ``speak_locale`` is the target locale for
+- **phrase leg**: one key per tuple ``(processed_text, voice_id, rate,
+  sorted(phonemes), speak_locale, enunciation)`` — the renderer's ``synth_memo``
+  key — where the text is ``preprocess(phrase.text, section.section_type)``,
+  phonemes are planned only when BOTH ``source_word`` and ``syllable_span`` are
+  present (``_phrase_phonemes``), and ``speak_locale`` is the target locale for
   phrases whose ``language_code`` matches and the phrase's OWN language's
-  locale otherwise (an English line declares en-US).
+  locale otherwise (an English line declares en-US). A target-language line in
+  an Enunciated section is cut into words by ``app.audio.enunciation.plan_line``
+  — the function the renderer calls, with the language's own long-word cut —
+  and that cut is the last field: Azure bills the ``<break>`` it becomes (21
+  characters a word gap, most of such a request), and Gemini's line is priced
+  at about twice its natural length.
 - **slicer leg**: one key per ``(source_word, voice_id)`` — the slicer's
   ``_words`` memo key — for every provenance phrase the renderer's
   ``_apply_slicing`` hands to ``ChunkSlicer._build_parent``, which synthesizes
@@ -97,6 +102,7 @@ from app.languages import (  # noqa: E402
     get_alignment,
     get_phoneme_planner,
     get_preprocessor,
+    get_slow_word,
     get_tts_locale,
     resolve_db_path,
 )
@@ -214,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         syllabify_fn=no_alignment.syllabify_fn if no_alignment is not None else None,
         slicer_enabled=alignment_installed() and no_alignment is not None,
         parent_rate=PARENT_RATE,
+        slow_word_fn=get_slow_word(code),
         cache_dir=cache_dir,
     )
     _print_report(lessons, cache_dir, cost)

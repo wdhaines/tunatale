@@ -197,11 +197,18 @@ def test_slow_speed_mirrors_natural_speed_line_count():
     assert len(slow_dialogue) == len(nat_dialogue)
 
 
-def test_slow_speed_adds_ellipsis_between_words():
+def test_slow_speed_stores_each_line_as_written():
+    """An Enunciated section stores the natural line (tunatale-tyfk).
+
+    It used to store ``Dober ... dan!`` and send that to the voice as text. The
+    pauses are now made at render time, by the provider's own means, from the
+    line itself — so what is stored is the line, the same one natural speed has.
+    """
     section = build_slow_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
+    natural = build_natural_speed_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     dialogue = [p for p in section.phrases if p.role != "narrator"]
-    assert " ... " in dialogue[0].text
-    assert dialogue[0].text == "Dober ... dan!"
+    assert dialogue[0].text == "Dober dan!"
+    assert [p.text for p in dialogue] == [p.text for p in natural.phrases if p.role != "narrator"]
 
 
 def test_slow_speed_scene_labels_not_slowed():
@@ -364,7 +371,7 @@ def test_slow_speed_skips_malformed_line():
     ]
     section = build_slow_speed_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     texts = [p.text for p in section.phrases]
-    assert "Kava ... prosim" in texts
+    assert "Kava prosim" in texts
     assert "Scene" in texts
     assert "Bad lines" in texts
 
@@ -405,31 +412,18 @@ def test_slovene_behavior_unchanged():
     assert result == ["prosim", "sim", "pro", "prosim"]
 
 
-def test_slow_speed_norwegian_slows_compounds():
-    """Norwegian slow-speed section should use intra-word commas for compounds."""
+def test_slow_speed_stores_a_norwegian_compound_whole():
+    """The compound's cut is not stored either. It is made when the line is
+    rendered (``test_renderer_enunciation``), so a better rule reaches every
+    lesson on its next render instead of only the ones generated after it."""
     slow_text = build_slow_speed_section(
-        [{"label": "Test", "lines": [{"speaker": "female-1", "text": "flyplassen", "translation": "the airport"}]}],
+        [{"label": "Test", "lines": [{"speaker": "female-1", "text": "Flyplassen er her.", "translation": "x"}]}],
         _VOICE_MAP,
         NARRATOR_VOICE,
         "no",
     )
     texts = [p.text for p in slow_text.phrases if p.role != "narrator"]
-    # Compound is split at morpheme boundaries; the article stays on its stem.
-    assert "fly, plassen" in "\n".join(texts)
-
-
-def test_slow_speed_slovene_unchanged():
-    """Slovene slow-speed should not use intra-word commas for compounds."""
-    slow_text = build_slow_speed_section(
-        [{"label": "Test", "lines": [{"speaker": "female-1", "text": "dober dan", "translation": "good day"}]}],
-        _VOICE_MAP,
-        NARRATOR_VOICE,
-        "sl",
-    )
-    texts = [p.text for p in slow_text.phrases if p.role != "narrator"]
-    assert " ... " in texts[0]
-    # No comma-based intra-word slowing
-    assert texts[0] == "dober ... dan"
+    assert texts == ["Flyplassen er her."]
 
 
 # ── Malformed-input resilience (backlog #5) ──────────────────────────────
@@ -475,14 +469,10 @@ def test_slow_translated_starts_with_title_phrase():
     assert first.language_code == "en"
 
 
-def test_slow_translated_has_ellipsis_slowed_l2():
+def test_slow_translated_stores_each_line_as_written():
     section = build_slow_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     l2_phrases = [p for p in section.phrases if p.language_code == L2_CODE]
-    assert len(l2_phrases) == 2
-    assert " ... " in l2_phrases[0].text
-    assert " ... " in l2_phrases[1].text
-    assert l2_phrases[0].text == "Dober ... dan!"
-    assert l2_phrases[1].text == "Prosim ... kavo."
+    assert [p.text for p in l2_phrases] == ["Dober dan!", "Prosim kavo."]
 
 
 def test_slow_translated_interleaves_narrator_after_l2():
@@ -661,7 +651,7 @@ def test_slow_en_translated_starts_with_title_phrase():
     assert first.language_code == "en"
 
 
-def test_slow_en_translated_narrator_before_ellipsis_l2():
+def test_slow_en_translated_narrator_before_l2():
     section = build_slow_en_translated_section(_SCENES, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     body = [p for p in section.phrases if p.text not in ("Enunciated, English Before", "At the Riverside Café")]
     for i, phrase in enumerate(body):
@@ -671,8 +661,8 @@ def test_slow_en_translated_narrator_before_ellipsis_l2():
         else:
             assert phrase.language_code == L2_CODE
     l2_phrases = [p for p in section.phrases if p.language_code == L2_CODE]
-    assert l2_phrases[0].text == "Dober ... dan!"
-    assert l2_phrases[1].text == "Prosim ... kavo."
+    assert l2_phrases[0].text == "Dober dan!"
+    assert l2_phrases[1].text == "Prosim kavo."
 
 
 def test_slow_en_translated_skips_line_without_translation():
@@ -687,8 +677,7 @@ def test_slow_en_translated_skips_line_without_translation():
     ]
     section = build_slow_en_translated_section(scenes, _VOICE_MAP, NARRATOR_VOICE, L2_CODE)
     l2_texts = [p.text for p in section.phrases if p.language_code == L2_CODE]
-    assert len(l2_texts) == 1
-    assert " ... " in l2_texts[0]
+    assert l2_texts == ["Dober dan"]
 
 
 def test_slow_en_translated_skips_malformed_input():
@@ -737,13 +726,7 @@ def test_resolve_voice_raises_for_unknown_speaker():
 
 
 def _register_slow_word_only(monkeypatch, slow_fn):
-    """Register a throwaway language whose ONLY wiring is a slow-word function.
-
-    The seam under test: a language is slowed because it registers
-    ``slow_word_fn``, not because it happens to also register a compound
-    breakdown. Norwegian sets both, so only a language with one of them can
-    tell the two rules apart.
-    """
+    """Register a throwaway language whose ONLY wiring is a slow-word function."""
     from app.languages import _CONFIGS as configs
     from app.languages import LanguageConfig, discover
     from app.models.language import Language
@@ -759,24 +742,20 @@ def _register_slow_word_only(monkeypatch, slow_fn):
     )
 
 
-def test_slow_speed_uses_slow_word_fn_without_a_compound_breakdown(monkeypatch):
-    _register_slow_word_only(monkeypatch, lambda w: f"<{w}>")
-    scenes = [{"label": "S", "lines": [{"speaker": "female-1", "text": "en to"}]}]
-
-    section = build_slow_speed_section(scenes, {"female-1": "v"}, "narr", "zz")
-
-    l2 = [p.text for p in section.phrases if p.language_code == "zz"]
-    assert l2 == ["<en> ... <to>"]
-
-
-def test_slow_translated_uses_slow_word_fn_without_a_compound_breakdown(monkeypatch):
+@pytest.mark.parametrize(
+    "build",
+    [build_slow_speed_section, build_slow_translated_section, build_slow_en_translated_section],
+)
+def test_no_enunciated_builder_applies_the_languages_cut(monkeypatch, build):
+    """The cut belongs to the renderer, and to the renderer alone. A builder
+    that also applied it would store ``<en> <to>``, the renderer would cut that
+    again, and the two rules would have to agree forever."""
     _register_slow_word_only(monkeypatch, lambda w: f"<{w}>")
     scenes = [{"label": "S", "lines": [{"speaker": "female-1", "text": "en to", "translation": "one two"}]}]
 
-    section = build_slow_translated_section(scenes, {"female-1": "v"}, "narr", "zz")
+    section = build(scenes, {"female-1": "v"}, "narr", "zz")
 
-    l2 = [p.text for p in section.phrases if p.language_code == "zz"]
-    assert l2 == ["<en> ... <to>"]
+    assert [p.text for p in section.phrases if p.language_code == "zz"] == ["en to"]
 
 
 # ── key_phrase_groups ───────────────────────────────────────────────────

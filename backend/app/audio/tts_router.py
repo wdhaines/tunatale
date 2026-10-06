@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
-from app.audio.ports import TTSService
+from app.audio.ports import Enunciation, TTSService
 
 # The provider suffix each adapter's voice ids end with. These are the ids'
 # own naming convention, not a per-language lookup — see
@@ -76,6 +76,7 @@ class RoutingTTSService:
         rate: str = "+0%",
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> None:
         """Hand *voice_id* to the adapter that serves it.
 
@@ -88,6 +89,8 @@ class RoutingTTSService:
             speak_locale: The locale *text* is written in, passed through
                 uninterpreted. An adapter that cannot use it degrades with a
                 warning; one that can, does.
+            enunciation: The line cut into words, passed through uninterpreted.
+                Each adapter pauses between them in its own way.
         """
         adapter = self._adapter_for(voice_id)
         await adapter.synthesize(
@@ -97,6 +100,7 @@ class RoutingTTSService:
             rate=rate,
             phonemes=phonemes,
             speak_locale=speak_locale,
+            enunciation=enunciation,
         )
 
     async def list_voices(self, language_code: str | None = None) -> list[dict]:
