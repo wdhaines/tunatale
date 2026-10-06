@@ -28,6 +28,7 @@ import pytest
 from app.audio.azure_tts import AzureTTSService
 from app.audio.gemini_tts import GeminiTTSService
 from app.audio.slicer import PARENT_RATE
+from app.audio.synth_plan import SynthRequest, plan_section
 from app.config import settings
 from app.languages import resolve_db_path
 from app.models.lesson import Lesson, Phrase, Section, SectionType
@@ -36,8 +37,6 @@ from scripts.report_render_cost import (
     GeminiLegStats,
     LegStats,
     RenderCost,
-    _memo_key,
-    _phrase_phonemes,
     _print_report,
     collect_keys,
     main,
@@ -138,6 +137,29 @@ def _natural(*phrases: Phrase) -> Section:
 _PASS_THROUGH = PassThroughPreprocessor()
 
 
+def _phrase_phonemes(planner, language_code: str, phrase: Phrase):
+    """The phonemes one phrase is sent with.
+
+    Asked of ``plan_section``, the function the renderer and the report both
+    call. The report once had a rule of its own under this name; it had drifted
+    from the renderer's (tunatale-u9ce), and the Rule 2 tests below now pin the
+    one rule there is.
+    """
+    [request] = plan_section(
+        _natural(phrase),
+        language_code,
+        preprocessor=_PASS_THROUGH,
+        planner=planner,
+        locale_for=lambda code: None,
+        slow_word=None,
+    )
+    return request.phonemes
+
+
+def _memo_key(text: str, voice_id: str, rate: str, phonemes, speak_locale):
+    return SynthRequest(text, voice_id, rate, phonemes, speak_locale).key
+
+
 def _price(
     lessons: list[Lesson],
     *,
@@ -205,7 +227,7 @@ def test_rule2_phonemes_require_both_source_word_and_syllable_span() -> None:
     assert _phrase_phonemes(planner, "no", _phrase("sno", source_word="sno")) is None
     assert planner.calls == []
 
-    # Both present -> the mapping keyed by phrase.text.lower().
+    # Both present -> the mapping keyed by the bare lowercase word.
     assert _phrase_phonemes(planner, "no", _phrase("sno", source_word="sno", syllable_span=(0, 1), upos="NOUN")) == {
         "sno": "ˈsnuː"
     }
