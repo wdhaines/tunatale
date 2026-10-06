@@ -111,12 +111,13 @@ from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import (
+    LemmaCard,
     _build_inflection_index,
     _build_variant_index,
     build_phrase_index,
+    choose_lemma_card,
     extract_transcript,
     phrase_span_keys,
-    resolve_lemma_card,
     resolve_via_inflection_index,
 )
 
@@ -1113,6 +1114,7 @@ def _resolve_card_for_lemma(
     variant_index: dict[str, tuple[int, SRSItem]] | None = None,
     inflection_index: dict[str, int] | None = None,
     surface_upos: dict[str, str] | None = None,
+    gloss: str | None = None,
 ):
     """Resolve the tracked card for a lemma, or None if untracked.
 
@@ -1139,21 +1141,55 @@ def _resolve_card_for_lemma(
     reader shows (tunatale-u8nz.22). The lemma's tag is its most frequent
     surface tag.
     """
+    return _choose_card_for_lemma(db, lemma, surfaces, variant_index, inflection_index, surface_upos, gloss).card
+
+
+def _choose_card_for_lemma(
+    db,
+    lemma: str,
+    surfaces: set[str],
+    variant_index: dict[str, tuple[int, SRSItem]] | None = None,
+    inflection_index: dict[str, int] | None = None,
+    surface_upos: dict[str, str] | None = None,
+    gloss: str | None = None,
+) -> LemmaCard:
+    """``_resolve_card_for_lemma``, also saying whether the card is a guess.
+
+    ``undecided`` is ``choose_lemma_card``'s: the spelling has several cards and
+    the lesson's gloss singled out none. The word loops of the preview and the
+    commit both skip such a lemma — it is tracked, so it is not a creation
+    candidate, and it is not graded, because nothing says which card heard it.
+    """
     upos = _lemma_upos(surfaces, surface_upos)
-    res = resolve_lemma_card(db, lemma, upos)
-    if res is None:
+    choice = choose_lemma_card(db, lemma, upos, gloss)
+    if choice.card is None:
         for s in surfaces:
             if s.lower() != lemma:
-                res = resolve_lemma_card(db, s.lower(), upos)
-                if res is not None:
+                choice = choose_lemma_card(db, s.lower(), upos, gloss)
+                if choice.card is not None:
                     break
-    if res is None and variant_index:
+    if choice.card is not None:
+        return choice
+    res = None
+    if variant_index:
         # Index keys are casefolded (_build_variant_index) — match that, or a
         # capitalized lemma from the Norwegian lemmatizer silently misses.
         res = variant_index.get(lemma.casefold())
     if res is None and inflection_index:
         res = resolve_via_inflection_index(db, inflection_index, lemma, *sorted(surfaces))
-    return res
+    return LemmaCard(res, False)
+
+
+def _lemma_gloss(lemma: str, surfaces: set[str], token_glosses: dict[str, str]) -> str:
+    """Every gloss the lesson gave *lemma* or one of its surfaces, as one string.
+
+    A listen decides a lemma's sense once per lesson (per-occurrence resolution
+    is bd tunatale-id1z), so it pools the evidence: ``gang`` glossed "time" and
+    ``gangen`` glossed "the time" both speak for the same card. Sorted, so the
+    preview and the commit read the same string.
+    """
+    keys = [lemma, *sorted(s.lower() for s in surfaces if s.lower() != lemma)]
+    return " ".join(g for key in keys if (g := token_glosses.get(key)))
 
 
 def _lemma_upos(surfaces: set[str], surface_upos: dict[str, str] | None) -> str | None:
@@ -1406,7 +1442,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             lemma_plausible=lemma_plausible,
         )
         _commit_resolved[_lem] = _resolve_card_for_lemma(
-            db, _lem, lemma_to_surfaces.get(_lem, set()), variant_index, inflection_index, surface_to_upos
+            db,
+            _lem,
+            lemma_to_surfaces.get(_lem, set()),
+            variant_index,
+            inflection_index,
+            surface_to_upos,
+            _lemma_gloss(_lem, lemma_to_surfaces.get(_lem, set()), token_glosses),
         )
     dropped_lemmas = _lemmas_losing_a_shared_card(_commit_resolved, _commit_card_keys)
 
@@ -1423,8 +1465,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
         )
 
-        res = _resolve_card_for_lemma(
-            db, lemma, lemma_to_surfaces.get(lemma, set()), variant_index, inflection_index, surface_to_upos
+        res, sense_undecided = _choose_card_for_lemma(
+            db,
+            lemma,
+            lemma_to_surfaces.get(lemma, set()),
+            variant_index,
+            inflection_index,
+            surface_to_upos,
+            _lemma_gloss(lemma, lemma_to_surfaces.get(lemma, set()), token_glosses),
         )
         existing_id, existing = res if res is not None else (None, None)
 
@@ -1477,6 +1525,11 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             # which a claimed card should not lose) and before anything that
             # grades.
             if existing_id in kp_claimed_ids:
+                continue
+            # The spelling has several cards and the lesson's gloss names none
+            # of them: grading `existing` would be grading a guess (bd
+            # tunatale-ceuc). Same place and same reason in the preview.
+            if sense_undecided:
                 continue
 
             rec = existing.directions.get(Direction.RECOGNITION)
@@ -2047,6 +2100,9 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
     listen_phrases = _listen_key_phrases(lesson, words, db)
+    # Read here, above the word loop: the gloss is what picks among a spelling's
+    # cards, and the create rows further down read the same map.
+    token_glosses: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
     # Same predicate mark_lesson_listened resolves, for the same reason: a
     # truncated lemma must not be the name on a row the commit path would key
     # somewhere else.
@@ -2123,7 +2179,13 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         )
         _preview_card_keys[lemma] = _key
         _preview_resolved[lemma] = _resolve_card_for_lemma(
-            db, _key, words.surfaces.get(lemma, set()), variant_index, inflection_index, words.surface_upos
+            db,
+            _key,
+            words.surfaces.get(lemma, set()),
+            variant_index,
+            inflection_index,
+            words.surface_upos,
+            _lemma_gloss(lemma, words.surfaces.get(lemma, set()), token_glosses),
         )
     dropped_lemmas = _lemmas_losing_a_shared_card(_preview_resolved, _preview_card_keys)
 
@@ -2151,8 +2213,14 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         )
         card_key_by_lemma[lemma] = card_key
 
-        res = _resolve_card_for_lemma(
-            db, card_key, words.surfaces.get(lemma, set()), variant_index, inflection_index, words.surface_upos
+        res, sense_undecided = _choose_card_for_lemma(
+            db,
+            card_key,
+            words.surfaces.get(lemma, set()),
+            variant_index,
+            inflection_index,
+            words.surface_upos,
+            _lemma_gloss(lemma, words.surfaces.get(lemma, set()), token_glosses),
         )
         if res is None:
             # Untracked → ranked/budget-truncated below, mirroring
@@ -2172,6 +2240,10 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             # shared introduction budget, and budgeting a row that then vanishes
             # would make the preview's own "N now / N later" split wrong.
             if existing_id in kp_claimed_ids:
+                continue
+            # Several cards, and the lesson's gloss names none of them — the
+            # commit will not grade it, so the preview must not offer it.
+            if sense_undecided:
                 continue
             if existing.syntactic_unit.card_type == "cloze":
                 continue
@@ -2306,7 +2378,6 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     # helper mark_lesson_listened uses when it creates the card. Reusing it (as
     # opposed to a second lookup here) is what makes the previewed gloss and the
     # stored gloss identical by construction rather than by coincidence.
-    token_glosses: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
     verb_base_glosses: dict[str, str] = (lesson.generation_metadata or {}).get("verb_base_glosses", {})
     creates = [
         {
