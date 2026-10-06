@@ -17,7 +17,9 @@ fixes (``app.srs.base_list``), behind every card already waiting. It writes
 TunaTale's own collection (``tt_collection``) inside ``safe_open`` — ``usn = -1``
 and ``mod`` per card, one ``col.mod`` bump, never ``col.usn`` or ``col.scm`` —
 and points TunaTale's ``anki_due`` mirror at the same values. It refuses a deck
-that gathers new cards by descending position, where "the back" is the front.
+that gathers new cards by descending position, where "the back" is the front,
+and it refuses to write anything when a planned card is no longer a new card in
+the collection, where ``due`` is no longer a position.
 
 A learner deck with no Anki behind it (``--tt-db <path> --no-anki``) has no
 collection to write: ``--position`` then sets TunaTale's own positions and drops
@@ -124,7 +126,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.apply and assignments:
             with safe_open(settings.tt_collection_path, mode="rw") as ctx:
                 ids = ",".join(str(cid) for cid, _ in assignments)
-                current = dict(ctx.conn.execute(f"SELECT id, due FROM cards WHERE id IN ({ids})").fetchall())
+                rows = ctx.conn.execute(f"SELECT id, due, type FROM cards WHERE id IN ({ids})").fetchall()
+                # `due` is a queue position only on a new card (type 0); on any other
+                # it is a due day or a timestamp. The plan comes from TunaTale's
+                # state, so a card that moved on in the collection means the two
+                # disagree, and writing a position there would corrupt its schedule.
+                not_new = sorted(cid for cid, _, card_type in rows if card_type != 0)
+                if not_new:
+                    shown = ", ".join(str(cid) for cid in not_new[:10])
+                    print(
+                        f"REFUSING: {len(not_new)} planned card(s) are not new in the collection ({shown}). Sync first."
+                    )
+                    return 2
+                current = {cid: due for cid, due, _ in rows}
                 present = [(cid, pos) for cid, pos in assignments if cid in current]
                 moves = [(cid, pos) for cid, pos in present if current[cid] != pos]
                 apply_repositioning(ctx.conn, RepositionPlan(assignments=present, moves=moves))
