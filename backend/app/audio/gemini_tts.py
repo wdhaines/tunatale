@@ -38,7 +38,7 @@ import google.auth.transport.requests
 import google.oauth2.service_account
 import httpx
 
-from app.audio.ports import TTSExhausted
+from app.audio.ports import Enunciation, TTSExhausted
 from app.generation.section_builder import _SENTENCE_PUNCTUATION
 from app.languages import language_name_for_tts_locale
 
@@ -75,6 +75,12 @@ _AUDIO_ENCODING = "MP3"
 # there was no instruction to key. Every key already in the cache is a
 # single-fragment one, and bumping would throw all of it away for nothing.
 PROMPT_VERSION = 1
+
+# The same rule for the ENUNCIATION sentence (``_ENUNCIATION_INSTRUCTION``), on
+# its own counter: bump this when that sentence is reworded. It is separate so
+# that rewording one instruction never throws away the clips the other made —
+# an enunciated key carries both, a drill key only the one above.
+ENUNCIATION_VERSION = 1
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
 # service account's own role, and a wrong scope is a 403 at synthesis time.
@@ -231,6 +237,61 @@ def _phrase_ipa_prompt(name: str, ipa: str) -> str:
     )
 
 
+# How an Enunciated line asks for its pauses. This provider takes no markup for
+# it (``input.ssml`` with ``<break>`` is refused, HTTP 400) and no punctuation in
+# the text is reliable: measured 2026-10-06 over 45 word gaps per device, " ... "
+# paused at 32, "[short pause]" tags, commas and periods at 37-39, and asking in
+# the prompt at all 45, in 9 of 9 takes. Of seven wordings the user chose this
+# one by ear ("Each word whole, at normal speed is sounding best"); "the way a
+# language teacher dictates" went syllable by syllable and is ruled out. Pauses
+# come out at 0.5-1.0 s whatever length is asked for, and a line about twice as
+# long as its natural-speed take.
+_ENUNCIATION_INSTRUCTION = "Say each word whole and at a normal speaking speed, then stop briefly before the next word."
+
+
+def _enunciated_prompt(name: str, ipa: str | None) -> str:
+    """The instruction for an Enunciated LINE. *name* carries its own trailing space.
+
+    The phrase sentence, then the pause, then the reading — the order that was
+    heard. With no reading the last sentence is left off rather than left
+    empty: the pause does not depend on it.
+    """
+    said = f"Say exactly this {name}phrase, once, with nothing before or after it. {_ENUNCIATION_INSTRUCTION}"
+    return said if ipa is None else f"{said} Pronounce it exactly as the IPA /{ipa}/."
+
+
+def enunciates(enunciation: Enunciation | None) -> bool:
+    """Is there a gap in *enunciation* for this provider to pause in?
+
+    Two words or more. A lone word has none, and the cut INSIDE a split word is
+    the markup provider's device: the instruction here is about whole words. A
+    ``False`` is a plain render in every respect, cache key included, so a
+    one-word Enunciated line is the natural-speed clip and costs nothing.
+    """
+    return bool(enunciation) and len(enunciation) >= 2
+
+
+def _line_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
+    """The reading of a whole LINE, or ``None`` when a word of it has none.
+
+    Each word is found in *phonemes* by its bare lowercase form — LOOKUP, where
+    :func:`_phrase_ipa` goes by position — so a line that says a word twice has
+    a reading, and dialogue does that constantly. The line's own punctuation
+    stays where it was, around the reading of the word it was on.
+    """
+    read: list[str] = []
+    for token in text.split():
+        bare = token.strip(_SENTENCE_PUNCTUATION)
+        if not any(c.isalnum() for c in bare):
+            read.append(token)
+            continue
+        ipa = phonemes.get(bare.lower())
+        if ipa is None:
+            return None
+        read.append(token.replace(bare, ipa, 1))
+    return " ".join(read)
+
+
 def _phrase_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
     """The one IPA a PHRASE instruction can carry, or ``None`` when the shape does not fit.
 
@@ -250,7 +311,9 @@ def _phrase_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
     return " ".join(phonemes.values())
 
 
-def resolve_ipa(text: str, phonemes: Mapping[str, str] | None) -> tuple[str | None, bool]:
+def resolve_ipa(
+    text: str, phonemes: Mapping[str, str] | None, enunciation: Enunciation | None = None
+) -> tuple[str | None, bool]:
     """The ``(ipa, phrase)`` a synthesis of *text* would carry, without rendering.
 
     Public because a caller that only needs the cache key — the render-cost
@@ -265,9 +328,17 @@ def resolve_ipa(text: str, phonemes: Mapping[str, str] | None) -> tuple[str | No
     fits neither instruction, an absent or empty mapping included. Deciding
     whether that is worth a warning stays with :meth:`GeminiTTSService.synthesize`:
     only a caller that was actually handed a mapping knows the caller expected one.
+
+    An *enunciation* this provider acts on (:func:`enunciates`) makes *text* a
+    LINE, read by lookup (:func:`_line_ipa`) and never by the two shapes below.
+    Whether the line is enunciated is the caller's to ask :func:`enunciates`;
+    this still answers only what reading it carries.
     """
     if not phonemes:
         return None, False
+    if enunciates(enunciation):
+        ipa = _line_ipa(text, phonemes)
+        return ipa, ipa is not None
     ipa = _single_token_ipa(text, phonemes)
     if ipa is not None:
         return ipa, False
@@ -343,6 +414,7 @@ class GeminiTTSService:
         rate: str = "+0%",
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Google Cloud TTS.
 
@@ -361,30 +433,36 @@ class GeminiTTSService:
                 request nor the cache key.
             speak_locale: Accepted and IGNORED, silently. The voice's own
                 ``languageCode`` is explicit, so there is nothing to override.
+            enunciation: The line cut into words. Two or more make *text* an
+                Enunciated line: it is still sent as written, and the pause
+                after each word is asked for in ``input.prompt``, with the
+                line's reading when *phonemes* covers every word of it. Fewer
+                change nothing, including the cache key.
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)
-        ipa, phrase = resolve_ipa(text, phonemes)
+        enunciated = enunciates(enunciation)
+        ipa, phrase = resolve_ipa(text, phonemes, enunciation)
         # A mapping we could not use is announced here and not inside
         # resolve_ipa, which is also called by callers that never render.
         if phonemes and ipa is None:
             self._warn_phonemes_unsupported()
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, ipa)
+            cached = self._cache_path(text, voice_id, rate, ipa, enunciated)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
                 logger.debug("Gemini TTS cache hit for %r", text[:40])
                 return
 
-        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase)
+        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, ipa)
+            cached = self._cache_path(text, voice_id, rate, ipa, enunciated)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -412,8 +490,10 @@ class GeminiTTSService:
             "lexicon phonemes for a voice served by this adapter."
         )
 
-    def _cache_path(self, text: str, voice_id: str, rate: str, ipa: str | None = None) -> Path:
-        """The cache file for one (model, voice, rate, text, ipa) tuple.
+    def _cache_path(
+        self, text: str, voice_id: str, rate: str, ipa: str | None = None, enunciated: bool = False
+    ) -> Path:
+        """The cache file for one (model, voice, rate, text, ipa, enunciated) tuple.
 
         The ``gemini|`` prefix keeps this adapter's entries disjoint from the
         sibling's in the one shared cache directory: both name files by a
@@ -429,9 +509,15 @@ class GeminiTTSService:
         without the version a reworded instruction would keep serving the audio
         the old words produced. With no IPA the key is EXACTLY what it was
         before prompts existed, so every clip already cached still hits.
+
+        An Enunciated line adds its own part, after the IPA's and under its own
+        version. The natural-speed section says this same text in this same
+        voice, so without it the two would be one file — and with no IPA to
+        tell them apart, the natural clip would play as the Enunciated one.
         """
         ipa_part = f"|ipa:{ipa}|p{PROMPT_VERSION}" if ipa is not None else ""
-        key = f"gemini|{self._model}|{voice_id}|{rate}|{text}{ipa_part}"
+        say_part = f"|say:words|e{ENUNCIATION_VERSION}" if enunciated else ""
+        key = f"gemini|{self._model}|{voice_id}|{rate}|{text}{ipa_part}{say_part}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
@@ -443,6 +529,7 @@ class GeminiTTSService:
         speaking_rate: float,
         ipa: str | None = None,
         phrase: bool = False,
+        enunciated: bool = False,
     ) -> dict:
         """The JSON body, exactly as the endpoint is measured to accept it.
 
@@ -454,13 +541,19 @@ class GeminiTTSService:
         *phrase* picks which of the two instructions carries the IPA, and it is
         the CALLER's measurement of the shape rather than a re-derivation here:
         the same count that decided the reading decides the sentence, and asking
-        twice is asking to disagree.
+        twice is asking to disagree. *enunciated* outranks it: an Enunciated
+        line has a prompt whether or not it has a reading.
         """
         request_input: dict[str, str] = {"text": text}
-        if ipa is not None:
+        if enunciated or ipa is not None:
             language_name = language_name_for_tts_locale(language_code)
-            build_prompt = _phrase_ipa_prompt if phrase else _ipa_prompt
-            request_input["prompt"] = build_prompt(f"{language_name} " if language_name else "", ipa)
+            named = f"{language_name} " if language_name else ""
+            if enunciated:
+                request_input["prompt"] = _enunciated_prompt(named, ipa)
+            else:
+                # Narrowed by the condition above: not enunciated, so there is a reading.
+                build_prompt = _phrase_ipa_prompt if phrase else _ipa_prompt
+                request_input["prompt"] = build_prompt(named, ipa)  # type: ignore[arg-type]
         return {
             "input": request_input,
             "voice": {"languageCode": language_code, "name": name, "model_name": self._model},
@@ -475,11 +568,12 @@ class GeminiTTSService:
         speaking_rate: float,
         ipa: str | None = None,
         phrase: bool = False,
+        enunciated: bool = False,
     ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, language_code, name, speaking_rate, ipa, phrase)
+                return await self._do_synthesize(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if _is_fatal(status):
@@ -522,6 +616,7 @@ class GeminiTTSService:
         speaking_rate: float,
         ipa: str | None = None,
         phrase: bool = False,
+        enunciated: bool = False,
     ) -> bytes:
         token = await self._token_provider()
         headers = {
@@ -529,7 +624,7 @@ class GeminiTTSService:
             "Content-Type": "application/json",
             "User-Agent": "tunatale",
         }
-        body = self._request_body(text, language_code, name, speaking_rate, ipa, phrase)
+        body = self._request_body(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
         # The pacing delay is paid on EVERY attempt — success or failure — so
         # that consecutive request STARTS are at least min_delay apart. A
         # throttled request that exits instantly is what turns a burst into a

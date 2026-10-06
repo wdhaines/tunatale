@@ -117,12 +117,16 @@ class TestStoryGeneration:
         narrator_phrases = [p for p in nat_section.phrases if p.role == "narrator"]
         assert any("Riverside" in p.text or "Café" in p.text for p in narrator_phrases)
 
-    async def test_generate_slow_speed_has_ellipsis(self, generator, language):
+    async def test_generate_slow_speed_stores_the_natural_lines(self, generator, language):
+        """A generated lesson's Enunciated section holds the lines as written;
+        the pauses are made at render time (tunatale-tyfk)."""
         day = _make_curriculum_day()
         lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
         slow_section = next(s for s in lesson.sections if s.section_type == SectionType.SLOW_SPEED)
-        dialogue = [p for p in slow_section.phrases if p.role != "narrator"]
-        assert any(" ... " in p.text for p in dialogue)
+        natural_section = next(s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED)
+        dialogue = [p.text for p in slow_section.phrases if p.role != "narrator"]
+        assert dialogue
+        assert dialogue == [p.text for p in natural_section.phrases if p.role != "narrator"]
 
     async def test_generate_translated_interleaves(self, generator, language):
         day = _make_curriculum_day()

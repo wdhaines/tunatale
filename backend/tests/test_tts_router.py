@@ -23,7 +23,9 @@ class _RecordingTTS:
         self.error = error
         self.calls: list[dict] = []
 
-    async def synthesize(self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None) -> None:
+    async def synthesize(
+        self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+    ) -> None:
         self.calls.append(
             {
                 "text": text,
@@ -32,6 +34,7 @@ class _RecordingTTS:
                 "rate": rate,
                 "phonemes": phonemes,
                 "speak_locale": speak_locale,
+                "enunciation": enunciation,
             }
         )
         if self.error is not None:
@@ -75,22 +78,33 @@ async def test_a_neural_voice_id_reaches_only_the_azure_adapter(tmp_path):
 
 
 async def test_the_optional_arguments_reach_the_chosen_adapter(tmp_path):
-    """phonemes and speak_locale are passed through, not consumed: deciding
-    what an adapter can do with them is the adapter's job."""
+    """phonemes, speak_locale and enunciation are passed through, not consumed:
+    deciding what an adapter can do with them is the adapter's job."""
     router, azure, gemini = _router()
 
     await router.synthesize(
-        "hei",
+        "hei du",
         NEURAL_VOICE,
         tmp_path / "o.mp3",
         rate="-40%",
         phonemes={"hei": "hei̯"},
         speak_locale="en-US",
+        enunciation=(("hei",), ("du",)),
     )
 
     assert azure.calls[0]["phonemes"] == {"hei": "hei̯"}
     assert azure.calls[0]["speak_locale"] == "en-US"
     assert azure.calls[0]["rate"] == "-40%"
+    assert azure.calls[0]["enunciation"] == (("hei",), ("du",))
+
+
+async def test_an_enunciation_reaches_the_gemini_adapter_too(tmp_path):
+    """Each provider pauses its own way, so each has to be told."""
+    router, azure, gemini = _router()
+
+    await router.synthesize("ako si", GEMINI_VOICE, tmp_path / "o.mp3", enunciation=(("ako",), ("si",)))
+
+    assert gemini.calls[0]["enunciation"] == (("ako",), ("si",))
 
 
 @pytest.mark.parametrize(

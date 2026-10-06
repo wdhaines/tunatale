@@ -72,7 +72,7 @@ def _lesson(*phrases: Phrase) -> Lesson:
 
 def _value(text: str, voice: str = KORE, rate: str = "+0%", phonemes=None, speak_locale: str = LOCALE) -> tuple:
     """The value tuple ``collect_keys`` stores for a Cebuano phrase key."""
-    return (text, voice, rate, phonemes, speak_locale)
+    return (text, voice, rate, phonemes, speak_locale, None)
 
 
 def _seed(lesson: Lesson, db_path: Path, lesson_id: str = "lesson-1") -> None:
@@ -140,6 +140,7 @@ def _price(lesson: Lesson, cache_dir: Path):
         syllabify_fn=None,
         slicer_enabled=False,
         parent_rate=PARENT_RATE,
+        slow_word_fn=None,
         cache_dir=cache_dir,
     )
 
@@ -368,6 +369,7 @@ def _keys_for(lesson: Lesson, *, slicer_enabled: bool, syllabify_fn=None) -> obj
         syllabify_fn=syllabify_fn,
         slicer_enabled=slicer_enabled,
         parent_rate=PARENT_RATE,
+        slow_word_fn=None,
     )
 
 
@@ -419,21 +421,26 @@ def test_two_renderer_keys_can_be_one_file(tmp_path: Path) -> None:
 def test_o7_gemini_cache_path_agrees_with_the_adapter_itself(tmp_path: Path) -> None:
     gemini = GeminiTTSService(cache_dir=tmp_path / "cache")
 
+    readings = {"maayong": "ˈmaʔa", "buntag": "ˈbuntag"}
     plain = _value("hi")
-    prompted = ("Maayong buntag", KORE, "+0%", {"maayong": "ˈmaʔa", "buntag": "ˈbuntag"}, LOCALE)
+    prompted = ("Maayong buntag", KORE, "+0%", readings, LOCALE, None)
+    # An Enunciated line: the same text and readings are a THIRD file, read by
+    # lookup and carrying the pause instruction's part of the key.
+    enunciated = ("Maayong buntag", KORE, "+0%", readings, LOCALE, (("Maayong",), ("buntag",)))
 
-    for text, voice, rate, phonemes, _locale in (plain, prompted):
-        value = (text, voice, rate, phonemes, _locale)
-        ipa, _phrase_flag = resolve_ipa(text, phonemes)
+    for value in (plain, prompted, enunciated):
+        text, voice, rate, phonemes, _locale, enunciation = value
+        ipa, _phrase_flag = resolve_ipa(text, phonemes, enunciation)
         assert gemini_cache_path(gemini, value) == GeminiTTSService(cache_dir=tmp_path / "cache")._cache_path(
-            text, voice, rate, ipa
+            text, voice, rate, ipa, enunciation is not None
         )
+    assert len({gemini_cache_path(gemini, value) for value in (plain, prompted, enunciated)}) == 3
 
     # The prompted case must actually be PROMPTED, or this guard would pass on a
     # gemini_cache_path that dropped resolve_ipa entirely.
     assert resolve_ipa("Maayong buntag", {"maayong": "ˈmaʔa", "buntag": "ˈbuntag"})[0] == "ˈmaʔa ˈbuntag"
     assert gemini_cache_path(gemini, prompted) != gemini_cache_path(
-        gemini, ("Maayong buntag", KORE, "+0%", None, LOCALE)
+        gemini, ("Maayong buntag", KORE, "+0%", None, LOCALE, None)
     )
 
 

@@ -20,7 +20,12 @@ from unittest.mock import AsyncMock
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.renderer import LessonRenderer
-from app.languages import get_ipa_for_drill_phrases, get_ipa_read_in_voice_locale, get_phoneme_planner
+from app.languages import (
+    get_ipa_for_drill_phrases,
+    get_ipa_for_enunciated_lines,
+    get_ipa_read_in_voice_locale,
+    get_phoneme_planner,
+)
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from tests.test_renderer import _make_wav_bytes
 
@@ -47,7 +52,9 @@ async def _render(tmp_path, lesson: Lesson, planner, locale: str, section_idx: i
     calls: list[dict] = []
     fake_audio = _make_wav_bytes()
 
-    async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+    async def fake_synthesize(
+        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+    ):
         calls.append({"text": text, "phonemes": phonemes, "speak_locale": speak_locale})
         output_path.write_bytes(fake_audio)
 
@@ -255,3 +262,14 @@ def test_only_cebuano_asks_for_phrase_ipa():
     assert get_ipa_for_drill_phrases("ceb") is True
     assert get_ipa_for_drill_phrases("tl") is False
     assert get_ipa_for_drill_phrases("zz") is False
+
+
+def test_only_cebuano_asks_for_line_ipa():
+    """An Enunciated line carries its reading only where the voice is TOLD how
+    it sounds. Tagalog and Norwegian are plain text there by the user's ear
+    (2026-10-06): Norwegian IPA and plain "seem identical" once the words are
+    separated, and every Tagalog IPA route was heard and turned down."""
+    assert get_ipa_for_enunciated_lines("ceb") is True
+    assert get_ipa_for_enunciated_lines("tl") is False
+    assert get_ipa_for_enunciated_lines("no") is False
+    assert get_ipa_for_enunciated_lines("zz") is False

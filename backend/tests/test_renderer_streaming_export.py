@@ -103,7 +103,7 @@ def _lesson() -> Lesson:
 
 @pytest.fixture
 def tts():
-    async def synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+    async def synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None):
         ms = next((v for k, v in _DURATIONS_MS.items() if k in text), 120)
         output_path.write_bytes(_wav_bytes(ms))
 

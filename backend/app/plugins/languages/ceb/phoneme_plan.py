@@ -75,6 +75,19 @@ _DIGRAPH_IPA = {"ng": "ŋ", "ts": "tʃ"}
 # a reading the letters cannot yield, not a preferred variant.
 _WHOLE_WORD_IPA = {"mga": "maˈŋa"}
 
+# Names the letter rules misread, as said inside a LINE (the Enunciated
+# sections give the voice the whole line's reading; tunatale-tyfk). A borrowed
+# name keeps its own spelling: Spanish j and z (Jimenez), an English vowel
+# (Paul), a z that Cebuano says as s (Liza). The rules gave dʒimɛnɛz, paʔul and
+# liza, and these three are the corrections the user heard in every round of
+# the listening test on 2026-10-06.
+#
+# It is a list and not a rule on purpose: no rule reads "Paul", and one that
+# turned every j into h would be wrong for the next English name. It applies to
+# lines only, so the key-phrase drill is untouched. A name missing from it is
+# read as spelled, which is audible; add it here with the reading you heard.
+_LINE_WORD_IPA = {"jimenez": "himɛnɛs", "paul": "pol", "liza": "lisa"}
+
 
 def create_phoneme_planner() -> SpelledPhonemePlanner:
     """Zero-arg factory registered on the plugin's ``LanguageConfig``.
@@ -90,4 +103,5 @@ def create_phoneme_planner() -> SpelledPhonemePlanner:
         digraph_ipa=_DIGRAPH_IPA,
         syllabify=lambda word: syllabify_word(word, "ceb"),
         whole_word_ipa=_WHOLE_WORD_IPA,
+        line_word_ipa=_LINE_WORD_IPA,
     )

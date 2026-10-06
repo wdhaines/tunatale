@@ -14,11 +14,20 @@ from pathlib import Path
 
 from app.audio import gemini_tts
 from app.audio.azure_tts import AzureTTSService
-from app.audio.gemini_tts import GeminiTTSService, resolve_ipa
+from app.audio.enunciation import ENUNCIATED_SECTIONS, line_phonemes, plan_line
+from app.audio.gemini_tts import GeminiTTSService, enunciates, resolve_ipa
+from app.audio.ports import Enunciation
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import PARENT_RATE
 from app.audio.tts_router import provider_for
-from app.languages import PhonemePlanner, get_phoneme_planner, get_preprocessor, get_tts_locale
+from app.languages import (
+    PhonemePlanner,
+    get_ipa_for_enunciated_lines,
+    get_phoneme_planner,
+    get_preprocessor,
+    get_slow_word,
+    get_tts_locale,
+)
 from app.models.lesson import Lesson, Phrase, SectionType
 
 # The Azure F0 tier's monthly allowance. Both the report's share line and the
@@ -41,14 +50,20 @@ _MONTHLY_ALLOWANCE = 500_000
 _GEMINI_CHARS_PER_SECOND = 11.0
 _GEMINI_AUDIO_TOKENS_PER_SECOND = 25.0
 _GEMINI_USD_PER_MILLION_AUDIO_TOKENS = 10.0  # gemini-2.5-flash-tts on Cloud TTS
+# An Enunciated line is asked to stop after each word, and the audio is what
+# this provider bills. Measured 2026-10-06 (tunatale-tyfk) on the chosen
+# wording: 8.3 s a line, three lines by three takes, against about 4 s for the
+# same lines at natural speed. Rounded to 2, since "about 4" is all the
+# denominator supports; re-measure it with the speaking rate above.
+_GEMINI_ENUNCIATED_LENGTH_FACTOR = 2.0
 
 # The renderer's dedupe key: (processed text, voice, rate, sorted phoneme
-# mapping, speak locale) — renderer.py::_synth. Neither the mapping nor the
-# locale is an attribute of the text; both change the audio AND the cache key.
-_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None]
+# mapping, speak locale, enunciation) — renderer.py::_synth. None of the last
+# three is an attribute of the text; each changes the audio AND the cache key.
+_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None]
 # The value carried for a key: same fields, phonemes in the dict form
 # ``_cache_path`` / ``_billable_body`` expect.
-_SynthValue = tuple[str, str, str, Mapping[str, str] | None, str | None]
+_SynthValue = tuple[str, str, str, Mapping[str, str] | None, str | None, Enunciation | None]
 
 
 @dataclass(frozen=True)
@@ -189,14 +204,16 @@ def _memo_key(
     rate: str,
     phonemes: Mapping[str, str] | None,
     speak_locale: str | None,
+    enunciation: Enunciation | None = None,
 ) -> _MemoKey:
-    """The renderer's 5-tuple, exactly as renderer.py::_synth builds it."""
+    """The renderer's key tuple, exactly as renderer.py::_synth builds it."""
     return (
         text,
         voice_id,
         rate,
         tuple(sorted(phonemes.items())) if phonemes else None,
         speak_locale,
+        enunciation,
     )
 
 
@@ -205,7 +222,7 @@ class RenderKeys:
     """Every distinct synthesis key a scope would send, split by provider leg.
 
     The four dicts are the renderer keys, keyed by the renderer's own dedupe
-    tuples (a 5-tuple for the phrase leg, ``(source_word, voice_id)`` for the
+    tuples (the six-field key for the phrase leg, ``(source_word, voice_id)`` for the
     slicer leg) and valued by the field tuple the adapters' ``_cache_path`` and
     ``_billable_body`` take. They are MUTABLE dicts on a frozen record: the
     record is a completed collection, not a value that should be edited in
@@ -249,6 +266,7 @@ def collect_keys(
     syllabify_fn: Callable[[str], list[str] | None] | None,
     slicer_enabled: bool,
     parent_rate: str,
+    slow_word_fn: Callable[[str], str] | None,
 ) -> RenderKeys:
     """The synthesis keys *lessons* would send, mirroring ``_render_section``.
 
@@ -264,9 +282,12 @@ def collect_keys(
     ``build_slicers`` returns a slicer only when ``alignment_installed()`` and
     the language has ``AlignmentConfig`` wiring — and ``syllabify_fn`` is the
     same function the slicer was constructed with (``AlignmentConfig.syllabify_fn``);
-    neither is restated here.
+    neither is restated here. ``slow_word_fn`` is the language's long-word cut
+    (``get_slow_word``), the one ``build_lesson_renderer`` hands the renderer:
+    an Enunciated line is keyed and billed by where its words are cut.
     """
     keys = RenderKeys()
+    line_ipa = get_ipa_for_enunciated_lines(language_code)
 
     for lesson in lessons:
         for section in lesson.sections:
@@ -284,6 +305,18 @@ def collect_keys(
                 # Rule 1: the synthesized text is PREPROCESSED text,
                 # never phrase.text itself.
                 text = preprocessor.preprocess(phrase.text, section.section_type)
+                # An Enunciated line is cut into words here exactly as the
+                # renderer cuts it — the same two functions, not a copy of
+                # them — and what is sent as text is the line as written.
+                line = (
+                    plan_line(text, slow_word_fn)
+                    if section.section_type in ENUNCIATED_SECTIONS and phrase.language_code == language_code
+                    else None
+                )
+                enunciation = None
+                if line is not None:
+                    text, enunciation = line.text, line.words
+                    ph_map = line_phonemes(line, planner) if line_ipa else None
                 # Rule 3: a phrase declares its own language's locale — the
                 # target locale for the section's language, en-US for an English
                 # line (renderer.py::_phrase_locale). For an en-US voice that
@@ -291,16 +324,16 @@ def collect_keys(
                 speak_locale = (
                     target_locale if phrase.language_code == language_code else get_tts_locale(phrase.language_code)
                 )
-                # Rule 4: dedupe by the 5-tuple, render-scoped (here: whole scope).
-                key = _memo_key(text, phrase.voice_id, phrase.rate, ph_map, speak_locale)
-                # The 5-tuple is the same dedupe key for BOTH providers — it is
+                # Rule 4: dedupe by the key tuple, render-scoped (here: whole scope).
+                key = _memo_key(text, phrase.voice_id, phrase.rate, ph_map, speak_locale, enunciation)
+                # The tuple is the same dedupe key for BOTH providers — it is
                 # the renderer's, and the renderer is what chooses the adapter.
                 # Only the PRICING splits, by the voice id's own suffix: a Gemini
                 # key billed as Azure characters would be wrong by two
                 # multipliers at once, and would also move the Azure allowance
                 # line for a request Azure never receives.
                 leg = keys.gemini_phrase if provider_for(phrase.voice_id) == "gemini" else keys.phrase
-                leg.setdefault(key, (text, phrase.voice_id, phrase.rate, ph_map, speak_locale))
+                leg.setdefault(key, (text, phrase.voice_id, phrase.rate, ph_map, speak_locale, enunciation))
 
                 # Rule 5: the slicer is a second, MUTUALLY EXCLUSIVE cost source.
                 # _apply_slicing skips every phrase with planned phonemes.
@@ -326,7 +359,7 @@ def collect_keys(
                     leg = keys.gemini_slicer if provider_for(phrase.voice_id) == "gemini" else keys.slicer
                     leg.setdefault(
                         skey,
-                        (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale),
+                        (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale, None),
                     )
 
     return keys
@@ -342,11 +375,12 @@ def price_lessons(
     syllabify_fn: Callable[[str], list[str] | None] | None,
     slicer_enabled: bool,
     parent_rate: str,
+    slow_word_fn: Callable[[str], str] | None,
     cache_dir: Path,
 ) -> RenderCost:
     """Price *lessons* against *cache_dir*, mirroring ``_render_section``.
 
-    Keys are deduped ACROSS all lessons in scope: identical 5-tuples share one
+    Keys are deduped ACROSS all lessons in scope: identical key tuples share one
     TTS-cache key, and a cache populated mid-curriculum serves every later
     lesson, so this is the number of requests a cold render of the whole scope
     would actually send.
@@ -365,6 +399,7 @@ def price_lessons(
         syllabify_fn=syllabify_fn,
         slicer_enabled=slicer_enabled,
         parent_rate=parent_rate,
+        slow_word_fn=slow_word_fn,
     )
 
     return RenderCost(
@@ -386,9 +421,9 @@ def gemini_cache_path(gemini: GeminiTTSService, value: _SynthValue) -> Path:
     never recompute a digest by hand (a hand-rolled digest is a silent miss,
     and a silent miss here is a clip that is evicted from nowhere).
     """
-    text, voice_id, rate, phonemes, _speak_locale = value
-    ipa, _phrase = resolve_ipa(text, phonemes)
-    return gemini._cache_path(text, voice_id, rate, ipa)
+    text, voice_id, rate, phonemes, _speak_locale, enunciation = value
+    ipa, _phrase = resolve_ipa(text, phonemes, enunciation)
+    return gemini._cache_path(text, voice_id, rate, ipa, enunciates(enunciation))
 
 
 def _leg_stats(keys: Mapping[object, _SynthValue], tts: AzureTTSService) -> LegStats:
@@ -400,12 +435,12 @@ def _leg_stats(keys: Mapping[object, _SynthValue], tts: AzureTTSService) -> LegS
     """
     hits = misses = 0
     billable = 0
-    for text, voice_id, rate, phonemes, speak_locale in keys.values():
-        if tts._cache_path(text, voice_id, rate, phonemes, speak_locale).exists():
+    for text, voice_id, rate, phonemes, speak_locale, enunciation in keys.values():
+        if tts._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation).exists():
             hits += 1
         else:
             misses += 1
-            billable += len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale))
+            billable += len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation))
     return LegStats(distinct=len(keys), hits=hits, misses=misses, billable_chars=billable)
 
 
@@ -428,8 +463,9 @@ def _gemini_leg_stats(keys: Mapping[object, _SynthValue], gemini: GeminiTTSServi
     # locale, or a mapping that resolves to the same IPA) are ONE file and one
     # request, so the leg dedupes again on the adapter's own key.
     files: set[Path] = set()
-    for text, voice_id, rate, phonemes, _speak_locale in keys.values():
-        path = gemini_cache_path(gemini, (text, voice_id, rate, phonemes, _speak_locale))
+    for value in keys.values():
+        text, _voice_id, rate, _phonemes, _speak_locale, enunciation = value
+        path = gemini_cache_path(gemini, value)
         if path in files:
             continue
         files.add(path)
@@ -442,9 +478,14 @@ def _gemini_leg_stats(keys: Mapping[object, _SynthValue], gemini: GeminiTTSServi
         # prompt alongside it. Text length becomes AUDIO SECONDS through the
         # measured speaking rate, and seconds become tokens through the token
         # rate; a rate above 1.0 buys fewer seconds for the same characters, so
-        # the speaking rate divides.
+        # the speaking rate divides. A line the voice is asked to pause in
+        # runs longer for the same characters, so that multiplies.
         audio_tokens += (
-            len(text) / _GEMINI_CHARS_PER_SECOND / gemini_tts._speaking_rate(rate) * _GEMINI_AUDIO_TOKENS_PER_SECOND
+            len(text)
+            / _GEMINI_CHARS_PER_SECOND
+            / gemini_tts._speaking_rate(rate)
+            * _GEMINI_AUDIO_TOKENS_PER_SECOND
+            * (_GEMINI_ENUNCIATED_LENGTH_FACTOR if enunciates(enunciation) else 1.0)
         )
     return GeminiLegStats(distinct=len(files), hits=hits, misses=misses, chars=chars, audio_tokens=audio_tokens)
 
@@ -487,6 +528,7 @@ def estimate_render(
         syllabify_fn=None,
         slicer_enabled=False,
         parent_rate=PARENT_RATE,
+        slow_word_fn=get_slow_word(code),
         cache_dir=cache_dir,
     )
     return RenderEstimate(

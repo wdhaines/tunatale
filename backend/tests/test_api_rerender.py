@@ -23,7 +23,7 @@ from app.audio.azure_tts import AzureTTSService
 from app.audio.render_cost import price_lessons
 from app.audio.slicer import PARENT_RATE
 from app.config import settings
-from app.languages import get_phoneme_planner, get_preprocessor, get_tts_locale
+from app.languages import get_phoneme_planner, get_preprocessor, get_slow_word, get_tts_locale
 from app.main import app
 from app.models.language import NARRATOR_VOICE
 from app.models.lesson import Lesson, Phrase, Section, SectionType
@@ -77,6 +77,7 @@ def _instrument(lesson: Lesson, cache_dir: Path):
         syllabify_fn=None,
         slicer_enabled=False,
         parent_rate=PARENT_RATE,
+        slow_word_fn=get_slow_word(code),
         cache_dir=cache_dir,
     )
 

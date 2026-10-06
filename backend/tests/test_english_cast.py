@@ -284,7 +284,9 @@ async def test_the_lesson_title_gets_the_narrators_english_gain(tmp_path):
     ``lesson.language_code`` would silently drop it to 0.0 dB.
     """
 
-    async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+    async def fake_synthesize(
+        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+    ):
         output_path.write_bytes(_make_wav_bytes(duration_ms=200, marker=0.5 if text == "Title" else 0.0))
 
     tts = AsyncMock()
@@ -314,7 +316,9 @@ async def _locales(tmp_path, phrases: list[Phrase]) -> dict[str, str | None]:
     """Text -> the ``speak_locale`` it was synthesized with (calls run concurrently)."""
     seen: dict[str, str | None] = {}
 
-    async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+    async def fake_synthesize(
+        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+    ):
         seen[text] = speak_locale
         output_path.write_bytes(_make_wav_bytes())
 

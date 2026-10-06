@@ -662,7 +662,7 @@ The syllabifier whose output `BreakdownChunk.span` indexes (§4.6) must be the o
 
 Two hooks transform text, at different points in a lesson's life.
 
-**`TextPreprocessor`** (`app/audio/preprocessing/base.py`) is a one-method protocol, `preprocess(text, section_type) -> str`, applied by the renderer to each phrase immediately before synthesis (and by `render_cost` so the price quote sees the same text). The registered `preprocessor_factory` must be a class, and `renderer.render_section` raises if a language has none. All four plugins ship the same twelve-line pass-through, a deliberate placeholder: the 2026-03 prototype carried a thousand-line Tagalog preprocessor (number clarification, abbreviation expansion), and the rewrite's rule is to add a replacement only when someone *hears* a TTS quirk. Slow-speed pauses are not a preprocessor job either: `section_builder` inserts `" ... "` between words at build time, so the slow and natural renders are the same kind of TTS request. Where a language needs to respell for the voice it uses `slow_word_fn` (Norwegian morpheme pauses) or the breakdown's spoken-form rules instead.
+**`TextPreprocessor`** (`app/audio/preprocessing/base.py`) is a one-method protocol, `preprocess(text, section_type) -> str`, applied by the renderer to each phrase immediately before synthesis (and by `render_cost` so the price quote sees the same text). The registered `preprocessor_factory` must be a class, and `renderer.render_section` raises if a language has none. All four plugins ship the same twelve-line pass-through, a deliberate placeholder: the 2026-03 prototype carried a thousand-line Tagalog preprocessor (number clarification, abbreviation expansion), and the rewrite's rule is to add a replacement only when someone *hears* a TTS quirk. Enunciated-section pauses are not a preprocessor job either: the renderer cuts each line into words (`app/audio/enunciation.py::plan_line`) and the adapter pauses between them in its own way (§7). Where a language wants a cut inside a long word it registers `slow_word_fn` (Norwegian compounds, long affixed Tagalog words); the breakdown has its own spoken-form rules.
 
 **`story_text_normalizer`** is applied once, at the *start* of `build_lesson_from_story` (`app/generation/story.py`), to the target-language fields of an LLM story on a deep copy: `scenes[*].lines[*].text`, `key_phrases[*].phrase` and `dialogue_glosses[*].word/.lemma`, never translations, titles or any English. Only Tagalog registers one. The LLM writes affixed forms with a U+2011 non-breaking hyphen (`mag‑kape`) where standard spelling is `magkape`; a hyphen after `mag nag pag mang nang` at a word start is correct only before a vowel or a capital (`mag-aral`, `nag-Facebook`), so the rule drops it before a lowercase consonant and ASCII-normalizes it elsewhere. Doing it once, before anything reads the story, means the lemmatizer, the cloze builder and the audio all see the same string.
 
@@ -839,7 +839,7 @@ A lesson is the unit of audio. `app/models/lesson.py::Lesson` holds a `title`, `
 
 A `Phrase` is one thing to synthesize: `text`, `voice_id`, `language_code` (the *text's* language, which is what decides pause rules and gain tables), SSML-style `rate`/`pitch`/`volume`, a `role` (`narrator`, `female-1`, ...), the part-of-speech tag `upos`, and two breakdown provenance fields, `source_word` and `syllable_span`, explained in §4.6. `role` is structure and `voice_id` is presentation: an English translation keeps `role="narrator"` even when a speaker-matched English voice reads it (§3.3), so cue pairing and key-phrase grouping never depend on which voice was chosen.
 
-`SectionType` has seven members, and the Pimsleur design is visible in their names: one drill section, then the dialogue at natural speed, then slow ("enunciated") and bilingual variants in both orders. The narrator announces each section by its display title, which lives in `app/generation/section_builder.py::SECTION_TITLES` rather than on the enum, because it is spoken content and changes with listening tests (the slow pass is now "Enunciated" because it is respelled speech with pauses, not a rate change).
+`SectionType` has seven members, and the Pimsleur design is visible in their names: one drill section, then the dialogue at natural speed, then slow ("enunciated") and bilingual variants in both orders. The narrator announces each section by its display title, which lives in `app/generation/section_builder.py::SECTION_TITLES` rather than on the enum, because it is spoken content and changes with listening tests (the slow pass is now "Enunciated" because it is the same line with a pause after each word, not a rate change).
 
 ```bash
 cd backend && uv run python -c "
@@ -1578,31 +1578,43 @@ Two repair paths exist for lessons stored without glosses: `POST /api/story/{les
 |---|---|---|
 | `key_phrases` | Key Phrases | per key phrase: L2 line, English, then a backward buildup |
 | `natural_speed` | Natural Speed | scenes and dialogue, L2 only |
-| `slow_speed` | Enunciated | same, words joined by ` ... ` |
+| `slow_speed` | Enunciated | the same lines, said one word at a time |
 | `translated` | English After | each L2 line, then its English |
 | `slow_translated` | Enunciated, English After | enunciated L2, then English |
 | `en_translated` | English Before | English, then the L2 line |
 | `slow_en_translated` | Enunciated, English Before | English, then enunciated L2 |
 
-"Slow" is a legacy name. The pass is *enunciated* speech, not slower speech: `get_slow_word(code)` supplies a per-language respelling (Norwegian's is morpheme-aware), and the words are joined with a literal ` ... ` that the TTS reads as a pause, with no rate change. Each English line is read by `tts_en_voice_map[speaker]` when the language has one and by the narrator otherwise, and keeps `role="narrator"` either way.
+"Slow" is a legacy name. The pass is *enunciated* speech, not slower speech: each target-language line is said with a pause after every word and no rate change. The three Enunciated sections **store the natural line**, the same text as their natural-speed twins; what makes them enunciated is their `section_type`. At render time `app/audio/enunciation.py::plan_line` cuts the line into words, and `get_slow_word(code)` cuts a long word into parts (Norwegian compounds at the morpheme boundary; Tagalog words of five syllables or more after a long prefix or in front of the lemma table's root). Each provider then pauses in the only way that works for it, chosen by the user's ear on 2026-10-06:
+
+- **Azure** (`AzureTTSService._enunciated_body`): plain text with `<break time="450ms"/>` after each word and `<break time="150ms"/>` at a cut inside a word. Markup is billable, so a word gap costs 21 characters; `report_render_cost.py` counts it.
+- **Gemini** (`gemini_tts._enunciated_prompt`): the natural line as text, and in `input.prompt` an instruction to say each word whole and stop briefly before the next, with the line's IPA when the language asks for it (`ipa_for_enunciated_lines`, Cebuano). This provider refuses `<break>`, and no punctuation in the text paused reliably.
+
+A lesson stored before this holds `jeg ... vil ... ha ... kaffe` in these sections, with `, ` inside a split word. `plan_line` reads that notation too, so an old lesson needs a re-render and not a rebuild. Each English line is read by `tts_en_voice_map[speaker]` when the language has one and by the narrator otherwise, and keeps `role="narrator"` either way.
 
 ```bash
 cd backend && uv run python - <<'E' 2>/dev/null
-from app.languages import discover, get_language; discover()
+from app.languages import discover, get_language, get_slow_word; discover()
+from app.audio.azure_tts import AzureTTSService
+from app.audio.enunciation import plan_line
 from app.generation.section_builder import SECTION_TITLES, build_natural_speed_section, build_slow_speed_section
 lang = get_language("no")
-scenes = [{"label": "At a cafe", "lines": [{"speaker": "male-1", "text": "Jeg vil ha kaffe", "translation": "I want coffee"}]}]
+scenes = [{"label": "At a cafe", "lines": [{"speaker": "male-1", "text": "Jeg venter på flyplassen", "translation": "I am waiting at the airport"}]}]
 narr = lang.tts_voice_map["narrator"]
 for build in (build_natural_speed_section, build_slow_speed_section):
     s = build(scenes, lang.tts_voice_map, narr, lang.code)
     print(s.section_type.value, [p.text for p in s.phrases])
+line = plan_line(s.phrases[-1].text, get_slow_word("no"))
+print(line.words)
+print(AzureTTSService._billable_body(line.text, s.phrases[-1].voice_id, "+0%", enunciation=line.words))
 print({t.value: title for t, title in SECTION_TITLES.items()})
 E
 ```
 
 ```output
-natural_speed ['Natural Speed', 'At a cafe', 'Jeg vil ha kaffe']
-slow_speed ['Enunciated', 'At a cafe', 'jeg ... vil ... ha ... kaffe']
+natural_speed ['Natural Speed', 'At a cafe', 'Jeg venter på flyplassen']
+slow_speed ['Enunciated', 'At a cafe', 'Jeg venter på flyplassen']
+(('jeg',), ('venter',), ('på',), ('fly', 'plassen'))
+<prosody rate="+0%">jeg<break time="450ms"/> venter<break time="450ms"/> på<break time="450ms"/> fly<break time="150ms"/>plassen</prosody>
 {'key_phrases': 'Key Phrases', 'natural_speed': 'Natural Speed', 'slow_speed': 'Enunciated', 'translated': 'English After', 'slow_translated': 'Enunciated, English After', 'en_translated': 'English Before', 'slow_en_translated': 'Enunciated, English Before'}
 ```
 
@@ -2099,7 +2111,7 @@ Combining the lexicon with the slicer is recorded in `main.py` as a live future 
 `render` has a deliberate shape, driven by memory:
 
 1. **Title.** The lesson title is synthesised in the narrator voice and gained, then used as the first piece of the timeline.
-2. **Synthesise every section concurrently** (`_synthesize_section`). Each section preprocesses its phrases (every shipped preprocessor is a pass-through; the slow-speed ellipses are inserted earlier, by `section_builder`, as `" ... "`), computes phoneme maps, and gathers one `_synth` per phrase. Concurrency is bounded by the adapter's semaphore, not here. A render-scoped memo keyed by `(text, voice, rate, phoneme-map, speak-locale)` makes an identical utterance (the same L2 line in the translated and en-translated sections) synthesise once. The phoneme map and locale are in the key because two phrases can share text and deserve different audio: measured on a real lesson, "en" collided six ways and the plain render won, so a planned buildup rung silently played untagged audio.
+2. **Synthesise every section concurrently** (`_synthesize_section`). Each section preprocesses its phrases (every shipped preprocessor is a pass-through), cuts the target-language lines of an Enunciated section into words (`plan_line`, §6), computes phoneme maps, and gathers one `_synth` per phrase. Concurrency is bounded by the adapter's semaphore, not here. A render-scoped memo keyed by `(text, voice, rate, phoneme-map, speak-locale, enunciation)` makes an identical utterance (the same L2 line in the translated and en-translated sections) synthesise once. The phoneme map, locale and enunciation are in the key because two phrases can share text and deserve different audio: every Enunciated line has the text, voice and rate of its natural-speed twin, and measured on a real lesson, "en" collided six ways and the plain render won, so a planned buildup rung silently played untagged audio.
 3. **Cancel, don't drain, on failure.** `asyncio.gather` stops waiting on the first failure but does not cancel siblings; left alone they synthesise into a temp directory that is being deleted. The `except BaseException` block cancels every section task and every memoised clip task. A TTS failure is nearly always provider-level, so ~150 queued clips would each fail in turn. Nothing is lost: finished clips are already in `tts_cache_dir`.
 4. **Assemble one section at a time** (`_assemble_section_parts`): read each clip, apply voice gain, compute the pause that follows it from the clip's real duration, and record `(phrase_index, start_frame, end_frame)`. Offsets are accumulated in frames, not milliseconds, to avoid cumulative drift. The pieces are streamed to the encoder unjoined (`_write_audio_stream` consumes the list destructively, so each clip is released as it is handed over) and only the frame count and relative cues are kept.
 5. **Layout and cues.** `assembly.py::lesson_layout` owns the piece order (`title, boundary, sec0, boundary, sec1, ...`, one boundary after the title and one between each pair of sections) and the boundary value; `cues.py::build_cue_manifest` turns the frame timings into `Cue` rows.

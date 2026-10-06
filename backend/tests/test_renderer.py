@@ -78,7 +78,9 @@ class TestLessonRenderer:
 
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -105,7 +107,9 @@ class TestLessonRenderer:
             ],
         )
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(_make_wav_bytes())
 
         mock_tts = AsyncMock()
@@ -122,7 +126,9 @@ class TestLessonRenderer:
 
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -141,7 +147,9 @@ class TestLessonRenderer:
         lesson = _minimal_lesson()
         fake_audio = _make_wav_bytes(duration_ms=500)
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -175,7 +183,9 @@ class TestLessonRenderer:
         lesson = _minimal_lesson()
         fake_audio = _make_wav_bytes(duration_ms=300)
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -200,7 +210,9 @@ class TestLessonRenderer:
 
         synthesize_calls = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synthesize_calls.append(text)
             output_path.write_bytes(fake_audio)
 
@@ -238,7 +250,9 @@ class TestLessonRenderer:
 
         calls: list[tuple[str, str, str]] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             calls.append((text, voice_id, rate))
             output_path.write_bytes(_make_wav_bytes())
 
@@ -264,7 +278,9 @@ class TestLessonRenderer:
 
         synthesize_calls = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synthesize_calls.append((text, voice_id))
             output_path.write_bytes(fake_audio)
 
@@ -284,7 +300,9 @@ class TestLessonRenderer:
         lesson = _minimal_lesson()
         fake_audio = _make_wav_bytes()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -319,7 +337,9 @@ class TestLessonRenderer:
         fake_audio = _make_wav_bytes()
         rate_calls = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             rate_calls.append((text, rate))
             output_path.write_bytes(fake_audio)
 
@@ -345,7 +365,9 @@ class TestLessonRenderer:
         """
         lesson = _minimal_lesson()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             sample_rate = 22050 if "hvala" in text else 11025
             output_path.write_bytes(_make_wav_bytes(rate=sample_rate))
 
@@ -364,7 +386,9 @@ class TestLessonRenderer:
         """
         lesson = _minimal_lesson()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             # Title at 22.05 kHz, phrases at 11.025 kHz → mismatch in the full mix.
             sample_rate = 22050 if text == lesson.title else 11025
             output_path.write_bytes(_make_wav_bytes(rate=sample_rate))
@@ -402,7 +426,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -424,7 +450,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -444,7 +472,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -463,7 +493,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(200)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -492,7 +524,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -515,7 +549,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -540,7 +576,9 @@ class TestLessonRendererSectionOutput:
         mock_tts = AsyncMock()
         synthesized: list[str] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synthesized.append(text)
             output_path.write_bytes(fake_audio)
 
@@ -557,7 +595,9 @@ class TestLessonRendererSectionOutput:
         fake_audio = _make_wav_bytes(100)
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -642,7 +682,9 @@ class TestLessonRendererCues:
         fake_audio = _make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=0.1)
         mock_tts = AsyncMock()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synth(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synth
@@ -663,7 +705,9 @@ class TestLessonRendererCues:
         lesson = Lesson(title="Start Here", language_code="sl")
         mock_tts = AsyncMock()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synth(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=0.1))
 
         mock_tts.synthesize = fake_synth
@@ -732,7 +776,9 @@ class TestLessonRendererCues:
         # clip identity must come from the temp-file path, not call order.
         by_key: dict[tuple[int | None, int], dict] = {p["key"]: p for p in all_phrases}
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synth(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             stem = output_path.stem
             if stem == "title":
                 spec = by_key[(None, 0)]
@@ -795,7 +841,9 @@ class TestLessonRendererCues:
 
         markers: dict[str, float] = {"B": 0.1, "prvi": 0.2, "drugi": 0.3}
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synth(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             marker = markers.get(text, 0.5)
             output_path.write_bytes(_make_wav_bytes(duration_ms=_PHRASE_DURATION_MS, marker=marker))
 
@@ -856,7 +904,9 @@ class TestLessonRendererCues:
         fake_audio = _make_wav_bytes()
         mock_tts = AsyncMock()
 
-        async def fake_synth(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synth(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synth
@@ -914,7 +964,9 @@ class TestEventLoopResponsiveness:
 
         mock_tts = AsyncMock()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts.synthesize = fake_synthesize
@@ -1116,7 +1168,9 @@ class TestRendererPhonemePlanner:
 
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1154,7 +1208,9 @@ class TestRendererPhonemePlanner:
 
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1191,7 +1247,9 @@ class TestRendererPhonemePlanner:
 
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1216,7 +1274,9 @@ class TestRendererPhonemePlanner:
 
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1249,7 +1309,9 @@ class TestRendererPhonemePlanner:
 
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "voice_id": voice_id, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1320,7 +1382,9 @@ class TestRendererPhonemePlanner:
         fake_audio = _make_wav_bytes()
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "phonemes": dict(phonemes) if phonemes else None})
             output_path.write_bytes(fake_audio)
 
@@ -1369,7 +1433,9 @@ class TestRendererPhonemePlanner:
         fake_audio = _make_wav_bytes()
         synth_kwargs: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_kwargs.append({"text": text, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1410,7 +1476,9 @@ class TestRendererPhonemePlanner:
 
         synth_calls: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synth_calls.append({"text": text, "phonemes": dict(phonemes) if phonemes else None})
             output_path.write_bytes(fake_audio)
 
@@ -1472,7 +1540,9 @@ class TestRendererPhonemePlanner:
         fake_audio = _make_wav_bytes()
         sliced_audio = _make_wav_bytes(marker=0.99)
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -1565,7 +1635,9 @@ class TestAboveSyllableInvariant:
         fake_audio = _make_wav_bytes()
         seen: list[dict] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             seen.append({"text": text, "voice": voice_id, "rate": rate, "phonemes": phonemes})
             output_path.write_bytes(fake_audio)
 
@@ -1629,7 +1701,9 @@ class TestRenderSection:
         fake_audio = _make_wav_bytes()
         synthesized: list[str] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             synthesized.append(text)
             output_path.write_bytes(fake_audio)
 
@@ -1668,7 +1742,9 @@ class TestRenderSection:
         lesson = _no_lesson()
         fake_audio = _make_wav_bytes()
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             output_path.write_bytes(fake_audio)
 
         mock_tts = AsyncMock()
@@ -1726,7 +1802,9 @@ class TestSpeakLocaleReachesTheAdapter:
     async def _calls(self, tmp_path, **renderer_kwargs) -> dict[str, str | None]:
         seen: dict[str, str | None] = {}
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             seen[text] = speak_locale
             output_path.write_bytes(_make_wav_bytes())
 
@@ -1772,7 +1850,9 @@ class TestSpeakLocaleReachesTheAdapter:
         """
         rendered: list[str | None] = []
 
-        async def fake_synthesize(text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None):
+        async def fake_synthesize(
+            text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        ):
             rendered.append(speak_locale)
             output_path.write_bytes(_make_wav_bytes())
 

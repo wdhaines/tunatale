@@ -17,8 +17,9 @@ import soundfile as sf
 
 from app.audio import assembly as _assembly
 from app.audio.cues import Cue, CueTiming, build_cue_manifest
+from app.audio.enunciation import ENUNCIATED_SECTIONS, EnunciatedLine, line_phonemes, plan_line
 from app.audio.pause_calculator import NaturalPauseCalculator
-from app.audio.ports import TTSService
+from app.audio.ports import Enunciation, TTSService
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.slicer import ChunkSlicer, SliceSpec
 from app.audio.transcode import encode_audio_stream
@@ -26,9 +27,11 @@ from app.generation.section_builder import _SENTENCE_PUNCTUATION
 from app.languages import (
     PhonemePlanner,
     get_ipa_for_drill_phrases,
+    get_ipa_for_enunciated_lines,
     get_ipa_read_in_voice_locale,
     get_phoneme_planner,
     get_preprocessor,
+    get_slow_word,
     get_tts_locale,
     get_tts_voice_gain_db,
 )
@@ -40,10 +43,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# (text, voice_id, rate, phoneme mapping, speak locale) — neither the mapping
-# nor the locale is an attribute of the text, and both change the audio. See
+# (text, voice_id, rate, phoneme mapping, speak locale, enunciation) — none of
+# the last three is an attribute of the text, and each changes the audio. See
 # _synth.
-_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None]
+_MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None]
 
 
 def _report_nowhere(done: int, total: int) -> None:
@@ -216,6 +219,7 @@ class LessonRenderer:
         slicers: dict[str, ChunkSlicer] | None = None,
         phoneme_planners: dict[str, PhonemePlanner] | None = None,
         tts_locales: dict[str, str] | None = None,
+        slow_word_fns: dict[str, Callable[[str], str]] | None = None,
     ) -> None:
         self._tts = tts
         self._preprocessors = preprocessors
@@ -240,6 +244,12 @@ class LessonRenderer:
         # a voice from ANOTHER locale is affected: the adapter drops the wrapper
         # when the voice already speaks the locale.
         self._tts_locales = tts_locales or {}
+        # language code -> where that language cuts a long word when a line is
+        # enunciated (``LanguageConfig.slow_word_fn``). Injected like the maps
+        # above; an omitted entry means every word of that language is said
+        # whole, which is right for a language that registers no rule and a
+        # silent loss for one that does, hence ``build_lesson_renderer``.
+        self._slow_word_fns = slow_word_fns or {}
 
     @property
     def pause_calculator(self) -> NaturalPauseCalculator:
@@ -458,10 +468,34 @@ class LessonRenderer:
         # and whole words are the TTS's job.
         planner = self._phoneme_planners.get(language_code)
 
-        def _phrase_phonemes(phrase: Phrase) -> Mapping[str, str] | None:
+        # An Enunciated section says each of its target-language lines one
+        # word at a time. Where the words are (and where a long one is cut) is
+        # decided HERE, at render time, from the line as stored — so a lesson
+        # stored before this existed is said the new way after a re-render. How
+        # the pause is made is the adapter's: see ``app.audio.enunciation``.
+        slow_word = self._slow_word_fns.get(language_code)
+        lines: list[EnunciatedLine | None] = [
+            plan_line(text, slow_word)
+            if section.section_type in ENUNCIATED_SECTIONS and phrase.language_code == language_code
+            else None
+            for text, phrase in zip(processed_texts, section.phrases, strict=True)
+        ]
+        # What goes to the voice as text is the line as written, with none of
+        # the stored `` ... `` notation in it.
+        processed_texts = [
+            line.text if line is not None else text for line, text in zip(lines, processed_texts, strict=True)
+        ]
+        line_ipa = get_ipa_for_enunciated_lines(language_code)
+
+        def _phrase_phonemes(phrase: Phrase, line: EnunciatedLine | None) -> Mapping[str, str] | None:
             """Compute phonemes for a sub-word chunk, or None for plain synthesis."""
             if planner is None:
                 return None
+            if line is not None:
+                # The reading of the whole line, for a language whose voice is
+                # told how a line sounds. Never a chunk's: an Enunciated line
+                # has no provenance, and for every other language it is plain.
+                return line_phonemes(line, planner) if line_ipa else None
             if phrase.language_code != language_code:
                 return None
             if phrase.source_word is None or phrase.syllable_span is None:
@@ -522,8 +556,8 @@ class LessonRenderer:
 
         ipa_indices: set[int] = set()
         phoneme_maps: list[Mapping[str, str] | None] = []
-        for i, ph in enumerate(section.phrases):
-            ph_map = _phrase_phonemes(ph)
+        for i, (ph, line) in enumerate(zip(section.phrases, lines, strict=True)):
+            ph_map = _phrase_phonemes(ph, line)
             phoneme_maps.append(ph_map)
             if ph_map is not None:
                 ipa_indices.add(i)
@@ -556,6 +590,7 @@ class LessonRenderer:
             rate: str,
             phonemes: Mapping[str, str] | None = None,
             speak_locale: str | None = None,
+            enunciation: Enunciation | None = None,
         ) -> Path:
             """Synthesize (or reuse) one phrase; returns its audio file path.
 
@@ -574,14 +609,31 @@ class LessonRenderer:
             # planned rung silently played un-tagged audio. The inverse is
             # worse: a provenance chunk inheriting IPA audio and then being
             # sliced. Same class as 2b's cache-key collision, one level up.
-            key = (text, voice_id, rate, tuple(sorted(phonemes.items())) if phonemes else None, speak_locale)
+            # The enunciation is part of it for the same reason, and the
+            # collision it prevents is certain rather than occasional: every
+            # Enunciated line has the natural-speed section's (text, voice,
+            # rate), so whichever section was submitted first would voice both.
+            key = (
+                text,
+                voice_id,
+                rate,
+                tuple(sorted(phonemes.items())) if phonemes else None,
+                speak_locale,
+                enunciation,
+            )
             async with memo_lock:
                 entry = synth_memo.get(key)
                 if entry is None:
                     canonical = tmp / f"s{section_idx}_p{phrase_idx}.mp3"
                     task = asyncio.ensure_future(
                         self._tts.synthesize(
-                            text, voice_id, canonical, rate=rate, phonemes=phonemes, speak_locale=speak_locale
+                            text,
+                            voice_id,
+                            canonical,
+                            rate=rate,
+                            phonemes=phonemes,
+                            speak_locale=speak_locale,
+                            enunciation=enunciation,
                         )
                     )
                     entry = (canonical, task)
@@ -623,9 +675,10 @@ class LessonRenderer:
                         phrase.rate,
                         phonemes=ph_map,
                         speak_locale=_phrase_locale(phrase, ph_map),
+                        enunciation=line.words if line is not None else None,
                     )
-                    for i, (text, phrase, ph_map) in enumerate(
-                        zip(processed_texts, section.phrases, phoneme_maps, strict=True)
+                    for i, (text, phrase, ph_map, line) in enumerate(
+                        zip(processed_texts, section.phrases, phoneme_maps, lines, strict=True)
                     )
                 ]
             )
@@ -943,8 +996,8 @@ def build_lesson_renderer(
 ) -> LessonRenderer:
     """The ONE way to build a renderer: the app and every re-render script.
 
-    Each language gets its preprocessor, its phoneme planner and its SSML
-    locale from the registry. A hand-built renderer drops whatever keyword it
+    Each language gets its preprocessor, its phoneme planner, its SSML locale
+    and its long-word cut from the registry. A hand-built renderer drops whatever keyword it
     forgets, and the constructor's defaults are silent: an omitted locale means
     "declare nothing", so a script re-render of the Tagalog key phrases sent
     "ng abuloy" to a German voice as German and it spelled "ng" out (live,
@@ -968,4 +1021,5 @@ def build_lesson_renderer(
         tts_locales={
             code: locale for code in [*codes, Language.english().code] if (locale := get_tts_locale(code)) is not None
         },
+        slow_word_fns={code: fn for code in codes if (fn := get_slow_word(code)) is not None},
     )

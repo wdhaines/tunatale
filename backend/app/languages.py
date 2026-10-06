@@ -214,8 +214,11 @@ class LanguageConfig:
     # Morphology-drill profile injected into the story prompt (``"slavic"`` = the
     # case/dual tagging block); ``None`` omits the block.
     morphology_profile: str | None = None
-    # Slowed-word function for the slow-speed section (Norwegian morpheme pauses).
-    # ``None`` when the language has no slow-word specialisation.
+    # Where a word is cut when an Enunciated line is said one word at a time:
+    # the word back, with ``", "`` at each cut (Norwegian ``fly, plassen``,
+    # Tagalog ``Nakaka, lungkot``). The comma is notation, read at render time
+    # by ``app.audio.enunciation.plan_line`` and turned into a short pause; it
+    # is never spoken. ``None`` when the language says every word whole.
     slow_word_fn: Callable[[str], str] | None = None
     # Story-text normalizer applied ONCE to the target-language fields of a
     # generated story, before any downstream processing (tunatale-w4m7.11:
@@ -354,6 +357,17 @@ class LanguageConfig:
     # is about a key phrase, and phrase IPA on a full sentence is untested. See
     # ``get_ipa_for_drill_phrases``.
     ipa_for_drill_phrases: bool = False
+    # True when an ENUNCIATED dialogue line should reach its voice with the
+    # reading of every word in it. For a voice that is told how a line sounds
+    # (an instruction), not one that is marked up word by word: decided by the
+    # user's ear on 2026-10-06 (tunatale-tyfk), where a whole Cebuano line in
+    # one request carrying the line's IPA "sounds pretty good". The Azure
+    # languages stay plain text there on the same evidence: Norwegian IPA and
+    # plain text "seem identical" once the words are separated, and every
+    # Tagalog IPA route was heard and turned down. Needs a planner that can
+    # read a word in a line (``plan_line_word``). See
+    # ``get_ipa_for_enunciated_lines``.
+    ipa_for_enunciated_lines: bool = False
     # A multi-word card matches a lesson phrase only on its exact surface form,
     # not on its lemmas (tunatale-w4m7.17). For a language whose lemma table
     # keys every verb form on the root, lemma matching lights up — and grades —
@@ -607,6 +621,15 @@ def get_ipa_for_drill_phrases(code: str) -> bool:
     return _facet(code, "ipa_for_drill_phrases", False)
 
 
+def get_ipa_for_enunciated_lines(code: str) -> bool:
+    """Do *code*'s Enunciated lines reach the voice with a reading of every word?
+
+    ``False`` for an unknown code, like its sibling above: plain text is what
+    every language sends unless its plugin opts in.
+    """
+    return _facet(code, "ipa_for_enunciated_lines", False)
+
+
 def get_phrase_match_exact_form(code: str) -> bool:
     """Do *code*'s multi-word cards match lesson phrases on exact surface form?
 
@@ -724,10 +747,10 @@ def get_alignment(code: str) -> AlignmentConfig | None:
 
 
 def get_slow_word(code: str) -> Callable[[str], str] | None:
-    """Return the slow-word function for *code*, or ``None``.
+    """Return the function that cuts *code*'s long words for enunciation, or ``None``.
 
-    Norwegian uses morpheme-aware micro-pauses; other languages slow by simple
-    whitespace splitting.
+    The word comes back with ``", "`` at each cut (see ``LanguageConfig.slow_word_fn``).
+    ``None`` for a language that says every word whole, and for an unknown code.
     """
     return _facet(code, "slow_word_fn", None)
 

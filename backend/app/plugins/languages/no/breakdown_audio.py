@@ -32,10 +32,7 @@ from app.config import settings
 from app.languages import get_tts_voice
 from app.models.lesson import Phrase, Section, SectionType
 from app.plugins.languages.no.breakdown_preview import format_breakdown_preview
-from app.plugins.languages.no.norwegian_breakdown import (
-    build_norwegian_breakdown,
-    slow_norwegian_word,
-)
+from app.plugins.languages.no.norwegian_breakdown import build_norwegian_breakdown
 
 _LANGUAGE_CODE = "no"
 
@@ -66,7 +63,9 @@ def build_preview_sections(word: str, voice_id: str) -> tuple[Section, Section]:
     )
     slow = Section(
         section_type=SectionType.SLOW_SPEED,
-        phrases=[_phrase(slow_norwegian_word(word), voice_id)],
+        # The word as written: the renderer makes the compound's cut itself,
+        # as it does for a line of a real lesson (``app.audio.enunciation``).
+        phrases=[_phrase(word, voice_id)],
     )
     return breakdown, slow
 

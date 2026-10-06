@@ -27,7 +27,7 @@ from xml.sax.saxutils import escape, quoteattr
 import httpx
 
 from app.audio.char_ledger import AzureCharacterLedger
-from app.audio.ports import TTSExhausted, TTSQuotaExceeded
+from app.audio.ports import Enunciation, TTSExhausted, TTSQuotaExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,20 @@ _FATAL_STATUSES = frozenset({401, 403})
 # match scripts/local/render_phoneme_ab.py's Norwegian class on its seven
 # documented cases.
 _WORD_RE = re.compile(r"[^\W\d_]+")
+
+# The pauses of an Enunciated line, written into the SSML. Chosen by the user's
+# ear on 2026-10-06 (tunatale-tyfk): 450 ms after every word, and 150 ms at the
+# cut inside a long word or compound, where a ", " used to stand ("The short
+# pause is good"). Measured the same day: " ... " between plain words is nearly
+# ignored by these voices, and a <break> pauses after every word on all six
+# that were tried, a Multilingual voice under <lang> included.
+#
+# The word break keeps the space after it (``gabi<break/> po``) and the part
+# break has none (``Nakiki<break/>ramay``), which is the shape that was heard.
+# Both strings are in the cache key, so changing a duration cannot serve a clip
+# made with the old one.
+_WORD_BREAK = '<break time="450ms"/>'
+_PART_BREAK = '<break time="150ms"/>'
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -199,6 +213,7 @@ class AzureTTSService:
         rate: str = "+0%",
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Azure Speech.
 
@@ -217,11 +232,16 @@ class AzureTTSService:
                 ``_lang_locale`` for why that is not optional. ``None``, and a
                 locale the voice already speaks, change nothing at all,
                 including the cache key.
+            enunciation: The line cut into words, and split words into parts.
+                The body is built from these with a ``<break>`` after every
+                word and a shorter one between parts; *text* then only names
+                the line in the cache key. ``None``/``()`` change nothing,
+                including the cache key.
         """
         self._require_credentials()
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale)
+            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
@@ -243,13 +263,13 @@ class AzureTTSService:
                     f"quota resets in {days}d{hours}h"
                 )
 
-        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes, speak_locale)
+        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes, speak_locale, enunciation)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale)
+            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -294,6 +314,7 @@ class AzureTTSService:
         rate: str,
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> Path:
         key = f"{voice_id}|{rate}|{text}"
         # Extend the key ONLY when a mapping is present: backend/media and
@@ -309,6 +330,12 @@ class AzureTTSService:
         # change. _lang_locale is the single place that decides.
         if (wrapper := self._lang_locale(voice_id, speak_locale)) is not None:
             key += f"|lang:{wrapper}"
+        # Same rule once more. The natural-speed section says this very text in
+        # this very voice, so without this an Enunciated line would be served
+        # the natural clip. Keyed on the markup itself: where the breaks fall
+        # and how long they are is exactly what makes the audio different.
+        if enunciation:
+            key += f"|say:{self._enunciated_body(enunciation, None)}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
@@ -346,6 +373,7 @@ class AzureTTSService:
         rate: str,
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> str:
         """The Azure-billable portion of one synthesis request's SSML.
 
@@ -356,7 +384,10 @@ class AzureTTSService:
         wraps in those two tags. ``len(_billable_body(...))`` is therefore the
         billable character count for one request.
         """
-        body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
+        if enunciation:
+            body = AzureTTSService._enunciated_body(enunciation, phonemes)
+        else:
+            body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
         inner = f"<prosody rate={quoteattr(rate)}>{body}</prosody>"
         # <lang> goes INSIDE <voice> and OUTSIDE <prosody>: the rate applies to
         # the foreign-language speech, not the other way round, and that is the
@@ -372,6 +403,7 @@ class AzureTTSService:
         rate: str,
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> str:
         """Wrap *text* in SSML.
 
@@ -383,16 +415,24 @@ class AzureTTSService:
         form has an entry is wrapped in a ``<phoneme>`` element (structure
         ported from scripts/local/render_phoneme_ab.py::build_phoneme_body).
         ALL caller text is still escaped either way — markup can only enter
-        the SSML through the argument, never through *text*.
+        the SSML through the argument, never through *text*. The same holds for
+        *enunciation*: its STRUCTURE becomes ``<break>`` elements and every
+        string in it is escaped.
         """
         locale = "-".join(voice_id.split("-")[:2])
-        inner = AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale)
+        inner = AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation)
         return (
             f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang={quoteattr(locale)}>'
             f"<voice name={quoteattr(voice_id)}>"
             f"{inner}"
             f"</voice></speak>"
         )
+
+    @staticmethod
+    def _enunciated_body(enunciation: Enunciation, phonemes: Mapping[str, str] | None) -> str:
+        """The body of an Enunciated line: its parts, escaped, with the pauses between."""
+        say = (lambda part: AzureTTSService._phoneme_body(part, phonemes)) if phonemes else escape
+        return f"{_WORD_BREAK} ".join(_PART_BREAK.join(say(part) for part in parts) for parts in enunciation)
 
     @staticmethod
     def _phoneme_body(text: str, phonemes: Mapping[str, str]) -> str:
@@ -420,11 +460,12 @@ class AzureTTSService:
         rate: str,
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, voice_id, rate, phonemes, speak_locale)
+                return await self._do_synthesize(text, voice_id, rate, phonemes, speak_locale, enunciation)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in _FATAL_STATUSES:
                     raise RuntimeError(
@@ -486,6 +527,7 @@ class AzureTTSService:
         rate: str,
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
+        enunciation: Enunciation | None = None,
     ) -> bytes:
         async with self._semaphore:
             headers = {
@@ -507,7 +549,9 @@ class AzureTTSService:
                     response = await http.post(
                         self._url(_SYNTHESIS_PATH),
                         headers=headers,
-                        content=self._build_ssml(text, voice_id, rate, phonemes, speak_locale).encode("utf-8"),
+                        content=self._build_ssml(text, voice_id, rate, phonemes, speak_locale, enunciation).encode(
+                            "utf-8"
+                        ),
                     )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
@@ -526,7 +570,7 @@ class AzureTTSService:
                 # a clip that eventually succeeds records once, not per attempt.
                 if self._ledger is not None:
                     self._ledger.record(
-                        len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale)),
+                        len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation)),
                         now=self._now(),
                     )
                 return response.content

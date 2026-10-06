@@ -1166,3 +1166,221 @@ async def test_the_rate_edges_are_accepted_and_carry_no_float_noise(tmp_path, ra
 )
 def test_resolve_ipa(text, phonemes, expected):
     assert resolve_ipa(text, phonemes) == expected
+
+
+# ---------------------------------------------------------------------------
+# Enunciated lines: the pause is ASKED FOR, in the instruction (tunatale-tyfk)
+# ---------------------------------------------------------------------------
+#
+# This provider refuses <break> (HTTP 400) and no text device is reliable:
+# measured 2026-10-06 over 45 word gaps each, " ... " paused at 32, commas and
+# periods at 37-39, and only asking in the prompt hit all 45, in 9 of 9 takes.
+# The wording is the one the user chose by ear from seven ("Each word whole, at
+# normal speed is sounding best"), and the two requests below are the ones they
+# heard, copied verbatim from scripts/local/ipa_ab/compare/ceb_prompts.json.
+
+_LINE = "Buntag sa Jimenez. Naglakaw si Paul."
+_LINE_WORDS = (("Buntag",), ("sa",), ("Jimenez.",), ("Naglakaw",), ("si",), ("Paul.",))
+_LINE_IPAS = {
+    "buntag": "buntaɡ",
+    "sa": "sa",
+    "jimenez": "himɛnɛs",
+    "naglakaw": "naɡlakaw",
+    "si": "si",
+    "paul": "pol",
+}
+_LINE_INPUT = {
+    "text": "Buntag sa Jimenez. Naglakaw si Paul.",
+    "prompt": (
+        "Say exactly this Cebuano phrase, once, with nothing before or after it. "
+        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
+        "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
+    ),
+}
+_GREETING = "Liza! Maayong buntag. Kumusta ka?"
+_GREETING_WORDS = (("Liza!",), ("Maayong",), ("buntag.",), ("Kumusta",), ("ka?",))
+_GREETING_IPAS = {"liza": "lisa", "maayong": "maʔajoŋ", "buntag": "buntaɡ", "kumusta": "kumusta", "ka": "ka"}
+_GREETING_INPUT = {
+    "text": "Liza! Maayong buntag. Kumusta ka?",
+    "prompt": (
+        "Say exactly this Cebuano phrase, once, with nothing before or after it. "
+        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
+        "Pronounce it exactly as the IPA /lisa! maʔajoŋ buntaɡ. kumusta ka?/."
+    ),
+}
+
+
+async def _inputs(calls) -> list[dict]:
+    """Run *calls* against a recording endpoint; return each request's ``input``."""
+    bodies: list[dict] = []
+
+    async def _record(request):
+        bodies.append(json.loads(request.content))
+        return _ok()
+
+    respx.post(SYNTHESIS_URL).mock(side_effect=_record)
+    await calls()
+    return [body["input"] for body in bodies]
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("text", "words", "ipas", "heard"),
+    [
+        pytest.param(_LINE, _LINE_WORDS, _LINE_IPAS, _LINE_INPUT, id="names"),
+        pytest.param(_GREETING, _GREETING_WORDS, _GREETING_IPAS, _GREETING_INPUT, id="short-sentences"),
+    ],
+)
+async def test_an_enunciated_line_is_the_request_the_user_chose(tmp_path, caplog, text, words, ipas, heard):
+    """The natural line as the text, its reading and the pause in the prompt.
+
+    The text carries no " ... " and no added commas ("keep it simple"), and the
+    reading keeps the line's own punctuation, as it did when it was heard.
+    """
+    with caplog.at_level(logging.WARNING):
+        inputs = await _inputs(
+            lambda: _svc().synthesize(text, VOICE, tmp_path / "1.mp3", phonemes=ipas, enunciation=words)
+        )
+
+    assert inputs == [heard]
+    assert _warnings(caplog) == []
+
+
+@respx.mock
+async def test_a_line_that_repeats_a_word_is_still_read(tmp_path, caplog):
+    """A drill phrase is read by POSITION, so "ko ang ko" has no reading there.
+    A line is read by LOOKUP: dialogue repeats words all the time, and refusing
+    those lines would leave most of a section unread."""
+    with caplog.at_level(logging.WARNING):
+        inputs = await _inputs(
+            lambda: _svc().synthesize(
+                "Ako, ako si Liza.",
+                VOICE,
+                tmp_path / "1.mp3",
+                phonemes={"ako": "ʔako", "si": "si", "liza": "lisa"},
+                enunciation=(("Ako,",), ("ako",), ("si",), ("Liza.",)),
+            )
+        )
+
+    assert inputs[0]["prompt"].endswith("Pronounce it exactly as the IPA /ʔako, ʔako si lisa./.")
+    assert _warnings(caplog) == []
+
+
+@respx.mock
+async def test_a_line_with_no_reading_is_still_asked_to_pause(tmp_path, caplog):
+    """The pause does not depend on the IPA. With no mapping the instruction
+    stands alone, and says nothing about a reading it was not given."""
+    with caplog.at_level(logging.WARNING):
+        inputs = await _inputs(lambda: _svc().synthesize(_LINE, VOICE, tmp_path / "1.mp3", enunciation=_LINE_WORDS))
+
+    assert inputs == [
+        {
+            "text": _LINE,
+            "prompt": (
+                "Say exactly this Cebuano phrase, once, with nothing before or after it. "
+                "Say each word whole and at a normal speaking speed, then stop briefly before the next word."
+            ),
+        }
+    ]
+    assert _warnings(caplog) == []
+
+
+@respx.mock
+async def test_a_mapping_missing_a_word_of_the_line_warns_and_only_pauses(tmp_path, caplog):
+    """A reading with a gap in it is not sent: the words after the gap would be
+    told the wrong sounds. The mapping was handed over and not used, so it says so."""
+    half = {"buntag": "buntaɡ", "sa": "sa"}
+
+    with caplog.at_level(logging.WARNING):
+        inputs = await _inputs(
+            lambda: _svc().synthesize(_LINE, VOICE, tmp_path / "1.mp3", phonemes=half, enunciation=_LINE_WORDS)
+        )
+
+    assert "IPA" not in inputs[0]["prompt"]
+    assert "stop briefly before the next word." in inputs[0]["prompt"]
+    assert len(_warnings(caplog)) == 1
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "enunciation",
+    [None, (), (("buntag",),), (("bun", "tag"),)],
+    ids=["none", "empty", "one-word", "one-split-word"],
+)
+async def test_one_word_has_no_gap_to_pause_in(tmp_path, enunciation):
+    """Nothing to separate, so nothing changes: the request and the cache file
+    are the plain render's, the one the natural-speed section already made. A
+    split INSIDE a word is the other provider's device; this one says words."""
+    cache = tmp_path / "cache"
+    inputs = await _inputs(
+        lambda: _svc(cache_dir=cache).synthesize("buntag", VOICE, tmp_path / "1.mp3", enunciation=enunciation)
+    )
+
+    assert inputs == [{"text": "buntag"}]
+    assert [p.name for p in cache.iterdir()] == [_svc(cache_dir=cache)._cache_path("buntag", VOICE, "+0%").name]
+
+
+@respx.mock
+async def test_an_enunciated_line_never_shares_a_clip_with_any_other_render(tmp_path):
+    """Four renders of one text that must be four files: natural, enunciated
+    with a reading, enunciated without, and the drill-phrase reading. Output is
+    nondeterministic, so nothing but the key tells them apart afterwards."""
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    svc = _svc(cache_dir=tmp_path / "cache")
+    text, words = "ilubong ugma", (("ilubong",), ("ugma",))
+
+    await svc.synthesize(text, VOICE, tmp_path / "natural.mp3")
+    await svc.synthesize(text, VOICE, tmp_path / "phrase.mp3", phonemes=_PHRASE_IPAS)
+    await svc.synthesize(text, VOICE, tmp_path / "said.mp3", enunciation=words)
+    await svc.synthesize(text, VOICE, tmp_path / "said_ipa.mp3", phonemes=_PHRASE_IPAS, enunciation=words)
+
+    names = sorted(p.name for p in (tmp_path / "cache").iterdir())
+    assert len(names) == 4
+    # The two that existed before this change keep their digests: nothing
+    # already in the cache is orphaned by it.
+    assert {"7e03c60410f5ccb6.mp3", "feb482c2706b423c.mp3"} < set(names)
+
+
+@respx.mock
+async def test_an_enunciated_line_is_cached_and_reused(tmp_path):
+    """Paid and nondeterministic: a second request for the line must be a hit."""
+    route = respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    svc = _svc(cache_dir=tmp_path / "cache")
+
+    for name in ("one.mp3", "two.mp3"):
+        await svc.synthesize(_LINE, VOICE, tmp_path / name, phonemes=_LINE_IPAS, enunciation=_LINE_WORDS)
+
+    assert route.call_count == 1
+    assert (tmp_path / "two.mp3").read_bytes() == b"ID3-audio"
+
+
+def test_the_enunciation_wording_has_its_own_version_in_the_key(tmp_path, monkeypatch):
+    """Rewording the instruction must not serve what the old words produced,
+    and must not throw away every drill clip keyed on PROMPT_VERSION either."""
+    svc = _svc(cache_dir=tmp_path)
+    before = svc._cache_path(_LINE, VOICE, "+0%", None, True)
+    drill = svc._cache_path(_PHRASE, VOICE, "+0%", "ʔiluboŋ ʔuɡma")
+
+    monkeypatch.setattr(gemini_tts, "ENUNCIATION_VERSION", gemini_tts.ENUNCIATION_VERSION + 1)
+
+    assert svc._cache_path(_LINE, VOICE, "+0%", None, True) != before
+    assert svc._cache_path(_PHRASE, VOICE, "+0%", "ʔiluboŋ ʔuɡma") == drill
+
+
+@pytest.mark.parametrize(
+    ("text", "phonemes", "enunciation", "expected"),
+    [
+        (_LINE, _LINE_IPAS, _LINE_WORDS, ("buntaɡ sa himɛnɛs. naɡlakaw si pol.", True)),
+        (_LINE, None, _LINE_WORDS, (None, False)),
+        (_LINE, {"buntag": "buntaɡ"}, _LINE_WORDS, (None, False)),
+        # One word: the enunciation is not in play, so the old rules decide.
+        ("buntag", {"buntag": "ˈbuntag"}, (("buntag",),), ("ˈbuntag", False)),
+    ],
+    ids=["line", "no-mapping", "half-mapping", "one-word"],
+)
+def test_resolve_ipa_for_an_enunciated_line(text, phonemes, enunciation, expected):
+    assert resolve_ipa(text, phonemes, enunciation) == expected
+
+
+def test_punctuation_standing_alone_passes_through_the_reading():
+    assert resolve_ipa("Ja – takk", {"ja": "ja", "takk": "tak"}, (("Ja –",), ("takk",))) == ("ja – tak", True)

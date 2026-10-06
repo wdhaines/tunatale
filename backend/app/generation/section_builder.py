@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from app.generation.syllabify import syllabify_word
-from app.languages import get_breakdown_spans, get_slow_word
+from app.languages import get_breakdown_spans
 from app.models.breakdown import BreakdownChunk
 from app.models.lesson import Phrase, Section, SectionType
 
@@ -21,8 +21,10 @@ DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
 Scene = dict  # {"label": str, "lines": list[DialogueLine]}
 
 # Narrator-spoken section titles matching the demo format.
-# The "Slow" pass is enunciated speech — respelled text with pauses, no rate
-# change (tunatale-v3ri) — and the English gloss sits after/before the L2 line.
+# The "Slow" pass is enunciated speech — each word of the line said apart, no
+# rate change (tunatale-v3ri) — and the English gloss sits after/before the L2
+# line. The pauses are made at render time (``app.audio.enunciation``), so an
+# Enunciated section STORES the same natural line as its natural-speed twin.
 SECTION_TITLES: dict[SectionType, str] = {
     SectionType.KEY_PHRASES: "Key Phrases",
     SectionType.NATURAL_SPEED: "Natural Speed",
@@ -290,7 +292,6 @@ def build_natural_speed_section(
             narrator_voice,
             l2_code,
             en_first=False,
-            slow=False,
             translated=False,
         ),
     ]
@@ -303,7 +304,14 @@ def build_slow_speed_section(
     narrator_voice: str,
     l2_code: str,
 ) -> Section:
-    """Build the SLOW_SPEED section — mirrors NATURAL_SPEED with '...' between words."""
+    """Build the SLOW_SPEED section — NATURAL_SPEED's lines, to be enunciated.
+
+    The phrases are the natural lines as written. What makes the section
+    Enunciated is its ``section_type``: the renderer cuts each of its
+    target-language lines into words and each provider pauses between them
+    (``app.audio.enunciation``, tunatale-tyfk). Lessons stored before that hold
+    ``Dober ... dan`` here instead, and the renderer reads those too.
+    """
     phrases: list[Phrase] = [
         Phrase(
             text=SECTION_TITLES[SectionType.SLOW_SPEED], voice_id=narrator_voice, language_code="en", role="narrator"
@@ -314,7 +322,6 @@ def build_slow_speed_section(
             narrator_voice,
             l2_code,
             en_first=False,
-            slow=True,
             translated=False,
         ),
     ]
@@ -328,14 +335,12 @@ def _build_translated_phrases(
     l2_code: str,
     *,
     en_first: bool,
-    slow: bool,
     translated: bool = True,
     en_voice_map: dict[str, str] | None = None,
 ) -> list[Phrase]:
     """Shared scene-loop for the section builders that play a scene's dialogue.
 
     *en_first*: ``True`` → narrator translation precedes L2 line; ``False`` → L2 first.
-    *slow*: ``True`` → L2 text is '...'-separated (language-aware); ``False`` → raw.
     *translated*: ``True`` → each L2 line is paired with its narrator translation,
     and a line with no translation is skipped; ``False`` → the L2 line stands alone
     (NATURAL_SPEED and SLOW_SPEED), so *en_first* has nothing to order and is ignored.
@@ -371,12 +376,7 @@ def _build_translated_phrases(
                 )
                 continue
             voice_id = _resolve_voice(speaker, l2_voice_map)
-            if slow:
-                slow_fn = get_slow_word(l2_code)
-                l2_text = " ... ".join((slow_fn(w) if slow_fn else w) for w in text.split())
-            else:
-                l2_text = text
-            l2_phrase = Phrase(text=l2_text, voice_id=voice_id, language_code=l2_code, role=speaker)
+            l2_phrase = Phrase(text=text, voice_id=voice_id, language_code=l2_code, role=speaker)
             if not translated:
                 phrases.append(l2_phrase)
                 continue
@@ -410,7 +410,7 @@ def build_translated_section(
             text=SECTION_TITLES[SectionType.TRANSLATED], voice_id=narrator_voice, language_code="en", role="narrator"
         ),
         *_build_translated_phrases(
-            scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, slow=False, en_voice_map=en_voice_map
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, en_voice_map=en_voice_map
         ),
     ]
     return Section(section_type=SectionType.TRANSLATED, phrases=phrases)
@@ -424,7 +424,7 @@ def build_slow_translated_section(
     *,
     en_voice_map: dict[str, str] | None = None,
 ) -> Section:
-    """Build the SLOW_TRANSLATED section — slowed L2 lines with trailing narrator translation."""
+    """Build the SLOW_TRANSLATED section — L2 lines to be enunciated, each with its trailing translation."""
     phrases: list[Phrase] = [
         Phrase(
             text=SECTION_TITLES[SectionType.SLOW_TRANSLATED],
@@ -433,7 +433,7 @@ def build_slow_translated_section(
             role="narrator",
         ),
         *_build_translated_phrases(
-            scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, slow=True, en_voice_map=en_voice_map
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=False, en_voice_map=en_voice_map
         ),
     ]
     return Section(section_type=SectionType.SLOW_TRANSLATED, phrases=phrases)
@@ -456,7 +456,7 @@ def build_en_translated_section(
             role="narrator",
         ),
         *_build_translated_phrases(
-            scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, slow=False, en_voice_map=en_voice_map
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, en_voice_map=en_voice_map
         ),
     ]
     return Section(section_type=SectionType.EN_TRANSLATED, phrases=phrases)
@@ -470,7 +470,7 @@ def build_slow_en_translated_section(
     *,
     en_voice_map: dict[str, str] | None = None,
 ) -> Section:
-    """Build the SLOW_EN_TRANSLATED section — narrator translation FIRST, then slowed L2."""
+    """Build the SLOW_EN_TRANSLATED section — narrator translation FIRST, then the L2 line to be enunciated."""
     phrases: list[Phrase] = [
         Phrase(
             text=SECTION_TITLES[SectionType.SLOW_EN_TRANSLATED],
@@ -479,7 +479,7 @@ def build_slow_en_translated_section(
             role="narrator",
         ),
         *_build_translated_phrases(
-            scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, slow=True, en_voice_map=en_voice_map
+            scenes, l2_voice_map, narrator_voice, l2_code, en_first=True, en_voice_map=en_voice_map
         ),
     ]
     return Section(section_type=SectionType.SLOW_EN_TRANSLATED, phrases=phrases)
