@@ -510,4 +510,72 @@ test.describe("word popover (coarse pointer)", () => {
 
 		expect(failures, failures.join("\n")).toEqual([]);
 	});
+
+	/**
+	 * ceuc — the lesson's gloss leads and a disagreeing card is named beneath it.
+	 *
+	 * The live case was Norwegian `gang`: the card says "hall", every lesson line
+	 * means "time", and the popover showed "hall". The words here are tracked by
+	 * a listen, which mints each card FROM its gloss, so card and gloss agree
+	 * until this test edits one card — which is also why it runs last.
+	 *
+	 * ⚠️ The row check is the half jsdom cannot make: `.tt-card-translation` is a
+	 * span, and without `display: block` it runs on after the gloss as one line
+	 * ("gloss 7 card: a different sense"), which reads as a single translation.
+	 */
+	test("ceuc: the lesson gloss leads and the card's disagreeing translation sits on its own row", async ({
+		page,
+		request,
+	}) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const { curriculumId } = await seed(request);
+
+		const itemsRes = await request.get(`${BACKEND}/api/srs/items?limit=10000`);
+		const item = ((await itemsRes.json()).items ?? []).find(
+			(i: { text: string }) => i.text.toLowerCase() === WORDS[7],
+		);
+		expect(item, `no SRS item for ${WORDS[7]}`).toBeTruthy();
+		const patch = await request.patch(`${BACKEND}/api/srs/items/${item.id}`, {
+			data: { text: item.text, translation: "a different sense" },
+		});
+		expect(patch.ok(), `patch failed: ${patch.status()}`).toBe(true);
+
+		await openRead(page, curriculumId);
+		// Found by its text, not by position: the key phrase is ONE `.tt-wrap`
+		// around two words that each have their own, so indices are not word
+		// positions (index 7 is WORDS[6]).
+		const index = await page.evaluate(
+			(target) =>
+				[...document.querySelectorAll(".tt-wrap")].findIndex(
+					(el) => !el.querySelector(".tt-wrap") && (el.querySelector(".word")?.textContent ?? "").includes(target),
+				),
+			WORDS[7],
+		);
+		expect(index, `no reader word for ${WORDS[7]}`).toBeGreaterThanOrEqual(0);
+		expect(await longPress(page, index), "long-press target not found").toBe(true);
+
+		const r = await page.evaluate(() => {
+			const tip = [...document.querySelectorAll(".tt")].find(
+				(el) => getComputedStyle(el).display !== "none",
+			);
+			const gloss = tip?.querySelector(".tt-translation");
+			const card = tip?.querySelector(".tt-card-translation");
+			const tr = tip?.getBoundingClientRect();
+			const gr = gloss?.getBoundingClientRect();
+			const cr = card?.getBoundingClientRect();
+			return {
+				shown: tip ? 1 : 0,
+				gloss: gloss?.textContent ?? null,
+				card: card?.textContent ?? null,
+				glossBottom: gr?.bottom ?? 0,
+				cardTop: cr?.top ?? 0,
+				cardInside: !!(tr && cr && cr.left >= tr.left && cr.right <= tr.right && cr.bottom <= tr.bottom),
+			};
+		});
+		expect(r.shown, "popover never opened").toBe(1);
+		expect(r.gloss).toBe("gloss 7");
+		expect(r.card).toBe("card: a different sense");
+		expect(r.cardTop, "the card line shares a row with the gloss").toBeGreaterThanOrEqual(r.glossBottom - 1);
+		expect(r.cardInside, "the card line overflows the popover").toBe(true);
+	});
 });

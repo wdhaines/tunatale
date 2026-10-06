@@ -23,6 +23,22 @@ describe("Tooltip", () => {
     expect(tooltip.textContent).toContain("hello");
   });
 
+  it("renders the card's translation on its own line when given one", () => {
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: "time", cardTranslation: "hall", childText: "gang" },
+    });
+    const tooltip = getByRole("tooltip");
+    expect(tooltip.querySelector(".tt-translation")!.textContent).toBe("time");
+    expect(tooltip.querySelector(".tt-card-translation")!.textContent).toBe("card: hall");
+  });
+
+  it("renders no card line when none is given", () => {
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: "time", childText: "gang" },
+    });
+    expect(getByRole("tooltip").querySelector(".tt-card-translation")).toBeNull();
+  });
+
   it('renders "Due" when word is due', () => {
     const word = makeWordToken({ is_due: true, srs_item_id: 1 });
     const { getByRole } = render(TooltipTest, {

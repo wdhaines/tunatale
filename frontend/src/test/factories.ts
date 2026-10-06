@@ -7,6 +7,7 @@ export function makeWordToken(overrides: Partial<WordToken> = {}): WordToken {
     srs_state: "new",
     srs_item_id: null,
     translation: null,
+    gloss: null,
     collocation_span_id: null,
     collocation_start: false,
     collocation_srs_state: null,

@@ -25,6 +25,9 @@
 
 	interface Props {
 		translation?: string | null;
+		// The word's card translates it differently from the lesson's gloss shown
+		// above (see wordGloss). Null hides the line.
+		cardTranslation?: string | null;
 		children: Snippet;
 		word?: WordToken;
 		sentence?: string;
@@ -58,6 +61,7 @@
 
 	let {
 		translation,
+		cardTranslation = null,
 		children,
 		word,
 		sentence,
@@ -401,6 +405,7 @@
 			{#if translation}<span class="tt-translation">{translation}</span>{/if}
 			{#if masteryLabel}<span class="tt-mastery">{masteryLabel}</span>{/if}
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
+			{#if cardTranslation}<span class="tt-card-translation">{t('tooltip.cardTranslation', { translation: cardTranslation })}</span>{/if}
 			{#if masterySides}<span class="tt-sides">{#each masterySides as line (line)}<span class="tt-side">{line}</span>{/each}</span>{/if}
 			{#if hasActions}
 				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
@@ -583,6 +588,12 @@
 		margin-left: 6px;
 		opacity: 0.8;
 		font-size: 11px;
+	}
+	.tt-card-translation {
+		display: block;
+		margin-top: 2px;
+		font-size: 11px;
+		opacity: 0.8;
 	}
 	.tt-sides {
 		display: block;
