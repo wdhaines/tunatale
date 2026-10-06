@@ -1,9 +1,15 @@
-"""A thematic base-vocabulary list (Fluent Forever's "first 625") as picture cards.
+"""A base-vocabulary list (Fluent Forever's "first 625") as picture cards.
 
 The list is data: a TSV per language (``category, english, <word>, status``) in
 list order. This module is the language-agnostic half: which rows become cards,
 and where in the new-card queue they go. ``scripts/seed_base_list.py`` is the
 wiring.
+
+**List order.** The source list is grouped by theme, and served that way it gave
+dog, cat, fish, bird and cow on one day, which is how similar words get confused.
+``frequency_order`` is the order the file is kept in instead: the most used word
+first, and no two neighbours from one theme while another theme has a word
+waiting. ``scripts/order_base_list.py`` applies it to the file.
 
 **Which rows.** Only rows whose ``status`` a person or the dictionary vouched for
 (``MINTABLE``); ``unconfirmed`` rows wait for acceptance. A word already in the
@@ -20,12 +26,16 @@ TunaTale's front allocations (around -1,000,000 and below) and an imported
 deck's own positions, and independent of when its chunk is minted. That assumes
 ascending ("deck") gather; ``back_positions`` is only meaningful there, and the
 script refuses a descending deck.
+
+The list owns the position of every card it added (``source == SOURCE``), so a
+list card moved by hand goes back to its slot on the next ``--position``. To move
+one for good, give it another source as well.
 """
 
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from app.common.guid import compute_guid
@@ -42,6 +52,8 @@ SOURCE = "base-list"
 MINTABLE = frozenset({"dictionary", "variant", "usage", "reviewed", "accepted"})
 BACK_BASE = 1_000_000
 _ORD = {Direction.RECOGNITION: 0, Direction.PRODUCTION: 1}
+# States a never-reviewed card can be in while it still holds a new-queue position.
+_WAITING = frozenset({"new", "buried"})
 
 
 @dataclass(frozen=True)
@@ -69,6 +81,45 @@ def load_base_list(lines: Iterable[str]) -> list[BaseWord]:
         BaseWord(rank, row["category"], row["english"], row[target].strip(), row["status"])
         for rank, row in enumerate(reader, start=offset)
     ]
+
+
+def load_counts(lines: Iterable[str]) -> dict[str, int]:
+    """``word -> occurrences`` from a corpus frequency TSV (``word, count``). ``#`` lines are comments."""
+    counts: dict[str, int] = {}
+    for line in lines:
+        if not line.startswith("#"):
+            word, count = line.rstrip("\n").split("\t")[:2]
+            counts[word] = int(count)
+    return counts
+
+
+def spread_by_frequency(words: Iterable[BaseWord], counts: dict[str, int]) -> list[BaseWord]:
+    """*words* in frequency order, ranks untouched: most used first, themes spread out.
+
+    Sorted by corpus count, a word the corpus lacks counting zero and ties keeping
+    their old order. Then each place goes to the most used word left whose theme
+    differs from the word before it; when only that theme is left, its words run
+    out in order.
+    """
+    waiting = sorted(words, key=lambda w: -counts.get(normalize(w.text), 0))
+    ordered: list[BaseWord] = []
+    while waiting:
+        previous = ordered[-1].category if ordered else None
+        pick = next((w for w in waiting if w.category != previous), waiting[0])
+        waiting.remove(pick)
+        ordered.append(pick)
+    return ordered
+
+
+def frequency_order(words: Iterable[BaseWord], counts: dict[str, int]) -> list[BaseWord]:
+    """``spread_by_frequency`` with the ranks renumbered to match, from the list's first rank.
+
+    Ordering an ordered list changes nothing, which is what lets a test hold the
+    committed file to this rule.
+    """
+    words = list(words)
+    start = min((w.rank for w in words), default=0)
+    return [replace(w, rank=rank) for rank, w in enumerate(spread_by_frequency(words, counts), start=start)]
 
 
 @dataclass
@@ -125,7 +176,9 @@ def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code:
     """``(anki_card_id, position)`` for every minted, still-NEW card the list added.
 
     A card already introduced keeps its position: moving it would change nothing
-    the learner sees and would re-push it for no reason.
+    the learner sees and would re-push it for no reason. A never-reviewed card
+    buried for the day (a sibling of today's reviews) is still waiting, so it is
+    placed too; left out, it would come back tomorrow at whatever slot it had.
     """
     out: list[tuple[int, int]] = []
     for word in words:
@@ -136,7 +189,7 @@ def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code:
         if item is None or item.syntactic_unit.source != SOURCE:
             continue
         for direction, ds in item.directions.items():
-            if ds.anki_card_id is None or ds.reps > 0 or ds.state.value != "new":
+            if ds.anki_card_id is None or ds.reps > 0 or ds.state.value not in _WAITING:
                 continue
             out.append((ds.anki_card_id, BACK_BASE + 2 * word.rank + _ORD[direction]))
     return out
