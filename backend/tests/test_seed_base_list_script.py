@@ -78,6 +78,43 @@ def test_add_then_position(env, capsys):
     assert "Moved 0 card(s)" in capsys.readouterr().out
 
 
+def test_no_anki_positions_a_learner_deck_without_opening_the_collection(env, tmp_path, monkeypatch, capsys):
+    _, _, list_path = env
+    learner_path = tmp_path / "learner.db"
+    learner = SRSDatabase(f"sqlite:///{learner_path}")
+    main(["--language", "ceb", "--list", str(list_path), "--tt-db", str(learner_path), "--add", "2", "--apply"])
+    learner.set_anki_state_cache("session_main_queue", "stale")
+    # No collection to open: touching it would raise.
+    monkeypatch.setattr(settings, "tt_collection_path", tmp_path / "absent.anki2")
+    args = ["--language", "ceb", "--list", str(list_path), "--tt-db", str(learner_path), "--position", "--no-anki"]
+
+    assert main(args) == 0
+    assert "4 list card(s) to place" in capsys.readouterr().out
+    assert learner.get_collocation("iring").directions[Direction.PRODUCTION].anki_due != BACK_BASE + 3  # dry run
+
+    assert main([*args, "--apply"]) == 0
+    assert "Moved 4 card(s) in TunaTale" in capsys.readouterr().out
+    assert learner.get_collocation("iro").directions[Direction.RECOGNITION].anki_due == BACK_BASE
+    assert learner.get_collocation("iring").directions[Direction.PRODUCTION].anki_due == BACK_BASE + 3
+    # The frozen queue is dropped: no sync will ever come along to rebuild it.
+    assert learner.get_anki_state_cache("session_main_queue") is None
+
+    assert main([*args, "--apply"]) == 0
+    assert "Moved 0 card(s) in TunaTale" in capsys.readouterr().out
+
+
+def test_no_anki_refuses_a_deck_linked_to_anki(env, capsys):
+    db, collection, list_path = env
+    main(["--language", "ceb", "--list", str(list_path), "--add", "2", "--apply"])
+    iring = db.get_collocation("iring")
+    db.set_anki_ids(iring.guid, 7, {Direction.RECOGNITION: 70, Direction.PRODUCTION: 71})
+    before = collection.read_bytes()
+    assert main(["--language", "ceb", "--list", str(list_path), "--position", "--no-anki", "--apply"]) == 2
+    assert "REFUSING" in capsys.readouterr().out
+    assert db.get_collocation("iring").directions[Direction.PRODUCTION].anki_due != BACK_BASE + 3
+    assert collection.read_bytes() == before
+
+
 def test_position_refuses_a_descending_deck(env, capsys):
     db, _, list_path = env
     db.set_anki_state_cache("new_card_gather_priority", "2")

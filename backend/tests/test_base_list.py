@@ -14,6 +14,8 @@ from __future__ import annotations
 import gzip
 from pathlib import Path
 
+import pytest
+
 from app.models.srs_item import Direction, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs import base_list as bl
@@ -144,6 +146,45 @@ def test_a_never_reviewed_card_buried_for_the_day_still_takes_its_slot():
     production.reps = 1
     db.update_direction(iring.guid, Direction.PRODUCTION, production)
     assert bl.back_positions(db, words, language_code="ceb") == []
+
+
+def test_a_deck_with_no_anki_is_positioned_by_guid_and_direction():
+    """The second learner's deck (2026-10-05): the same list, no Anki ids at all,
+    so ``back_positions`` plans nothing for it."""
+    db = SRSDatabase(":memory:")
+    words = _words()
+    bl.mint_base_words(db, words[:2], language_code="ceb", list_name="FF 625")
+    assert bl.back_positions(db, words, language_code="ceb") == []  # the control
+    iro, iring = db.get_collocation("iro").guid, db.get_collocation("iring").guid
+    plan = bl.tt_only_positions(db, words, language_code="ceb")
+    assert sorted(plan, key=lambda p: p[2]) == [
+        (iro, Direction.RECOGNITION, bl.BACK_BASE),
+        (iro, Direction.PRODUCTION, bl.BACK_BASE + 1),
+        (iring, Direction.RECOGNITION, bl.BACK_BASE + 2),
+        (iring, Direction.PRODUCTION, bl.BACK_BASE + 3),
+    ]
+    with db._get_conn() as conn:
+        assert bl.apply_tt_only_positions(conn, plan) == 4
+        assert bl.apply_tt_only_positions(conn, plan) == 0  # nothing left to move
+        conn.commit()
+    assert db.get_collocation("iring").directions[Direction.PRODUCTION].anki_due == bl.BACK_BASE + 3
+    # A started card is left where it is, as in an Anki-backed deck.
+    recognition = db.get_collocation("iro").directions[Direction.RECOGNITION]
+    recognition.state, recognition.reps = SRSState.LEARNING, 1
+    db.update_direction(iro, Direction.RECOGNITION, recognition)
+    assert (iro, Direction.RECOGNITION, bl.BACK_BASE) not in bl.tt_only_positions(db, words, language_code="ceb")
+
+
+def test_a_deck_linked_to_anki_is_refused_by_the_tt_only_plan():
+    """Moving only TunaTale's copy would leave Anki serving the old order until
+    the next pull put it back."""
+    db = SRSDatabase(":memory:")
+    words = _words()
+    bl.mint_base_words(db, words[:2], language_code="ceb", list_name="FF 625")
+    iring = db.get_collocation("iring")
+    db.set_anki_ids(iring.guid, 7, {Direction.RECOGNITION: 70, Direction.PRODUCTION: 71})
+    with pytest.raises(ValueError, match="iring"):
+        bl.tt_only_positions(db, words, language_code="ceb")
 
 
 def _themed(*rows: tuple[str, str]) -> list[bl.BaseWord]:

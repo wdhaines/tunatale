@@ -44,8 +44,10 @@ from app.models.syntactic_unit import SyntacticUnit
 from app.srs.cognate_seed import normalize
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    import sqlite3
+    from collections.abc import Callable, Iterable, Iterator
 
+    from app.models.srs_item import SRSItem
     from app.srs.database import SRSDatabase
 
 SOURCE = "base-list"
@@ -172,15 +174,16 @@ def mint_base_words(db: SRSDatabase, words: Iterable[BaseWord], *, language_code
     return added
 
 
-def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code: str) -> list[tuple[int, int]]:
-    """``(anki_card_id, position)`` for every minted, still-NEW card the list added.
+def _waiting_slots(
+    db: SRSDatabase, words: Iterable[BaseWord], language_code: str
+) -> Iterator[tuple[SRSItem, Direction, int]]:
+    """``(card, direction, position)`` for every card the list added that is still waiting.
 
     A card already introduced keeps its position: moving it would change nothing
     the learner sees and would re-push it for no reason. A never-reviewed card
     buried for the day (a sibling of today's reviews) is still waiting, so it is
     placed too; left out, it would come back tomorrow at whatever slot it had.
     """
-    out: list[tuple[int, int]] = []
     for word in words:
         item = db.get_collocation_by_guid(compute_guid(word.text, language_code, ""))
         # Only cards the LIST added. A word that was already a card keeps its place
@@ -189,7 +192,51 @@ def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code:
         if item is None or item.syntactic_unit.source != SOURCE:
             continue
         for direction, ds in item.directions.items():
-            if ds.anki_card_id is None or ds.reps > 0 or ds.state.value not in _WAITING:
-                continue
-            out.append((ds.anki_card_id, BACK_BASE + 2 * word.rank + _ORD[direction]))
+            if ds.reps == 0 and ds.state.value in _WAITING:
+                yield item, direction, BACK_BASE + 2 * word.rank + _ORD[direction]
+
+
+def back_positions(db: SRSDatabase, words: Iterable[BaseWord], *, language_code: str) -> list[tuple[int, int]]:
+    """``(anki_card_id, position)`` for every minted, still-waiting card the list added.
+
+    A card with no Anki id yet is left out: the next sync mints it at the front,
+    and the ``--position`` after that places it.
+    """
+    return [
+        (item.directions[direction].anki_card_id, position)
+        for item, direction, position in _waiting_slots(db, words, language_code)
+        if item.directions[direction].anki_card_id is not None
+    ]
+
+
+def tt_only_positions(
+    db: SRSDatabase, words: Iterable[BaseWord], *, language_code: str
+) -> list[tuple[str, Direction, int]]:
+    """``(guid, direction, position)`` for the same cards, in a deck with no Anki behind it.
+
+    Such a deck (a second learner's) has no card ids to key on and no collection
+    to write: TunaTale's own ``anki_due`` is the queue position. A deck that IS
+    linked raises, because moving only TunaTale's copy would leave Anki serving
+    the old order until the next pull put it back.
+    """
+    out: list[tuple[str, Direction, int]] = []
+    for item, direction, position in _waiting_slots(db, words, language_code):
+        if item.directions[direction].anki_card_id is not None:
+            raise ValueError(
+                f"{item.syntactic_unit.text!r} is linked to an Anki card; position this deck without --no-anki"
+            )
+        out.append((item.guid, direction, position))
     return out
+
+
+def apply_tt_only_positions(conn: sqlite3.Connection, positions: Iterable[tuple[str, Direction, int]]) -> int:
+    """Write ``tt_only_positions`` into TunaTale's mirror. Returns how many cards moved."""
+    moved = 0
+    for guid, direction, position in positions:
+        cur = conn.execute(
+            "UPDATE collocation_directions SET anki_due = ? WHERE direction = ? AND anki_due IS NOT ?"
+            " AND collocation_id = (SELECT id FROM collocations WHERE guid = ?)",
+            (position, direction.value, position, guid),
+        )
+        moved += cur.rowcount
+    return moved
