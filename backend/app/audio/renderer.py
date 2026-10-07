@@ -31,7 +31,7 @@ from app.languages import (
     get_tts_voice_gain_db,
 )
 from app.models.language import Language
-from app.models.lesson import Lesson, Section
+from app.models.lesson import DRILL_PROMPT_ROLE, Lesson, Section, SectionType
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -117,10 +117,50 @@ def _read_audio(path: Path) -> _Audio:
     return _Audio(samples, int(rate))
 
 
+def _read_trimmed(path: Path) -> _Audio:
+    """:func:`_read_audio`, cut to what is said in the clip."""
+    return _trim_edges(_read_audio(path))
+
+
 def _silence(duration_ms: float, like: _Audio) -> _Audio:
     """A silent buffer of *duration_ms*, matching *like*'s rate and channel count."""
     frames = round(duration_ms / 1000.0 * like.rate)
     return _Audio(np.zeros((frames, like.samples.shape[1]), dtype=_SAMPLE_DTYPE), like.rate)
+
+
+# Cutting a drill clip to what is said in it (see ``_trim_edges``). The floor is
+# relative to the clip's loudest window; the margins are what is kept around
+# the voice, so a soft onset or a trailing consonant is never the thing cut.
+_TRIM_WINDOW_MS = 10.0
+_TRIM_FLOOR_DB = -45.0
+_TRIM_LEAD_MS = 20.0
+_TRIM_TAIL_MS = 100.0
+
+
+def _trim_edges(audio: _Audio) -> _Audio:
+    """*audio* without the near-silence a vendor put before and after the voice.
+
+    Azure returns a short clip padded to a fixed 1.872 s whatever it says (a
+    226 ms "walk" in 1872 ms of file, measured 2026-10-07), and a Gemini word
+    arrives behind about 300 ms of silence. In the affix drill that padding is
+    most of what the learner would hear between a word and its form, and it
+    makes "how long the answer is" a fact about the file rather than the
+    answer. Only the drill is cut: every other section's rhythm was settled by
+    ear on the files as they are.
+
+    A clip shorter than one window is returned as it is, and so is digital
+    silence: every window of it ties for loudest, so all of it clears the floor.
+    """
+    window = max(1, int(_TRIM_WINDOW_MS / 1000.0 * audio.rate))
+    count = len(audio.samples) // window
+    if count == 0:
+        return audio
+    frames = audio.samples[: count * window].reshape(count, -1)
+    db = 20.0 * np.log10(np.sqrt((frames.astype(np.float64) ** 2).mean(axis=1)) + 1e-10)
+    loud = np.flatnonzero(db > db.max() + _TRIM_FLOOR_DB)
+    start = max(0, loud[0] * window - round(_TRIM_LEAD_MS / 1000.0 * audio.rate))
+    end = min(len(audio.samples), (loud[-1] + 1) * window + round(_TRIM_TAIL_MS / 1000.0 * audio.rate))
+    return _Audio(audio.samples[start:end], audio.rate)
 
 
 def _concat(parts: list[_Audio]) -> _Audio:
@@ -341,8 +381,11 @@ class LessonRenderer:
         parts: list[_Audio] = []
         section_cues: list[tuple[int, int, int]] = []
         current_frame = 0
+        # The drill is paced by what is SAID, so its clips lose the vendor's
+        # padding before anything measures them (see ``_trim_edges``).
+        read = _read_trimmed if section.section_type is SectionType.AFFIX_DRILL else _read_audio
         for i, phrase in enumerate(section.phrases):
-            phrase_audio = _read_audio(phrase_files[i])
+            phrase_audio = read(phrase_files[i])
             # Per-voice loudness gain, applied to the clip that goes into the
             # mix only. The pace_audio read below stays ungained: it exists
             # solely to decide the following pause, and gain is amplitude-only —
@@ -363,12 +406,20 @@ class LessonRenderer:
             # changes how a chunk SOUNDS and nothing else.
             pace_audio = phrase_audio
             if pace_files is not None and pace_files[i] != phrase_files[i]:
-                pace_audio = _read_audio(pace_files[i])
+                pace_audio = read(pace_files[i])
+            # A drill prompt is the one phrase paced by the clip AFTER it: the
+            # gap is the learner's turn, and how long that takes is the length
+            # of the answer. Read from the pace file, like every other pause.
+            next_duration_s = None
+            if phrase.role == DRILL_PROMPT_ROLE and i + 1 < len(section.phrases):
+                next_duration_s = read((pace_files or phrase_files)[i + 1]).duration_ms / 1000.0
             pause_ms = calc.get_phrase_pause(
                 audio_duration_s=pace_audio.duration_ms / 1000.0,
                 word_count=len(phrase.text.split()),
                 section_type=section.section_type,
                 language_code=phrase.language_code,
+                role=phrase.role,
+                next_duration_s=next_duration_s,
             )
             if pause_ms > 0:
                 pause = _silence(pause_ms, phrase_audio)

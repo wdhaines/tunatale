@@ -46,6 +46,10 @@ class SectionType(Enum):
     The bilingual sections come in two orderings: TRANSLATED / SLOW_TRANSLATED
     play the L2 line first then its English translation; EN_TRANSLATED /
     SLOW_EN_TRANSLATED play the English translation first then the L2 line.
+
+    AFFIX_DRILL is the one section not made from the story: a rule-built drill
+    on one affix pattern (``app.generation.affix_drill``), where the narrator
+    asks for a form, the learner says it into a pause, and the answer follows.
     """
 
     KEY_PHRASES = "key_phrases"
@@ -55,6 +59,13 @@ class SectionType(Enum):
     SLOW_TRANSLATED = "slow_translated"
     EN_TRANSLATED = "en_translated"
     SLOW_EN_TRANSLATED = "slow_en_translated"
+    AFFIX_DRILL = "affix_drill"
+
+
+# The ``Phrase.role`` of a drill line that asks the learner for a form. It is
+# what tells the pause calculator to wait for an answer rather than for the next
+# line: a prompt and the narrator's other English are otherwise the same phrase.
+DRILL_PROMPT_ROLE = "prompt"
 
 
 @dataclass

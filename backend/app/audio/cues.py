@@ -96,6 +96,48 @@ def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: i
     return cues
 
 
+def _build_drill_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
+    """Build cues for the affix drill: an English line and the form after it are one item.
+
+    That pairing is the drill's unit both ways it occurs, the narrator naming a
+    form before it is modelled and a prompt before its answer, so both cues
+    share one ``drill`` ref and the player's sentence step and repeat latch move
+    by the pair. English with no form after it (the section title) is narration.
+
+    Never a ``line`` ref: that is an index into the transcript's dialogue, and
+    a drill item is not in it.
+    """
+    section = lesson.sections[section_idx]
+    cues: list[Cue] = []
+    l2_code = lesson.language_code
+    item_n = 0
+
+    for i, te in enumerate(timing):
+        phrase = section.phrases[te.phrase_index]
+        if phrase.language_code == l2_code:
+            ref: dict = {"kind": "drill", "target_index": item_n}
+            item_n += 1
+        elif _next_is_l2(section, timing, i, l2_code):
+            ref = {"kind": "drill", "target_index": item_n}
+        else:
+            ref = {"kind": "narration"}
+        cues.append(
+            Cue(
+                index=0,
+                start_ms=0,
+                end_ms=0,
+                section_index=section_idx,
+                section_type=section.section_type.value,
+                phrase_index=te.phrase_index,
+                role=phrase.role,
+                language_code=phrase.language_code,
+                text=phrase.text,
+                ref=ref,
+            )
+        )
+    return cues
+
+
 def _build_key_phrases_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
     """Build cues for the key_phrases section from the section's own group structure.
 
@@ -216,6 +258,8 @@ def build_cue_manifest(lesson: Lesson, timing: list[CueTiming], rate: int) -> li
 
         if section.section_type == SectionType.KEY_PHRASES:
             cues = _build_key_phrases_refs(lesson, sec_timing, section_idx)
+        elif section.section_type == SectionType.AFFIX_DRILL:
+            cues = _build_drill_refs(lesson, sec_timing, section_idx)
         else:
             cues = _build_dialogue_refs(lesson, sec_timing, section_idx)
 

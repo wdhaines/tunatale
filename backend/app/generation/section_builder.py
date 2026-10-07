@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 
+from app.generation.affix_drill import AffixDrill
 from app.generation.syllabify import syllabify_word
 from app.languages import get_breakdown_spans
 from app.models.breakdown import BreakdownChunk
-from app.models.lesson import Phrase, Section, SectionType
+from app.models.lesson import DRILL_PROMPT_ROLE, Phrase, Section, SectionType
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ SECTION_TITLES: dict[SectionType, str] = {
     SectionType.SLOW_TRANSLATED: "Enunciated, English After",
     SectionType.EN_TRANSLATED: "English Before",
     SectionType.SLOW_EN_TRANSLATED: "Enunciated, English Before",
+    SectionType.AFFIX_DRILL: "Affix Drill",
 }
 
 
@@ -483,3 +485,29 @@ def build_slow_en_translated_section(
         ),
     ]
     return Section(section_type=SectionType.SLOW_EN_TRANSLATED, phrases=phrases)
+
+
+def build_affix_drill_section(drill: AffixDrill, *, narrator_voice: str, l2_voice: str) -> Section:
+    """Build the AFFIX_DRILL section from a drill script (``app.generation.affix_drill``).
+
+    One phrase per step, after the narrator's title. The English is the
+    narrator's and every form is *l2_voice*'s: one voice says the forms so that
+    what changes between two of them is the affix, not the speaker.
+
+    ``role`` carries what a step IS, because nothing else on a phrase can: a
+    prompt (:data:`DRILL_PROMPT_ROLE`) is followed by a pause sized for the
+    learner's answer, and the narrator's other English is not. The forms keep
+    the script's own names for them, ``model`` and ``answer``.
+    """
+    phrases: list[Phrase] = [
+        Phrase(
+            text=SECTION_TITLES[SectionType.AFFIX_DRILL], voice_id=narrator_voice, language_code="en", role="narrator"
+        )
+    ]
+    for step in drill.steps:
+        if step.language_code == "en":
+            role = DRILL_PROMPT_ROLE if step.kind == "prompt" else "narrator"
+            phrases.append(Phrase(text=step.text, voice_id=narrator_voice, language_code="en", role=role))
+        else:
+            phrases.append(Phrase(text=step.text, voice_id=l2_voice, language_code=step.language_code, role=step.kind))
+    return Section(section_type=SectionType.AFFIX_DRILL, phrases=phrases)
