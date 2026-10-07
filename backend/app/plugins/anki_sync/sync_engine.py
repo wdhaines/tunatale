@@ -18,6 +18,8 @@ from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
 from app.cards.drawn_picture import drawn_picture
 from app.cards.media.audio_prestage import mint_audio_mode
+from app.cards.media.vocab_media import image_filename as _image_filename
+from app.cards.media.vocab_media import image_no_other_card_holds as _image_no_other_card_holds
 from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
@@ -1785,6 +1787,7 @@ class AnkiSync:
         image_ok = 0
         image_no_results = 0
         image_failed = 0
+        image_duplicate = 0
         no_notetype = 0
         # The mint notetype's L2 (sort) field, resolved at the first vocab item.
         # "" means the notetype is not in the collection.
@@ -1915,6 +1918,7 @@ class AnkiSync:
                 existing_image = picture.filename
 
             media = None
+            image_refused = False
             if _media_fn is not None and (existing_audio is None or existing_image is None):
                 # A minted card is NEW and may not be seen for weeks, so a
                 # METERED voice is not rendered here: the mint asks for Forvo
@@ -1948,14 +1952,44 @@ class AnkiSync:
                 _copy_tt_media_to_anki(self._writer, existing_image)
                 image_tag = f'<img src="{existing_image}">'
             elif media is not None and media.image_bytes is not None:
-                ext = media.image_ext or "jpg"
-                img_filename = f"{_safe_stem(english, 'img')}.{ext}"
-                self._writer.store_media_file(img_filename, media.image_bytes)
-                image_tag = f'<img src="{img_filename}">'
-                _store_tt_media(self._db, coll_id, "image", img_filename, media.image_bytes)
+                # The same two guards as the add-time write and the pre-stage:
+                # bytes another card already shows are refused and re-fetched
+                # once with their URL barred, and the filename carries the
+                # digest. This path had neither, so it stored exactly the
+                # picture the add-time write had just refused (tunatale-t61w).
+
+                async def _refetch(word=word, english=english, item=item):
+                    return await _media_fn(
+                        word,
+                        english,
+                        source_sentence=item.syntactic_unit.source_sentence,
+                        grammar=item.syntactic_unit.grammar,
+                        used_image_urls=used_image_urls,
+                        audio="none",
+                    )
+
+                image, owner = await _image_no_other_card_holds(
+                    self._db, coll_id, media, used_image_urls=used_image_urls, refetch=_refetch
+                )
+                if image is None:
+                    # Minted without a picture rather than with a shared one. Not
+                    # marked unpicturable: the card is now in the image repair
+                    # queue, which the pre-stage drains with its own retry.
+                    image_refused = True
+                    image_duplicate += 1
+                    _log.warning(
+                        "image for %r duplicates collocation %d — not stored; minted without a picture",
+                        word,
+                        owner,
+                    )
+                else:
+                    img_filename = _image_filename(english, image.image_bytes, image.image_ext)
+                    self._writer.store_media_file(img_filename, image.image_bytes)
+                    image_tag = f'<img src="{img_filename}">'
+                    _store_tt_media(self._db, coll_id, "image", img_filename, image.image_bytes)
 
             # Classify image fetch status into report counters
-            if media is not None:
+            if media is not None and not image_refused:
                 img_status = getattr(media, "image_status", None)
                 if img_status == "ok":
                     image_ok += 1
@@ -2078,6 +2112,7 @@ class AnkiSync:
             image_ok=image_ok,
             image_no_results=image_no_results,
             image_failed=image_failed,
+            image_duplicate=image_duplicate,
             no_notetype=no_notetype,
         )
 

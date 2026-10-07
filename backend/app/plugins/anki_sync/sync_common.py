@@ -157,6 +157,10 @@ class CreateNewReport:
     image_ok: int = 0
     image_no_results: int = 0
     image_failed: int = 0
+    #: Cards minted WITHOUT a picture because every one fetched was already on
+    #: another card. Apart from ``image_ok``: the fetch succeeded, the card got
+    #: nothing, and the image repair queue is what picks it up.
+    image_duplicate: int = 0
     #: Vocab words held unlinked because the mint notetype is not in the collection.
     no_notetype: int = 0
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, date, datetime, time
+from hashlib import sha256
 
 import pytest
 
@@ -22,6 +23,10 @@ from app.srs.database import SRSDatabase
 from tests._helpers.anki_sync_create_new import FakeReader, _make_dual_collection_conn  # noqa: F401
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _sha(data: bytes) -> str:
+    return sha256(data).hexdigest()
 
 
 def _make_db() -> SRSDatabase:
@@ -2125,7 +2130,157 @@ class TestCreateNewDrawsNumbers:
         )
 
         assert "skip_image" not in media_kwargs[0]
-        assert db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation("båt").guid)) == "img_boat.jpg"
+        boat = db.get_collocation_id_by_guid(db.get_collocation("båt").guid)
+        assert db.get_image_filename(boat) == f"img_boat_{_sha(b'IMG')[:8]}.jpg"
+
+
+class TestCreateNewImagesAreUniquePerCard:
+    """The sync mint was the last image write with neither guard (tunatale-t61w).
+
+    The add-time write and the pre-stage both refuse bytes another card already
+    holds, and both hash-suffix the filename. The mint did neither. Measured
+    2026-10-06 on the owner's Cebuano deck: the add-time fetch refused `anhi`
+    "come" a picture `bisita` "visitor" already showed, and the sync five minutes
+    later fetched the same picture and stored it as the bare `img_come.jpg` — so
+    the mint undid the refusal, and two production fronts now ask for different
+    words with one photograph.
+    """
+
+    _URL_1 = "https://cdn.pixabay.com/photo/first.jpg"
+    _URL_2 = "https://cdn.pixabay.com/photo/second.jpg"
+
+    @staticmethod
+    def _holder(db, image_bytes: bytes) -> int:
+        """A card that already shows *image_bytes*, linked so the mint skips it."""
+        _add_item_with_anki_ids(db, "skip", "ship")
+        holder = db.get_collocation_id_by_guid(db.get_collocation("skip").guid)
+        db.add_media(holder, "image", "img_ship.jpg", "media/img_ship.jpg", "img_ship.jpg", _sha(image_bytes), 5)
+        return holder
+
+    def _media(self, results):
+        calls: list[dict] = []
+        queue = list(results)
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            calls.append({**kwargs, "word": word, "used_image_urls": set(used_image_urls)})
+            result = queue.pop(0)
+            if result is not None and result.image_url:
+                used_image_urls.add(result.image_url)  # what fetch_card_media does
+            return result
+
+        return media, calls
+
+    @staticmethod
+    async def _mint(db, media):
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code="no").sync_create_new(
+            deck_name="0. Norwegian", model_name="Norwegian Vocabulary", _media_fn=media
+        )
+        return writer
+
+    def _taken(self):
+        return MediaResult(image_bytes=b"TAKEN", image_ext="jpg", image_url=self._URL_1, image_status="ok")
+
+    async def test_a_picture_another_card_holds_is_refetched_with_its_url_barred(self):
+        db = _make_db()
+        self._holder(db, b"TAKEN")
+        _add_item(db, "båt", "boat")
+        media, calls = self._media(
+            [self._taken(), MediaResult(image_bytes=b"FREE", image_ext="jpg", image_url=self._URL_2, image_status="ok")]
+        )
+
+        writer = await self._mint(db, media)
+
+        filename = f"img_boat_{_sha(b'FREE')[:8]}.jpg"
+        boat = db.get_collocation_id_by_guid(db.get_collocation("båt").guid)
+        assert db.get_image_filename(boat) == filename
+        fields = next(c for c in writer.calls if c[0] == "create_note")[3]
+        assert fields["Image"] == f'<img src="{filename}">'
+        assert ("store_media_file", filename, 4) in writer.calls
+        assert len(calls) == 2
+        assert calls[1]["used_image_urls"] == {self._URL_1}
+        assert calls[1]["audio"] == "none", "a picture alone: the first call already settled the audio"
+        assert "skip_image" not in calls[1]
+
+    async def test_a_second_duplicate_mints_the_card_without_a_picture(self, caplog):
+        """Imageless, not shared. The card then sits in the image repair queue
+        (`list_production_cards_missing_images`), which the pre-stage drains."""
+        db = _make_db()
+        holder = self._holder(db, b"TAKEN")
+        _add_item(db, "båt", "boat")
+        media, calls = self._media([self._taken(), self._taken()])
+
+        with caplog.at_level("WARNING"):
+            writer = await self._mint(db, media)
+
+        boat = db.get_collocation_id_by_guid(db.get_collocation("båt").guid)
+        assert db.get_image_filename(boat) is None
+        assert not db.is_image_unavailable(boat), "a duplicate is not a verdict that the word cannot be pictured"
+        fields = next(c for c in writer.calls if c[0] == "create_note")[3]
+        assert fields["Image"] == ""
+        assert len(calls) == 2, "one retry, no loop"
+        assert f"duplicates collocation {holder}" in caplog.text
+
+    async def test_two_cards_minted_in_one_sync_do_not_share_a_picture(self):
+        """The within-run half: the first card's row is written before the second
+        is checked, so the same guard covers a batch."""
+        db = _make_db()
+        _add_item(db, "båt", "boat")
+        _add_item(db, "skute", "boat")
+        media, _calls = self._media(
+            [
+                self._taken(),
+                self._taken(),
+                MediaResult(image_bytes=b"FREE", image_ext="jpg", image_url=self._URL_2, image_status="ok"),
+            ]
+        )
+
+        await self._mint(db, media)
+
+        names = {
+            db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation(word).guid))
+            for word in ("båt", "skute")
+        }
+        assert names == {f"img_boat_{_sha(b'TAKEN')[:8]}.jpg", f"img_boat_{_sha(b'FREE')[:8]}.jpg"}
+
+    async def test_the_filename_carries_the_digest(self):
+        """A shared gloss must not resolve to one filename: the bare form had the
+        second card's write replace the first card's picture on disk."""
+        import app.plugins.anki_sync.sync as sync_mod
+
+        db = _make_db()
+        _add_item(db, "båt", "boat")
+        _add_item(db, "skute", "boat")
+        media, _calls = self._media(
+            [
+                MediaResult(image_bytes=b"ONE", image_ext="jpg", image_status="ok"),
+                MediaResult(image_bytes=b"TWO", image_ext="jpg", image_status="ok"),
+            ]
+        )
+
+        await self._mint(db, media)
+
+        first = db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation("båt").guid))
+        second = db.get_image_filename(db.get_collocation_id_by_guid(db.get_collocation("skute").guid))
+        assert first != second
+        assert (sync_mod._MEDIA_DIR / first).read_bytes() == b"ONE"
+        assert (sync_mod._MEDIA_DIR / second).read_bytes() == b"TWO"
+
+    async def test_a_refused_duplicate_is_not_counted_as_an_image(self):
+        """`image_ok` is the report's "cards that got a picture". A fetch that
+        succeeded and was then refused did not give the card one."""
+        db = _make_db()
+        self._holder(db, b"TAKEN")
+        _add_item(db, "båt", "boat")
+        media, _calls = self._media([self._taken(), self._taken()])
+
+        writer = FakeCreateWriter()
+        report = await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code="no").sync_create_new(
+            deck_name="0. Norwegian", model_name="Norwegian Vocabulary", _media_fn=media
+        )
+
+        assert report.image_ok == 0
+        assert report.image_duplicate == 1
 
 
 class TestCreateNewDefersMeteredAudio:
