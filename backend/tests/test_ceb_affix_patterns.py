@@ -157,9 +157,9 @@ def test_a_missing_table_is_an_error_not_an_empty_answer(tmp_path):
 
 def test_the_english_of_a_form_is_written_down_not_derived():
     """The case that ruled out wording a form from its root's gloss: kita is
-    "see", and its mag- pair means meeting, while its ma- pair means seeing."""
+    "see", and its mag- pair means meeting (Wolff: "Magkita ra tag usab, We'll
+    meet again")."""
     assert pattern_glosses("kita", _BY_KEY["mag-nag"]) == ("see", ("will meet", "met"))
-    assert pattern_glosses("kita", _BY_KEY["ma-na"]) == ("see", ("will see", "saw"))
     assert pattern_glosses("Lakaw", _BY_KEY["mo-mi"]) == ("walk", ("will walk", "walked"))
 
 
@@ -169,6 +169,20 @@ def test_a_pair_nobody_has_worded_has_no_english():
     assert pattern_glosses("andam", _BY_KEY["mag-nag"]) is None
     # dala's ma- pair is "can be carried / got carried": deliberately not in the table.
     assert pattern_glosses("dala", _BY_KEY["ma-na"]) is None
+
+
+def test_makita_is_left_out_because_it_is_object_focus():
+    """Native news uses makita / nakita thousands of times, and it does mean
+    seeing. But the one who sees is in the genitive (Wolff: "Makita ba nimu
+    ang ayruplanu?"), so it is not an actor pair like matulog / natulog, and
+    drilling it as one would teach "makita ko" ("I will be seen")."""
+    assert pattern_forms("kita", _BY_KEY["ma-na"]) == ("makita", "nakita")
+    assert pattern_glosses("kita", _BY_KEY["ma-na"]) is None
+
+
+def test_mosulti_is_speaking_not_telling():
+    """Wolff: sulti "tell" is class A1 (no mu-/mi-); mosulti is the A2 sense, "speak"."""
+    assert pattern_glosses("sulti", _BY_KEY["mo-mi"]) == ("speak", ("will speak", "spoke"))
 
 
 def test_every_worded_pair_is_one_native_news_uses():

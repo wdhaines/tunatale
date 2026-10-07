@@ -6,7 +6,28 @@
 # and makita is "will see"; dala is "bring", but nadala is "got carried". Measured 2026-10-07 on the
 # 13 pairs the owner's deck could drill: wording them mechanically from the gloss got 3 wrong.
 #
-# Written 2026-10-07 from standard usage. NOT yet checked by a native speaker.
+# Written 2026-10-07 and checked the same day against John U. Wolff, A Dictionary of Cebuano Visayan
+# (1972; Project Gutenberg #40074): each root's entry, its verb class and its example sentences.
+# NOT checked by a native speaker. Wolff's classes, as used below: [A] takes mu-/mi- (punctual) and
+# mag-/nag- (durative); [A2] takes mu-/mi- only; [B1] is stative, ma-/na-; [C] is mutual action, mag-.
+#
+#   adtu [A2] go · anhi [A2] come ("Muanhi ka ba ugma? Will you come here tomorrow?") · balik [A2] go,
+#   come back · sulud [A2] go in · inum [A] drink · kaun [A2S] eat · tan-aw [A] see, look at ·
+#   lakaw = lakat [A] walk, and [A2] go away (milakaw is also "left") · ampu [A] pray ·
+#   dala [A] take, bring, carry ("Magdala ba kug rigalu? Shall I bring presents?") · lutu [A] cook ·
+#   hulat [A] wait · uban [AC] go with, accompany ("Muuban ku nimu, I'll go with you") ·
+#   tulug [B1] go to sleep ("Natulug na ba siya? Is he asleep yet?") · lipay [B1] be happy
+#   ("Nalipay ku nga nia ka, I am glad that you're here") · hurut [A] use up; na- = be used up.
+#   kita "meet" is [C]: "Magkita ra tag usab, We'll meet again."
+#
+# Two corrections the check made:
+# - sulti: "tell" is [A1], which does NOT take mu-/mi-. mosulti / misulti is the [A2] sense "speak,
+#   utter", so the row says speak, not say.
+# - kita in ma-/na- was REMOVED. makita / nakita is not an actor pair like matulog / natulog: Wolff
+#   gives "Makita ba nimu ang ayruplanu? Can you see the plane?", where the one who sees is nimu
+#   and the thing seen is the subject. That is object focus, which is deferred. Drilling it beside
+#   matulog would teach "makita ko" for "I will see", which means "I will be seen".
+#
 # Every row must also be a pair native news uses (tests/test_ceb_affix_patterns.py enforces it).
 lakaw	mo-mi	walk	will walk	walked
 lakaw	mag-nag	walk	will walk	walked
@@ -15,7 +36,6 @@ dala	mag-nag	bring	will bring	brought
 inom	mo-mi	drink	will drink	drank
 adto	mo-mi	go	will go	went
 anhi	mo-mi	come	will come	came
-kita	ma-na	see	will see	saw
 kita	mag-nag	see	will meet	met
 tulog	ma-na	sleep	will sleep	slept
 lipay	ma-na	happy	will be happy	is happy
@@ -25,7 +45,7 @@ balik	mo-mi	return	will return	returned
 sulod	mo-mi	inside	will enter	entered
 tan-aw	mo-mi	watch	will watch	watched
 kaon	mo-mi	eat	will eat	ate
-sulti	mo-mi	say	will say	said
-hurot	ma-na	used up	will run out	ran out
+sulti	mo-mi	speak	will speak	spoke
+hurot	ma-na	use up	will run out	ran out
 uban	mo-mi	accompany	will go along	went along
 uban	mag-nag	accompany	will go together	went together
