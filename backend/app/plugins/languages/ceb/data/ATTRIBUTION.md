@@ -49,3 +49,18 @@ FineWeb-2 is released under the **Open Data Commons Attribution License
 (ODC-By) v1.0**: <https://opendatacommons.org/licenses/by/1-0/>, and its use is
 also subject to Common Crawl's Terms of Use: <https://commoncrawl.org/terms-of-use>.
 This file is the attribution ODC-By requires.
+
+# Attribution: `cebuano_affix_counts.tsv.gz`
+
+This committed file holds **root/affix counts derived from FineWeb-2**, built by
+`backend/scripts/build_cebuano_affix_counts.py` (tunatale-ve4p.2). It contains
+root/affix/count triples only — no text from the source.
+
+- **Source:** the same FineWeb-2 `ceb_Latn` shard and the same four native news
+  hosts as `cebuano_frequency.tsv.gz` above.
+- **Source shard sha256:**
+  `4982dae9f61107d1f9c60725bb8434e1d0d4b990f596c8fd1e890ebef5f98a3a`
+- **Fetch date:** 2026-09-26
+
+The licence is the one stated above (ODC-By v1.0, and Common Crawl's Terms of
+Use); this section is the attribution it requires for this file.
