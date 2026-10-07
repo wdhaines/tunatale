@@ -832,13 +832,19 @@ class TestCebuanoRegistration:
 
         assert number_value(word, "ceb") == value
 
-    @pytest.mark.parametrize("word", ["usa", "baynte", "singko", "alas"])
-    def test_usa_and_the_spanish_numbers_do_not_resolve(self, word):
-        """usa is 'one' AND the article ('usa ka bata' = a child), like tl isa.
-        Spanish-derived numbers belong to clocks and prices, not a counting heap."""
+    @pytest.mark.parametrize("word", ["baynte", "singko", "alas"])
+    def test_the_spanish_numbers_do_not_resolve(self, word):
+        """Spanish-derived numbers belong to clocks and prices, not a counting heap."""
         from app.cards.number_image import number_value
 
         assert number_value(word, "ceb") is None
+
+    def test_usa_is_one(self):
+        """Once excluded as "also the article"; the user's call (2026-10-06) is
+        that Cebuano does not use it that way, so it counts like any cardinal."""
+        from app.cards.number_image import number_value
+
+        assert number_value("usa", "ceb") == 1
 
 
 class TestPlannerExampleIsNeverTheLowestSortingLanguage:

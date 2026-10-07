@@ -12,8 +12,10 @@
     "the NATIVE context, so the native words get the picture.",
     "",
     "`exclude`:",
-    "  isa      — 'one' AND the indefinite 'a/an' (isang bata = a child); a picture",
-    "             of one thing is equally 'a thing'. Same reasoning as Norwegian `en`.",
+    "  NOT isa. It was excluded as 'one AND the indefinite a/an (isang bata = a",
+    "  child)', by analogy with Norwegian `en`. The user (2026-10-06): 'Cebuano",
+    "  and Tagalog don't really do indefinite articles that way. I think treating",
+    "  them primarily as a number makes sense.' So isa is drawn as one.",
     "  sandaan  — a doublet of isandaan (100); isandaan is the produced form.",
     "  the Spanish-derived words — their context is a clock face or a price, not a",
     "             heap; they take the `clock` / `money` picture below instead.",
@@ -93,7 +95,6 @@
     "mil": 1000
   },
   "exclude": [
-    "isa",
     "sandaan",
     "sero",
     "uno",

@@ -48,7 +48,7 @@ def test_a_photographed_number_is_planned_and_everything_else_is_not() -> None:
     _card(db, "tulo", image=number_picture("tulo", "ceb").filename)  # already drawn
     _card(db, "upat", image=None)  # no picture at all: not this module's call
     _card(db, "iring", image="img_cat_00000000.jpg")  # not a number
-    _card(db, "usa", image="img_one_11111111.jpg")  # excluded: 'one' AND 'a/an'
+    _card(db, "dyis", image="img_ten_11111111.jpg")  # excluded: a spelling doublet of diyes
     _card(db, "lima", image="img_x.jpg", card_type="cloze")  # a cloze has no Image field
 
     plan = plan_redraws(db, "ceb")

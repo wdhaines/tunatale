@@ -168,6 +168,10 @@ class TestDispatch:
             # A place in a line (the user, 2026-10-06: "sist made me think of this").
             ("først", "no", "first", "first"),
             ("sist", "no", "last", "last"),
+            # "Also una first?" (the user, 2026-10-06). The Cebuano base list
+            # glosses it "first"; Tagalog's una is the same word.
+            ("una", "ceb", "first", "first"),
+            ("una", "tl", "first; ahead", "first"),
             # Cebuano (2026-09-29): kilid shared tupad's "beside", tunga shared
             # taliwala's "between".
             ("kilid", "ceb", "side", "side"),
