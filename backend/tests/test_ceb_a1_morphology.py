@@ -5,7 +5,8 @@ and the core object affixes (gi- -on -an gi-...-an i-). Stative ma- na- joined
 them on 2026-10-07 (tunatale-ve4p.1): ``matulog``, ``nalipay`` and ``nakita``
 are in the first two lessons. Still NOT A1: ability (maka- naka-) and
 imperatives (-a -i pag-). Hints name the affix and its meaning:
-"lakaw — mi-: did (completed)".
+"lakaw — mi- / ni-: did (completed)". ni- is read as a spelling of mi-
+(2026-10-07), so that hint names both.
 
 The feature is recovered from (surface, lemma) by subtracting the root, because
 Wiktionary's conjugation tags are too sparse to use (11 forms tagged "past").
@@ -60,6 +61,11 @@ from app.srs.lemmatizer import TokenAnalysis
         # ...which must not swallow the longer actor prefixes on the same roots.
         ("nagdala", "dala", "nag"),
         ("magkita", "kita", "mag"),
+        # ni- is another spelling of mi- (the commoner one in native news:
+        # niadto 1,058 vs miadto 231), so it is the same affix, not a tenth one.
+        ("niadto", "adto", "mi"),
+        ("Nilakaw", "lakaw", "mi"),
+        ("nianhi", "anhi", "mi"),
     ],
 )
 def test_affix_of_recovers_the_a1_affix(surface, root, affix):
@@ -76,6 +82,8 @@ def test_affix_of_recovers_the_a1_affix(surface, root, affix):
         ("paglakaw", "lakaw"),  # pag-: not A1
         ("imnon", "inom"),  # syncope: the root is not a substring; no guess
         ("gilakaw", "hatag"),  # a different root
+        ("niini", "kini"),  # a pronoun that happens to begin ni-
+        ("nila", "nila"),  # ...and one that is its own lemma
     ],
 )
 def test_affix_of_is_none_outside_the_a1_set(surface, root):
@@ -101,6 +109,7 @@ def test_cebuano_registers_a_bundle():
         ("gihatagan", "hatag", "verb:gi-an"),
         ("matulog", "tulog", "verb:ma"),
         ("nalipay", "lipay", "verb:na"),
+        ("niadto", "adto", "verb:mi"),
     ],
 )
 def test_an_a1_form_maps_to_a_whitelisted_feature(surface, lemma, feature):
@@ -138,7 +147,7 @@ def test_the_whitelist_holds_exactly_the_decided_affixes():
 @pytest.mark.parametrize(
     ("lemma", "feature", "hint"),
     [
-        ("lakaw", "verb:mi", "lakaw — mi-: did (completed)"),
+        ("lakaw", "verb:mi", "lakaw — mi- / ni-: did (completed)"),
         ("kaon", "verb:on", "kaon — -on: will be done (to it)"),
         ("hatag", "verb:gi", "hatag — gi-: was done (to it)"),
         ("hatag", "verb:gi-an", "hatag — gi-…-an: was done to/at"),
@@ -208,7 +217,7 @@ class TestInflectionClozeEndpoint:
         assert resp.status_code == 200
         cloze = db.get_collocation_by_guid(compute_guid("milakaw", "ceb", "morph:verb-mi"))
         assert cloze.syntactic_unit.card_type == "cloze"
-        assert cloze.syntactic_unit.grammar == "lakaw — mi-: did (completed)"
+        assert cloze.syntactic_unit.grammar == "lakaw — mi- / ni-: did (completed)"
         # A prefix form shares no leading letters with its root, so the whole
         # word is the blank; the hint carries the grammar.
         assert cloze.syntactic_unit.source_sentence == "{{c1::Milakaw}} siya sa eskwelahan."
