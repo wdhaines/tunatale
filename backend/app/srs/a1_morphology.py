@@ -46,7 +46,10 @@ class A1Morphology:
     ``patterns`` are the affix contrasts the language can drill, and
     ``pattern_forms(root, pattern)`` spells one root across a pattern's
     features, or returns ``None`` when the language cannot vouch for every
-    form. Both are empty for a language that registers no patterns.
+    form. ``pattern_glosses(root, pattern)`` gives the root's English and the
+    English of each form, or ``None`` when nobody has written it down: an affix
+    can change a root's meaning, so this is never derived from the root's gloss.
+    All three are empty for a language that registers no patterns.
     """
 
     to_feature: Callable[[TokenAnalysis], str | None]
@@ -54,3 +57,4 @@ class A1Morphology:
     format_hint: Callable[[str, str], str]
     patterns: tuple[AffixPattern, ...] = ()
     pattern_forms: Callable[[str, AffixPattern], tuple[str, ...] | None] | None = None
+    pattern_glosses: Callable[[str, AffixPattern], tuple[str, tuple[str, ...]] | None] | None = None

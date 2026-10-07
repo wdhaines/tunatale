@@ -1,0 +1,31 @@
+# English for a Cebuano root drilled in an affix pattern (tunatale-ve4p.4). Hand-written.
+# root<TAB>pattern<TAB>the root's English<TAB>the English of each form, in the pattern's order
+#
+# A row here is the ONLY way a root gets into an affix drill. The English is NOT derived from the
+# root's gloss, because the affix can change the meaning: kita is "see", but magkita is "will meet"
+# and makita is "will see"; dala is "bring", but nadala is "got carried". Measured 2026-10-07 on the
+# 13 pairs the owner's deck could drill: wording them mechanically from the gloss got 3 wrong.
+#
+# Written 2026-10-07 from standard usage. NOT yet checked by a native speaker.
+# Every row must also be a pair native news uses (tests/test_ceb_affix_patterns.py enforces it).
+lakaw	mo-mi	walk	will walk	walked
+lakaw	mag-nag	walk	will walk	walked
+ampo	mag-nag	pray	will pray	prayed
+dala	mag-nag	bring	will bring	brought
+inom	mo-mi	drink	will drink	drank
+adto	mo-mi	go	will go	went
+anhi	mo-mi	come	will come	came
+kita	ma-na	see	will see	saw
+kita	mag-nag	see	will meet	met
+tulog	ma-na	sleep	will sleep	slept
+lipay	ma-na	happy	will be happy	is happy
+luto	mag-nag	cook	will cook	cooked
+hulat	mag-nag	wait	will wait	waited
+balik	mo-mi	return	will return	returned
+sulod	mo-mi	inside	will enter	entered
+tan-aw	mo-mi	watch	will watch	watched
+kaon	mo-mi	eat	will eat	ate
+sulti	mo-mi	say	will say	said
+hurot	ma-na	used up	will run out	ran out
+uban	mo-mi	accompany	will go along	went along
+uban	mag-nag	accompany	will go together	went together

@@ -19,7 +19,7 @@ Ability (maka- naka-) and imperatives (-a -i pag-) are deliberately NOT
 recognised.
 """
 
-from app.plugins.languages.ceb.affix_patterns import PATTERNS, pattern_forms
+from app.plugins.languages.ceb.affix_patterns import PATTERNS, pattern_forms, pattern_glosses
 from app.srs.a1_morphology import A1Morphology
 from app.srs.function_words import _default_format_morphology_hint
 from app.srs.lemmatizer import TokenAnalysis
@@ -93,4 +93,5 @@ CEBUANO_A1_MORPHOLOGY = A1Morphology(
     format_hint=_format_hint,
     patterns=PATTERNS,
     pattern_forms=pattern_forms,
+    pattern_glosses=pattern_glosses,
 )

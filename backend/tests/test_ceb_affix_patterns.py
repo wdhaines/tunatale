@@ -21,11 +21,14 @@ from app.languages import get_a1_morphology
 from app.plugins.languages.ceb.a1_morphology import affix_of
 from app.plugins.languages.ceb.affix_patterns import (
     COUNTS_PATH,
+    GLOSSES_PATH,
     PATTERN_AFFIXES,
     PATTERNS,
     VOUCH_FLOOR,
     load_affix_counts,
+    load_affix_glosses,
     pattern_forms,
+    pattern_glosses,
     spell,
 )
 
@@ -149,6 +152,47 @@ def test_a_missing_table_is_an_error_not_an_empty_answer(tmp_path):
         load_affix_counts(tmp_path / "absent.tsv.gz")
 
 
+# ── the hand-written English ─────────────────────────────────────────────────
+
+
+def test_the_english_of_a_form_is_written_down_not_derived():
+    """The case that ruled out wording a form from its root's gloss: kita is
+    "see", and its mag- pair means meeting, while its ma- pair means seeing."""
+    assert pattern_glosses("kita", _BY_KEY["mag-nag"]) == ("see", ("will meet", "met"))
+    assert pattern_glosses("kita", _BY_KEY["ma-na"]) == ("see", ("will see", "saw"))
+    assert pattern_glosses("Lakaw", _BY_KEY["mo-mi"]) == ("walk", ("will walk", "walked"))
+
+
+def test_a_pair_nobody_has_worded_has_no_english():
+    # Native news uses andam with mag-/nag- (26 / 77), but no row says what it means.
+    assert pattern_forms("andam", _BY_KEY["mag-nag"]) == ("mag-andam", "nag-andam")
+    assert pattern_glosses("andam", _BY_KEY["mag-nag"]) is None
+    # dala's ma- pair is "can be carried / got carried": deliberately not in the table.
+    assert pattern_glosses("dala", _BY_KEY["ma-na"]) is None
+
+
+def test_every_worded_pair_is_one_native_news_uses():
+    """The table cannot word a pair the count table would refuse to drill."""
+    table = load_affix_glosses(GLOSSES_PATH)
+    assert len(table) >= 20
+    unvouched = [(root, key) for root, key in table if pattern_forms(root, _BY_KEY[key]) is None]
+    assert unvouched == []
+
+
+def test_a_row_with_the_wrong_number_of_forms_is_an_error(tmp_path):
+    path = tmp_path / "glosses.tsv"
+    path.write_text("# header\n\nlakaw\tmag-nag\twalk\twill walk\twalked\nampo\tmag-nag\tpray\twill pray\n")
+    with pytest.raises(ValueError, match=r"glosses.tsv:4: ampo mag-nag needs 2 English forms, has 1"):
+        load_affix_glosses(path)
+
+
+def test_a_row_naming_an_unknown_pattern_is_an_error(tmp_path):
+    path = tmp_path / "glosses.tsv"
+    path.write_text("lakaw\tmag-mi\twalk\twill walk\twalked\n")
+    with pytest.raises(ValueError, match=r"glosses.tsv:1: lakaw mag-mi needs None English forms, has 2"):
+        load_affix_glosses(path)
+
+
 # ── reached through the registry ─────────────────────────────────────────────
 
 
@@ -156,9 +200,11 @@ def test_cebuano_registers_its_patterns_on_the_bundle():
     bundle = get_a1_morphology("ceb")
     assert bundle.patterns == PATTERNS
     assert bundle.pattern_forms("tulog", _BY_KEY["ma-na"]) == ("matulog", "natulog")
+    assert bundle.pattern_glosses("tulog", _BY_KEY["ma-na"]) == ("sleep", ("will sleep", "slept"))
 
 
 def test_a_language_without_patterns_registers_none():
     bundle = get_a1_morphology("no")
     assert bundle.patterns == ()
     assert bundle.pattern_forms is None
+    assert bundle.pattern_glosses is None

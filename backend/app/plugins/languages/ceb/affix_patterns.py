@@ -28,6 +28,7 @@ from pathlib import Path
 from app.srs.a1_morphology import AffixPattern
 
 COUNTS_PATH = Path(__file__).parent / "data" / "cebuano_affix_counts.tsv.gz"
+GLOSSES_PATH = Path(__file__).parent / "data" / "affix_glosses.tsv"
 VOUCH_FLOOR = 20
 _VOWELS = "aeiou"
 
@@ -69,3 +70,29 @@ def pattern_forms(
     if any(table.get((root, affix), 0) < VOUCH_FLOOR for affix in affixes):
         return None
     return tuple(spell(root, affix) for affix in affixes)
+
+
+@cache
+def load_affix_glosses(path: Path) -> dict[tuple[str, str], tuple[str, tuple[str, ...]]]:
+    """``(root, pattern key) -> (the root's English, the English of each form)`` from *path*.
+
+    A row whose pattern is unknown, or that does not have exactly one English
+    per form, raises: a half-written row must not become a half-worded drill.
+    """
+    cells = {pattern.key: len(pattern.features) for pattern in PATTERNS}
+    glosses: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line or line.startswith("#"):
+            continue
+        root, key, root_english, *forms = line.split("\t")
+        if len(forms) != cells.get(key):
+            raise ValueError(
+                f"{path.name}:{number}: {root} {key} needs {cells.get(key)} English forms, has {len(forms)}"
+            )
+        glosses[(root, key)] = (root_english, tuple(forms))
+    return glosses
+
+
+def pattern_glosses(root: str, pattern: AffixPattern) -> tuple[str, tuple[str, ...]] | None:
+    """The hand-written English for *root* in *pattern*, or ``None`` when there is none."""
+    return load_affix_glosses(GLOSSES_PATH).get((root.casefold(), pattern.key))
