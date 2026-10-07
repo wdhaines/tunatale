@@ -1,9 +1,11 @@
 """Cebuano stage 2: affixed forms as inflection clozes on the root card (tunatale-u8nz.20).
 
 User decisions (2026-09-27): A1 = the core actor affixes (mo- mi- mag- nag-)
-and the core object affixes (gi- -on -an gi-...-an i-). NOT A1: stative/ability
-(ma- na- maka- naka-) and imperatives (-a -i pag-). Hints name the affix and
-its meaning: "lakaw — mi-: did (completed)".
+and the core object affixes (gi- -on -an gi-...-an i-). Stative ma- na- joined
+them on 2026-10-07 (tunatale-ve4p.1): ``matulog``, ``nalipay`` and ``nakita``
+are in the first two lessons. Still NOT A1: ability (maka- naka-) and
+imperatives (-a -i pag-). Hints name the affix and its meaning:
+"lakaw — mi-: did (completed)".
 
 The feature is recovered from (surface, lemma) by subtracting the root, because
 Wiktionary's conjugation tags are too sparse to use (11 forms tagged "past").
@@ -50,6 +52,14 @@ from app.srs.lemmatizer import TokenAnalysis
         # h-insertion before a suffix on a vowel-final root.
         ("basahon", "basa", "on"),
         ("gibasahan", "basa", "gi-an"),
+        # Stative ma-/na-, as the stored lessons use them.
+        ("matulog", "tulog", "ma"),
+        ("malipay", "lipay", "ma"),
+        ("nalipay", "lipay", "na"),
+        ("nakita", "kita", "na"),
+        # ...which must not swallow the longer actor prefixes on the same roots.
+        ("nagdala", "dala", "nag"),
+        ("magkita", "kita", "mag"),
     ],
 )
 def test_affix_of_recovers_the_a1_affix(surface, root, affix):
@@ -60,9 +70,8 @@ def test_affix_of_recovers_the_a1_affix(surface, root, affix):
     ("surface", "root"),
     [
         ("lakaw", "lakaw"),  # no affix
-        ("matulog", "tulog"),  # ma-: stative, not A1 by decision
-        ("nakita", "kita"),  # na-: not A1
-        ("makakaon", "kaon"),  # maka-: not A1
+        ("makakaon", "kaon"),  # maka-: ability, not A1
+        ("nakahibalo", "hibalo"),  # naka-: ability, not A1
         ("kuhaa", "kuha"),  # -a imperative: not A1
         ("paglakaw", "lakaw"),  # pag-: not A1
         ("imnon", "inom"),  # syncope: the root is not a substring; no guess
@@ -86,7 +95,13 @@ def test_cebuano_registers_a_bundle():
 
 @pytest.mark.parametrize(
     ("surface", "lemma", "feature"),
-    [("milakaw", "lakaw", "verb:mi"), ("kaonon", "kaon", "verb:on"), ("gihatagan", "hatag", "verb:gi-an")],
+    [
+        ("milakaw", "lakaw", "verb:mi"),
+        ("kaonon", "kaon", "verb:on"),
+        ("gihatagan", "hatag", "verb:gi-an"),
+        ("matulog", "tulog", "verb:ma"),
+        ("nalipay", "lipay", "verb:na"),
+    ],
 )
 def test_an_a1_form_maps_to_a_whitelisted_feature(surface, lemma, feature):
     got = ud_feats_to_tt_feature(_analysis(surface, lemma), "ceb")
@@ -100,7 +115,7 @@ def test_only_a_verb_reading_carries_a_feature():
 
 
 def test_a_non_a1_form_has_no_feature():
-    assert ud_feats_to_tt_feature(_analysis("matulog", "tulog"), "ceb") is None
+    assert ud_feats_to_tt_feature(_analysis("nakahibalo", "hibalo"), "ceb") is None
 
 
 def test_the_whitelist_holds_exactly_the_decided_affixes():
@@ -110,6 +125,8 @@ def test_the_whitelist_holds_exactly_the_decided_affixes():
         "verb:mi",
         "verb:mag",
         "verb:nag",
+        "verb:ma",
+        "verb:na",
         "verb:gi",
         "verb:on",
         "verb:an",
@@ -125,6 +142,8 @@ def test_the_whitelist_holds_exactly_the_decided_affixes():
         ("kaon", "verb:on", "kaon — -on: will be done (to it)"),
         ("hatag", "verb:gi", "hatag — gi-: was done (to it)"),
         ("hatag", "verb:gi-an", "hatag — gi-…-an: was done to/at"),
+        ("tulog", "verb:ma", "tulog — ma-: will be / will happen (not yet)"),
+        ("lipay", "verb:na", "lipay — na-: is / was / happened"),
     ],
 )
 def test_the_hint_names_the_affix_and_its_meaning(lemma, feature, hint):

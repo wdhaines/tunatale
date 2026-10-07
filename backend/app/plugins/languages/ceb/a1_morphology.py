@@ -12,16 +12,19 @@ gets no feature and stays a plain word; guessing would put a wrong hint on a
 card.
 
 A1 by the user's decision (2026-09-27): the core actor affixes mo- mi- mag- nag-
-and the core object affixes gi- -on -an gi-…-an i-. Stative/ability (ma- na-
-maka- naka-) and imperatives (-a -i pag-) are deliberately NOT recognised.
+and the core object affixes gi- -on -an gi-…-an i-. Stative ma- na- joined them
+on 2026-10-07 (tunatale-ve4p.1): they were 5 of the 14 affixed verbs the first
+two lessons left unexplained (``matulog``, ``malipay``, ``nalipay``, ``nakita``).
+Ability (maka- naka-) and imperatives (-a -i pag-) are deliberately NOT
+recognised.
 """
 
 from app.srs.a1_morphology import A1Morphology
 from app.srs.function_words import _default_format_morphology_hint
 from app.srs.lemmatizer import TokenAnalysis
 
-# Longest first: "mag"/"nag" before a hypothetical shorter overlap, "i" last.
-_PREFIXES = ("mag", "nag", "mo", "mi", "gi", "i")
+# Longest first: "mag"/"nag" before the "ma"/"na" they begin with, "i" last.
+_PREFIXES = ("mag", "nag", "ma", "na", "mo", "mi", "gi", "i")
 _SUFFIXES = ("on", "an")
 
 # affix → (how the hint spells it, what it means)
@@ -30,6 +33,8 @@ _AFFIXES: dict[str, tuple[str, str]] = {
     "mi": ("mi-", "did (completed)"),
     "mag": ("mag-", "will do (not yet done)"),
     "nag": ("nag-", "did / was doing"),
+    "ma": ("ma-", "will be / will happen (not yet)"),
+    "na": ("na-", "is / was / happened"),
     "gi": ("gi-", "was done (to it)"),
     "on": ("-on", "will be done (to it)"),
     "an": ("-an", "will be done to/at"),
