@@ -29,6 +29,11 @@ file (and its ``-wal`` if one exists) somewhere else and point ``--deck`` there.
 the analyses the app stored for these very lines, so the report shows what the
 app saw. A line with no cached analysis is counted and printed, never treated
 as verb-free.
+
+**Newest analysis wins.** The cache keeps one row per sentence PER lemma-table
+build (a deck measured 2026-10-07 held six builds' worth), so a sentence can
+have several analyses that disagree. The report takes the most recently
+written one, which is what the app last computed for that line.
 """
 
 from __future__ import annotations
@@ -144,9 +149,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     con = _connect(args.deck)
+    # Oldest first, so a later row for the same sentence replaces an earlier one.
     cached = dict(
         con.execute(
-            "SELECT sentence, analyses_json FROM lemma_analysis_cache WHERE language_code = ?", (args.language,)
+            "SELECT sentence, analyses_json FROM lemma_analysis_cache WHERE language_code = ?"
+            " ORDER BY updated_at, rowid",
+            (args.language,),
         )
     )
     lessons = con.execute("SELECT day, data_json FROM lessons ORDER BY day").fetchall()
