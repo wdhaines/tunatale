@@ -4172,7 +4172,7 @@ The auth store has three states for "does this deployment need a login": on, off
 Everything under `frontend/src/lib/stores/` is a Svelte 5 rune store. Two families:
 
 - **Server-backed state** polled or hydrated through `api`: `listened.svelte.ts` (which lessons have been listened to, backed by `GET /api/srs/listens`; it also migrates the pre-server localStorage keys once), `queueStats`, `pipeline` (polls the generation pipeline every 2 s while active, 10 s otherwise, with a generation counter so a stale poll cannot write after `stop()`), `llmActivity`, `llmHealth`, `rateLimit`, `language`, `auth`, `parked`, `sync`.
-- **Per-device preferences**, all built on `localPref.svelte.ts::createLocalPref`: hands-free mode, player collapsed, English-order mode, caption blur, listen countdown, wifi prefetch, voice, the reader's "Produce" toggle.
+- **Per-device preferences**, all built on `localPref.svelte.ts::createLocalPref`: hands-free mode, player collapsed, English-order mode, caption blur, listen countdown, wifi prefetch, and the reader's two chips (English and Recall).
 
 ```bash
 cd frontend/src/lib && sed -n '/^export function createLocalPref/,/^}/p' stores/localPref.svelte.ts | head -30; ls stores | grep -c Pref
@@ -4305,7 +4305,7 @@ Position is saved on `visibilitychange`/`pagehide` (throttled) and resumes into 
 
 **Offline audio.** Audio is cached by `frontend/src/service-worker.ts`, deliberately a thin shell; all decisions live in the tested `$lib/sw/audio-cache.ts`. Strategy is cache-first on the full file with *synthesised* Range responses: lesson audio is immutable (keyed by a server-minted id), `<audio>` sends `Range` requests, Chromium stalls over a service worker unless it gets a `206`, and the server's own `206` cannot be cached, so the worker caches the full `200` and cuts `206` slices itself. `sw/prefetch.ts` can prefetch a lesson on wifi when the Network Information API says so and the user has not asked to save data. `sw/precache.ts` keeps debug pages (the voice probes) out of the app-shell cache, so a spike can stay in the tree safely. The design is in `docs/archive/offline-audio-plan.md`.
 
-**Voice.** A voice-control spike lives under `frontend/src/lib/voice/`: `phraseTable.ts::resolveCommand` maps an exact utterance to a command, and `wakeLock.ts` holds a screen wake lock during playback. There is no recognizer wired in yet; the mic chip and `voicePref` are the groundwork.
+**Voice.** A voice-control spike lives under `frontend/src/lib/voice/`: `phraseTable.ts::resolveCommand` maps an exact utterance to a command, and `wakeLock.ts` holds a screen wake lock while hands-free is running in Listen, which is when nobody is touching the phone. There is no recognizer wired in yet; the Mic chip and its `voicePref` store were removed until there is a wake word.
 
 ### 13.5 The reader: one shell, two sources
 
@@ -4329,7 +4329,8 @@ export function masterySides(bands: {
 - **Colour** is mastery hue from the word's progress; unknown, ignored and suspended words get fixed classes.
 - **Twin rails** under a word show per-direction strength (recognition and production) as a coloured, length-proportional fill, from the backend's band vocabulary (`mastery.py::direction_band`); a never-studied card, no card and an absent band are one "not started" state, because whether a row exists is not something the learner can act on.
 - **Weight** marks what is due: a due recognition direction renders bold, and `WordToken.overdue_ratio` (computed backend-side relative to stability, since a 2-day memory a week late is lost while a 6-month one is fine) steps it to 800 at one stability overdue and 900 at three.
-- **Blur-as-cloze**: with the per-device "Produce" toggle on (default off, `stores/readerProductionPref.svelte.ts`), a word whose *production* direction is due blurs instead of bolding. Tapping reveals it and grades nothing; only the popover's four ratings (Again / Hard / Good / Easy) write, and they grade production through the review queue's own endpoint. With the toggle off the reader is exactly the recognition-only reader.
+- **The reader's chips** (`ReaderChips.svelte`) sit in the sticky card in Read, drawn like Listen's setting chips. English cycles Off, Idiomatic (the line translation), Literal (the per-word gloss), Both (`stores/readerEnglishPref.svelte.ts`); Recall is Blurred or Off. Both persist. With the player collapsed only Recall stays, on the Mark as Listened row. In Read the player itself always plays natural speed with no spoken English and ignores hands-free; the Listen choices are kept and apply again on switching back (`LessonPlayer.svelte`, `effectiveEnun` / `effectiveEnglish` / `syncEffectiveHandsFree`).
+- **Blur-as-cloze**: with the per-device Recall chip on Blurred (default off, `stores/readerProductionPref.svelte.ts`), a word whose *production* direction is due blurs instead of bolding. Tapping reveals it and grades nothing; only the popover's four ratings (Again / Hard / Good / Easy) write, and they grade production through the review queue's own endpoint. With Recall off the reader is exactly the recognition-only reader.
 - **Popover actions** (`Tooltip.svelte`) create a base card or an inflection cloze, grade a due word, undo the single latest grade, and apply ignore, known and new overrides; the override set deliberately excludes lapse and restore so it never rewrites FSRS scheduling state.
 
 ### 13.6 Listen, review and review sessions

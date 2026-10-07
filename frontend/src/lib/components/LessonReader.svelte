@@ -4,9 +4,11 @@
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { createReadingActions } from '$lib/reading/readingActions.svelte';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
+	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import LessonPlayer from './LessonPlayer.svelte';
 	import ReadListenToggle from './ReadListenToggle.svelte';
+	import ReaderChips from './ReaderChips.svelte';
 	import Transcript from './Transcript.svelte';
 	import TranscriptPlaceholder from './TranscriptPlaceholder.svelte';
 
@@ -55,7 +57,7 @@
 		/** Shown in place of the player when there is no audio yet. */
 		noAudio?: Snippet;
 		/** The action row at the foot of the sticky card. */
-		actions?: Snippet;
+		actions?: Snippet<[{ recallInline: boolean }]>;
 	}
 
 	let {
@@ -76,6 +78,7 @@
 	}: Props = $props();
 
 	const mode = $derived(lessonModePref.mode);
+	const recallInline = $derived(mode === 'read' && audio != null && playerCollapsedPref.collapsed);
 </script>
 
 <!-- The sticky card owns everything reached for mid-lesson: the title, the
@@ -114,8 +117,11 @@
 	{:else if noAudio}
 		{@render noAudio()}
 	{/if}
+	{#if mode === 'read' && !recallInline}
+		<ReaderChips />
+	{/if}
 	{#if actions}
-		{@render actions()}
+		{@render actions({ recallInline })}
 	{/if}
 </section>
 

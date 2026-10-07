@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { createListenActions } from '$lib/reading/listenActions.svelte';
+	import ReaderChips from './ReaderChips.svelte';
 
 	/**
 	 * The action row at the foot of the sticky card: mark listened, what the last
@@ -16,8 +17,11 @@
 		reviewHref: string;
 		/** Suppressed while the page is showing an error of its own. */
 		hasError?: boolean;
+		/** Read mode with the player collapsed: the Recall chip joins this row,
+		    at the button's height (LessonReader decides; the pages pass it on). */
+		recallInline?: boolean;
 	}
-	let { listen, reviewHref, hasError = false }: Props = $props();
+	let { listen, reviewHref, hasError = false, recallInline = false }: Props = $props();
 
 	const result = $derived(listen.listenResult);
 	const showConfirmation = $derived(result !== null && !hasError);
@@ -31,10 +35,11 @@
 	);
 </script>
 
-<div class="listen-actions">
+<div class="listen-actions" class:with-recall={recallInline}>
 	<button class="listen-btn" class:listened={listen.isListened} onclick={() => listen.open()}>
 		Mark as Listened
 	</button>
+	{#if recallInline}<ReaderChips inline />{/if}
 	{#if showConfirmation && result}
 		<p class="listen-confirmation">
 			{#if result.created > 0}
@@ -68,6 +73,9 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0.5rem 0.9rem;
+	}
+	.listen-actions.with-recall {
+		align-items: stretch;
 	}
 	.listen-btn {
 		/* The page-wide `button` rule adds a 0.75rem top margin, which in a flex

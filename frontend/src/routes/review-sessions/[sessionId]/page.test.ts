@@ -1283,6 +1283,10 @@ describe("header density on a phone", () => {
 });
 
 describe("hands-free carries on into the next review session", () => {
+  // Hands-free runs in Listen only; Read ignores it and keeps the setting
+  // (bd tunatale-685k). The file-level reset above leaves the page in Read.
+  beforeEach(() => lessonModePref.set("listen"));
+
   function sectionCue(sectionIndex: number, sectionType: string) {
     return {
       index: 0,

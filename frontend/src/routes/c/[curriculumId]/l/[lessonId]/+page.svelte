@@ -535,11 +535,12 @@
 					{/if}
 				</div>
 		{/snippet}
-		{#snippet actions()}
+		{#snippet actions({ recallInline })}
 			<ListenActions
 				{listen}
 				reviewHref="/review?lesson={data.lesson.id}&back=/c/{data.curriculum.id}/l/{data.lesson.id}"
 				hasError={error !== ''}
+				{recallInline}
 			/>
 		{/snippet}
 	</LessonReader>

@@ -1904,3 +1904,72 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
   });
 });
+
+describe("reader chips (bd tunatale-685k)", () => {
+  beforeEach(async () => {
+    localStorage.clear();
+    const { readerEnglishPref } = await import("$lib/stores/readerEnglishPref.svelte");
+    const { readerProductionPref } = await import("$lib/stores/readerProductionPref.svelte");
+    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    readerEnglishPref.set("off");
+    readerProductionPref.set(false);
+    playerCollapsedPref.set(false);
+  });
+
+  it("Read, player expanded: reader-english-chip and reader-recall-chip both present, and the Recall chip is NOT inside .listen-actions", async () => {
+    const { getByTestId, container } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await waitFor(() => {
+      expect(getByTestId("reader-english-chip")).toBeTruthy();
+      expect(getByTestId("reader-recall-chip")).toBeTruthy();
+      const listenActions = container.querySelector(".listen-actions");
+      expect(listenActions?.contains(getByTestId("reader-recall-chip"))).toBe(false);
+    });
+  });
+
+  it("Read, playerCollapsedPref.set(true): reader-english-chip absent; reader-recall-chip present and its parentElement is .listen-actions", async () => {
+    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    playerCollapsedPref.set(true);
+    const { queryByTestId, getByTestId, container } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    await waitFor(() => {
+      expect(queryByTestId("reader-english-chip")).toBeNull();
+      const recall = getByTestId("reader-recall-chip");
+      expect(recall.parentElement).toBe(container.querySelector(".listen-actions"));
+    });
+  });
+
+  it("Listen: neither chip present, expanded or collapsed", async () => {
+    const { findByRole, queryByTestId } = render(Page, {
+      props: { data: { curriculum, lesson, audio, transcript } },
+    });
+    // Present in Read first: without this the absences below would also pass
+    // on a page that never drew the chips at all.
+    await waitFor(() => expect(queryByTestId("reader-recall-chip")).not.toBeNull());
+    await fireEvent.click(await findByRole("button", { name: "Listen" }));
+    await waitFor(() => {
+      expect(queryByTestId("reader-english-chip")).toBeNull();
+      expect(queryByTestId("reader-recall-chip")).toBeNull();
+    });
+    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    playerCollapsedPref.set(true);
+    await waitFor(() => {
+      expect(queryByTestId("reader-english-chip")).toBeNull();
+      expect(queryByTestId("reader-recall-chip")).toBeNull();
+    });
+  });
+
+  it("Read with no audio and playerCollapsedPref.set(true): both chips present", async () => {
+    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    playerCollapsedPref.set(true);
+    const { getByTestId } = render(Page, {
+      props: { data: { curriculum, lesson, audio: null, transcript } },
+    });
+    await waitFor(() => {
+      expect(getByTestId("reader-english-chip")).toBeTruthy();
+      expect(getByTestId("reader-recall-chip")).toBeTruthy();
+    });
+  });
+});

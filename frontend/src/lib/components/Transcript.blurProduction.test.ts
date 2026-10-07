@@ -3,11 +3,13 @@
  * for the dialogue, persists across reloads, and is OFF by default.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent } from "@testing-library/svelte";
+import { render } from "@testing-library/svelte";
+import { tick } from "svelte";
 import Transcript from "./Transcript.svelte";
 import type { TranscriptData } from "$lib/api";
 import { makeWordToken } from "../../test/factories";
 import { readerProductionPref } from "$lib/stores/readerProductionPref.svelte";
+import { readerEnglishPref } from "$lib/stores/readerEnglishPref.svelte";
 
 vi.mock("$lib/api", () => ({
   api: { translate: vi.fn() },
@@ -53,6 +55,7 @@ function words(container: HTMLElement): HTMLElement[] {
 beforeEach(() => {
   localStorage.clear();
   readerProductionPref.set(false);
+  readerEnglishPref.set("off");
   localStorage.clear();
 });
 
@@ -63,11 +66,9 @@ describe("Transcript — Produce toggle", () => {
   });
 
   it("turning it on blurs exactly the production-due word, and persists", async () => {
-    const { container, getByRole } = render(Transcript, { props: { transcript } });
-    const pill = getByRole("button", { name: "Produce" });
-    expect(pill.getAttribute("aria-pressed")).toBe("false");
-    await fireEvent.click(pill);
-    expect(pill.getAttribute("aria-pressed")).toBe("true");
+    const { container } = render(Transcript, { props: { transcript } });
+    readerProductionPref.set(true);
+    await tick();
     const blurred = container.querySelectorAll(".word-blurred");
     expect(blurred).toHaveLength(1);
     // The recognition-due neighbour still bolds.

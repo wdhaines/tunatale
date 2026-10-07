@@ -156,6 +156,12 @@ function backendServer(i: number) {
 			// key in .env makes the suite hit Pixabay/Forvo live (slow, flaky).
 			// Empty it so seeding stays offline; the process env beats .env.
 			PIXABAY_API_KEY: '',
+			// The same for speech: a card with no Forvo recording (any phrase
+			// card, e.g. the one phrase-drag.spec.ts makes) falls back to Azure
+			// TTS when the review queue pre-stages audio, and the dev .env carries
+			// a real key. CI has none; empty here so a local run makes the same
+			// zero paid calls (backend/tests/conftest.py pins it the same way).
+			AZURE_SPEECH_KEY: '',
 			// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
 			// so a local `lemmatizer_type=classla` in .env doesn't make the
 			// backend pay classla's ~26s model load and blow the webServer timeout.

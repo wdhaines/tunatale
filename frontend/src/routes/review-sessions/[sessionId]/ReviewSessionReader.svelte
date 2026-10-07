@@ -446,11 +446,12 @@
 			     single number; the full phrasing survives in the tooltip. -->
 			<MasteryLine {transcript} loading={transcriptLoading} extra={coverageSegment} />
 		{/snippet}
-		{#snippet actions()}
+		{#snippet actions({ recallInline })}
 			<ListenActions
 				{listen}
 				reviewHref="/review?lesson={data.session.id}&back=/review-sessions/{data.session.id}"
 				hasError={error !== ''}
+				{recallInline}
 			/>
 		{/snippet}
 		{#snippet noAudio()}
