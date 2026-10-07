@@ -3979,7 +3979,7 @@ export interface components {
        * Kind
        * @enum {string}
        */
-      kind: "line" | "key_phrase" | "narration";
+      kind: "line" | "key_phrase" | "narration" | "drill";
       /** Target Index */
       target_index?: number | null;
     };

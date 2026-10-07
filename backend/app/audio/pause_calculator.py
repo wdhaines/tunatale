@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from app.models.lesson import SectionType
+from app.models.lesson import DRILL_PROMPT_ROLE, SectionType
 
 _BASE_PHRASE_PAUSE_MS = 500  # prototype's silence_between_phrases (0.5 s)
 _SLOW_SPEED_FACTOR = 1.2
 _SECTION_BOUNDARY_PAUSE_MS = 3000
 _ENGLISH_LANG = "en"
+# The affix drill. After a prompt the learner has to find the form and then say
+# it, so the gap is thinking time plus the length of the answer that follows.
+# After a form there is room to say it back: its own length, as in Key Phrases,
+# but a one-word form is over in half a second and that is no room at all.
+# Both are first values, chosen before anyone had heard a drill.
+_DRILL_THINK_MS = 2000
+_DRILL_REPEAT_FLOOR_MS = 1000
 
 _BOUNDARY_PAUSES: dict[str, int] = {
     "syllable": 300,
@@ -28,6 +35,9 @@ class NaturalPauseCalculator:
         word_count: int,
         section_type: SectionType,
         language_code: str = _ENGLISH_LANG,
+        *,
+        role: str = "",
+        next_duration_s: float | None = None,
     ) -> int:
         """Pause in ms to insert after a phrase.
 
@@ -36,6 +46,12 @@ class NaturalPauseCalculator:
         - Enunciated (SLOW_SPEED) + L2: base 500 ms × 1.2.
         - Enunciated (SLOW_SPEED) + English narrator: base 500 ms (no slow factor).
         - Natural Speed / English After (any language): base 500 ms.
+        - Affix Drill + a prompt (`role`): 2 s to think, plus `next_duration_s`,
+          the length of the answer that follows it (nothing, if nothing does).
+        - Affix Drill + L2: audio-duration-based (1:1), floor 1 s.
+        - Affix Drill + the narrator's other English: base 500 ms.
+
+        `role` and `next_duration_s` are read by the Affix Drill alone.
 
         `word_count` is retained for backward compatibility with the renderer
         call site and is currently unused.
@@ -43,6 +59,13 @@ class NaturalPauseCalculator:
         del word_count  # unused; kept for API stability
 
         is_l2 = language_code != _ENGLISH_LANG
+
+        if section_type == SectionType.AFFIX_DRILL:
+            if role == DRILL_PROMPT_ROLE:
+                return _DRILL_THINK_MS + int((next_duration_s or 0.0) * 1000)
+            if is_l2:
+                return max(_DRILL_REPEAT_FLOOR_MS, int(audio_duration_s * 1000))
+            return _BASE_PHRASE_PAUSE_MS
 
         if section_type == SectionType.KEY_PHRASES and is_l2:
             return max(_BASE_PHRASE_PAUSE_MS, int(audio_duration_s * 1000))

@@ -26,7 +26,9 @@ from app.audio.render_cost import collect_keys
 from app.audio.renderer import build_lesson_renderer
 from app.audio.slicer import PARENT_RATE
 from app.config import settings
+from app.generation.affix_drill import build_affix_drill
 from app.generation.section_builder import (
+    build_affix_drill_section,
     build_en_translated_section,
     build_key_phrases_section,
     build_natural_speed_section,
@@ -35,7 +37,14 @@ from app.generation.section_builder import (
     build_slow_translated_section,
     build_translated_section,
 )
-from app.languages import get_language, get_phoneme_planner, get_preprocessor, get_slow_word, get_tts_locale
+from app.languages import (
+    get_a1_morphology,
+    get_language,
+    get_phoneme_planner,
+    get_preprocessor,
+    get_slow_word,
+    get_tts_locale,
+)
 from app.models.lesson import Lesson, Section
 from tests.test_renderer import _make_wav_bytes
 
@@ -60,6 +69,13 @@ _STORIES = {
         [("Dober dan!", "Good day!"), ("Prosim kavo", "A coffee, please")],
         [("Dober dan! Prosim kavo.", "Good day! A coffee, please."), ("Ja.", "Yes.")],
     ),
+}
+
+
+# The affix drill is the one section not made from a story, for the languages
+# that register affix patterns: one-word forms, prompts, and a whole line.
+_DRILLS = {
+    "ceb": ("mo-mi", ["inom", "lakaw"], ("Milakaw si Paul sa dalan.", "Paul walked on the road.")),
 }
 
 
@@ -91,6 +107,11 @@ def _lesson(code: str) -> Lesson:
         build_en_translated_section(scenes, voices, narrator, code, **spoken),
         build_slow_en_translated_section(scenes, voices, narrator, code, **spoken),
     ]
+    if code in _DRILLS:
+        pattern_key, roots, line = _DRILLS[code]
+        pattern = next(p for p in get_a1_morphology(code).patterns if p.key == pattern_key)
+        drill = build_affix_drill(code, pattern, roots=roots, line=line)
+        sections.append(build_affix_drill_section(drill, narrator_voice=narrator, l2_voice=voices["female-1"]))
     return Lesson(title="A lesson", language_code=code, sections=sections, narrator_voice=narrator)
 
 

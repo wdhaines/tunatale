@@ -1484,7 +1484,7 @@ class RenderCueRef(BaseModel):
     to omit the key.
     """
 
-    kind: Literal["line", "key_phrase", "narration"]
+    kind: Literal["line", "key_phrase", "narration", "drill"]
     target_index: int | None = Field(default=None, exclude_if=lambda v: v is None)  # omitted when unset
 
 

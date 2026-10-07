@@ -3874,7 +3874,8 @@
             "enum": [
               "line",
               "key_phrase",
-              "narration"
+              "narration",
+              "drill"
             ],
             "title": "Kind",
             "type": "string"

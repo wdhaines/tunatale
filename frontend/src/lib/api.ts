@@ -431,9 +431,12 @@ export interface SectionAudio {
 }
 
 export interface CueRef {
-  kind: "line" | "key_phrase" | "narration";
+  // "drill" is an affix-drill item: an English line and the form after it share
+  // one index, so they are one step for the sentence controls. It names nothing
+  // in the transcript.
+  kind: "line" | "key_phrase" | "narration" | "drill";
   // Absent on narration refs — the backend emits {"kind": "narration"} with no
-  // target (see app/audio/cues.py); only line/key_phrase refs carry an index.
+  // target (see app/audio/cues.py); every other kind carries an index.
   target_index?: number;
 }
 
