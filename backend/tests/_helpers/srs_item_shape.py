@@ -51,6 +51,7 @@ SRS_ITEM_KEYS = {
     "article",
     "extras",
     "pos",
+    "context_sentence",
 }
 
 DIRECTION_WITHOUT_LEFT = DIRECTION_KEYS - {"left"}

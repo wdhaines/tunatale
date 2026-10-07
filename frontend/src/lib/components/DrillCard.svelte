@@ -196,6 +196,11 @@
 				<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 			{/if}
 			<p class="main-text slovene">{headword}{posLabel}</p>
+			<!-- Two cards with one spelling: the sentence this one was met in says
+			     which is being asked, without answering it (bd tunatale-p7ak). -->
+			{#if item.context_sentence}
+				<p class="context-sentence slovene">{item.context_sentence}</p>
+			{/if}
 		{:else if direction === 'production'}
 			{#if item.card_type === 'cloze' && item.source_sentence}
 				<p class="main-text">{@html clozePromptHtml()}</p>
@@ -275,6 +280,11 @@
 	.main-text {
 		font-size: 1.5rem;
 		font-weight: bold;
+		margin-bottom: 0.5rem;
+	}
+	.context-sentence {
+		font-size: 1rem;
+		opacity: 0.8;
 		margin-bottom: 0.5rem;
 	}
 	.prompt-image {

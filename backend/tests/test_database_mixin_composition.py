@@ -112,4 +112,8 @@ def test_public_method_count_pinned() -> None:
     # +list_seen_vocab_missing_word_audio (the audio pre-stage's "already met"
     #  queue: metered TTS is rendered when a card is about to be heard, not at
     #  mint — tunatale-r8hk)
-    assert count == 139
+    # +get_homograph_surfaces (the review queue's "does another card share this
+    #  spelling?", as one set per language. count_vocab_with_text answers the
+    #  same question for one text, exact-case, one query each — the queue asks
+    #  it of every item, casefolded — tunatale-p7ak)
+    assert count == 140

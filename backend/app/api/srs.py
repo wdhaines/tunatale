@@ -184,6 +184,7 @@ def _item_to_dict(
     image_url: str | None = None,
     audio_url: str | None = None,
     ambiguous_surfaces: set[str] | None = None,
+    homograph_surfaces: set[str] | None = None,
 ) -> dict:
     """Serialize an SRSItem to a response dict.
 
@@ -235,9 +236,24 @@ def _item_to_dict(
         # (e.g. "fange" noun vs verb). Empty otherwise, so unambiguous cards
         # stay uncluttered. ``ambiguous_surfaces`` is None on endpoints that
         # don't compute it (single-item views) → no POS shown there.
+        # A key that is not a word class is a SENSE key — the card's English
+        # meaning ("time") — and printing it on the front answers the card
+        # (bd tunatale-p7ak), so it is never shown.
         "pos": (
             item.syntactic_unit.disambig_key
-            if ambiguous_surfaces is not None and item.syntactic_unit.text.casefold() in ambiguous_surfaces
+            if ambiguous_surfaces is not None
+            and item.syntactic_unit.text.casefold() in ambiguous_surfaces
+            and upos_for_disambig(item.syntactic_unit.disambig_key) is not None
+            else ""
+        ),
+        # What tells two cards with one spelling apart without answering either:
+        # the sentence each was met in (the user, 2026-10-06). Empty for a card
+        # with its spelling to itself, and for one that carries no sentence.
+        "context_sentence": (
+            item.syntactic_unit.source_sentence
+            if homograph_surfaces is not None
+            and item.syntactic_unit.card_type == "vocab"
+            and item.syntactic_unit.text.casefold() in homograph_surfaces
             else ""
         ),
     }
@@ -1879,10 +1895,11 @@ async def get_lesson_review_queue(content_id: str, request: Request, response: R
     review.sort(key=lambda t: (t[0], t[1]))
 
     ambiguous = db.get_ambiguous_surfaces(lesson.language_code)
+    homographs = db.get_homograph_surfaces(lesson.language_code)
     has_unreviewed_listen = _has_unreviewed_listen(db.latest_listen_at(content_id), db.latest_review_at(content_id))
     queue = []
     for _, rid, item, d, rating in learning + review:
-        entry = _queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous)
+        entry = _queue_item_to_dict(rid, item, lesson.language_code, d, db, ambiguous, homographs)
         # Provisional rating per card, so the UI can pre-fill what the listen staged.
         entry["pending_rating"] = rating
         queue.append(entry)
@@ -3425,6 +3442,7 @@ def _queue_item_to_dict(
     direction: Direction,
     db,
     ambiguous_surfaces: set[str] | None = None,
+    homograph_surfaces: set[str] | None = None,
 ) -> dict:
     img = db.get_image_filename(row_id)
     image_url = f"/api/srs/media/{img}" if img else None
@@ -3437,7 +3455,7 @@ def _queue_item_to_dict(
         aud = db.get_audio_filename(row_id)
         audio_url = f"/api/srs/media/{aud}" if aud else None
         word_audio_url = None
-    base = _item_to_dict(row_id, item, lang, image_url, audio_url, ambiguous_surfaces)
+    base = _item_to_dict(row_id, item, lang, image_url, audio_url, ambiguous_surfaces, homograph_surfaces)
     base["direction"] = direction.value
     base["word_audio_url"] = word_audio_url
     # `_item_to_dict` populates flat fields from recognition (or production for
@@ -3608,14 +3626,18 @@ async def get_review_queue(
             limit=settings.prestage_audio_limit,
         )
 
-    # POS is a disambiguator: show it only where a surface spans >=2 word classes.
+    # POS is a disambiguator: show it only where a surface spans >=2 word classes;
+    # the context sentence, where a spelling has >=2 cards of any key.
     # Computed once per language present in the queue, then passed per item.
     ambiguous_by_lang: dict[str, set[str]] = {}
+    homographs_by_lang: dict[str, set[str]] = {}
     for _rid, _item, qlang, _dir in ordered:
         if qlang not in ambiguous_by_lang:
             ambiguous_by_lang[qlang] = db.get_ambiguous_surfaces(qlang)
+            homographs_by_lang[qlang] = db.get_homograph_surfaces(qlang)
     return {
         "queue": [
-            _queue_item_to_dict(rid, it, qlang, qdir, db, ambiguous_by_lang[qlang]) for rid, it, qlang, qdir in ordered
+            _queue_item_to_dict(rid, it, qlang, qdir, db, ambiguous_by_lang[qlang], homographs_by_lang[qlang])
+            for rid, it, qlang, qdir in ordered
         ]
     }

@@ -891,6 +891,43 @@ describe("DrillCard", () => {
       expect(answer?.textContent).toBe("en fange (noun)");
     });
 
+    // bd tunatale-p7ak: two cards with one spelling are told apart on the
+    // recognition front by the sentence each was met in — never by a sense key,
+    // which is the card's own answer.
+    it("shows the context sentence under the word on a recognition front", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "gang",
+        translation: "time",
+        pos: "",
+        context_sentence: "Jeg kommer med en gang.",
+      });
+      const { container } = render(DrillCard, { item, direction: "recognition", onRate });
+      expect(container.querySelector(".main-text")?.textContent).toBe("gang");
+      expect(container.querySelector(".prompt .context-sentence")?.textContent).toBe(
+        "Jeg kommer med en gang.",
+      );
+    });
+
+    it("shows no context line when the card has its spelling to itself", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({ text: "hus", context_sentence: "" });
+      const { container } = render(DrillCard, { item, direction: "recognition", onRate });
+      expect(container.querySelector(".context-sentence")).toBeNull();
+    });
+
+    it("keeps the context sentence off a production front, where it holds the answer", async () => {
+      const onRate = vi.fn().mockResolvedValue(undefined);
+      const item = makeSRSItemDetail({
+        text: "gang",
+        translation: "time",
+        card_type: "vocab",
+        context_sentence: "Jeg kommer med en gang.",
+      });
+      const { container } = render(DrillCard, { item, direction: "production", onRate });
+      expect(container.querySelector(".prompt .context-sentence")).toBeNull();
+    });
+
     it("renders a bare headword when neither article nor POS is set", async () => {
       const onRate = vi.fn().mockResolvedValue(undefined);
       const item = makeSRSItemDetail({ text: "hund", article: "", pos: "" });
