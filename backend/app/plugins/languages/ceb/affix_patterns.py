@@ -96,3 +96,8 @@ def load_affix_glosses(path: Path) -> dict[tuple[str, str], tuple[str, tuple[str
 def pattern_glosses(root: str, pattern: AffixPattern) -> tuple[str, tuple[str, ...]] | None:
     """The hand-written English for *root* in *pattern*, or ``None`` when there is none."""
     return load_affix_glosses(GLOSSES_PATH).get((root.casefold(), pattern.key))
+
+
+def pattern_roots(pattern: AffixPattern) -> tuple[str, ...]:
+    """The roots worded for *pattern*, in the gloss table's own order."""
+    return tuple(root for root, key in load_affix_glosses(GLOSSES_PATH) if key == pattern.key)

@@ -305,6 +305,73 @@
         "title": "CreateCardResponse",
         "type": "object"
       },
+      "CreateGrammarLessonRequest": {
+        "description": "Body of POST /api/curriculum/{curriculum_id}/grammar-lessons.",
+        "properties": {
+          "pattern": {
+            "title": "Pattern",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "title": "CreateGrammarLessonRequest",
+        "type": "object"
+      },
+      "CreateGrammarLessonResponse": {
+        "description": "Response of POST /api/curriculum/{curriculum_id}/grammar-lessons: the day\nthat was appended and what its drill was planned from. ``roots`` are\nmodelled before they are asked; ``new_roots`` are only asked.",
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/GrammarLessonLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "new_roots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "New Roots",
+            "type": "array"
+          },
+          "pattern": {
+            "title": "Pattern",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "position",
+          "title",
+          "pattern",
+          "roots",
+          "new_roots",
+          "lines"
+        ],
+        "title": "CreateGrammarLessonResponse",
+        "type": "object"
+      },
       "CreateItemRequest": {
         "properties": {
           "language_code": {
@@ -518,8 +585,18 @@
             "title": "Focus",
             "type": "string"
           },
+          "kind": {
+            "default": "thematic",
+            "title": "Kind",
+            "type": "string"
+          },
           "learning_objective": {
             "title": "Learning Objective",
+            "type": "string"
+          },
+          "pattern": {
+            "default": "",
+            "title": "Pattern",
             "type": "string"
           },
           "position": {
@@ -589,8 +666,16 @@
             "title": "Focus",
             "type": "string"
           },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
           "learning_objective": {
             "title": "Learning Objective",
+            "type": "string"
+          },
+          "pattern": {
+            "title": "Pattern",
             "type": "string"
           },
           "story_guidance": {
@@ -608,7 +693,9 @@
           "focus",
           "collocations",
           "learning_objective",
-          "story_guidance"
+          "story_guidance",
+          "kind",
+          "pattern"
         ],
         "title": "CurriculumSourceDay",
         "type": "object"
@@ -1125,6 +1212,57 @@
           "user_prompt"
         ],
         "title": "GetStoryPromptResponse",
+        "type": "object"
+      },
+      "GrammarLessonLine": {
+        "description": "One whole line a grammar lesson ends on.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "translation"
+        ],
+        "title": "GrammarLessonLine",
+        "type": "object"
+      },
+      "GrammarPatternOption": {
+        "description": "One element of GET /api/curriculum/{curriculum_id}/grammar-patterns.\n\n``roots`` are the roots this learner understands that the pattern can\ndrill; ``ready`` is whether that is enough to build a lesson from.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "roots",
+          "ready"
+        ],
+        "title": "GrammarPatternOption",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -6103,6 +6241,106 @@
           }
         },
         "summary": "Set Generation Mode",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/grammar-lessons": {
+      "post": {
+        "description": "Append a grammar day for one affix pattern and hand it to the pipeline.\n\nThe plan is made HERE first, so a pattern the learner is not ready for is\nrefused before a day exists. The pipeline plans again when it builds the\nlesson; the two read the same cards and lessons, seconds apart.\n\nEnqueued whatever the curriculum's generation mode: ``manual`` exists to\nkeep the model from being called unasked, and a drill calls no model.\n\nA planner proposal still waiting to be committed was numbered against the\nold day list, so committing it after this answers 409 and asks for a\nre-proposal, as it does after any other change to the days.",
+        "operationId": "create_grammar_lesson_api_curriculum__curriculum_id__grammar_lessons_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGrammarLessonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateGrammarLessonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Grammar Lesson",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/grammar-patterns": {
+      "get": {
+        "description": "The affix patterns a grammar lesson can drill, and whether this learner\nunderstands enough roots for each. Empty for a language with no patterns.",
+        "operationId": "list_grammar_patterns_api_curriculum__curriculum_id__grammar_patterns_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrammarPatternOption"
+                  },
+                  "title": "Response List Grammar Patterns Api Curriculum  Curriculum Id  Grammar Patterns Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Grammar Patterns",
         "tags": [
           "curriculum"
         ]

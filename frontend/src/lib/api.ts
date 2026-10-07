@@ -114,6 +114,10 @@ export interface DayPlan {
   collocations: string[];
   learning_objective: string;
   story_guidance: string;
+  /** "thematic" (a story) or "grammar" (an affix drill with no story). */
+  kind: string;
+  /** The affix pattern a grammar day drills, e.g. "mo-mi"; empty on a story day. */
+  pattern: string;
 }
 
 export type ProposedBatch = components["schemas"]["ProposedBatch"];

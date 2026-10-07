@@ -12,6 +12,8 @@ const batch = (start: number, count: number, firstPosition = start): ProposedBat
     collocations: ["a"],
     learning_objective: "o",
     story_guidance: "",
+    kind: "thematic",
+    pattern: "",
   })),
 });
 

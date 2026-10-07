@@ -210,6 +210,19 @@ class TestValidatePlanDays:
         with pytest.raises(ValueError, match=r"days\[0\].story_guidance must be a string"):
             validate_plan_days(days)
 
+    def test_kind_and_pattern_are_optional_and_checked(self):
+        days = _plan_dict()["days"]
+        days[0] |= {"kind": "grammar", "pattern": "mo-mi"}
+        validate_plan_days(days)  # a grammar day beside a day that names neither
+
+        days[0]["kind"] = "quiz"
+        with pytest.raises(ValueError, match=r"days\[0\].kind must be one of thematic, grammar"):
+            validate_plan_days(days)
+
+        days[0] |= {"kind": "grammar", "pattern": 7}
+        with pytest.raises(ValueError, match=r"days\[0\].pattern must be a string"):
+            validate_plan_days(days)
+
     def test_unknown_field_rejected(self):
         days = _plan_dict()["days"]
         days[0]["notes"] = "stray field from a hand edit"
@@ -304,12 +317,24 @@ class TestExportPlan:
         out = export_plan(store, c.id)
         assert "metadata" not in out
 
-    def test_days_include_all_six_fields(self, store):
+    def test_days_include_every_field(self, store):
+        """``kind`` and ``pattern`` travel with the plan: without them a grammar
+        day would come back from a hand edit as a story day (tunatale-ve4p.5)."""
         c = _curriculum()
         store.save_curriculum(c.id, c)
         out = export_plan(store, c.id)
         for day in out["days"]:
-            assert set(day.keys()) == {"day", "title", "focus", "collocations", "learning_objective", "story_guidance"}
+            assert set(day.keys()) == {
+                "day",
+                "title",
+                "focus",
+                "collocations",
+                "learning_objective",
+                "story_guidance",
+                "kind",
+                "pattern",
+            }
+            assert (day["kind"], day["pattern"]) == ("thematic", "")
 
 
 class TestImportPlan:

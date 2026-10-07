@@ -8,7 +8,7 @@ handful of roots the learner knows, the script is:
    echo of the order just modelled; the answer follows.
 3. **New on this root.** Roots named but NOT modelled: the learner has to
    build the form. Getting these right is the affix, not a remembered word.
-4. **The whole line**, when the caller supplies one.
+4. **Whole lines**, when the caller supplies any.
 
 Two things can stop a root being drilled, and both DROP it with a reason
 rather than guess: the language cannot vouch for every form
@@ -58,6 +58,20 @@ class DrillRoot:
     english: str
     cells: tuple[tuple[str, str], ...]  # (form, its English), in the pattern's order
 
+    @property
+    def transparent(self) -> bool:
+        """Whether a form's English is built on the root's own.
+
+        ``lakaw`` is "walk" and ``molakaw`` "will walk", so a learner who
+        knows the root can be asked for a form nobody modelled. ``uban`` is
+        "accompany" and ``mouban`` "will go along": that one has to be shown
+        first, because nothing in the prompt leads to it.
+        """
+        root = self.english.split()
+        return any(
+            english.split()[i : i + len(root)] == root for _, english in self.cells for i in range(len(english.split()))
+        )
+
 
 def drill_root(language_code: str, root: str, pattern: AffixPattern) -> DrillRoot | str:
     """*root* ready to drill in *pattern*, or the reason it cannot be."""
@@ -92,12 +106,12 @@ def build_affix_drill(
     *,
     roots: list[str],
     new_roots: list[str] | None = None,
-    line: tuple[str, str] | None = None,
+    lines: list[tuple[str, str]] | None = None,
 ) -> AffixDrill:
     """The drill script for *pattern*.
 
-    *roots* are modelled and then asked; *new_roots* are only asked. *line* is
-    ``(target-language line, its English)``.
+    *roots* are modelled and then asked; *new_roots* are only asked. Each of
+    *lines* is ``(target-language line, its English)``.
     """
     drill = AffixDrill()
 
@@ -124,7 +138,6 @@ def build_affix_drill(
         drill.steps += _prompts(found, language_code)
     for found in usable(new_roots or []):
         drill.steps += _named(found, language_code) + _prompts(found, language_code)
-    if line is not None:
-        text, english = line
+    for text, english in lines or []:
         drill.steps += [DrillStep("prompt", f"Say: {english}", "en"), DrillStep("answer", text, language_code)]
     return drill

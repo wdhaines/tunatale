@@ -326,7 +326,7 @@ def test_an_english_line_and_the_form_after_it_are_one_item():
 
 def test_drill_cues_never_point_at_a_dialogue_line():
     """A ``line`` ref is an index into the transcript's dialogue, which a drill is not in."""
-    drill = build_affix_drill("ceb", _MO_MI, roots=["inom", "lakaw"], line=("Milakaw si Paul.", "Paul walked."))
+    drill = build_affix_drill("ceb", _MO_MI, roots=["inom", "lakaw"], lines=[("Milakaw si Paul.", "Paul walked.")])
     refs = _cue_refs(_section(drill))
 
     assert {ref["kind"] for ref in refs} == {"narration", "drill"}

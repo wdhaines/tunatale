@@ -1255,6 +1255,10 @@ class CurriculumDayWithPosition(BaseModel):
     learning_objective: str
     story_guidance: str
     position: int
+    # Defaults, because a proposal the planner made before kinds existed is
+    # stored without them.
+    kind: str = "thematic"
+    pattern: str = ""
 
 
 class ProposedBatch(BaseModel):
@@ -1299,6 +1303,8 @@ class CurriculumSourceDay(BaseModel):
     collocations: list[str]
     learning_objective: str
     story_guidance: str
+    kind: str
+    pattern: str
 
 
 class CurriculumSourceResponse(BaseModel):
@@ -1309,6 +1315,46 @@ class CurriculumSourceResponse(BaseModel):
     language_code: str
     cefr_level: str
     days: list[CurriculumSourceDay]
+
+
+class GrammarPatternOption(BaseModel):
+    """One element of GET /api/curriculum/{curriculum_id}/grammar-patterns.
+
+    ``roots`` are the roots this learner understands that the pattern can
+    drill; ``ready`` is whether that is enough to build a lesson from.
+    """
+
+    key: str
+    title: str
+    roots: list[str]
+    ready: bool
+
+
+class CreateGrammarLessonRequest(BaseModel):
+    """Body of POST /api/curriculum/{curriculum_id}/grammar-lessons."""
+
+    pattern: str
+
+
+class GrammarLessonLine(BaseModel):
+    """One whole line a grammar lesson ends on."""
+
+    text: str
+    translation: str
+
+
+class CreateGrammarLessonResponse(BaseModel):
+    """Response of POST /api/curriculum/{curriculum_id}/grammar-lessons: the day
+    that was appended and what its drill was planned from. ``roots`` are
+    modelled before they are asked; ``new_roots`` are only asked."""
+
+    day: int
+    position: int
+    title: str
+    pattern: str
+    roots: list[str]
+    new_roots: list[str]
+    lines: list[GrammarLessonLine]
 
 
 class PipelineDayStatus(BaseModel):
