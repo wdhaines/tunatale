@@ -6,6 +6,10 @@
 
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
+		// The card means something else than the lesson's gloss: make a second
+		// card for the gloss's meaning (bd tunatale-ceuc). Offered beside the
+		// `cardTranslation` line, which is what says the two disagree.
+		onCreateSense?: (word: WordToken, sentence: string) => Promise<void>;
 		onSetState?: (id: number, state: string) => Promise<void>;
 		onRestoreKnown?: (id: number) => Promise<void>;
 		onUntrack?: (id: number) => Promise<void>;
@@ -296,6 +300,8 @@
 
 	const showCreateInflection = $derived(Boolean(word?.inflectable && actions?.onCreateInflection));
 
+	const showCreateSense = $derived(Boolean(cardTranslation && word && actions?.onCreateSense));
+
 	const hasSrsItem = $derived(word != null && word.srs_item_id != null);
 
 	const showIgnore = $derived(
@@ -362,6 +368,7 @@
 			...PRODUCTION_RATINGS.map(() => showProductionGrade),
 			showDrillIn,
 			showCreateInflection,
+			showCreateSense,
 			showIgnore,
 			showIgnoreCardless,
 			showUnignore,
@@ -439,6 +446,13 @@
 							class="tt-btn"
 							onclick={() => actions!.onCreateInflection!(word!, sentence ?? '')}
 						>{t('tooltip.createInflectionCard')}</button>
+					{/if}
+					{#if showCreateSense}
+						<button
+							type="button"
+							class="tt-btn"
+							onclick={() => actions!.onCreateSense!(word!, sentence ?? '')}
+						>{t('tooltip.differentMeaning')}</button>
 					{/if}
 					{#if showUnignore}
 						<button

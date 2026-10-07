@@ -1448,6 +1448,22 @@ export class TunaTaleAPI {
     });
   }
 
+  /** A second card for a spelling's other meaning (bd tunatale-ceuc): `item_id`
+   * is the card the word resolved to, `translation` the lesson's gloss. */
+  async createSenseCard(body: {
+    item_id: number;
+    surface: string;
+    sentence: string;
+    language_code: string;
+    translation: string;
+  }): Promise<{ id: number; was_created: boolean; item: SRSItemDetail }> {
+    return this.request("/api/srs/items/sense", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
   async ignoreLemma(lemma: string, language_code: string): Promise<{ status: string }> {
     return this.request("/api/srs/ignored-lemmas", {
       method: "POST",

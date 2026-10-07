@@ -39,6 +39,68 @@ describe("Tooltip", () => {
     expect(getByRole("tooltip").querySelector(".tt-card-translation")).toBeNull();
   });
 
+  // bd tunatale-ceuc, slice 4: the card line is where the learner sees that the
+  // card means something else, so the way to make a second card sits with it.
+  describe("different meaning", () => {
+    const word = makeWordToken({
+      surface: "gang",
+      lemma: "gang",
+      srs_item_id: 3,
+      gloss: "time",
+      translation: "hall",
+    });
+    const sentence = "Jeg kommer med en gang.";
+
+    it("offers a second card where the card disagrees with the lesson", async () => {
+      const onCreateSense = vi.fn();
+      const { getByRole } = render(TooltipTest, {
+        props: {
+          translation: "time",
+          cardTranslation: "hall",
+          word,
+          sentence,
+          actions: { onCreateSense },
+        },
+      });
+      await getByRole("button", { name: "Different meaning" }).click();
+      expect(onCreateSense).toHaveBeenCalledWith(word, sentence);
+    });
+
+    it("passes an empty sentence when the popover was given none", async () => {
+      const onCreateSense = vi.fn();
+      const { getByRole } = render(TooltipTest, {
+        props: { translation: "time", cardTranslation: "hall", word, actions: { onCreateSense } },
+      });
+      await getByRole("button", { name: "Different meaning" }).click();
+      expect(onCreateSense).toHaveBeenCalledWith(word, "");
+    });
+
+    it("does not offer it where the card and the lesson agree", () => {
+      const { queryByRole } = render(TooltipTest, {
+        props: { translation: "hall", word, sentence, actions: { onCreateSense: vi.fn() } },
+      });
+      expect(queryByRole("button", { name: "Different meaning" })).toBeNull();
+    });
+
+    it("does not offer it without a word to make the card for", () => {
+      const { queryByRole } = render(TooltipTest, {
+        props: {
+          translation: "time",
+          cardTranslation: "hall",
+          actions: { onCreateSense: vi.fn() },
+        },
+      });
+      expect(queryByRole("button", { name: "Different meaning" })).toBeNull();
+    });
+
+    it("does not offer it on a surface that cannot make cards", () => {
+      const { queryByRole } = render(TooltipTest, {
+        props: { translation: "time", cardTranslation: "hall", word, sentence, actions: {} },
+      });
+      expect(queryByRole("button", { name: "Different meaning" })).toBeNull();
+    });
+  });
+
   it('renders "Due" when word is due', () => {
     const word = makeWordToken({ is_due: true, srs_item_id: 1 });
     const { getByRole } = render(TooltipTest, {

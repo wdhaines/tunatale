@@ -69,6 +69,15 @@ class TestSenseOverlap:
             ("the time (den gangen = back then)", "time, occasion", True),
             ("hours", "hour", True),
             ("wondered", "wonder", True),
+            # A plural in -es whose singular keeps the e: stripping "es" alone
+            # made "times" the stem "tim", which is not "time" (2026-10-06;
+            # Norwegian `tre ganger` is glossed "three times").
+            ("times", "time, occasion", True),
+            ("three times", "time", True),
+            ("houses", "house", True),
+            ("boxes", "box", True),
+            ("timed", "time", True),
+            ("timer", "time", False),
             ("Sunday", "sunday", True),
             # An article is never evidence of a shared sense.
             ("to the", "the hall", False),
