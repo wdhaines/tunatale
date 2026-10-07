@@ -9,6 +9,7 @@
 	import { railPropsFor } from '$lib/masteryBands';
 	import { onMount } from 'svelte';
 	import { readerProductionPref } from '$lib/stores/readerProductionPref.svelte';
+	import { readerEnglishPref } from '$lib/stores/readerEnglishPref.svelte';
 
 	// The legend's rail swatches are painted by the SAME function that paints
 	// the words, so a swatch cannot drift from the rail it explains. (The old
@@ -65,7 +66,6 @@
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
 
 	// --- Selection state ---
-	let selectionMode = $state(false);
 	let isDragging = $state(false);
 	let selection = $state<{ lineIndex: number; startIdx: number; endIdx: number } | null>(null);
 	let dragAnchor = $state<{ lineIndex: number; wordIdx: number } | null>(null);
@@ -74,23 +74,20 @@
 	let translateLoading = $state(false);
 	let translateError = $state('');
 
-	// Add-phrase section state
-	let showAddPhrase = $state(false);
-	let addPhraseText = $state('');
-	let addPhraseTranslation = $state('');
-	let addPhraseLoading = $state(false);
-	let addPhraseError = $state('');
+	// What English the dialogue shows is the reader's English chip
+	// (ReaderChips.svelte, bd tunatale-685k): Literal is the per-word gloss,
+	// Idiomatic the whole-line L1 translation under each L2 line (BDT-style,
+	// cover-one-side reading), Both is both.
+	const showGloss = $derived(readerEnglishPref.showLiteral);
+	const showInterlinear = $derived(readerEnglishPref.showIdiomatic);
 
-	// Progressive-disclosure toggles for variations
-	let showGloss = $state(false);
-	// Interlinear: the whole-line L1 translation under each L2 line (BDT-style,
-	// cover-one-side reading). Distinct from per-word Gloss.
-	let showInterlinear = $state(false);
-
-	// "Produce": the blur-as-cloze reader (bd tunatale-dvdm.3). Unlike the two
-	// toggles above it is a SETTING, not a per-visit disclosure, so it persists;
-	// off by default. Read at mount because the store touches localStorage.
-	onMount(() => readerProductionPref.init());
+	// Recall: the blur-as-cloze reader (bd tunatale-dvdm.3), the reader's other
+	// chip. Both are persisted settings, read at mount because the stores touch
+	// localStorage.
+	onMount(() => {
+		readerProductionPref.init();
+		readerEnglishPref.init();
+	});
 
 	// "?" disclosure for the dialogue usage instructions + mastery-color legend.
 	// Default closed, no persistence.
@@ -129,11 +126,6 @@
 		dragAnchor = null;
 		isDragging = false;
 		pendingTranslation = '';
-	}
-
-	function toggleSelectionMode() {
-		selectionMode = !selectionMode;
-		resetSelection();
 	}
 
 	function wordIsSelected(lineIndex: number, wordIdx: number): boolean {
@@ -223,30 +215,6 @@
 		selection = { lineIndex, startIdx: start, endIdx: end };
 	}
 
-	function handleWordTapInSelectionMode(lineIndex: number, wordIdx: number, words: WordToken[]) {
-		if (!dragAnchor) {
-			dragAnchor = { lineIndex, wordIdx };
-			selection = null;
-		} else {
-			if (dragAnchor.lineIndex !== lineIndex) {
-				dragAnchor = { lineIndex, wordIdx };
-				selection = null;
-				return;
-			}
-
-			const start = Math.min(dragAnchor.wordIdx, wordIdx);
-			const end = Math.max(dragAnchor.wordIdx, wordIdx);
-			dragAnchor = null;
-
-			if (start === end || hasOverlap(words, start, end)) {
-				selection = null;
-				return;
-			}
-
-			selection = { lineIndex, startIdx: start, endIdx: end };
-		}
-	}
-
 	function confirmPhrase(lineIndex: number, words: WordToken[]) {
 		const { startIdx, endIdx } = selection!;
 		const text = words.slice(startIdx, endIdx + 1).map((w) => w.surface).join(' ');
@@ -262,12 +230,10 @@
 			source_lesson_id: lesson?.id,
 			source_line_index: lineIndex
 		});
-		selectionMode = false;
 		resetSelection();
 	}
 
 	function cancelPhrase() {
-		selectionMode = false;
 		resetSelection();
 	}
 
@@ -287,37 +253,6 @@
 		} finally {
 			translateLoading = false;
 		}
-	}
-
-	async function fetchAddPhraseTranslation() {
-		if (!addPhraseText.trim() || !lesson) return;
-		addPhraseLoading = true;
-		addPhraseError = '';
-		try {
-			const { translation } = await api.translateTerm(addPhraseText.trim(), lesson.language_code);
-			addPhraseTranslation = translation;
-		} catch {
-			addPhraseError = 'Translation failed. Check connection and try again.';
-		} finally {
-			addPhraseLoading = false;
-		}
-	}
-
-	function submitAddPhrase() {
-		if (!addPhraseText.trim()) return;
-		const text = addPhraseText.trim();
-		const word_count = text.split(/\s+/).length;
-		onCreatePhrase?.({
-			text,
-			word_count,
-			translation: addPhraseTranslation,
-			lineIndex: -1, // sentinel: not from transcript; handler tolerates
-			startIdx: -1,  // sentinel: not from transcript; handler tolerates
-			endIdx: -1,    // sentinel: not from transcript; handler tolerates
-		});
-		addPhraseText = '';
-		addPhraseTranslation = '';
-		showAddPhrase = false;
 	}
 
 	/* A collocation used to tint its background on the mastery ramp; since the
@@ -484,35 +419,7 @@
 						aria-expanded={showHelp}
 						onclick={() => (showHelp = !showHelp)}
 					>?</button>
-					{#if selectionMode}
-						<span class="transcript-hint">{t('transcript.selectionHint')}</span>
-					{/if}
 				</h3>
-
-				<div class="disclosure-toggles" role="group" aria-label={t('transcript.showVariations')}>
-					<button
-						type="button"
-						class="toggle-pill"
-						class:active={showGloss}
-						aria-pressed={showGloss}
-						onclick={() => (showGloss = !showGloss)}
-					>{t('transcript.gloss')}</button>
-					<button
-						type="button"
-						class="toggle-pill"
-						class:active={showInterlinear}
-						aria-pressed={showInterlinear}
-						onclick={() => (showInterlinear = !showInterlinear)}
-					>{t('transcript.interlinear')}</button>
-					<button
-						type="button"
-						class="toggle-pill"
-						class:active={readerProductionPref.enabled}
-						aria-pressed={readerProductionPref.enabled}
-						title={t('transcript.practiseProductionHint')}
-						onclick={() => readerProductionPref.set(!readerProductionPref.enabled)}
-					>{t('transcript.practiseProduction')}</button>
-				</div>
 			</div>
 
 			{#if showHelp}
@@ -560,10 +467,6 @@
 					</div>
 				</div>
 			{/if}
-
-			<button class="new-phrase-btn" onclick={toggleSelectionMode}>
-				{selectionMode ? t('transcript.cancel') : t('transcript.newPhrase')}
-			</button>
 
 			{#each scenes as scene, sceneIdx (sceneIdx)}
 				{#if scene.title}
@@ -659,11 +562,7 @@
 										</Tooltip>
 									{:else}
 										{@const wIdx = wordIndexInLine(segments, segIdx, 0)}
-										<!-- svelte-ignore a11y_click_events_have_key_events -->
-										<!-- svelte-ignore a11y_no_static_element_interactions -->
-										<span
-											onclick={selectionMode ? () => handleWordTapInSelectionMode(lineIndex, wIdx, line.words) : undefined}
-										>
+										<span>
 											<WordSpan
 												word={segment.word}
 												onWordClick={onWordClick}
@@ -717,28 +616,6 @@
 		</div>
 	{/if}
 
-	<div class="add-phrase-section">
-		<button class="add-phrase-toggle" onclick={() => (showAddPhrase = !showAddPhrase)}>
-			{t('transcript.addPhrase')} {showAddPhrase ? '▴' : '▾'}
-		</button>
-		{#if showAddPhrase}
-			<div class="add-phrase-form">
-				<input class="add-phrase-text" type="text" placeholder={t('transcript.phraseText')} bind:value={addPhraseText} />
-				<input class="add-phrase-translation" type="text" placeholder={t('transcript.translationPlaceholder')} bind:value={addPhraseTranslation} />
-				<button
-					class="add-phrase-translate-btn"
-					onclick={fetchAddPhraseTranslation}
-					disabled={addPhraseLoading || !addPhraseText.trim()}
-					title={t('transcript.translateWithAi')}
-				>{addPhraseLoading ? '…' : '✨'}</button>
-				<button class="add-phrase-create" onclick={submitAddPhrase} disabled={!addPhraseText.trim()}>{t('transcript.create')}</button>
-				{#if addPhraseError}
-					<span class="phrase-error">{addPhraseError}</span>
-				{/if}
-			</div>
-		{/if}
-	</div>
-
 </div>
 
 <style>
@@ -762,33 +639,6 @@
 		justify-content: space-between;
 		flex-wrap: wrap;
 		gap: 0.5rem;
-	}
-	.disclosure-toggles {
-		display: flex;
-		gap: 0.35rem;
-	}
-	.toggle-pill {
-		font-size: 0.75rem;
-		padding: 0.2rem 0.7rem;
-		background: transparent;
-		color: var(--color-muted, #6b7280);
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 999px;
-		cursor: pointer;
-		transition: background-color 0.1s, color 0.1s, border-color 0.1s;
-	}
-	.toggle-pill:hover {
-		border-color: var(--color-primary, #2563eb);
-	}
-	.toggle-pill.active {
-		background: var(--color-primary, #2563eb);
-		color: white;
-		border-color: var(--color-primary, #2563eb);
-	}
-	.transcript-hint {
-		font-style: italic;
-		text-transform: none;
-		font-size: 0.75rem;
 	}
 	.help-toggle {
 		display: inline-flex;
@@ -871,20 +721,6 @@
 		width: 1.6rem;
 		height: 0;
 		vertical-align: middle;
-	}
-	.new-phrase-btn {
-		font-size: 0.75rem;
-		padding: 0.2rem 0.6rem;
-		background: transparent;
-		border: 1px solid var(--color-primary, #2563eb);
-		color: var(--color-primary, #2563eb);
-		border-radius: var(--radius-pill);
-		cursor: pointer;
-		margin-bottom: 0.5rem;
-	}
-	.new-phrase-btn:hover {
-		background: var(--color-primary-hover);
-		color: var(--color-on-primary);
 	}
 	.key-phrases-list {
 		list-style: none;
@@ -1199,71 +1035,6 @@
 		color: var(--color-danger, #dc2626);
 		font-size: 0.75rem;
 		flex-basis: 100%;
-	}
-	.add-phrase-section {
-		margin-top: 1rem;
-		padding: 0.5rem 0;
-		border-top: 1px solid var(--color-border, #e5e7eb);
-	}
-	.add-phrase-toggle {
-		font-size: 0.8rem;
-		padding: 0.3rem 0.75rem;
-		background: transparent;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: var(--radius-pill);
-		cursor: pointer;
-		color: var(--color-muted, #6b7280);
-	}
-	.add-phrase-toggle:hover {
-		border-color: var(--color-primary, #2563eb);
-		color: var(--color-primary, #2563eb);
-	}
-	.add-phrase-form {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		margin-top: 0.4rem;
-		background: rgba(99, 102, 241, 0.06);
-		border: 1px solid rgba(99, 102, 241, 0.2);
-		border-radius: 4px;
-		font-size: 0.875rem;
-	}
-	.add-phrase-form input {
-		flex: 1;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 3px;
-		padding: 0.25rem 0.4rem;
-		font-size: 0.85rem;
-	}
-	.add-phrase-form button {
-		margin-top: 0;
-	}
-	.add-phrase-create {
-		padding: 0.2rem 0.6rem;
-		background: var(--color-primary, #2563eb);
-		color: var(--color-on-primary, #fff);
-		border: none;
-		border-radius: var(--radius-pill);
-		cursor: pointer;
-		font-size: 0.8rem;
-	}
-	.add-phrase-create:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.add-phrase-translate-btn {
-		padding: 0.2rem 0.4rem;
-		background: transparent;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 3px;
-		cursor: pointer;
-		font-size: 0.85rem;
-		line-height: 1;
-	}
-	.add-phrase-translate-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	@media (min-width: 641px) {

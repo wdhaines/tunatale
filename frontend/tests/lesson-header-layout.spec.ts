@@ -19,6 +19,8 @@ import { backendAvailable, BACKEND } from "./helpers";
  * 3. The player's setting chips never move, resize, wrap or cut off a value as
  *    their values change. Content-sized chips reflowed the row on every Speed
  *    tap on a phone (2026-09-11: "Enunciated" pushed Mic onto a second row).
+ *    Mic left on 2026-10-07 (bd tunatale-685k) and Hands-free took its place:
+ *    the row is Speed, English, Captions, Hands-free, on one line from 360px up.
  */
 
 const PHONE = { width: 390, height: 844 };
@@ -133,7 +135,7 @@ test("lesson card: stats span the card's full content width on a phone", async (
 });
 
 /**
- * The setting chips (Speed / English / Captions / Mic) exist only on a lesson
+ * The setting chips (Speed / English / Captions / Hands-free) exist only on a lesson
  * whose audio carries every section with per-section cues, and e2e never renders
  * audio — so the audio response is stubbed with all seven. Without the stub
  * there are no chips and every assertion below would pass on an empty row.
@@ -187,6 +189,8 @@ type ChipBox = {
 	y: number;
 	w: number;
 	h: number;
+	/** Top of the value text, relative to the row. */
+	valueY: number;
 	wrapped: boolean;
 	clipped: boolean;
 	labelClipped: boolean;
@@ -207,6 +211,7 @@ async function chipBoxes(row: import("@playwright/test").Locator): Promise<ChipB
 				y: Math.round(r.y - origin.y),
 				w: Math.round(r.width),
 				h: Math.round(r.height),
+				valueY: Math.round(v.getBoundingClientRect().y - origin.y),
 				wrapped: v.getBoundingClientRect().height > lineHeight * 1.5,
 				clipped: v.scrollWidth > v.clientWidth,
 				labelClipped: l.scrollWidth > l.clientWidth,
@@ -216,8 +221,10 @@ async function chipBoxes(row: import("@playwright/test").Locator): Promise<ChipB
 }
 
 // 375 is the common iPhone width, where the reported wrap happened: "Enunciated"
-// widened the Speed chip and pushed Mic onto the second row. 320 is the floor —
-// the chips may stack there, but they must still never reflow or cut a value.
+// widened the Speed chip and pushed the fourth chip onto the second row. 320 is
+// the floor — the chips may stack there, but they must still never reflow or
+// cut a value. The fourth chip is Hands-free, whose label takes two lines in a
+// quarter of a phone's width: the four VALUES must still share one line.
 for (const { width, fourAcross } of [
 	{ width: 375, fourAcross: true },
 	{ width: 320, fourAcross: false },
@@ -263,6 +270,7 @@ for (const { width, fourAcross } of [
 			[speed, 4],
 			[row.locator(".english-btn"), 3],
 			[row.locator(".caption-blur-btn"), 2],
+			[row.locator(".hands-free-toggle"), 3],
 		] as const) {
 			for (let i = 0; i < clicks; i++) {
 				await chip.click();
@@ -270,11 +278,14 @@ for (const { width, fourAcross } of [
 			}
 		}
 		// Guard against a vacuous pass: the loop really did cycle the labels.
-		expect(new Set(seen).size).toBeGreaterThanOrEqual(7);
+		expect(new Set(seen).size).toBeGreaterThanOrEqual(9);
+		expect(baseline, "Speed, English, Captions, Hands-free").toHaveLength(4);
 
 		if (fourAcross) {
-			const tops = new Set(baseline.slice(0, 4).map((b) => b.y));
+			const tops = new Set(baseline.map((b) => b.y));
 			expect(tops.size, "the four setting chips share one row").toBe(1);
+			const valueTops = new Set(baseline.map((b) => b.valueY));
+			expect(valueTops.size, "the four values share one line").toBe(1);
 		}
 	});
 }

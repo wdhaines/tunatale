@@ -14,7 +14,6 @@
 	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
-	import { voicePref } from '$lib/stores/voicePref.svelte';
 	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
 	import type { SectionType } from '$lib/sectionTypes';
 	import { createWakeLock } from '$lib/voice/wakeLock';
@@ -178,15 +177,17 @@
 	// every ~2s chunk boundary.
 	let revealedCueIndex: number | null = $state(null);
 
-	// --- Wake lock for self-paced voice capture ---
-	// Self-timed mic capture needs the screen not to sleep mid-phrase. The
-	// helper feature-detects navigator.wakeLock, so browsers (and jsdom)
-	// without it no-op silently, and a rejected request (document not visible)
-	// is swallowed rather than breaking playback. onDestroy releases whatever
-	// a disable/re-enable race left behind.
+	// --- Wake lock while hands-free is running ---
+	// Hands-free plays on with nobody touching the phone, so the screen must not
+	// sleep mid-run — that is the whole condition: Read suspends hands-free, so
+	// the lock goes with it. It used to follow the Mic setting, which had
+	// nothing else wired to it. The helper feature-detects navigator.wakeLock,
+	// so browsers (and jsdom) without it no-op silently, and a rejected request
+	// (document not visible) is swallowed rather than breaking playback.
+	// onDestroy releases whatever a disable/re-enable race left behind.
 	const wakeLock = createWakeLock();
 	$effect(() => {
-		void wakeLock.sync(voicePref.enabled);
+		void wakeLock.sync(handsFreeMode !== 'off' && !compact);
 	});
 	onDestroy(() => {
 		wakeLock.release();
@@ -210,7 +211,12 @@
 	// Read from following you into Listen.
 	let collapsed = $derived(compact && playerCollapsedPref.collapsed);
 
-	let selectedSectionType = $derived(resolveSectionType(phase, enunLevel, englishMode));
+	// Read is always natural speed with no spoken English (the user, 2026-10-07,
+	// bd tunatale-685k). The stored Listen choice is not touched: these are what
+	// PLAYS, enunLevel / englishMode are what is REMEMBERED.
+	const effectiveEnun = $derived(compact ? 'natural' : enunLevel);
+	const effectiveEnglish: EnglishMode = $derived(compact ? 'off' : englishMode);
+	let selectedSectionType = $derived(resolveSectionType(phase, effectiveEnun, effectiveEnglish));
 	let enunIndex = $derived(ENUNCIATION_OPTIONS.findIndex((o) => o.level === enunLevel));
 	const enunValue = $derived.by(() => {
 		const opt = ENUNCIATION_OPTIONS[enunIndex];
@@ -263,7 +269,7 @@
 			ctrl.selectTrack(init.audio.sections.some((s) => s.section_type === selectedSectionType)
 				? selectedSectionType
 				: type);
-			ctrl.setEnunciationRate(resolveRate(enunLevel));
+			ctrl.setEnunciationRate(resolveRate(effectiveEnun));
 		}
 	}
 
@@ -284,8 +290,17 @@
 
 	function applyHandsFreeMode(mode: HandsFreeMode) {
 		handsFreeMode = mode;
-		ctrl.setHandsFree(mode !== 'off');
-		ctrl.setRepeatLesson(mode === 'repeat');
+		syncEffectiveHandsFree();
+	}
+
+	// ONE place decides what reaches the controller. handsFreeMode is the
+	// REMEMBERED mode in both modes; Read suspends hands-free (the user,
+	// 2026-10-07: "ignored while in Read, setting kept"), so the effective
+	// value is gated on !compact. Called after every change to handsFreeMode or
+	// compact — never persisted (the chip tap writes handsFreePref itself).
+	function syncEffectiveHandsFree() {
+		ctrl.setHandsFree(handsFreeMode !== 'off' && !compact);
+		ctrl.setRepeatLesson(handsFreeMode === 'repeat' && !compact);
 	}
 
 	function onHandsFreeClick() {
@@ -359,8 +374,22 @@
 			untrack(() => enunLevel)
 		);
 		if (p.phase !== undefined) phase = p.phase;
-		if (p.enunciation !== undefined) enunLevel = p.enunciation;
-		if (p.english !== undefined) englishMode = p.english;
+		// In Read the playing track is natural_speed — a consequence of being in
+		// Read, not a choice the learner made. Mirroring its Speed/English onto
+		// the pills would overwrite the remembered Listen preference with
+		// Natural / Off and then persist it; the guards "leaves Listen's choice
+		// in storage exactly as it was" and "a track picked from the transcript
+		// moves the phase, never the stored Speed or English" exist to catch
+		// that. The phase, which Read still shows, is a real choice in both
+		// modes, so it mirrors in both. compact is read through untrack: the
+		// mode switch that flips it is the compact effect's job, and this
+		// effect must not re-run mid-switch while the old natural_speed track
+		// is still playing — with the gate open that would clobber the stored
+		// Speed/English before applyTrack re-applies them.
+		if (!untrack(() => compact)) {
+			if (p.enunciation !== undefined) enunLevel = p.enunciation;
+			if (p.english !== undefined) englishMode = p.english;
+		}
 		// Merging with the CURRENT pill values, not with p, is what preserves
 		// the fields a section type cannot carry — pillsForSection omits the
 		// enunciation LEVEL for the slow_* sections, and both level and English
@@ -375,6 +404,22 @@
 		// this and save the track the run reached: toggling stays put now
 		// (2026-09-29), and only the user's own chip taps are a preference.
 		if (mounted && !untrack(() => ctrl.handsFree)) untrack(() => persistSelection());
+	});
+
+	// Read ↔ Listen changes what PLAYS (the effective Speed/English), so a mode
+	// switch on an already-mounted player re-applies the track. The first pass
+	// is skipped: onMount applies the track for the starting mode, and this must
+	// not race it. It never persists — switching modes is not a preference
+	// change; only chip taps and the mirror above write. `mounted` is plain
+	// state set in onMount, so `compact` is this effect's only dependency.
+	let appliedCompact = untrack(() => compact);
+	$effect(() => {
+		const next = compact;
+		if (next === appliedCompact) return;
+		appliedCompact = next;
+		if (!mounted || !trackMode) return;
+		untrack(() => applyTrack());
+		untrack(() => syncEffectiveHandsFree());
 	});
 
 	// --- Prefetch section URLs ---
@@ -419,7 +464,6 @@
 
 	onMount(() => {
 		captionBlurPref.init();
-		voicePref.init();
 		playerCollapsedPref.init();
 
 		// Seed the persisted phase/enunciation/English selection and make it
@@ -439,29 +483,33 @@
 
 			handsFreePref.init();
 			// Consumed unconditionally — a baton left lying around would fire on
-			// some later, unrelated mount.
+			// some later, unrelated mount. What it STARTS, though, runs only in
+			// Listen: Read suspends hands-free (the user, 2026-10-07), so a
+			// hand-off arriving there is used up and starts nothing.
 			const handedOff = handsFreePref.consumeHandoff();
 			if (handsFreePref.enabled) {
 				applyHandsFreeMode(handsFreePref.mode);
-				if (handedOff) {
-					// Arrived because the previous item's sequence finished: start
-					// this one at the top of the sequence, not on the pass that
-					// happened to end. Deliberately not persisted — see the mirror.
-					phase = 'key_phrases';
-					applyTrack();
-					ctrl.play();
-				} else if (ctrl.resumeSection !== null && ctrl.resumeSection !== ctrl.activeSectionType) {
-					// A restart mid-run: resume the pass it was on. Hands-free never
-					// persists the track it advances to, so the saved selection applied
-					// above is the ENTRY track, and the resume's section disagrees with
-					// it on every hands-free restart — which the controller reads as a
-					// stale offset and discards, landing on Natural at 0 (tunatale-muff).
-					// Selected AFTER hands-free is on, so the mirror does not persist it.
-					// The resume's section is applied directly rather than through
-					// applyTrack, so it is NOT covered by the first-section
-					// fallback: a resume naming a section this lesson lacks
-					// no-ops, and the track applyTrack already selected stands.
-					ctrl.selectTrack(ctrl.resumeSection, null, true);
+				if (!compact) {
+					if (handedOff) {
+						// Arrived because the previous item's sequence finished: start
+						// this one at the top of the sequence, not on the pass that
+						// happened to end. Deliberately not persisted — see the mirror.
+						phase = 'key_phrases';
+						applyTrack();
+						ctrl.play();
+					} else if (ctrl.resumeSection !== null && ctrl.resumeSection !== ctrl.activeSectionType) {
+						// A restart mid-run: resume the pass it was on. Hands-free never
+						// persists the track it advances to, so the saved selection applied
+						// above is the ENTRY track, and the resume's section disagrees with
+						// it on every hands-free restart — which the controller reads as a
+						// stale offset and discards, landing on Natural at 0 (tunatale-muff).
+						// Selected AFTER hands-free is on, so the mirror does not persist it.
+						// The resume's section is applied directly rather than through
+						// applyTrack, so it is NOT covered by the first-section
+						// fallback: a resume naming a section this lesson lacks
+						// no-ops, and the track applyTrack already selected stands.
+						ctrl.selectTrack(ctrl.resumeSection, null, true);
+					}
 				}
 			}
 		}
@@ -613,7 +661,7 @@
 	</div>
 	{/if}
 
-	{#if ((trackMode && hasAllSections) || (hasCues && !compact)) && !collapsed}
+	{#if hasCues && !compact}
 		<!-- Independent setting chips (field:value), NOT a segmented pick-one:
 		     the phase row above owns the segmented look. Each chip toggles on its
 		     own; the accent (.active) marks a non-default value. -->
@@ -639,30 +687,21 @@
 					<span class="chip-value">{t(ENGLISH_LABELS[englishMode])}</span>
 				</button>
 			{/if}
-			{#if !compact}
-				<button
-					class="setting-chip caption-blur-btn"
-					class:active={!captionBlurPref.enabled}
-					aria-pressed={captionBlurPref.enabled}
-					onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
-				>
-					<span class="chip-label">{t('lessonPlayer.captions.label')}</span>
-					<span class="chip-value">{captionBlurPref.enabled ? t('lessonPlayer.captions.blurred') : t('lessonPlayer.captions.visible')}</span>
-				</button>
-				<button
-					class="setting-chip voice-btn"
-					class:active={voicePref.enabled}
-					aria-pressed={voicePref.enabled}
-					onclick={() => voicePref.set(!voicePref.enabled)}
-				>
-					<span class="chip-label">{t('lessonPlayer.mic.label')}</span>
-					<span class="chip-value">{voicePref.enabled ? t('lessonPlayer.on') : t('lessonPlayer.off')}</span>
-				</button>
-			{/if}
+			<button
+				class="setting-chip caption-blur-btn"
+				class:active={!captionBlurPref.enabled}
+				aria-pressed={captionBlurPref.enabled}
+				onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
+			>
+				<span class="chip-label">{t('lessonPlayer.captions.label')}</span>
+				<span class="chip-value">{captionBlurPref.enabled ? t('lessonPlayer.captions.blurred') : t('lessonPlayer.captions.visible')}</span>
+			</button>
 			<!-- Hands-free: whether the lesson plays on by itself when a track
-			     ends (Off / On / Repeat lesson). Shown in Read mode too — reading
-			     while listening (the user's call, 2026-09-29). The headphone
-			     marker + dashed treatment set it apart from the track chips. -->
+			     ends (Off / On / Repeat lesson). Reading while listening was the
+			     user's call (2026-09-29), but the 2026-10-07 decision pulled the
+			     chip from Read with the rest of the controls row: hands-free is
+			     suspended there, not shown. The headphone marker + dashed
+			     treatment set it apart from the track chips. -->
 			<button
 				class="hands-free-toggle"
 				aria-pressed={handsFreeMode !== 'off'}
@@ -843,10 +882,11 @@
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 0.05rem;
-		flex: 1;
+		flex: 0 1 calc((100% - (var(--chip-cols) - 1) * var(--chip-gap)) / var(--chip-cols));
+		min-width: 0;
 		max-width: 9rem;
 		min-height: 44px;
-		padding: 0.3rem 0.7rem;
+		padding: 0.3rem 0.5rem;
 		background: transparent;
 		color: var(--color-text);
 		border: 1px dashed var(--color-border, #ddd);
@@ -858,6 +898,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.25rem;
+		/* A button centres its text; the label's second line would sit off to
+		   the right of the first. */
+		text-align: left;
 	}
 	.hands-free-toggle:hover {
 		border-color: var(--color-muted);
@@ -928,6 +971,12 @@
 		justify-content: center;
 		flex-wrap: wrap;
 		gap: 0.5rem var(--chip-gap);
+	}
+	/* "Hands-free" needs two label lines in a quarter of a phone's width, so the
+	   row's values sit on the chips' bottom edge: one baseline across all four
+	   whatever a label takes. */
+	.controls-row > button {
+		justify-content: space-between;
 	}
 	/* Below ~360px four shares are too narrow for "Natural": stack 2×2 rather
 	   than cut a value off. */

@@ -1,9 +1,11 @@
 /**
  * Tests for Transcript.svelte component.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import Transcript from "./Transcript.svelte";
+import { tick } from "svelte";
+import { readerEnglishPref } from "$lib/stores/readerEnglishPref.svelte";
 import { api } from "$lib/api";
 import type { Cue, LessonDetail, TranscriptData } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
@@ -208,6 +210,10 @@ function defaultProps(overrides = {}) {
 }
 
 describe("Transcript", () => {
+  beforeEach(() => {
+    readerEnglishPref.set("off");
+  });
+
   it("renders key phrases when present", () => {
     const { getByText } = render(Transcript, {
       props: defaultProps({ transcript: transcriptWithPhrases }),
@@ -1040,23 +1046,6 @@ describe("Transcript", () => {
       ],
     };
 
-    it('renders a "+ New phrase" button', () => {
-      const { getByText } = render(Transcript, {
-        props: defaultProps({ transcript: transcriptForDrag }),
-      });
-      expect(getByText("+ New phrase")).toBeTruthy();
-    });
-
-    it('clicking "+ New phrase" button enables selection mode', async () => {
-      const { getByText } = render(Transcript, {
-        props: defaultProps({ transcript: transcriptForDrag }),
-      });
-      const btn = getByText("+ New phrase");
-      await fireEvent.click(btn);
-      // Once in selection mode the button should show a cancel label or the button is active
-      expect(getByText("Cancel")).toBeTruthy();
-    });
-
     it("pointerup without prior pointerdown does not show confirm bar", async () => {
       const { container } = render(Transcript, {
         props: defaultProps({ transcript: transcriptForDrag }),
@@ -1349,64 +1338,6 @@ describe("Transcript", () => {
       );
     });
 
-    it("selectionMode: first tap sets anchor, second tap shows confirm bar", async () => {
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({ transcript: transcriptForDrag }),
-      });
-
-      await fireEvent.click(getByText("+ New phrase"));
-
-      // First tap: click word 0
-      const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
-      await fireEvent.click(centruSpan);
-      // No confirm bar yet after first tap
-      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
-
-      // Second tap: click word 1
-      const mestaSpan = container.querySelector('[data-word-index="1"]') as HTMLElement;
-      await fireEvent.click(mestaSpan);
-      // Now confirm bar should appear
-      expect(container.querySelector(".phrase-confirm-bar")).toBeTruthy();
-    });
-
-    it("selectionMode: cross-line second tap resets anchor to new line, no confirm bar", async () => {
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({ transcript: transcriptTwoLines }),
-      });
-
-      await fireEvent.click(getByText("+ New phrase"));
-
-      // First tap: line 0, word 0
-      const centruSpan = container.querySelector(
-        '[data-line-index="0"][data-word-index="0"]',
-      ) as HTMLElement;
-      await fireEvent.click(centruSpan);
-      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
-
-      // Second tap: line 1, word 0 (different line) — anchor resets to this word
-      const hvalaSpan = container.querySelector(
-        '[data-line-index="1"][data-word-index="0"]',
-      ) as HTMLElement;
-      await fireEvent.click(hvalaSpan);
-      // No confirm bar (anchor was reset, this is now the new first tap)
-      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
-    });
-
-    it("selectionMode: tapping same word twice (start===end) shows no confirm bar", async () => {
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({ transcript: transcriptForDrag }),
-      });
-
-      await fireEvent.click(getByText("+ New phrase"));
-
-      // First tap: word 0
-      const centruSpan = container.querySelector('[data-word-index="0"]') as HTMLElement;
-      await fireEvent.click(centruSpan);
-      // Second tap: same word 0
-      await fireEvent.click(centruSpan);
-      expect(container.querySelector(".phrase-confirm-bar")).toBeFalsy();
-    });
-
     it("scene grouping: renders scene header from lesson natural_speed narrator+en phrases", () => {
       const lesson: LessonDetail = {
         id: "l1",
@@ -1683,7 +1614,7 @@ describe("Transcript", () => {
       expect(queryByText("Slow")).toBeNull();
     });
 
-    it("progressive disclosure: per-word gloss hidden by default, shown when Gloss toggle is enabled", async () => {
+    it("progressive disclosure: per-word gloss hidden by default, shown when English: Literal", async () => {
       const transcriptData: TranscriptData = {
         lesson_id: "l1",
         key_phrases: [],
@@ -1716,17 +1647,18 @@ describe("Transcript", () => {
           },
         ],
       };
-      const { container, getByText } = render(Transcript, {
+      const { container } = render(Transcript, {
         props: defaultProps({ transcript: transcriptData }),
       });
       expect(container.querySelector(".word-gloss")).toBeNull();
-      await fireEvent.click(getByText("Gloss"));
+      readerEnglishPref.set("literal");
+      await tick();
       const gloss = container.querySelector(".word-gloss");
       expect(gloss).not.toBeNull();
       expect(gloss!.textContent).toContain("hello");
     });
 
-    it("progressive disclosure: interlinear L1 hidden by default, shown when Interlinear toggle is enabled", async () => {
+    it("progressive disclosure: interlinear L1 hidden by default, shown when English: Idiomatic", async () => {
       const lesson: LessonDetail = {
         id: "l1",
         day: 1,
@@ -1780,17 +1712,96 @@ describe("Transcript", () => {
           },
         ],
       };
-      const { container, getByText, queryByText } = render(Transcript, {
+      const { container, queryByText } = render(Transcript, {
         props: defaultProps({ transcript: transcriptData, lesson }),
       });
       // Interlinear L1 not shown by default
       expect(queryByText("hello there")).toBeFalsy();
       expect(container.querySelector(".line-interlinear")).toBeNull();
-      // Toggle Interlinear
-      await fireEvent.click(getByText("Interlinear"));
+      // Switch to English: Idiomatic
+      readerEnglishPref.set("idiomatic");
+      await tick();
       const interlinear = container.querySelector(".line-interlinear");
       expect(interlinear).not.toBeNull();
       expect(interlinear!.textContent).toContain("hello there");
+    });
+
+    it("progressive disclosure: English: Both shows gloss and line translation, back to Off shows neither", async () => {
+      const lesson: LessonDetail = {
+        id: "l1",
+        day: 1,
+        title: "test",
+        language_code: "sl",
+        key_phrases: [],
+        sections: [
+          {
+            type: "natural_speed",
+            phrases: [{ text: "zdravo", role: "female-1", language_code: "sl", voice_id: "v" }],
+          },
+          { type: "slow_speed", phrases: [] },
+          {
+            type: "translated",
+            phrases: [
+              { text: "zdravo", role: "female-1", language_code: "sl", voice_id: "v" },
+              { text: "hello there", role: "narrator", language_code: "en", voice_id: "v" },
+            ],
+          },
+        ],
+      };
+      const transcriptData: TranscriptData = {
+        lesson_id: "l1",
+        key_phrases: [],
+        dialogue_lines: [
+          {
+            role: "female-1",
+            sentence: "",
+            words: [
+              {
+                surface: "zdravo",
+                lemma: "zdravo",
+                srs_state: "new",
+                srs_item_id: null,
+                translation: "hello",
+                collocation_span_id: null,
+                collocation_start: false,
+                collocation_srs_state: null,
+                collocation_lemma: null,
+                collocation_translation: null,
+                card_type: null,
+                active_state: "new",
+                active_direction: null,
+                is_due: false,
+                progress: null,
+                inflectable: false,
+                inflection_feature: null,
+                known_marked: false,
+              },
+            ],
+          },
+        ],
+      };
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: transcriptData, lesson }),
+      });
+      readerEnglishPref.set("both");
+      await tick();
+      expect(container.querySelector(".word-gloss")).not.toBeNull();
+      expect(container.querySelector(".line-interlinear")).not.toBeNull();
+      readerEnglishPref.set("off");
+      await tick();
+      expect(container.querySelector(".word-gloss")).toBeNull();
+      expect(container.querySelector(".line-interlinear")).toBeNull();
+    });
+
+    it("renders no Gloss, Interlinear, Produce, + New phrase or Add phrase… controls", () => {
+      const { queryByText } = render(Transcript, {
+        props: defaultProps(),
+      });
+      expect(queryByText("Gloss")).toBeNull();
+      expect(queryByText("Interlinear")).toBeNull();
+      expect(queryByText("Produce")).toBeNull();
+      expect(queryByText("+ New phrase")).toBeNull();
+      expect(queryByText("Add phrase…")).toBeNull();
     });
 
     it("translation input can be updated and is included in onCreatePhrase call", async () => {
@@ -1938,202 +1949,6 @@ describe("Transcript", () => {
       expect(onCreatePhrase).toHaveBeenCalledWith(
         expect.objectContaining({ translation: "custom edit" }),
       );
-    });
-  });
-
-  describe("add-phrase collapsed section", () => {
-    const transcriptEmpty: TranscriptData = {
-      lesson_id: "l1",
-      key_phrases: [],
-      dialogue_lines: [],
-    };
-
-    it("does not show add-phrase form by default", () => {
-      const { container } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      expect(container.querySelector(".add-phrase-form")).toBeFalsy();
-    });
-
-    it("shows add-phrase form after toggling", async () => {
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      const toggle = getByText(/Add phrase/);
-      await fireEvent.click(toggle);
-      expect(container.querySelector(".add-phrase-form")).toBeTruthy();
-      expect(container.querySelector(".add-phrase-form input")).toBeTruthy();
-    });
-
-    it("toggle button expands and collapses", async () => {
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      const toggle = getByText(/Add phrase/);
-      await fireEvent.click(toggle);
-      expect(container.querySelector(".add-phrase-form")).toBeTruthy();
-      await fireEvent.click(toggle);
-      expect(container.querySelector(".add-phrase-form")).toBeFalsy();
-    });
-
-    it("typing text and clicking Create calls onCreatePhrase with correct args", async () => {
-      const onCreatePhrase = vi.fn();
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          onCreatePhrase,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
-      await fireEvent.input(textInput, { target: { value: "good morning sunshine" } });
-
-      const translationInput = container.querySelector(
-        ".add-phrase-translation",
-      ) as HTMLInputElement;
-      await fireEvent.input(translationInput, { target: { value: "dobro jutro sonce" } });
-
-      await fireEvent.click(container.querySelector(".add-phrase-create") as HTMLElement);
-
-      expect(onCreatePhrase).toHaveBeenCalledWith(
-        expect.objectContaining({
-          text: "good morning sunshine",
-          word_count: 3,
-          translation: "dobro jutro sonce",
-          lineIndex: -1,
-          startIdx: -1,
-          endIdx: -1,
-        }),
-      );
-    });
-
-    it("✨ translate button works in add-phrase form", async () => {
-      vi.mocked(api.translateTerm).mockResolvedValue({ translation: "dobro jutro sonce" });
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
-      await fireEvent.input(textInput, { target: { value: "good morning sunshine" } });
-
-      const translateBtn = container.querySelector(".add-phrase-translate-btn") as HTMLElement;
-      await fireEvent.click(translateBtn);
-
-      await waitFor(() => {
-        const translationInput = container.querySelector(
-          ".add-phrase-translation",
-        ) as HTMLInputElement;
-        expect(translationInput.value).toBe("dobro jutro sonce");
-      });
-    });
-
-    it("✨ translate error in add-phrase form shows error message", async () => {
-      vi.mocked(api.translateTerm).mockRejectedValue(new Error("LLM error"));
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
-      await fireEvent.input(textInput, { target: { value: "good morning" } });
-
-      const translateBtn = container.querySelector(".add-phrase-translate-btn") as HTMLElement;
-      await fireEvent.click(translateBtn);
-
-      await waitFor(() => {
-        const errorEl = container.querySelector(".add-phrase-form .phrase-error");
-        expect(errorEl).toBeTruthy();
-        expect(errorEl!.textContent).toContain("Translation failed");
-      });
-    });
-
-    it("Create with empty text does not call onCreatePhrase", async () => {
-      const onCreatePhrase = vi.fn();
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          onCreatePhrase,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const createBtn = container.querySelector(".add-phrase-create") as HTMLElement;
-      await fireEvent.click(createBtn);
-      expect(onCreatePhrase).not.toHaveBeenCalled();
-    });
-
-    it("Create with whitespace-only text does not call onCreatePhrase", async () => {
-      const onCreatePhrase = vi.fn();
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          onCreatePhrase,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
-      await fireEvent.input(textInput, { target: { value: "   " } });
-
-      const createBtn = container.querySelector(".add-phrase-create") as HTMLElement;
-      await fireEvent.click(createBtn);
-      expect(onCreatePhrase).not.toHaveBeenCalled();
-    });
-
-    it("Create button is disabled when text is empty", async () => {
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const createBtn = container.querySelector(".add-phrase-create") as HTMLButtonElement;
-      expect(createBtn.disabled).toBe(true);
-    });
-
-    it("Create resets form and collapses section on success", async () => {
-      const onCreatePhrase = vi.fn();
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({
-          transcript: transcriptEmpty,
-          onCreatePhrase,
-          lesson: { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] },
-        }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
-      await fireEvent.input(textInput, { target: { value: "good morning" } });
-      const translationInput = container.querySelector(
-        ".add-phrase-translation",
-      ) as HTMLInputElement;
-      await fireEvent.input(translationInput, { target: { value: "dobro jutro" } });
-
-      await fireEvent.click(container.querySelector(".add-phrase-create") as HTMLElement);
-
-      expect(container.querySelector(".add-phrase-form")).toBeFalsy();
     });
   });
 
@@ -2340,23 +2155,6 @@ describe("Transcript", () => {
 
       expect(vi.mocked(api.translateTerm)).not.toHaveBeenCalled();
     });
-
-    it("fetchAddPhraseTranslation early-returns when lesson is null", async () => {
-      // Hits the `if (!addPhraseText.trim() || !lesson) return` early return.
-      vi.mocked(api.translateTerm).mockClear();
-      const { container, getByText } = render(Transcript, {
-        props: defaultProps({ transcript: oneWord, lesson: null }),
-      });
-      await fireEvent.click(getByText(/Add phrase/));
-
-      const textInput = container.querySelector(".add-phrase-text") as HTMLInputElement;
-      await fireEvent.input(textInput, { target: { value: "test phrase" } });
-
-      const translateBtn = container.querySelector(".add-phrase-translate-btn") as HTMLElement;
-      await fireEvent.click(translateBtn);
-
-      expect(vi.mocked(api.translateTerm)).not.toHaveBeenCalled();
-    });
   });
 
   describe("Dialogue help disclosure", () => {
@@ -2370,7 +2168,7 @@ describe("Transcript", () => {
       expect(helpToggle.getAttribute("aria-expanded")).toBe("false");
       expect(container.querySelector(".help-panel")).toBeFalsy();
       // The old permanently-visible instruction wall is gone.
-      expect(queryByText(/Drag to create a phrase/)).toBeFalsy();
+      expect(queryByText(/Drag across words to make a phrase card/)).toBeFalsy();
     });
 
     it("clicking the '?' toggle opens the help panel with instructions and a mastery legend", async () => {
@@ -2383,8 +2181,10 @@ describe("Transcript", () => {
       expect(helpToggle.getAttribute("aria-expanded")).toBe("true");
       const panel = container.querySelector(".help-panel");
       expect(panel).toBeTruthy();
-      expect(panel!.textContent).toContain("Drag to create a");
-      expect(panel!.textContent).toContain("+ New phrase");
+      expect(panel!.textContent).toContain("Drag across words to make a phrase card");
+      // Tap-selection is gone (bd tunatale-685k): the help must not send the
+      // learner looking for a button that no longer exists.
+      expect(panel!.textContent).not.toContain("+ New phrase");
       expect(panel!.textContent).toContain("popover");
       expect(panel!.textContent).toContain("Alt+hover");
 
@@ -2435,16 +2235,6 @@ describe("Transcript", () => {
       await fireEvent.click(helpToggle);
       expect(helpToggle.getAttribute("aria-expanded")).toBe("false");
       expect(container.querySelector(".help-panel")).toBeFalsy();
-    });
-
-    it("selectionMode shows the contextual hint inline instead of the help panel toggle text", async () => {
-      const { getByText, queryByText } = render(Transcript, {
-        props: defaultProps({ transcript: transcriptWithDialogue }),
-      });
-      await fireEvent.click(getByText("+ New phrase"));
-      expect(getByText("Tap first word, then last word to set phrase range.")).toBeTruthy();
-      // The instruction wall stays hidden behind '?' even in selection mode.
-      expect(queryByText(/Drag to create a phrase/)).toBeFalsy();
     });
   });
 

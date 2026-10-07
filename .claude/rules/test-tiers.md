@@ -51,7 +51,11 @@ alone**. Operationally, one question, checkable against a PR:
 "Browser-computed" is wider than geometry. It is anything the app hands to the
 engine and gets a verdict back on: layout and paint (rects, overflow, wrapping,
 stacking), the security policy (`cors-lockdown` — preflight and enforcement), the
-service worker and HTTP range machinery (`offline-audio`). For the layout case,
+service worker and HTTP range machinery (`offline-audio`), and the event sequence
+of a real tap or drag (`phrase-drag`). A real tap is pointerdown, pointerup, then
+click; `fireEvent.click` dispatches only the last, so a handler that the first
+two undo passes in jsdom and never completes in a browser. Tap-to-select shipped
+that way from April to October 2026. For the layout case,
 which is most of them in practice: *could you assert this without asking the
 browser to compute a number?*
 

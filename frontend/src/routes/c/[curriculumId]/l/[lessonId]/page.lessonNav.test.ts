@@ -141,6 +141,10 @@ function captureAudio(): { els: HTMLAudioElement[]; restore: () => void } {
 }
 
 describe("hands-free carries on into the next day", () => {
+  // Hands-free runs in Listen only; Read ignores it and keeps the setting
+  // (bd tunatale-685k). The file-level reset above leaves the page in Read.
+  beforeEach(() => lessonModePref.set("listen"));
+
   // Seeded so the player opens ON the last pass of the sequence: ending that
   // track is what completes the run.
   function seedOnLastPass() {

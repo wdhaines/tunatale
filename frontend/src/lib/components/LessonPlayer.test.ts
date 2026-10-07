@@ -8,7 +8,6 @@ import PillSyncHarness from "../../test/PillSyncHarness.svelte";
 import { tick } from "svelte";
 import { maybePrefetchLesson } from "$lib/sw/prefetch";
 import { captionBlurPref } from "$lib/stores/captionBlurPref.svelte";
-import { voicePref } from "$lib/stores/voicePref.svelte";
 import { playerCollapsedPref } from "$lib/stores/playerCollapsedPref.svelte";
 import type { Cue, LessonAudio } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
@@ -44,7 +43,6 @@ beforeEach(() => {
   localStorage.clear();
   vi.mocked(maybePrefetchLesson).mockClear();
   captionBlurPref.set(true);
-  voicePref.set(false);
   // Reset the collapse singleton's IN-MEMORY state too, not just storage.
   // Measured by sabotage: with onMount's init() removed, "restores a stored
   // collapse on mount" still passed, because the previous test's set(true) was
@@ -405,22 +403,6 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".phase-row")).toBeFalsy();
     });
 
-    // The user's call, 2026-09-29: hands-free makes sense in Read mode too
-    // (reading while listening). Before, a saved "on" still ran there with no
-    // chip to turn it off.
-    it("shows the hands-free chip in Read mode, and it works", () => {
-      const { container } = render(LessonPlayer, {
-        props: { audio: audioWithAllSections, compact: true },
-      });
-      const toggle = container.querySelector<HTMLButtonElement>(".hands-free-toggle")!;
-      expect(toggle).toBeTruthy();
-      fireEvent.click(toggle);
-      expect(toggle.getAttribute("aria-pressed")).toBe("true");
-      // The Listen-only chips stay Listen-only.
-      expect(container.querySelector(".caption-blur-btn")).toBeFalsy();
-      expect(container.querySelector(".voice-btn")).toBeFalsy();
-    });
-
     it("still renders transport row in compact mode", () => {
       const { container } = render(LessonPlayer, {
         props: { audio: audioWithNoSections, compact: true },
@@ -765,14 +747,6 @@ describe("LessonPlayer", () => {
       expect(container.querySelector(".english-btn")).toBeTruthy();
     });
 
-    it("renders enunciation and English controls in compact (Read) mode too", () => {
-      const { container } = render(LessonPlayer, {
-        props: { audio: audioWithAllSections, compact: true },
-      });
-      expect(container.querySelector(".enunciation-btn")).toBeTruthy();
-      expect(container.querySelector(".english-btn")).toBeTruthy();
-    });
-
     it("does not render enunciation or English buttons when cues absent", () => {
       const { container } = render(LessonPlayer, { props: { audio: audioWithCuesNull } });
       expect(container.querySelector(".enunciation-btn")).toBeFalsy();
@@ -1007,16 +981,12 @@ describe("LessonPlayer", () => {
 
     it("starts expanded: the full rows are present, the compact bar is not", () => {
       const { container } = readMode();
-      for (const sel of [
-        ".phase-row",
-        ".sentence-row",
-        ".controls-row",
-        ".transport-row",
-        ".scrubber-row",
-      ]) {
+      for (const sel of [".phase-row", ".sentence-row", ".transport-row", ".scrubber-row"]) {
         expect(container.querySelector(sel), `${sel} at rest`).toBeTruthy();
       }
       expect(container.querySelector(".compact-bar")).toBeFalsy();
+      // Read no longer has the settings chips row at all (2026-10-07).
+      expect(container.querySelector(".controls-row")).toBeFalsy();
     });
 
     it("collapsing drops the set-once rows and KEEPS playback reachable", async () => {
@@ -1104,13 +1074,13 @@ describe("LessonPlayer", () => {
     it("reacts to the pref changing while mounted", async () => {
       const { container } = readMode();
       await tick();
-      expect(container.querySelector(".controls-row")).toBeTruthy();
+      expect(container.querySelector(".sentence-row")).toBeTruthy();
       playerCollapsedPref.set(true);
       await tick();
-      expect(container.querySelector(".controls-row")).toBeFalsy();
+      expect(container.querySelector(".sentence-row")).toBeFalsy();
       playerCollapsedPref.set(false);
       await tick();
-      expect(container.querySelector(".controls-row")).toBeTruthy();
+      expect(container.querySelector(".sentence-row")).toBeTruthy();
     });
 
     it("collapsing does NOT interrupt playback", async () => {
@@ -1760,48 +1730,6 @@ describe("LessonPlayer", () => {
         props: { audio: audioWithAllSections, compact: true },
       });
       expect(container.querySelector(".caption-blur-btn")).toBeFalsy();
-    });
-  });
-
-  describe("voice chip", () => {
-    it("renders disabled by default: aria-pressed false, value Off, not active", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const chip = container.querySelector(".voice-btn");
-      expect(chip).toBeTruthy();
-      expect(chip!.getAttribute("aria-pressed")).toBe("false");
-      expect(chip!.classList.contains("active")).toBe(false);
-      expect(chip!.querySelector(".chip-label")!.textContent).toBe("Mic");
-      expect(chip!.querySelector(".chip-value")!.textContent).toBe("Off");
-    });
-
-    it("clicking toggles the preference on, persists 'on', and marks the chip active", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const chip = container.querySelector(".voice-btn")!;
-      fireEvent.click(chip);
-      expect(voicePref.enabled).toBe(true);
-      expect(localStorage.getItem("voice")).toBe("on");
-      expect(chip.getAttribute("aria-pressed")).toBe("true");
-      expect(chip.classList.contains("active")).toBe(true);
-      expect(chip.querySelector(".chip-value")!.textContent).toBe("On");
-    });
-
-    it("clicking again toggles back off and persists 'off'", () => {
-      const { container } = render(LessonPlayer, { props: { audio: audioWithCues } });
-      const chip = container.querySelector(".voice-btn")!;
-      fireEvent.click(chip);
-      fireEvent.click(chip);
-      expect(voicePref.enabled).toBe(false);
-      expect(localStorage.getItem("voice")).toBe("off");
-      expect(chip.getAttribute("aria-pressed")).toBe("false");
-      expect(chip.classList.contains("active")).toBe(false);
-      expect(chip.querySelector(".chip-value")!.textContent).toBe("Off");
-    });
-
-    it("does not render in compact (Read) mode", () => {
-      const { container } = render(LessonPlayer, {
-        props: { audio: audioWithAllSections, compact: true },
-      });
-      expect(container.querySelector(".voice-btn")).toBeFalsy();
     });
   });
 
