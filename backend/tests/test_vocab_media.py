@@ -421,6 +421,202 @@ class TestAddTimeImagesAreUniquePerCard:
         assert "duplicates collocation 42" in caplog.text
 
 
+class TestADuplicatePictureIsRetriedOnce:
+    """A refused duplicate must not leave the card imageless when a second
+    picture was there for the asking (tunatale-t61w).
+
+    Measured 2026-10-06 on the owner's Cebuano deck: `anhi` "come" and `kanus-a`
+    "when" were added from the reader and came up with no picture. Both fetches
+    had SUCCEEDED — the query cache held "person entering house" and "calendar
+    page date" — and both were refused because another card already showed those
+    exact bytes (`bisita` "visitor", `petsa` "date"). The refusal was right; what
+    was missing is the pre-stage's second half, where the URL that produced the
+    duplicate is barred and the same query is asked once more for the NEXT hit.
+    """
+
+    _URL_1 = "https://cdn.pixabay.com/photo/first.jpg"
+    _URL_2 = "https://cdn.pixabay.com/photo/second.jpg"
+
+    def _fetcher(self, results):
+        """A fetch fake that hands out *results* in order and records each call."""
+        calls: list[dict] = []
+        queue = list(results)
+
+        async def _fetch(word, english, **kwargs):
+            # A snapshot: the set is mutated in place between calls.
+            calls.append({**kwargs, "used_image_urls": set(kwargs["used_image_urls"] or ())})
+            result = queue.pop(0)
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        return _fetch, calls
+
+    async def _generate(self, db, fetch, *, used_image_urls=None):
+        async def _query(*_a, **_k):
+            return "boat on water"
+
+        return await vocab_media.generate_vocab_media(
+            db,
+            7,
+            "båt",
+            "boat",
+            llm=object(),
+            pixabay_key="k",
+            language_code="no",
+            used_image_urls=used_image_urls,
+            _query_fn=_query,
+            _fetch_fn=fetch,
+        )
+
+    def _first(self):
+        return MediaResult(
+            audio_bytes=b"AUD",
+            audio_source="tts",
+            image_bytes=b"TAKEN",
+            image_ext="jpg",
+            image_url=self._URL_1,
+            image_status="ok",
+        )
+
+    async def test_the_next_picture_is_fetched_and_stored(self, media_dir) -> None:
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42})
+        fetch, calls = self._fetcher(
+            [
+                self._first(),
+                MediaResult(image_bytes=b"FREE", image_ext="png", image_url=self._URL_2, image_status="ok"),
+            ]
+        )
+
+        out = await self._generate(db, fetch)
+
+        assert out["image"] == f"img_boat_{sha256(b'FREE').hexdigest()[:8]}.png"
+        assert (media_dir / out["image"]).read_bytes() == b"FREE"
+        assert "image_duplicate_of" not in out, "the card HAS a picture; nothing was left refused"
+        assert len(calls) == 2
+        # The retry asks the SAME query with the offending URL barred — that is
+        # what makes the pipeline hand back the next candidate rather than the
+        # same top hit — and asks for no audio, which the first call already got.
+        assert calls[0]["used_image_urls"] == set()
+        assert calls[1]["used_image_urls"] == {self._URL_1}
+        assert calls[1]["image_query"] == calls[0]["image_query"] == "boat on water"
+        assert calls[1]["audio"] == "none"
+        assert calls[1]["language_code"] == "no"
+        assert "audio" not in calls[0], "the first call is unchanged"
+        # One audio row and one image row: the retry must not store audio twice.
+        assert [m[1] for m in db.media] == ["audio_tts", "image"]
+
+    async def test_a_second_duplicate_ends_it(self, media_dir) -> None:
+        """Bounded to ONE retry: a loop would spend the free-tier budget on a
+        query whose results are simply exhausted."""
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42, sha256(b"ALSO").hexdigest(): 43})
+        fetch, calls = self._fetcher(
+            [
+                self._first(),
+                MediaResult(image_bytes=b"ALSO", image_ext="jpg", image_url=self._URL_2, image_status="ok"),
+            ]
+        )
+
+        out = await self._generate(db, fetch)
+
+        assert "image" not in out
+        assert out["image_duplicate_of"] == 43, "names the picture refused LAST"
+        assert len(calls) == 2
+        assert list(media_dir.glob("img_*")) == []
+
+    async def test_a_retry_that_finds_nothing_leaves_the_card_imageless(self, media_dir, caplog) -> None:
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42})
+        fetch, calls = self._fetcher([self._first(), MediaResult(image_status="no_results")])
+
+        with caplog.at_level("WARNING"):
+            out = await self._generate(db, fetch)
+
+        assert "image" not in out
+        assert out["image_duplicate_of"] == 42
+        assert len(calls) == 2
+        assert "duplicates collocation 42" in caplog.text
+
+    async def test_a_retry_that_raises_does_not_fail_the_add(self, media_dir) -> None:
+        """Media is best-effort; the card and the audio already stored survive."""
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42})
+        fetch, _calls = self._fetcher([self._first(), RuntimeError("pixabay down")])
+
+        out = await self._generate(db, fetch)
+
+        assert "image" not in out
+        assert out["image_duplicate_of"] == 42
+        assert out["audio"] == "tts_båt.mp3"
+
+    async def test_a_batch_callers_url_set_learns_the_barred_url(self, media_dir) -> None:
+        """`POST /items/batch` shares one set across its cards. The barred URL
+        goes into THAT set, so a later card in the batch is not offered it."""
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42})
+        fetch, _calls = self._fetcher(
+            [
+                self._first(),
+                MediaResult(image_bytes=b"FREE", image_ext="jpg", image_url=self._URL_2, image_status="ok"),
+            ]
+        )
+        shared: set[str] = set()
+
+        await self._generate(db, fetch, used_image_urls=shared)
+
+        assert self._URL_1 in shared
+
+    async def test_a_duplicate_with_no_url_cannot_be_barred_so_is_not_retried(self, media_dir) -> None:
+        """Without the URL there is nothing to exclude, and the same query would
+        return the same top hit: one wasted search and the same refusal."""
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42})
+        fetch, calls = self._fetcher([MediaResult(image_bytes=b"TAKEN", image_ext="jpg", image_status="ok")])
+
+        out = await self._generate(db, fetch)
+
+        assert out["image_duplicate_of"] == 42
+        assert len(calls) == 1
+
+    async def test_through_the_real_pipeline_the_retry_gets_the_second_hit(self, media_dir) -> None:
+        """The seam the fakes above assume: `fetch_card_media` reports the URL it
+        downloaded even when the caller passed no set, and filters a barred URL
+        out of the next search. Nothing here is faked but the network."""
+        from functools import partial
+
+        from app.cards.media.forvo import ForvoOutcome, ForvoResult
+        from app.cards.media.pipeline import fetch_card_media
+        from app.cards.media.pixabay import PixabaySearch
+
+        hits = [
+            {"webformatURL": self._URL_1, "tags": "boat, water", "imageWidth": 800, "imageHeight": 600, "likes": 90},
+            {"webformatURL": self._URL_2, "tags": "boat, water", "imageWidth": 800, "imageHeight": 600, "likes": 10},
+        ]
+        by_url = {self._URL_1: b"TAKEN", self._URL_2: b"FREE"}
+        tts_renders: list[str] = []
+
+        async def _tts(text, *, voice=None):
+            tts_renders.append(text)
+            return b"AUD"
+
+        fetch = partial(
+            fetch_card_media,
+            forvo_enabled=True,
+            normalize=False,
+            _forvo_fn=lambda word, **_k: ForvoResult(ForvoOutcome.NO_PRONUNCIATION),
+            _tts_fn=_tts,
+            _search_fn=lambda query, **_k: PixabaySearch(hits=hits, status="ok"),
+            _download_fn=lambda hit, **_k: (by_url[hit["webformatURL"]], "jpg", hit["webformatURL"]),
+        )
+        db = _FakeDB(owned_digests={sha256(b"TAKEN").hexdigest(): 42})
+
+        async def _query(*_a, **_k):
+            return "boat water"
+
+        out = await vocab_media.generate_vocab_media(
+            db, 7, "båt", "boat", llm=None, pixabay_key="k", language_code="no", _query_fn=_query, _fetch_fn=fetch
+        )
+
+        assert out["image"] == f"img_boat_{sha256(b'FREE').hexdigest()[:8]}.jpg"
+        assert tts_renders == ["båt"], "the retry rendered no second voice"
+
+
 @pytest.mark.parametrize(
     ("word", "language_code", "stem"),
     [("fem", "no", "count_005"), ("singko", "ceb", "clock_05"), ("kinse", "ceb", "money_0015")],

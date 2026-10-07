@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.cards.drawn_picture import drawn_picture
@@ -45,6 +46,16 @@ def safe_stem(word: str, prefix: str) -> str:
     """Sanitize word for use as a media filename stem: keep letters/digits/underscores."""
     sanitized = re.sub(r"[^\w\s]", "", word).replace(" ", "_")
     return f"{prefix}_{sanitized}"
+
+
+def image_filename(english: str, data: bytes, ext: str | None) -> str:
+    """A fetched picture's filename: ``img_<gloss>_<digest8>.<ext>``.
+
+    The digest is what keeps two cards with one English gloss from resolving to
+    one file — the bare ``img_<gloss>.<ext>`` had the second write replace the
+    first card's picture on disk.
+    """
+    return f"{safe_stem(english, 'img')}_{hashlib.sha256(data).hexdigest()[:8]}.{ext or 'jpg'}"
 
 
 def _drop_image_rows(db: Any, coll_id: int, kind: str) -> None:
@@ -92,6 +103,56 @@ def replace_item_image(db: Any, coll_id: int, english: str, data: bytes, ext: st
     store_tt_media(db, coll_id, "image", filename, data)
     db.add_dirty_field_by_id(coll_id, "image")
     return filename
+
+
+async def image_no_other_card_holds(
+    db: Any,
+    coll_id: int,
+    media: Any,
+    *,
+    used_image_urls: set[str],
+    refetch: Callable[[], Awaitable[Any]],
+) -> tuple[Any, int | None]:
+    """Settle which fetched picture, if any, *coll_id* may store.
+
+    Returns ``(media, owner)``. ``media`` is the fetch result whose image no
+    other card holds, or ``None`` when every picture tried was a duplicate;
+    ``owner`` is the collocation holding the picture refused last, or ``None``
+    when nothing was refused. *media* must carry ``image_bytes``.
+
+    Two cards must not show one photograph: a production front shows the picture
+    and asks for the word, so a shared picture admits more than one right answer
+    (see ``image_digest_owner``). Refusing the duplicate is half of that. The
+    other half is what the pre-stage's pass 4 does, and what the add-time write
+    and the sync mint lacked until tunatale-t61w: bar the URL that produced it
+    and ask once more, so the pipeline's own filter hands back the NEXT hit.
+    Without the retry a refusal just left the card imageless — measured
+    2026-10-06 on the owner's Cebuano deck, where `anhi` "come" and `kanus-a`
+    "when" were refused the pictures `bisita` and `petsa` already showed.
+
+    *refetch* is the caller's own fetch, asked for a picture alone, and must
+    search with *used_image_urls* — the set this bars the URL in. ONE retry: a
+    loop would spend the free-tier budget on a query whose hits are exhausted.
+    A result with no ``image_url`` is not retried at all, because there is
+    nothing to bar and the same query would return the same top hit.
+    """
+    owner = db.image_digest_owner(hashlib.sha256(media.image_bytes).hexdigest(), exclude_collocation_id=coll_id)
+    if owner is None:
+        return media, None
+    if not media.image_url:
+        return None, owner
+    used_image_urls.add(media.image_url)
+    try:
+        retry = await refetch()
+    except Exception as exc:  # noqa: BLE001 — media is best-effort; a failed retry is a missing picture
+        logger.warning("image retry failed after a duplicate of collocation %d: %s", owner, exc)
+        return None, owner
+    if retry is None or retry.image_bytes is None:
+        return None, owner
+    retry_owner = db.image_digest_owner(hashlib.sha256(retry.image_bytes).hexdigest(), exclude_collocation_id=coll_id)
+    if retry_owner is not None:
+        return None, retry_owner
+    return retry, None
 
 
 async def generate_vocab_media(
@@ -175,17 +236,28 @@ async def generate_vocab_media(
         stored["audio"] = audio_filename
 
     if media.image_bytes is not None:
-        ext = media.image_ext or "jpg"
-        digest_full = hashlib.sha256(media.image_bytes).hexdigest()
-        owner = db.image_digest_owner(digest_full, exclude_collocation_id=coll_id)
-        if owner is not None:
-            # Another card already shows this exact picture. Storing it would
-            # point two cards at one file and leave a production front that
-            # admits more than one right answer — `vite` and `kjenne` are both
-            # "know", and one photo cannot ask for a particular one of them.
-            # Left imageless on purpose: the word is then a candidate for the
+        retry_urls = used_image_urls if used_image_urls is not None else set()
+
+        async def _refetch() -> Any:
+            # A picture alone: the audio is settled, and asking again would cost
+            # a second Forvo request and a second TTS render.
+            return await fetch_fn(
+                word,
+                english,
+                pixabay_key=pixabay_key,
+                language_code=language_code,
+                used_image_urls=retry_urls,
+                image_query=image_query,
+                llm=llm,
+                audio="none",
+            )
+
+        image, owner = await image_no_other_card_holds(db, coll_id, media, used_image_urls=retry_urls, refetch=_refetch)
+        if image is None:
+            # Every picture tried is one another card already shows. Left
+            # imageless on purpose: the word is then a candidate for the
             # pre-stage (mint queue, or the repair queue if its production card
-            # already exists), which retries with the URL set populated.
+            # already exists), which runs the same bar-and-retry on a later pass.
             logger.warning(
                 "image for %r duplicates collocation %d — not stored; the word stays imageless for the pre-stage",
                 word,
@@ -199,13 +271,13 @@ async def generate_vocab_media(
         else:
             # Hash-suffixed, matching the pre-stage, `promote_production_cards`
             # and `replace_item_image`. This used to be the BARE `img_<gloss>.<ext>`
-            # — the one write path that omitted the digest — and a shared English
-            # gloss is common, so the second card glossed "note" overwrote the
-            # first's picture in place, silently changing a card the learner
-            # already knew. Measured 2026-09-06: 3 Slovene files whose bytes no
-            # longer matched their recorded sha256, all three bare-named.
-            img_filename = f"{safe_stem(english, 'img')}_{digest_full[:8]}.{ext}"
-            store_tt_media(db, coll_id, "image", img_filename, media.image_bytes)
+            # and a shared English gloss is common, so the second card glossed
+            # "note" overwrote the first's picture in place, silently changing a
+            # card the learner already knew. Measured 2026-09-06: 3 Slovene files
+            # whose bytes no longer matched their recorded sha256, all three
+            # bare-named.
+            img_filename = image_filename(english, image.image_bytes, image.image_ext)
+            store_tt_media(db, coll_id, "image", img_filename, image.image_bytes)
             stored["image"] = img_filename
 
     audio_status = getattr(media, "audio_status", None)
