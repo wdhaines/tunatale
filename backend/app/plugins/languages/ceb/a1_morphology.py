@@ -17,6 +17,13 @@ on 2026-10-07 (tunatale-ve4p.1): they were 5 of the 14 affixed verbs the first
 two lessons left unexplained (``matulog``, ``malipay``, ``nalipay``, ``nakita``).
 Ability (maka- naka-) and imperatives (-a -i pag-) are deliberately NOT
 recognised.
+
+``ni-`` is read as ``mi-`` (the user, 2026-10-07): it is the same affix in
+another spelling, and the commoner one in native news (``niadto`` 1,058 against
+``miadto`` 231 in 9.5 M tokens). It gets no feature of its own, so the hint for
+``verb:mi`` names both spellings. The affix-count table still counts ``mi-``
+only: ``niadto`` is also the demonstrative "back then", so its count would
+vouch for forms on the strength of a different word.
 """
 
 from app.plugins.languages.ceb.affix_patterns import PATTERNS, pattern_forms
@@ -27,11 +34,13 @@ from app.srs.lemmatizer import TokenAnalysis
 # Longest first: "mag"/"nag" before the "ma"/"na" they begin with, "i" last.
 _PREFIXES = ("mag", "nag", "ma", "na", "mo", "mi", "gi", "i")
 _SUFFIXES = ("on", "an")
+# Another spelling of an affix above → the affix it is.
+_SPELLINGS = {"ni": "mi"}
 
 # affix → (how the hint spells it, what it means)
 _AFFIXES: dict[str, tuple[str, str]] = {
     "mo": ("mo-", "will do (not yet done)"),
-    "mi": ("mi-", "did (completed)"),
+    "mi": ("mi- / ni-", "did (completed)"),
     "mag": ("mag-", "will do (not yet done)"),
     "nag": ("nag-", "did / was doing"),
     "ma": ("ma-", "will be / will happen (not yet)"),
@@ -68,6 +77,9 @@ def affix_of(surface: str, root: str) -> str | None:
     for prefix in _PREFIXES:
         if s == prefix + r:
             return prefix
+    for spelling, affix in _SPELLINGS.items():
+        if s == spelling + r:
+            return affix
     return None
 
 
@@ -79,7 +91,7 @@ def _to_feature(analysis: TokenAnalysis) -> str | None:
 
 
 def _format_hint(lemma: str, feature: str) -> str:
-    """``("lakaw", "verb:mi")`` → ``"lakaw — mi-: did (completed)"``."""
+    """``("lakaw", "verb:mi")`` → ``"lakaw — mi- / ni-: did (completed)"``."""
     spelled = _AFFIXES.get(feature.removeprefix("verb:"))
     if spelled is None:
         return _default_format_morphology_hint(lemma, feature)
