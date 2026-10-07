@@ -75,6 +75,11 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     # 2026-09-29).
     "side": (1, False, False),
     "middle": (1, False, False),
+    # A place in a LINE rather than by a box (the user, 2026-10-06, on Norwegian
+    # sist): three blocks and the ball queued on the ground, and an arrow over
+    # them for which way the line faces. The arrow is the line's, not the ball's.
+    "first": (3, True, True),
+    "last": (3, True, True),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -140,6 +145,17 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("bottom", "middle"),
     ("side", "middle"),
     ("middle", "side"),
+    # first / last differ only in which end of the line the ball stands at, and
+    # share their three blocks with the staircase pair.
+    ("first", "last"),
+    ("last", "first"),
+    ("first", "further_up"),
+    ("further_up", "first"),
+    ("last", "further_down"),
+    ("further_down", "last"),
+    ("first", "beside"),
+    ("last", "beside"),
+    ("first", "out"),
 )
 
 
@@ -703,6 +719,55 @@ def _is_middle(p: Picture) -> bool:
     )
 
 
+def _line_position(p: Picture) -> float | None:
+    """Where the ball stands in a queue, along the way the queue faces.
+
+    Three blocks and the ball in one row on the ground, none overlapping and no
+    gap wide enough to stand in, under a horizontal arrow that touches none of
+    them. Returns the ball's centre measured ALONG the arrow, relative to the
+    blocks: positive when it is ahead of every block, negative when it is behind
+    every block, and ``None`` when the picture is not such a queue or the ball is
+    somewhere in the middle of it.
+    """
+    ball, arrow = p.ball, p.arrow
+    if len(p.blocks) != 3 or ball is None or arrow is None:
+        return None
+    members = sorted([*(_body(b) for b in p.blocks), _disc(ball)], key=lambda r: r[0])
+    gaps = [b[0] - a[2] for a, b in zip(members, members[1:], strict=False)]
+    in_a_row = (
+        all(_touches(m[3], p.ground) for m in members)
+        and all(-_TOUCH <= gap < ball.r for gap in gaps)
+        and all(_touches(b.h, 2 * ball.r) for b in p.blocks)
+    )
+    over_the_line = (
+        abs(_dy(arrow)) <= _TOUCH
+        and _length(arrow) >= 3 * ball.r
+        and arrow.y1 + _CLEAR < min(m[1] for m in members)
+        and members[0][0] <= min(arrow.x1, arrow.x2)
+        and max(arrow.x1, arrow.x2) <= members[-1][2]
+    )
+    if not (in_a_row and over_the_line):
+        return None
+    facing = 1.0 if _dx(arrow) > 0 else -1.0
+    ahead = min(facing * (ball.cx - (b.x + b.w / 2)) for b in p.blocks)
+    behind = max(facing * (ball.cx - (b.x + b.w / 2)) for b in p.blocks)
+    if ahead > 0:
+        return ahead
+    return behind if behind < 0 else None
+
+
+def _is_first(p: Picture) -> bool:
+    """At the head of the line: ahead of every block, the way the arrow points."""
+    position = _line_position(p)
+    return position is not None and position > 0
+
+
+def _is_last(p: Picture) -> bool:
+    """At the tail of the line: every block is ahead of it."""
+    position = _line_position(p)
+    return position is not None and position < 0
+
+
 _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "up": _is_up,
     "down": _is_down,
@@ -729,6 +794,8 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "further_up": _is_further_up,
     "side": _is_side,
     "middle": _is_middle,
+    "first": _is_first,
+    "last": _is_last,
 }
 
 
@@ -736,7 +803,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Twenty-five ids, and the renderer refuses everything outside this list."""
+    """Twenty-seven ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -763,6 +830,8 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "further_up",
         "side",
         "middle",
+        "first",
+        "last",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)
@@ -815,6 +884,8 @@ def test_the_arrow_shaft_is_axis_aligned_and_reaches_the_ball(concept: str) -> N
         "further_up",
         "side",
         "middle",
+        "first",
+        "last",
     ],
 )
 def test_every_block_rests_on_the_ground_except_the_table(concept: str) -> None:
@@ -827,7 +898,7 @@ def test_every_block_rests_on_the_ground_except_the_table(concept: str) -> None:
             assert _touches(block.y + block.h, picture.ground)
 
 
-@pytest.mark.parametrize("concept", ["out", "under", "between", "beside"])
+@pytest.mark.parametrize("concept", ["out", "under", "between", "beside", "first", "last"])
 def test_a_ball_on_the_ground_touches_it(concept: str) -> None:
     """Rests on the ground rather than hovering near it — and that is what
     separates these four from the concepts whose ball is up in the air."""

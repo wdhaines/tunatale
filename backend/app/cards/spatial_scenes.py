@@ -87,6 +87,10 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     # (the user's eye, 2026-09-29).
     "side",
     "middle",
+    # A place in a LINE, not a place by a box: Norwegian først and sist had
+    # photographs (the user, 2026-10-06: "first and last are good candidates").
+    "first",
+    "last",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -551,6 +555,45 @@ def _middle() -> list[str]:
     return [_block(_CX - _BLOCK_W / 2, _BLOCK_TALL_Y, _BLOCK_W, _BLOCK_TALL_H, band=band_top)]
 
 
+# ── A place in a line ────────────────────────────────────────────────────────
+# `first` and `last` name a position in an ORDER, which one box cannot show. So
+# the box is repeated: three of them queue on the ground with the ball, and an
+# arrow over the queue says which way it faces. The arrow belongs to the line —
+# it touches nothing, where every other arrow here starts at or lands on the
+# ball — and it is the only thing that makes one end the front.
+
+_QUEUE_PITCH = 46.0
+_QUEUE_BOX = 2 * _BALL_R  # as tall as the ball, so the four read as one row
+_QUEUE_BOX_W = 40.0
+_QUEUE_X0 = _CX - 1.5 * _QUEUE_PITCH  # the first slot's centre; four slots centred on the frame
+_QUEUE_ARROW_Y = 105.0
+
+
+def _queue(ball_slot: int) -> list[str]:
+    """Four slots left to right, the ball in *ball_slot* and a block in each other."""
+    centres = [_QUEUE_X0 + i * _QUEUE_PITCH for i in range(4)]
+    blocks = [
+        _block(cx - _QUEUE_BOX_W / 2, _G - _QUEUE_BOX, _QUEUE_BOX_W, _QUEUE_BOX)
+        for i, cx in enumerate(centres)
+        if i != ball_slot
+    ]
+    return [
+        *blocks,
+        _ball(centres[ball_slot], _G - _BALL_R),
+        _arrow(centres[0], _QUEUE_ARROW_Y, centres[-1], _QUEUE_ARROW_Y),
+    ]
+
+
+def _first() -> list[str]:
+    """The ball at the head of the line: ahead of every block, the way the arrow points."""
+    return _queue(3)
+
+
+def _last() -> list[str]:
+    """:func:`_first` with the ball at the other end: every block is ahead of it."""
+    return _queue(0)
+
+
 _SCENES: dict[str, Callable[[], list[str]]] = {
     "up": _up,
     "down": _down,
@@ -577,6 +620,8 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "further_up": _further_up,
     "side": _side,
     "middle": _middle,
+    "first": _first,
+    "last": _last,
 }
 
 

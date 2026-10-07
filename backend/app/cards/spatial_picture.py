@@ -66,6 +66,10 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "further_up": frozenset({"above", "up", "higher", "over", "further"}),
     "side": frozenset({"side", "edge", "flank"}),
     "middle": frozenset({"middle", "centre", "center", "mid"}),
+    # A place in a line. "latest" and "final" are `last` said another way; the
+    # verb "to last" is a different word's gloss, and that word is not listed.
+    "first": frozenset({"first", "firstly"}),
+    "last": frozenset({"last", "latest", "final", "lastly"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")

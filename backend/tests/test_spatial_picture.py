@@ -106,6 +106,10 @@ class TestGlossGuard:
             ("further_up", "above"),
             ("side", "side"),
             ("middle", "middle, centre"),
+            ("first", "first"),
+            ("first", "at first; firstly"),
+            ("last", "last"),
+            ("last", "last; latest"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -122,6 +126,8 @@ class TestGlossGuard:
             ("up", "upset"),  # a word containing the keyword is not the keyword
             ("on", "only"),
             ("in", "inch"),
+            ("last", "lasting"),
+            ("first", "fir"),
         ],
     )
     def test_a_gloss_that_does_not_name_the_relation_refuses(self, concept, gloss) -> None:
@@ -156,6 +162,12 @@ class TestDispatch:
             ("nede", "no", "down", "down_there"),
             ("nedenfor", "no", "below", "further_down"),
             ("ovenfor", "no", "above", "further_up"),
+            # The user's report (2026-10-06): oppå had a photo. `på` stays a
+            # cloze, so no Norwegian word had claimed the `on` picture.
+            ("oppå", "no", "on top of", "on"),
+            # A place in a line (the user, 2026-10-06: "sist made me think of this").
+            ("først", "no", "first", "first"),
+            ("sist", "no", "last", "last"),
             # Cebuano (2026-09-29): kilid shared tupad's "beside", tunga shared
             # taliwala's "between".
             ("kilid", "ceb", "side", "side"),
