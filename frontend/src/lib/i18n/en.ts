@@ -437,10 +437,11 @@ export const en = {
   "home.noCurriculaHint": "Use “+ New curriculum” above to generate your first one.",
   "home.daysListened": "{listened} of {total} days listened",
   "home.allListened": "All {count} days listened ✓",
-  "home.confirmDeleteTopic": "Confirm delete {topic}",
-  "home.deleteTopic": "Delete {topic}",
-  "home.confirmDelete": "Confirm delete",
-  "home.delete": "Delete",
+  "home.upNext": "Up next",
+  "home.listened": "Listened ✓",
+  "home.dayN": "Day {position}",
+  "home.allLessons": "All lessons",
+  "home.otherCurricula": "Other curricula",
   "home.reviewSessions": "Review sessions",
   "home.working": "Working…",
   "home.newReviewSession": "+ New review session",
@@ -453,8 +454,6 @@ export const en = {
   "home.reusedOf": "reused {used} of {total}",
   "home.wordsForgetting": "words you were forgetting",
   "home.nothingDue": "Nothing to review right now — no vocabulary is due in this language today.",
-  "home.revisitDay": "Revisit Day {position}",
-  "home.continueDay": "Continue → Day {position}",
   "home.allReviewSessions": "All review sessions",
 
   // review/+page.svelte
@@ -609,6 +608,10 @@ export const en = {
   "curriculum.backToLessons": "Lessons",
   "curriculum.dayCount": { one: "{count} day", other: "{count} days" },
   "curriculum.planLink": "Plan next days",
+  "curriculum.delete": "Delete",
+  "curriculum.confirmDelete": "Confirm delete",
+  "curriculum.deleteTopic": "Delete {topic}",
+  "curriculum.confirmDeleteTopic": "Confirm delete {topic}",
 
   // +error.svelte
   "error.genericFallback": "Something went wrong",

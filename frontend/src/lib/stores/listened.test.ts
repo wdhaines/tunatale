@@ -291,6 +291,55 @@ describe("listenedStore", () => {
     });
   });
 
+  // Home picks which curriculum to lead with by its most recent listen
+  // (bd tunatale-e6fq). The store already held the timestamp; this reads it.
+  describe("lastListenedAt()", () => {
+    it("is null for a lesson never listened to", () => {
+      expect(listenedStore.lastListenedAt("lesson-1")).toBeNull();
+    });
+
+    it("returns the server's timestamp after hydrate, unchanged", async () => {
+      mockApi.getListens.mockResolvedValue({
+        lessons: [
+          {
+            lesson_id: "l1",
+            listen_count: 3,
+            last_listened_at: "2026-10-06T22:50:07.654582+00:00",
+          },
+        ],
+      });
+
+      await listenedStore.hydrate();
+
+      expect(listenedStore.lastListenedAt("l1")).toBe("2026-10-06T22:50:07.654582+00:00");
+      expect(listenedStore.lastListenedAt("l2")).toBeNull();
+    });
+
+    it("moves to the moment of a listen made in this session", async () => {
+      mockApi.getListens.mockResolvedValue({
+        lessons: [
+          { lesson_id: "l1", listen_count: 1, last_listened_at: "2026-01-01T00:00:00+00:00" },
+        ],
+      });
+      await listenedStore.hydrate();
+      mockApi.markAsListened.mockResolvedValue({
+        status: "ok",
+        created: 0,
+        staged: 0,
+        applied: 0,
+        remaining_candidates: 0,
+        listen_count: 2,
+      });
+      const before = Date.now();
+
+      await listenedStore.markListened("l1");
+
+      const stamp = listenedStore.lastListenedAt("l1");
+      expect(stamp).not.toBe("2026-01-01T00:00:00+00:00");
+      expect(Date.parse(stamp as string)).toBeGreaterThanOrEqual(before);
+    });
+  });
+
   describe("language switch", () => {
     it("refresh() refetches getListens and clears old entries", async () => {
       mockApi.getListens

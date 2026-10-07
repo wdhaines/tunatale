@@ -33,7 +33,10 @@ vi.mock("$lib/api", () => ({
 }));
 
 vi.mock("$lib/stores/listened.svelte", () => ({
-  listenedStore: { has: vi.fn().mockReturnValue(false) },
+  listenedStore: {
+    has: vi.fn().mockReturnValue(false),
+    lastListenedAt: vi.fn().mockReturnValue(null),
+  },
 }));
 
 import { api } from "$lib/api";
@@ -118,6 +121,48 @@ describe("the review-session list", () => {
     expect(rows.map((r) => r.textContent)).toEqual([
       expect.stringContaining("2 September"),
       expect.stringContaining("28 August"),
+    ]);
+  });
+
+  it("shows only the three newest; the rest are on the index", async () => {
+    mockListSessions.mockResolvedValue([
+      session({ id: "s5", session_date: "2026-09-05", title: "Fifth" }),
+      session({ id: "s4", session_date: "2026-09-04", title: "Fourth" }),
+      session({ id: "s3", session_date: "2026-09-03", title: "Third" }),
+      session({ id: "s2", session_date: "2026-09-02", title: "Second" }),
+      session({ id: "s1", session_date: "2026-09-01", title: "First" }),
+    ]);
+    const { findAllByTestId, queryByText, getByRole } = render(Page);
+
+    const rows = await findAllByTestId("review-session-row");
+    expect(rows.map((r) => r.querySelector(".topic")?.textContent)).toEqual([
+      "Fifth",
+      "Fourth",
+      "Third",
+    ]);
+    expect(queryByText("Second")).toBeNull();
+    expect(getByRole("link", { name: /All review sessions/ }).getAttribute("href")).toBe(
+      "/review-sessions",
+    );
+  });
+
+  it("takes 'newest' from the one session ordering, not from the order it was handed", async () => {
+    // Oldest first, and two on the same date: the index page breaks that tie by
+    // id, and home showing a different three would be a second answer to "what
+    // is recent" (lib/reading/nextReviewSession.ts::orderSessions).
+    mockListSessions.mockResolvedValue([
+      session({ id: "a", session_date: "2026-09-01", title: "Oldest" }),
+      session({ id: "b", session_date: "2026-09-02", title: "Tie b" }),
+      session({ id: "c", session_date: "2026-09-02", title: "Tie c" }),
+      session({ id: "d", session_date: "2026-09-03", title: "Newest" }),
+    ]);
+    const { findAllByTestId } = render(Page);
+
+    const rows = await findAllByTestId("review-session-row");
+    expect(rows.map((r) => r.querySelector(".topic")?.textContent)).toEqual([
+      "Newest",
+      "Tie c",
+      "Tie b",
     ]);
   });
 

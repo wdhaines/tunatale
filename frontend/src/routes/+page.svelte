@@ -2,12 +2,19 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
+	import CardList from '$lib/components/CardList.svelte';
+	import type { CardRow } from '$lib/components/CardList.svelte';
+	import ReviewSessionCards from '$lib/components/ReviewSessionCards.svelte';
 	import { listenedStore } from '$lib/stores/listened.svelte';
 	import { languageStore } from '$lib/stores/language.svelte';
 	import { pinReviewWords, pinnedReviewWords, unpinReviewWords } from '$lib/reviewDraft';
 	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
-	import { formatSessionDate } from '$lib/reading/sessionDate';
+	import { orderSessions } from '$lib/reading/nextReviewSession';
+	import { leadCurriculum, recentLessons } from '$lib/reading/recentLessons';
+
+	// How many recent lessons and sessions home lists before "All …" takes over.
+	const RECENT_COUNT = 3;
 
 	// Tagline names the active L2 (falls back to a generic line before the language
 	// list has loaded, or in a single-language deployment that hasn't resolved yet).
@@ -22,8 +29,6 @@
 		totalDays: number;
 		percent: number;
 		allListened: boolean;
-		continueLabel: string;
-		continueHref: string;
 	}
 
 	let curricula: Array<{ id: string; topic: string; created_at: string }> = $state([]);
@@ -60,40 +65,28 @@
 	let progressById: Record<string, CardProgress> = $derived.by(() => {
 		const next: Record<string, CardProgress> = {};
 		for (const [id, days] of Object.entries(daysById)) {
-			const progress = computeProgress(id, days);
+			const progress = computeProgress(days);
 			if (progress) next[id] = progress;
 		}
 		return next;
 	});
 
-	// Two-click delete, one card at a time (same pattern as the lesson page's
-	// "Delete day"): the first click arms that card, the second deletes. Blur
-	// disarms, so a click elsewhere can't leave a primed button behind.
-	let confirmingDeleteId: string | null = $state(null);
-	let deletingId: string | null = $state(null);
-	let deleteError = $state('');
+	// Lesson titles come from each curriculum's own GET (bd tunatale-e6fq):
+	// keyed by the day key so a deleted day leaves the titles beside it intact.
+	let titlesById: Record<string, Record<number, string>> = $state({});
 
-	async function handleDelete(id: string) {
-		confirmingDeleteId = null;
-		deletingId = id;
-		deleteError = '';
-		try {
-			await api.deleteCurriculum(id);
-			curricula = curricula.filter((c) => c.id !== id);
-		} catch (e) {
-			deleteError = e instanceof Error ? e.message : String(e);
-		} finally {
-			deletingId = null;
-		}
-	}
+	// The ONE curriculum home leads with: the one listened to most recently,
+	// else the first. Null only when there is no curriculum at all, which is
+	// exactly the empty state.
+	const lead = $derived(
+		leadCurriculum(curricula, daysById, (id) => listenedStore.lastListenedAt(id))
+	);
+	// Every other curriculum drops to a one-line list below the lead. Identity,
+	// not `lead?.id`: when there is no lead the list is empty anyway.
+	const others = $derived(curricula.filter((c) => c !== lead));
 
-	function handleDeleteClick(id: string) {
-		if (confirmingDeleteId === id) {
-			handleDelete(id);
-		} else {
-			confirmingDeleteId = id;
-		}
-	}
+	// The three newest sessions, in the ONE order the index uses, newest first.
+	const recentSessions = $derived(orderSessions(sessions).reverse().slice(0, RECENT_COUNT));
 
 	// Mini-form for starting a new plan (chat-based; replaces one-shot generation)
 	let planTopic = $state('');
@@ -150,14 +143,27 @@
 			if (days) next[id] = days;
 		}
 		daysById = next;
-	});
 
-	function coverageLine(s: ReviewSession): string | null {
-		// null is "never measured" and gets NO line. [] is a measured zero and
-		// gets one — "reused 0 of 5" is a real observation.
-		if (s.review_requested === null || s.review_used === null) return null;
-		return t('home.reusedOf', { used: s.review_used.length, total: s.review_requested.length });
-	}
+		// Titles come from each curriculum's own GET. `overview` carries the day
+		// list with its titles; keyed by day so a deleted day leaves the titles
+		// beside it intact. A failure leaves this curriculum title-less, and the
+		// rows fall back to "Day N" — a row still has to be reachable.
+		const titleEntries = await Promise.all(
+			curricula.map(async (c) => {
+				try {
+					const summary = await api.getCurriculum(c.id);
+					return [c.id, summary.days] as const;
+				} catch {
+					return [c.id, null] as const;
+				}
+			})
+		);
+		const titles: Record<string, Record<number, string>> = {};
+		for (const [id, days] of titleEntries) {
+			if (days) titles[id] = Object.fromEntries(days.map((d) => [d.day, d.title]));
+		}
+		titlesById = titles;
+	});
 
 	/**
 	 * Same contract as ManualStoryPanel's importKey (bd tunatale-rwkz.1): minted
@@ -226,31 +232,50 @@
 	}
 
 	function computeProgress(
-		curriculumId: string,
 		days: Array<{ day: number; position: number; lesson_id: string }>
 	): CardProgress | null {
 		if (days.length === 0) return null;
 
-		const sorted = [...days].sort((a, b) => a.day - b.day);
-		const totalDays = sorted.length;
-		const listenedCount = sorted.filter((d) => listenedStore.has(d.lesson_id)).length;
+		const totalDays = days.length;
+		const listenedCount = days.filter((d) => listenedStore.has(d.lesson_id)).length;
 		const percent = Math.round((listenedCount / totalDays) * 100);
-		const firstUnlistened = sorted.find((d) => !listenedStore.has(d.lesson_id));
-		const allListened = !firstUnlistened;
-		const target = firstUnlistened ?? sorted[sorted.length - 1];
-		const continueLabel = allListened
-			? t('home.revisitDay', { position: target.position })
-			: t('home.continueDay', { position: target.position });
-		const continueHref = `/c/${curriculumId}/l/${target.lesson_id}`;
+		const allListened = listenedCount === totalDays;
 
-		return { listenedCount, totalDays, percent, allListened, continueLabel, continueHref };
+		return { listenedCount, totalDays, percent, allListened };
 	}
 
-	function formatDate(iso: string): string {
-		return new Date(iso).toLocaleDateString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric'
+	/**
+	 * The lesson rows under the lead curriculum. Titles come from that
+	 * curriculum's own GET; a day whose title never arrived (the fetch failed,
+	 * or the day is not in the summary) is labelled by position and carries no
+	 * meta, so it is still one click away.
+	 */
+	function lessonRowsFor(c: { id: string }): CardRow[] {
+		return recentLessons(
+			daysById[c.id] ?? [],
+			(id) => listenedStore.has(id),
+			RECENT_COUNT
+		).map((lesson): CardRow => {
+			const label = t('home.dayN', { position: lesson.position });
+			const title = (titlesById[c.id] ?? {})[lesson.day];
+			const note = lesson.next ? t('home.upNext') : t('home.listened');
+			return title === undefined
+				? {
+						id: lesson.lesson_id,
+						href: `/c/${c.id}/l/${lesson.lesson_id}`,
+						title: label,
+						meta: '',
+						note,
+						emphasis: lesson.next
+					}
+				: {
+						id: lesson.lesson_id,
+						href: `/c/${c.id}/l/${lesson.lesson_id}`,
+						title,
+						meta: label,
+						note,
+						emphasis: lesson.next
+					};
 		});
 	}
 </script>
@@ -299,52 +324,48 @@
 		<p class="muted">{t('home.loading')}</p>
 	{:else if listError}
 		<p class="error">{listError}</p>
-	{:else if curricula.length === 0}
+	{:else if !lead}
 		<div class="empty card">
 			<p class="muted">{t('home.noCurricula')}</p>
 			<p class="muted small">{t('home.noCurriculaHint')}</p>
 		</div>
 	{:else}
-		<ul class="library">
-			{#each curricula as c (c.id)}
-				<li>
-					<div class="curric-card card">
-						<a class="card-link" href="/c/{c.id}">
-							<span class="topic">{c.topic}</span>
-							<span class="meta">{formatDate(c.created_at)}</span>
-						</a>
-						{#if progressById[c.id]}
-							{@const p = progressById[c.id]}
-							<div class="progress-info">
-								<p class="progress-line">{t('home.daysListened', { listened: p.listenedCount, total: p.totalDays })}</p>
-								<div class="progress-bar">
-									<div class="progress-fill" style="width: {p.percent}%"></div>
-								</div>
-								{#if p.allListened}
-									<p class="all-done">{t('home.allListened', { count: p.totalDays })}</p>
-								{/if}
-								<a class="continue-link" href={p.continueHref}>{p.continueLabel}</a>
-							</div>
+		{@const p = progressById[lead.id]}
+		<div class="curric-head" data-testid="lead-curriculum">
+			<a class="curric-topic" href="/c/{lead.id}">{lead.topic}</a>
+			{#if p}
+				<span class="progress-line"
+					>{p.allListened
+						? t('home.allListened', { count: p.totalDays })
+						: t('home.daysListened', { listened: p.listenedCount, total: p.totalDays })}</span
+				>
+			{/if}
+		</div>
+		{#if p}
+			<div class="progress-bar lead-bar">
+				<div class="progress-fill" style="width: {p.percent}%"></div>
+			</div>
+		{/if}
+		<CardList rows={lessonRowsFor(lead)} testid="recent-lesson-row" />
+		<a class="all-link" href="/c/{lead.id}">{t('home.allLessons')} →</a>
+		{#if others.length > 0}
+			<h2 class="other-head">{t('home.otherCurricula')}</h2>
+			<ul class="other-list">
+				{#each others as c (c.id)}
+					{@const p = progressById[c.id]}
+					<li data-testid="other-curriculum-row">
+						<a href="/c/{c.id}">{c.topic}</a>
+						{#if p}
+							<span class="progress-line"
+								>{t('home.daysListened', {
+									listened: p.listenedCount,
+									total: p.totalDays
+								})}</span
+							>
 						{/if}
-						<button
-							type="button"
-							class="delete-btn"
-							class:confirming={confirmingDeleteId === c.id}
-							aria-label={confirmingDeleteId === c.id
-								? t('home.confirmDeleteTopic', { topic: c.topic })
-								: t('home.deleteTopic', { topic: c.topic })}
-							onclick={() => handleDeleteClick(c.id)}
-							onblur={() => (confirmingDeleteId = null)}
-							disabled={deletingId === c.id}
-						>
-							{confirmingDeleteId === c.id ? t('home.confirmDelete') : t('home.delete')}
-						</button>
-					</div>
-				</li>
-			{/each}
-		</ul>
-		{#if deleteError}
-			<p class="error delete-error">{deleteError}</p>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 	{/if}
 
@@ -400,32 +421,11 @@
 		{#if sessions.length === 0}
 			<p class="muted small">{t('home.noReviewSessions')}</p>
 		{:else}
-			<!--
-				The SAME card shape the curricula above use — .library / .curric-card /
-				.card-link / .topic / .meta. A session is a different KIND of thing, not
-				a different kind of list item, and giving it bespoke markup made one page
-				look like two.
-			-->
-			<ul class="library">
-				{#each sessions as s (s.id)}
-					{@const line = coverageLine(s)}
-					<li data-testid="review-session-row">
-						<div class="curric-card card">
-							<a class="card-link" href="/review-sessions/{s.id}">
-								<span class="topic">{s.title}</span>
-								<span class="meta">{formatSessionDate(s.session_date)}</span>
-							</a>
-							{#if line}
-								<p class="progress-line">{line} {t('home.wordsForgetting')}</p>
-							{/if}
-						</div>
-					</li>
-				{/each}
-			</ul>
+			<ReviewSessionCards sessions={recentSessions} />
 			<!-- The index is the counterpart of a curriculum's day page, and the
 			     page a session's back link and delete return to. Absent when there
 			     are no sessions, so it is never a link to an empty page. -->
-			<a class="all-sessions" href="/review-sessions">{t('home.allReviewSessions')} →</a>
+			<a class="all-link" href="/review-sessions">{t('home.allReviewSessions')} →</a>
 		{/if}
 	</section>
 </main>
@@ -524,45 +524,51 @@
 	.new-btn:active {
 		transform: translateY(1px);
 	}
-	.library {
+	.curric-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
+		flex-wrap: wrap;
+	}
+	.curric-topic {
+		font-size: 1.15rem;
+		font-weight: 700;
+		color: var(--color-text);
+		text-decoration: none;
+	}
+	.curric-topic:hover {
+		color: var(--color-primary);
+	}
+	.lead-bar {
+		margin: 0.6rem 0 0.9rem;
+	}
+	.other-head {
+		margin: 1.5rem 0 0.5rem;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--color-muted);
+	}
+	.other-list {
 		list-style: none;
 		margin: 0;
 		padding: 0;
 		display: grid;
-		gap: 0.75rem;
+		gap: 0.35rem;
 	}
-	.curric-card {
+	.other-list li {
 		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		padding: 1rem 1.25rem;
-		transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
 	}
-	.curric-card:hover {
-		border-color: var(--color-primary);
-		box-shadow: var(--shadow);
-		transform: translateY(-1px);
-	}
-	.card-link {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		text-decoration: none;
+	.other-list a {
 		color: var(--color-text);
-	}
-	.topic {
-		font-size: 1.05rem;
 		font-weight: 600;
+		text-decoration: none;
 	}
-	.meta {
-		color: var(--color-muted);
-		font-size: 0.8rem;
-		flex-shrink: 0;
-	}
-	.progress-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
+	.other-list a:hover {
+		color: var(--color-primary);
 	}
 	.progress-line {
 		margin: 0;
@@ -571,14 +577,14 @@
 	}
 	/* One step below the rows above it: the rows are the content, this is the way
 	   to the page that lists them. */
-	.all-sessions {
+	.all-link {
 		display: inline-block;
 		margin-top: 0.75rem;
 		color: var(--color-muted);
 		font-size: 0.85rem;
 		text-decoration: none;
 	}
-	.all-sessions:hover {
+	.all-link:hover {
 		color: var(--color-primary);
 	}
 	.progress-bar {
@@ -591,54 +597,6 @@
 		height: 100%;
 		border-radius: var(--radius-pill);
 		background: var(--color-primary);
-	}
-	.all-done {
-		margin: 0;
-		font-size: 0.85rem;
-		font-weight: 600;
-		color: var(--color-success);
-	}
-	.continue-link {
-		align-self: flex-start;
-		padding: 0.4rem 0.9rem;
-		border-radius: var(--radius-pill);
-		background: var(--color-surface-2);
-		color: var(--color-primary);
-		font-size: 0.8rem;
-		font-weight: 600;
-		text-decoration: none;
-		transition: background 0.15s ease, color 0.15s ease;
-	}
-	.continue-link:hover {
-		background: var(--color-primary);
-		color: var(--color-on-primary);
-	}
-	.delete-btn {
-		align-self: flex-start;
-		flex-shrink: 0;
-		padding: 0.4rem 0.9rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-pill);
-		background: var(--color-surface);
-		color: var(--color-muted);
-		font-size: 0.8rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-	.delete-btn:hover {
-		color: var(--color-danger);
-		border-color: var(--color-danger);
-	}
-	.delete-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	.delete-btn.confirming {
-		border-color: var(--color-danger);
-		color: var(--color-danger);
-	}
-	.delete-error {
-		margin-top: 0.75rem;
 	}
 	.empty {
 		display: flex;
@@ -715,23 +673,6 @@
 			flex-direction: row;
 			justify-content: space-between;
 			gap: 1rem;
-		}
-		.curric-card {
-			flex-direction: row;
-			align-items: center;
-			justify-content: space-between;
-			gap: 1.5rem;
-		}
-		.card-link {
-			flex: 1 1 auto;
-			flex-direction: row;
-			align-items: baseline;
-			justify-content: space-between;
-			gap: 1rem;
-		}
-		.progress-info {
-			flex: 0 0 auto;
-			width: 14rem;
 		}
 	}
 </style>

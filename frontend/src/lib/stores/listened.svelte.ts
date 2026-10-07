@@ -6,6 +6,8 @@
  * API surface:
  *  - has(lessonId)   — boolean, backward-compatible read
  *  - count(lessonId) — listen count (0 = never listened)
+ *  - lastListenedAt(lessonId) — string | null, the listen's own timestamp
+ *    (server-written or browser-written; null = never listened)
  *  - markListened(lessonId, wordRatings?) — async: calls API + returns response
  *  - hydrate()       — async: server fetch + one-time localStorage migration
  *  - refresh()       — async: resets hydration latch + re-runs hydrate()
@@ -53,6 +55,11 @@ function createListenedStore() {
 
     count(lessonId: string): number {
       return entries[lessonId]?.listenCount ?? 0;
+    },
+
+    /** The listen's own timestamp, or null for a lesson never listened to. */
+    lastListenedAt(lessonId: string): string | null {
+      return entries[lessonId]?.lastListenedAt ?? null;
     },
 
     /** Async: calls the listen API, updates local state, returns full response. */
