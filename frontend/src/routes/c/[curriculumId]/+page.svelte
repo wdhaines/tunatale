@@ -25,6 +25,37 @@
 		(pipelineStatus?.days ?? []).map(d => [d.day, d.state]),
 	));
 
+	// Two-click delete, the same pattern the day panel below uses: the first
+	// click arms, the second deletes, and blur disarms so a click elsewhere can't
+	// leave a primed button behind. It lives with the curriculum it removes, as a
+	// session's delete lives on the session's own page (bd tunatale-e6fq).
+	let confirmingDelete = $state(false);
+	let deleting = $state(false);
+
+	async function handleDelete() {
+		confirmingDelete = false;
+		deleting = true;
+		error = '';
+		try {
+			await api.deleteCurriculum(data.curriculum.id);
+			await goto('/');
+		} catch (e) {
+			// A failure leaves the button enabled and disarmed, so the learner can
+			// try again without a second arm.
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			deleting = false;
+		}
+	}
+
+	function handleDeleteClick() {
+		if (confirmingDelete) {
+			handleDelete();
+		} else {
+			confirmingDelete = true;
+		}
+	}
+
 	async function refreshProgress() {
 		try {
 			const days = await api.getCurriculumProgress(data.curriculum.id);
@@ -114,6 +145,19 @@
 			/>
 		{/if}
 		<a class="plan-link" href="/c/{data.curriculum.id}/plan">{t('curriculum.planLink')} →</a>
+		<button
+			type="button"
+			class="delete-btn"
+			class:confirming={confirmingDelete}
+			aria-label={confirmingDelete
+				? t('curriculum.confirmDeleteTopic', { topic: data.curriculum.topic })
+				: t('curriculum.deleteTopic', { topic: data.curriculum.topic })}
+			onclick={handleDeleteClick}
+			onblur={() => (confirmingDelete = false)}
+			disabled={deleting}
+		>
+			{confirmingDelete ? t('curriculum.confirmDelete') : t('curriculum.delete')}
+		</button>
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
@@ -170,5 +214,29 @@
 	}
 	.plan-link:hover {
 		text-decoration: underline;
+	}
+	.delete-btn {
+		display: block;
+		margin-top: 1rem;
+		padding: 0.4rem 0.9rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-muted);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.delete-btn:hover {
+		color: var(--color-danger);
+		border-color: var(--color-danger);
+	}
+	.delete-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+	.delete-btn.confirming {
+		border-color: var(--color-danger);
+		color: var(--color-danger);
 	}
 </style>

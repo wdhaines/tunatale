@@ -18,6 +18,7 @@ vi.mock("$lib/api", () => ({
     getStoryPrompt: vi.fn().mockResolvedValue({ system_prompt: "sys", user_prompt: "usr" }),
     importStory: vi.fn(),
     deleteCurriculumDay: vi.fn(),
+    deleteCurriculum: vi.fn(),
   },
 }));
 
@@ -506,6 +507,95 @@ describe("/c/[curriculumId] page", () => {
       expect(container.querySelector("textarea")).toBeNull();
       expect(vi.mocked(api.getCurriculumProgress)).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+// Moved here from home (bd tunatale-e6fq): home lists lessons now, so the
+// curriculum's own page is where a curriculum is deleted, as a session's own
+// page is where a session is. Same two-click arming as it had on home.
+describe("Delete curriculum", () => {
+  const mockDeleteCurriculum = vi.mocked(api.deleteCurriculum);
+  const renderPage = () => render(Page, { props: { data: { curriculum } } });
+
+  it("offers a Delete button that names the curriculum", () => {
+    const { getByRole } = renderPage();
+    const button = getByRole("button", { name: "Delete Coffee" });
+    expect(button.textContent?.trim()).toBe("Delete");
+  });
+
+  it("arms on the first click without deleting", async () => {
+    const { getByRole } = renderPage();
+
+    await fireEvent.click(getByRole("button", { name: "Delete Coffee" }));
+
+    const armed = getByRole("button", { name: "Confirm delete Coffee" });
+    expect(armed.textContent?.trim()).toBe("Confirm delete");
+    expect(mockDeleteCurriculum).not.toHaveBeenCalled();
+  });
+
+  it("deletes on the second click and returns home", async () => {
+    mockDeleteCurriculum.mockResolvedValue({ deleted: "cid-1" });
+    const { getByRole } = renderPage();
+
+    await fireEvent.click(getByRole("button", { name: "Delete Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Coffee" }));
+
+    await waitFor(() => {
+      expect(mockDeleteCurriculum).toHaveBeenCalledWith("cid-1");
+      expect(mockGoto).toHaveBeenCalledWith("/");
+    });
+  });
+
+  it("disarms on blur", async () => {
+    const { getByRole } = renderPage();
+
+    await fireEvent.click(getByRole("button", { name: "Delete Coffee" }));
+    await fireEvent.blur(getByRole("button", { name: "Confirm delete Coffee" }));
+
+    expect(getByRole("button", { name: "Delete Coffee" })).toBeTruthy();
+    expect(mockDeleteCurriculum).not.toHaveBeenCalled();
+  });
+
+  it("stays on the page and shows the error when the delete fails", async () => {
+    mockDeleteCurriculum.mockRejectedValue(new Error("DELETE /api/curriculum/cid-1: Not Found"));
+    const { getByRole, findByText } = renderPage();
+
+    await fireEvent.click(getByRole("button", { name: "Delete Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Coffee" }));
+
+    expect(await findByText(/Not Found/)).toBeTruthy();
+    expect(mockGoto).not.toHaveBeenCalledWith("/");
+    // Re-enabled and disarmed, so the learner can try again.
+    expect((getByRole("button", { name: "Delete Coffee" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("shows a stringified error when the delete rejects with a non-Error", async () => {
+    mockDeleteCurriculum.mockRejectedValue("nope");
+    const { getByRole, findByText } = renderPage();
+
+    await fireEvent.click(getByRole("button", { name: "Delete Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Coffee" }));
+
+    expect(await findByText("nope")).toBeTruthy();
+  });
+
+  it("is disabled while the delete is in flight", async () => {
+    let finish: (v: { deleted: string }) => void = () => {};
+    mockDeleteCurriculum.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const { getByRole } = renderPage();
+
+    await fireEvent.click(getByRole("button", { name: "Delete Coffee" }));
+    await fireEvent.click(getByRole("button", { name: "Confirm delete Coffee" }));
+
+    await waitFor(() =>
+      expect((getByRole("button", { name: "Delete Coffee" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      ),
+    );
+    finish({ deleted: "cid-1" });
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/"));
   });
 });
 
