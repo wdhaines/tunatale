@@ -84,25 +84,31 @@ _WEAK = frozenset(
         "had",
     ]
 )
-# Longest first, so "wondered" loses "ed" rather than only "d".
+# What a gloss may open with that is not part of the meaning's name.
+_LEADING = _DROP | {"to"}
 _SUFFIXES = ("ing", "ed", "es", "s", "d")
 _MIN_STEM = 3
 
 
-def _stem(word: str) -> str:
-    """Enough to join "hours" to "hour" and "wondered" to "wonder" — nothing more."""
-    for suffix in _SUFFIXES:
-        if word.endswith(suffix) and len(word) - len(suffix) >= _MIN_STEM:
-            return word[: -len(suffix)]
-    return word
+def _stems(word: str) -> frozenset[str]:
+    """*word*, and every shorter form it might be a suffixed version of.
+
+    Enough to join "hours" to "hour" and "wondered" to "wonder" — nothing more.
+    A SET, because English does not say which suffix a word carries: "times" is
+    "time" + "s" and "boxes" is "box" + "es". Taking the longest suffix alone
+    made "times" the stem "tim", so a line glossed "three times" could not
+    find the card translated "time" (2026-10-06).
+    """
+    cut = {word[: -len(suffix)] for suffix in _SUFFIXES if word.endswith(suffix)}
+    return frozenset({word, *(stem for stem in cut if len(stem) >= _MIN_STEM)})
 
 
 def _words(text: str) -> tuple[frozenset[str], frozenset[str]]:
-    """(content words, grammar words) of a gloss or translation, casefolded;
-    content words lightly stemmed, articles gone."""
+    """(content words, grammar words) of a gloss or translation, casefolded,
+    articles gone."""
     tokens = [w for w in re.findall(r"[^\W\d_]+", text.casefold()) if w not in _DROP]
     return (
-        frozenset(_stem(w) for w in tokens if w not in _WEAK),
+        frozenset(w for w in tokens if w not in _WEAK),
         frozenset(w for w in tokens if w in _WEAK),
     )
 
@@ -110,7 +116,41 @@ def _words(text: str) -> tuple[frozenset[str], frozenset[str]]:
 def sense_overlap(gloss: str, translation: str) -> tuple[int, int]:
     """(content words shared, grammar words shared) — compare as a tuple, so a
     shared content word outranks any number of shared grammar words.
-    ``(0, 0)`` is no evidence at all."""
+    ``(0, 0)`` is no evidence at all. A content word of the gloss is shared
+    when some content word of the translation could be the same word under a
+    suffix (``_stems``)."""
     gloss_content, gloss_weak = _words(gloss)
     card_content, card_weak = _words(translation)
-    return len(gloss_content & card_content), len(gloss_weak & card_weak)
+    card_stems = frozenset().union(*(_stems(w) for w in card_content))
+    shared = sum(1 for word in gloss_content if _stems(word) & card_stems)
+    return shared, len(gloss_weak & card_weak)
+
+
+def names_same_sense(gloss: str, translation: str) -> bool:
+    """Does a card translated *translation* already HAVE the meaning *gloss* names?
+
+    Stricter than "any overlap", because here a yes means "make no new card":
+    a shared grammar word alone is not a shared meaning ("to wonder" and "to
+    trick" share "to") — unless grammar words are all the gloss has, which is
+    the function-word case ``_WEAK`` exists for (``vår`` glossed "our").
+    """
+    content, weak = sense_overlap(gloss, translation)
+    return content > 0 or (weak > 0 and not _words(gloss)[0])
+
+
+def sense_label(gloss: str) -> str:
+    """The key a second-sense card is told apart by: its meaning, named plainly.
+
+    The decks already key same-class homographs this way — Slovene ``barva`` is
+    two cards keyed "color" and "paint" — so a card minted for a second sense
+    (bd tunatale-ceuc) takes the same shape rather than a new one. Casefolded,
+    a gloss's parenthetical aside dropped unless it is all there is, and the
+    leading article or infinitive "to" dropped: "the time (den gangen = back
+    then)" names the sense "time". Empty when nothing is left to name it by.
+    """
+    text = " ".join(gloss.casefold().split())
+    text = " ".join(re.sub(r"\([^)]*\)", " ", text).split()) or text
+    words = text.split(" ")
+    while len(words) > 1 and words[0] in _LEADING:
+        words.pop(0)
+    return "" if words[0] in _DROP else " ".join(words)

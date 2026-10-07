@@ -327,6 +327,21 @@ class CreateBaseCardRequest(BaseModel):
     lesson_id: str | None = None
 
 
+class CreateSenseCardRequest(BaseModel):
+    """Body of POST /api/srs/items/sense: a second card for a spelling's other meaning.
+
+    ``item_id`` is the card the word resolved to, and ``translation`` the
+    lesson's gloss that disagrees with it — the meaning the new card is for.
+    ``surface`` and ``sentence`` are where it was met.
+    """
+
+    item_id: int
+    surface: str
+    sentence: str
+    language_code: str
+    translation: str
+
+
 # ── Auth models ─────────────────────────────────────────────────────────────
 
 

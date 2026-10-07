@@ -1641,6 +1641,31 @@ describe("TunaTaleAPI", () => {
       expect(result.item.text).toBe("zdravo");
     });
 
+    it("createSenseCard calls POST /api/srs/items/sense", async () => {
+      const mockResp = {
+        id: 7,
+        was_created: true,
+        item: { id: 7, text: "gang", translation: "time" },
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(mockResp)));
+
+      const body = {
+        item_id: 3,
+        surface: "gang",
+        sentence: "Jeg kommer med en gang.",
+        language_code: "no",
+        translation: "time",
+      };
+      const result = await api.createSenseCard(body);
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/srs/items/sense`,
+        expect.objectContaining({ method: "POST", body: JSON.stringify(body) }),
+      );
+      expect(result.id).toBe(7);
+      expect(result.was_created).toBe(true);
+    });
+
     it("createBaseCard throws on non-ok response", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
 

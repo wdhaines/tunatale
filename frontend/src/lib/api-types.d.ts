@@ -1611,6 +1611,47 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/srs/items/sense": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Sense Card
+     * @description Give a spelling a second card, for a meaning its first card does not have.
+     *
+     *     Norwegian ``gang`` is one card, "hall", and every lesson line that uses it
+     *     means "time" (bd tunatale-ceuc). The reader shows the lesson's gloss over
+     *     the card's translation; this is its "different meaning" action. The new
+     *     card is the first card's word again — same front, lemma and article — told
+     *     apart by a key made from the meaning (``sense_match.py::sense_label``), the
+     *     shape the Slovene deck already uses for ``barva`` "color" / "paint".
+     *
+     *     What it guarantees is that the mint changes what the learner sees: the
+     *     gloss the card was made from resolves to it afterwards
+     *     (``transcript.py::choose_lemma_card``). So a meaning one of the spelling's
+     *     cards already has makes nothing and answers with that card, and a verb's
+     *     dictionary re-gloss is used only while it still shares the gloss's meaning.
+     *     That same check is what makes a second tap idempotent, which the key alone
+     *     could not: the re-gloss is a model's answer and may differ next time.
+     *
+     *     Single-word vocab cards only. ``choose_lemma_card`` picks among the VOCAB
+     *     cards that share a LEMMA, so a sense card beside a cloze, or beside a
+     *     phrase (which is found by its span and carries no lemma), could never be
+     *     resolved to. NEW, no Anki ids: the card-adding contract, and
+     *     ``sync_create_new`` mints the note.
+     */
+    post: operations["create_sense_card_api_srs_items_sense_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/items/{item_id}": {
     parameters: {
       query?: never;
@@ -2451,6 +2492,26 @@ export interface components {
       title: string;
       /** Warnings */
       warnings: string[];
+    };
+    /**
+     * CreateSenseCardRequest
+     * @description Body of POST /api/srs/items/sense: a second card for a spelling's other meaning.
+     *
+     *     ``item_id`` is the card the word resolved to, and ``translation`` the
+     *     lesson's gloss that disagrees with it — the meaning the new card is for.
+     *     ``surface`` and ``sentence`` are where it was met.
+     */
+    CreateSenseCardRequest: {
+      /** Item Id */
+      item_id: number;
+      /** Language Code */
+      language_code: string;
+      /** Sentence */
+      sentence: string;
+      /** Surface */
+      surface: string;
+      /** Translation */
+      translation: string;
     };
     /**
      * CurriculumDayWithPosition
@@ -6547,6 +6608,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["BulkDeleteResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_sense_card_api_srs_items_sense_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateSenseCardRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateCardResponse"];
         };
       };
       /** @description Validation Error */

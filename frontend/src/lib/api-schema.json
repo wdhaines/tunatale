@@ -466,6 +466,40 @@
         "title": "CreateReviewSessionResponse",
         "type": "object"
       },
+      "CreateSenseCardRequest": {
+        "description": "Body of POST /api/srs/items/sense: a second card for a spelling's other meaning.\n\n``item_id`` is the card the word resolved to, and ``translation`` the\nlesson's gloss that disagrees with it \u2014 the meaning the new card is for.\n``surface`` and ``sentence`` are where it was met.",
+        "properties": {
+          "item_id": {
+            "title": "Item Id",
+            "type": "integer"
+          },
+          "language_code": {
+            "title": "Language Code",
+            "type": "string"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "surface": {
+            "title": "Surface",
+            "type": "string"
+          },
+          "translation": {
+            "title": "Translation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "surface",
+          "sentence",
+          "language_code",
+          "translation"
+        ],
+        "title": "CreateSenseCardRequest",
+        "type": "object"
+      },
       "CurriculumDayWithPosition": {
         "description": "One element of GetCurriculumResponse.days / .proposed.days.\n\nMirrors ``CurriculumDay`` (``app/models/curriculum.py``) plus ``position``,\nthe handler-computed contiguous display ordinal (``Curriculum.day_positions()``)\n\u2014 as opposed to ``day``, a stable but possibly-gappy key.",
         "properties": {
@@ -8030,6 +8064,48 @@
           }
         },
         "summary": "Bulk Delete Items",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/items/sense": {
+      "post": {
+        "description": "Give a spelling a second card, for a meaning its first card does not have.\n\nNorwegian ``gang`` is one card, \"hall\", and every lesson line that uses it\nmeans \"time\" (bd tunatale-ceuc). The reader shows the lesson's gloss over\nthe card's translation; this is its \"different meaning\" action. The new\ncard is the first card's word again \u2014 same front, lemma and article \u2014 told\napart by a key made from the meaning (``sense_match.py::sense_label``), the\nshape the Slovene deck already uses for ``barva`` \"color\" / \"paint\".\n\nWhat it guarantees is that the mint changes what the learner sees: the\ngloss the card was made from resolves to it afterwards\n(``transcript.py::choose_lemma_card``). So a meaning one of the spelling's\ncards already has makes nothing and answers with that card, and a verb's\ndictionary re-gloss is used only while it still shares the gloss's meaning.\nThat same check is what makes a second tap idempotent, which the key alone\ncould not: the re-gloss is a model's answer and may differ next time.\n\nSingle-word vocab cards only. ``choose_lemma_card`` picks among the VOCAB\ncards that share a LEMMA, so a sense card beside a cloze, or beside a\nphrase (which is found by its span and carries no lemma), could never be\nresolved to. NEW, no Anki ids: the card-adding contract, and\n``sync_create_new`` mints the note.",
+        "operationId": "create_sense_card_api_srs_items_sense_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSenseCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateCardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Sense Card",
         "tags": [
           "srs"
         ]

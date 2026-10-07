@@ -24,6 +24,7 @@ from app.api.models import (
     CreateBaseCardRequest,
     CreateCardResponse,
     CreateItemRequest,
+    CreateSenseCardRequest,
     DrillFeedbackResponse,
     DrillRequest,
     DueCollocationsResponse,
@@ -58,6 +59,7 @@ from app.api.models import (
     UpdateItemRequest,
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
+from app.cards.field_map import upos_for_disambig
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import (
@@ -109,6 +111,7 @@ from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_las
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
+from app.srs.sense_match import names_same_sense, sense_label
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import (
     LemmaCard,
@@ -2972,7 +2975,11 @@ async def _persist_new_card(
     result = db.get_collocation_by_id(coll_id)
     if result is None:  # pragma: no cover — defensive; id came from get_collocation_id_by_guid
         raise HTTPException(status_code=500, detail="Failed to retrieve created collocation")
-    _, item, _ = result
+    return _card_response(db, coll_id, result[1], language_code, was_created=was_created)
+
+
+def _card_response(db, coll_id: int, item: SRSItem, language_code: str, *, was_created: bool) -> dict:
+    """The ``{id, was_created, item}`` body every card-creating endpoint answers with."""
     img = db.get_image_filename(coll_id)
     image_url = f"/api/srs/media/{img}" if img else None
     aud = db.get_audio_filename(coll_id)
@@ -2982,6 +2989,41 @@ async def _persist_new_card(
         "was_created": was_created,
         "item": _item_to_dict(coll_id, item, language_code, image_url, audio_url),
     }
+
+
+async def _analyze_surface(db, language_code: str, sentence: str, surface: str):
+    """The tagger's reading of *surface* as it stands in *sentence*, or ``None``.
+
+    Shared by the card-creating endpoints, so they cannot disagree about a
+    word's class. Offloads the (classla) lemmatizer off the event loop — see
+    get_lesson_transcript.
+    """
+    lemmatizer = get_lemmatizer(language_code)
+    mv = model_version_for(lemmatizer)
+    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, lemmatizer, sentence, language_code, mv)
+    return next((ta for ta in analyses if ta.surface.casefold() == surface.casefold()), None)
+
+
+async def _verb_dictionary_gloss(
+    request: Request, *, surface: str, front: str, language_code: str, upos: str | None, sentence: str
+) -> str:
+    """The bare dictionary meaning of a verb card's *front*, or "" to keep the gloss.
+
+    The transcript gloss is the *conjugated* in-context meaning ("pokazem" →
+    "I will show"). classla gives the lemma + POS, but the English base meaning
+    is a translation only the LLM can produce — re-gloss to the bare dictionary
+    form ("show") to match the existing verb cards. Gloss the card FRONT, in its
+    sentence, not the bare lemma: a Tagalog lemma is a root ("punta"), which is
+    also a Spanish loan meaning "point", and that is the sense the model picked
+    for a "pumunta" card (live, 2026-09-24). "" for anything that is not a verb,
+    with no model, or on an answer that is not a gloss.
+    """
+    llm_client = app_state.llm(request)
+    if upos != "VERB" or llm_client is None:
+        return ""
+    return await generate_word_gloss(
+        llm_client, surface=surface, lemma=front, source_lang=language_code, pos=upos, sentence=sentence
+    )
 
 
 def _lesson_sentence_translation(lesson, sentence: str) -> str:
@@ -3053,11 +3095,7 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # curated include-list is the sole signal). The surface is checked too — an
     # inflected function form (classla "sem" → lemma "biti") classifies via its
     # surface even when the dictionary lemma isn't itself a function word.
-    # Offload the (classla) lemmatizer off the event loop — see get_lesson_transcript.
-    lemmatizer = get_lemmatizer(lang)
-    mv = model_version_for(lemmatizer)
-    analyses = await anyio.to_thread.run_sync(analyze_sentence_cached, db, lemmatizer, body.sentence, lang, mv)
-    analysis = next((ta for ta in analyses if ta.surface.casefold() == body.surface.casefold()), None)
+    analysis = await _analyze_surface(db, lang, body.sentence, body.surface)
     upos = analysis.upos if analysis else None
     gender = analysis.gender if analysis else ""
     # Check both lemma and surface with the surface's upos (a single-word click).
@@ -3081,22 +3119,13 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         headword = body.surface.casefold()
     front = format_vocab_headword(headword, upos, lang) if card_type == "vocab" else lemma
 
-    # Verb base cards: the transcript gloss is the *conjugated* in-context meaning
-    # ("pokazem" → "I will show"). classla gives us the lemma + POS, but the
-    # English base meaning is a translation only the LLM can produce — re-gloss to
-    # the bare dictionary form ("show") to match the existing verb cards.
-    # Gloss the card FRONT, in its sentence, not the bare lemma: a Tagalog lemma
-    # is a root ("punta"), which is also a Spanish loan meaning "point", and that
-    # is the sense the model picked for a "pumunta" card (live, 2026-09-24).
-    translation = body.translation
-    if upos == "VERB":
-        llm_client = app_state.llm(request)
-        if llm_client is not None:
-            gloss = await generate_word_gloss(
-                llm_client, surface=body.surface, lemma=front, source_lang=lang, pos=upos, sentence=body.sentence
-            )
-            if gloss:
-                translation = gloss
+    # A verb's card takes its dictionary meaning, not the conjugated gloss.
+    translation = (
+        await _verb_dictionary_gloss(
+            request, surface=body.surface, front=front, language_code=lang, upos=upos, sentence=body.sentence
+        )
+        or body.translation
+    )
 
     # A cloze shows its sentence, so it carries the sentence's English (Anki's
     # Back Extra). Before tunatale-0ycs this endpoint dropped it, and every
@@ -3134,6 +3163,80 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     )
     _backfill_sentence_translation(db, unit, lang, sentence_translation, result)
     return result
+
+
+@router.post("/items/sense", status_code=200, response_model=CreateCardResponse)
+async def create_sense_card(body: CreateSenseCardRequest, request: Request) -> dict:
+    """Give a spelling a second card, for a meaning its first card does not have.
+
+    Norwegian ``gang`` is one card, "hall", and every lesson line that uses it
+    means "time" (bd tunatale-ceuc). The reader shows the lesson's gloss over
+    the card's translation; this is its "different meaning" action. The new
+    card is the first card's word again — same front, lemma and article — told
+    apart by a key made from the meaning (``sense_match.py::sense_label``), the
+    shape the Slovene deck already uses for ``barva`` "color" / "paint".
+
+    What it guarantees is that the mint changes what the learner sees: the
+    gloss the card was made from resolves to it afterwards
+    (``transcript.py::choose_lemma_card``). So a meaning one of the spelling's
+    cards already has makes nothing and answers with that card, and a verb's
+    dictionary re-gloss is used only while it still shares the gloss's meaning.
+    That same check is what makes a second tap idempotent, which the key alone
+    could not: the re-gloss is a model's answer and may differ next time.
+
+    Single-word vocab cards only. ``choose_lemma_card`` picks among the VOCAB
+    cards that share a LEMMA, so a sense card beside a cloze, or beside a
+    phrase (which is found by its span and carries no lemma), could never be
+    resolved to. NEW, no Anki ids: the card-adding contract, and
+    ``sync_create_new`` mints the note.
+    """
+    db = request.state.srs_db
+    lang = body.language_code
+    found = db.get_collocation_by_id(body.item_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    first = found[1].syntactic_unit
+    if first.card_type != "vocab" or not first.lemma:
+        raise HTTPException(status_code=409, detail="Only a single-word vocab card can have a second sense card")
+    gloss = body.translation.strip()
+    if not sense_label(gloss):
+        raise HTTPException(status_code=422, detail="A second sense needs a meaning to name it by")
+
+    for cid, item in db.get_collocations_by_lemma_with_id(first.lemma):
+        unit = item.syntactic_unit
+        if unit.card_type == "vocab" and names_same_sense(gloss, unit.translation or ""):
+            return _card_response(db, cid, item, lang, was_created=False)
+
+    analysis = await _analyze_surface(db, lang, body.sentence, body.surface)
+    regloss = await _verb_dictionary_gloss(
+        request,
+        surface=body.surface,
+        front=first.text,
+        language_code=lang,
+        upos=analysis.upos if analysis else None,
+        sentence=body.sentence,
+    )
+    translation = regloss if names_same_sense(gloss, regloss) else gloss
+    key = sense_label(translation)
+    # UNIQUE(text, disambig_key): a key that reads as a word class may BE the
+    # first card's ("noun"), and would be resolved as a class besides.
+    if upos_for_disambig(key) is not None:
+        key = f"sense:{key}"
+    unit = SyntacticUnit(
+        text=first.text,
+        translation=translation,
+        word_count=first.word_count,
+        difficulty=1,
+        source="user",
+        lemma=first.lemma,
+        card_type="vocab",
+        disambig_key=key,
+        # The line the meaning was met in, which is what tells the two cards
+        # apart for a reader of either.
+        source_sentence=body.sentence,
+        article=first.article,
+    )
+    return await _persist_new_card(db, unit, lang, synthesize=False, llm=app_state.llm(request), media_word=first.lemma)
 
 
 @router.get("/items", status_code=200, response_model=ListItemsResponse)

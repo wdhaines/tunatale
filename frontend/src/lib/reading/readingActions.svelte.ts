@@ -174,6 +174,23 @@ export function createReadingActions(opts: ReadingActionsOptions) {
         });
         await refetch();
       }),
+    // The word's card means something else than the lesson's gloss: make a
+    // second card for the gloss's meaning (bd tunatale-ceuc). Only offered
+    // where the two disagree, so the word has a card and a gloss by then.
+    onCreateSense: async (word: WordToken, sentence: string) =>
+      guarded(async () => {
+        await api.createSenseCard({
+          item_id: word.srs_item_id!,
+          surface: word.surface,
+          sentence,
+          language_code: opts.languageCode,
+          translation: word.gloss!,
+        });
+        // The backend picks among a spelling's cards by the gloss, so the
+        // re-read shows the word on its new card.
+        await refetch();
+        queueStatsStore.refresh();
+      }),
     onSetState: async (id: number, state: string) => {
       // Reset-to-new forgets the card in Anki too (re-learn from scratch), so
       // confirm before discarding the schedule. Other states are label-only.

@@ -87,6 +87,7 @@ export const en = {
   "tooltip.notDue": "Not Due",
   "tooltip.words": "Words…",
   "tooltip.createInflectionCard": "Inflect",
+  "tooltip.differentMeaning": "Different meaning",
   "tooltip.unignore": "Un-ignore",
   "tooltip.ignore": "Ignore",
   "tooltip.known": "Known",
