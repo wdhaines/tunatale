@@ -1058,6 +1058,9 @@ class SrsItemResponse(BaseModel):
     article: str
     extras: list[ItemExtra]
     pos: str
+    # The sentence the card was made from, only where another card shares its
+    # spelling: what the recognition front shows beside the word (tunatale-p7ak).
+    context_sentence: str
 
 
 class ListItemsResponse(BaseModel):

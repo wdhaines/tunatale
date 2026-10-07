@@ -185,6 +185,20 @@ class TestAmbiguousSurfaces:
         self._add(srs_db, "gå", "verb")
         assert srs_db.get_ambiguous_surfaces("no") == set()
 
+    def test_a_spelling_with_two_vocab_cards_is_a_homograph_whatever_their_keys(self, srs_db):
+        """Wider than ``get_ambiguous_surfaces`` on purpose: a blank key and a
+        sense key are two cards with one spelling all the same (tunatale-p7ak)."""
+        self._add(srs_db, "tom", "")
+        self._add(srs_db, "Tom", "noun")
+        self._add(srs_db, "barva", "color")
+        self._add(srs_db, "barva", "paint")
+        self._add(srs_db, "bil", "noun")
+        self._add(srs_db, "fange", "noun")
+        self._add(srs_db, "fange", "verb", lang="sl")  # another language's card
+        self._add(srs_db, "gå", "verb")
+        self._add(srs_db, "gå", "morph:verb-pres", card_type="cloze")  # a cloze is not a second vocab card
+        assert srs_db.get_homograph_surfaces("no") == {"tom", "barva"}
+
     def test_add_duplicate_does_not_raise(self, srs_db):
         unit = _unit()
         srs_db.add_collocation(unit, language_code="sl")

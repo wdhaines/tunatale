@@ -10,9 +10,11 @@
     "injective after `exclude`), and counting is the NATIVE context.",
     "",
     "`exclude`:",
-    "  usa      — 'one' AND the indefinite article (usa ka bata = a child), the",
-    "             same reasoning as tl `isa` and no `en`.",
     "  the Spanish-derived words — their context is a clock face or a price.",
+    "  NOT usa. It was excluded as 'one AND the indefinite article (usa ka bata",
+    "  = a child)', by analogy with no `en`. The user (2026-10-06): 'Cebuano and",
+    "  Tagalog don't really do indefinite articles that way. I think treating",
+    "  them primarily as a number makes sense.' So usa is drawn as one.",
     "",
     "  dyis     — a spelling doublet of diyes (10); diyes carries the clock.",
     "Teens are multi-word (napulo'g usa = 11) and so are not single tokens; they",
@@ -76,7 +78,6 @@
     "mil": 1000
   },
   "exclude": [
-    "usa",
     "sero",
     "uno",
     "dos",

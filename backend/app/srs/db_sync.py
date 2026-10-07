@@ -191,6 +191,26 @@ class DbSyncMixin:
             by_surface.setdefault(row["text"].casefold(), set()).add(row["disambig_key"])
         return {surface for surface, pos_set in by_surface.items() if len(pos_set) >= 2}
 
+    def get_homograph_surfaces(self, language_code: str) -> set[str]:
+        """Return casefolded surfaces carried by >=2 vocab cards, whatever their keys.
+
+        Wider than :meth:`get_ambiguous_surfaces`, which counts distinct
+        non-blank keys because it decides whether a word-class LABEL is worth
+        printing. This one answers "is there a second card with this spelling?"
+        — true of a reader-made card (no key) beside a sense card too (bd
+        tunatale-p7ak). UNIQUE(text, disambig_key) makes each row its own card.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT text FROM collocations WHERE language_code = ? AND card_type = 'vocab'",
+                (language_code,),
+            ).fetchall()
+        counts: dict[str, int] = {}
+        for row in rows:
+            surface = row["text"].casefold()
+            counts[surface] = counts.get(surface, 0) + 1
+        return {surface for surface, count in counts.items() if count >= 2}
+
     def set_anki_ids(
         self,
         guid: str,

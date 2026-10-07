@@ -51,11 +51,17 @@ def test_native_numbers_get_the_counting_picture(word, value):
     assert number_value(word, "tl") == value
 
 
-@pytest.mark.parametrize("word", ["tres", "otso", "bente", "singkuwenta", "isa", "sandaan", "isanlibo"])
-def test_spanish_numbers_one_and_doublets_do_not(word):
+@pytest.mark.parametrize("word", ["tres", "otso", "bente", "singkuwenta", "sandaan", "isanlibo"])
+def test_spanish_numbers_and_doublets_do_not(word):
     # Spanish-derived numbers belong to clock time and prices (tunatale-w4m7.10);
-    # `isa` is also "a/an"; `sandaan` is isandaan's doublet; 1000 is out of range.
+    # `sandaan` is isandaan's doublet; 1000 is out of range.
     assert number_value(word, "tl") is None
+
+
+def test_isa_is_one():
+    # Once excluded as "also a/an"; the user's call (2026-10-06) is that Tagalog
+    # does not use it that way, so it counts like any cardinal.
+    assert number_value("isa", "tl") == 1
 
 
 @pytest.fixture(scope="module")

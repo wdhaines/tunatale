@@ -504,6 +504,9 @@ export interface SRSItemDetail {
   // Part of speech, present only when the surface is ambiguous across word
   // classes (e.g. "fange" noun vs verb). Empty otherwise.
   pos?: string;
+  /** The sentence the card was made from, only where another card shares its
+   * spelling: shown under the word on a recognition front (tunatale-p7ak). */
+  context_sentence?: string;
   // Rich back-of-card fields sourced from the Anki note (IPA, inflections,
   // examples, dictionary entry…). Each carries pre-sanitized HTML and a tier
   // controlling where it renders on the answer side. Absent/empty for cards

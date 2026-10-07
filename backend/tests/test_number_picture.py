@@ -64,8 +64,6 @@ class TestDispatch:
     @pytest.mark.parametrize(
         ("word", "code"),
         [
-            ("usa", "ceb"),  # 'one' AND 'a/an' — excluded, and in no scene either
-            ("isa", "tl"),
             ("dyis", "ceb"),  # spelling doublet of diyes, which carries the clock
             ("sero", "ceb"),  # zero: nothing to draw in any context
             ("en", "no"),
@@ -75,6 +73,17 @@ class TestDispatch:
     )
     def test_everything_else_keeps_its_route(self, word, code) -> None:
         assert number_picture(word, code) is None
+
+    @pytest.mark.parametrize(("word", "code"), [("usa", "ceb"), ("isa", "tl")])
+    def test_one_is_a_number_in_cebuano_and_tagalog(self, word, code) -> None:
+        """Both were excluded as "also the indefinite article", by analogy with
+        Norwegian `en`. The user (2026-10-06): "Cebuano and Tagalog don't really
+        do indefinite articles that way. I think treating them primarily as a
+        number makes sense." `en` stays excluded: it IS Norwegian's article."""
+        picture = number_picture(word, code)
+        assert picture is not None
+        assert picture.filename.startswith("count_001_")
+        assert number_picture("en", "no") is None
 
 
 class TestSceneFiles:

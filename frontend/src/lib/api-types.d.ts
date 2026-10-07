@@ -3097,6 +3097,8 @@ export interface components {
       audio_url: string | null;
       /** Card Type */
       card_type: string;
+      /** Context Sentence */
+      context_sentence: string;
       /** Difficulty */
       difficulty: number;
       /** Direction */
@@ -3756,6 +3758,8 @@ export interface components {
       audio_url: string | null;
       /** Card Type */
       card_type: string;
+      /** Context Sentence */
+      context_sentence: string;
       /** Difficulty */
       difficulty: number;
       /** Direction */
@@ -4208,6 +4212,8 @@ export interface components {
       audio_url: string | null;
       /** Card Type */
       card_type: string;
+      /** Context Sentence */
+      context_sentence: string;
       /** Difficulty */
       difficulty: number;
       directions: components["schemas"]["ItemDirections"];

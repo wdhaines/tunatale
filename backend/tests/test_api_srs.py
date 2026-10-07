@@ -562,6 +562,78 @@ def _add_review_due_with_pos(db, text, today, *, pos="", article="", lang="sl"):
         )
 
 
+def _add_new_card(db, text, translation, key, sentence="", lang="no", card_type="vocab"):
+    from app.models.syntactic_unit import SyntacticUnit
+
+    db.add_collocation(
+        SyntacticUnit(
+            text=text,
+            translation=translation,
+            word_count=1,
+            difficulty=1,
+            source="test",
+            lemma=text,
+            disambig_key=key,
+            source_sentence=sentence,
+            card_type=card_type,
+        ),
+        language_code=lang,
+    )
+
+
+class TestReviewQueueTellsHomographsApart:
+    """Two cards with one spelling need something on the recognition front to
+    say which is being asked (bd tunatale-p7ak). A word-class key does that
+    without answering ("fange (noun)"). A SENSE key is the English meaning, so
+    printing it ("gang (time)") answers the card — the user chose the word plus
+    the sentence it was met in instead (2026-10-06)."""
+
+    async def _queue(self) -> list[dict]:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            return (await client.get("/api/srs/review-queue?session_start=1")).json()["queue"]
+
+    async def test_a_sense_key_is_never_printed_and_its_sentence_is(self, api_app_state):
+        _add_new_card(api_app_state, "gang", "hall", "noun")
+        _add_new_card(api_app_state, "gang", "time", "time", "Jeg kommer med en gang.")
+
+        cards = {q["translation"]: q for q in await self._queue() if q["text"] == "gang"}
+
+        assert (cards["time"]["pos"], cards["time"]["context_sentence"]) == ("", "Jeg kommer med en gang.")
+        # The deck's own card keeps its class label and has no sentence to show.
+        assert (cards["hall"]["pos"], cards["hall"]["context_sentence"]) == ("noun", "")
+
+    async def test_two_sense_keyed_cards_print_neither_key(self, api_app_state):
+        """The Slovene deck's shape (`barva` keyed "color" / "paint"): both
+        fronts used to carry their own answer."""
+        _add_new_card(api_app_state, "barva", "color", "color", lang="sl")
+        _add_new_card(api_app_state, "barva", "paint", "paint", lang="sl")
+
+        cards = [q for q in await self._queue() if q["text"] == "barva"]
+
+        assert len(cards) >= 2
+        assert {q["pos"] for q in cards} == {""}
+        assert {q["context_sentence"] for q in cards} == {""}
+
+    async def test_an_unkeyed_card_beside_a_sense_card_shows_its_sentence_too(self, api_app_state):
+        """A card made in the reader has no key at all, and is still one of two
+        cards with that spelling."""
+        _add_new_card(api_app_state, "ura", "hour", "", "Ura je ena.", lang="sl")
+        _add_new_card(api_app_state, "ura", "clock", "clock", "Poglej na uro.", lang="sl")
+
+        cards = {q["translation"]: q for q in await self._queue() if q["text"] == "ura"}
+
+        assert cards["hour"]["context_sentence"] == "Ura je ena."
+        assert cards["clock"]["context_sentence"] == "Poglej na uro."
+
+    async def test_a_card_with_its_spelling_to_itself_shows_no_sentence(self, api_app_state):
+        """The sentence is there to tell two cards apart, not to decorate every front."""
+        _add_new_card(api_app_state, "hus", "house", "", "Dette er et hus.")
+
+        hus = next(q for q in await self._queue() if q["text"] == "hus")
+
+        assert hus["context_sentence"] == ""
+
+
 class TestReviewQueueArticleAndPos:
     """/review-queue serializes the gender article (always) and the POS (only when ambiguous)."""
 

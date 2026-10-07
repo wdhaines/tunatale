@@ -1756,6 +1756,10 @@
             "title": "Card Type",
             "type": "string"
           },
+          "context_sentence": {
+            "title": "Context Sentence",
+            "type": "string"
+          },
           "difficulty": {
             "title": "Difficulty",
             "type": "number"
@@ -1916,6 +1920,7 @@
           "article",
           "extras",
           "pos",
+          "context_sentence",
           "direction",
           "word_audio_url",
           "pending_rating"
@@ -3238,6 +3243,10 @@
             "title": "Card Type",
             "type": "string"
           },
+          "context_sentence": {
+            "title": "Context Sentence",
+            "type": "string"
+          },
           "difficulty": {
             "title": "Difficulty",
             "type": "number"
@@ -3394,6 +3403,7 @@
           "article",
           "extras",
           "pos",
+          "context_sentence",
           "direction",
           "word_audio_url"
         ],
@@ -4340,6 +4350,10 @@
             "title": "Card Type",
             "type": "string"
           },
+          "context_sentence": {
+            "title": "Context Sentence",
+            "type": "string"
+          },
           "difficulty": {
             "title": "Difficulty",
             "type": "number"
@@ -4480,7 +4494,8 @@
           "note",
           "article",
           "extras",
-          "pos"
+          "pos",
+          "context_sentence"
         ],
         "title": "SrsItemResponse",
         "type": "object"
