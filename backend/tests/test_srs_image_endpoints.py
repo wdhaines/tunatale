@@ -18,6 +18,7 @@ import respx
 from httpx import ASGITransport, AsyncClient
 
 from app.api.models import ImageCandidate, ImageCandidatesResponse
+from app.cards.media.query_llm import IMAGE_QUERY_MODEL_VERSION
 from app.main import app
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -248,7 +249,7 @@ class TestCandidates:
         monkeypatch.setattr("app.cards.media.pixabay.search_pixabay", _capture)
         api.add_collocation(_unit(), language_code="sl")
         cid = _id_for_text(api, "voda")
-        api.set_image_query("voda", "water", "v1", "crystal clear water")
+        api.set_image_query("voda", "water", IMAGE_QUERY_MODEL_VERSION, "crystal clear water")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             resp = await c.get(f"/api/srs/items/{cid}/image/candidates")
         assert captured == ["crystal clear water"]

@@ -19,6 +19,7 @@
 	import { createWakeLock } from '$lib/voice/wakeLock';
 	import { t } from '$lib/i18n/i18n.svelte';
 	import type { MessageKey } from '$lib/i18n/i18n.svelte';
+	import SettingChip from './SettingChip.svelte';
 
 	interface Props {
 		audio: LessonAudio;
@@ -687,35 +688,32 @@
 		     own; the accent (.active) marks a non-default value. -->
 		<div class="controls-row">
 			{#if trackMode && hasAllSections}
-				<button
-					class="setting-chip enunciation-btn"
-					class:active={enunLevel !== 'natural'}
+				<SettingChip
+					class="enunciation-btn"
+					active={enunLevel !== 'natural'}
 					onclick={onEnunClick}
 					disabled={phase !== 'dialogue'}
 					title={t(ENUNCIATION_OPTIONS[enunIndex].titleKey)}
-				>
-					<span class="chip-label">{t('lessonPlayer.speed.label')}</span>
-					<span class="chip-value">{enunValue}</span>
-				</button>
-				<button
-					class="setting-chip english-btn"
-					class:active={englishMode !== 'off'}
+					label={t('lessonPlayer.speed.label')}
+					value={enunValue}
+				/>
+				<SettingChip
+					class="english-btn"
+					active={englishMode !== 'off'}
 					onclick={onEnglishClick}
 					disabled={phase !== 'dialogue'}
-				>
-					<span class="chip-label">{t('lessonPlayer.english.label')}</span>
-					<span class="chip-value">{t(ENGLISH_LABELS[englishMode])}</span>
-				</button>
+					label={t('lessonPlayer.english.label')}
+					value={t(ENGLISH_LABELS[englishMode])}
+				/>
 			{/if}
-			<button
-				class="setting-chip caption-blur-btn"
-				class:active={!captionBlurPref.enabled}
+			<SettingChip
+				class="caption-blur-btn"
+				active={!captionBlurPref.enabled}
 				aria-pressed={captionBlurPref.enabled}
 				onclick={() => captionBlurPref.set(!captionBlurPref.enabled)}
-			>
-				<span class="chip-label">{t('lessonPlayer.captions.label')}</span>
-				<span class="chip-value">{captionBlurPref.enabled ? t('lessonPlayer.captions.blurred') : t('lessonPlayer.captions.visible')}</span>
-			</button>
+				label={t('lessonPlayer.captions.label')}
+				value={captionBlurPref.enabled ? t('lessonPlayer.captions.blurred') : t('lessonPlayer.captions.visible')}
+			/>
 			<!-- Hands-free: whether the lesson plays on by itself when a track
 			     ends (Off / On / Repeat lesson). Reading while listening was the
 			     user's call (2026-09-29), but the 2026-10-07 decision pulled the
@@ -987,6 +985,8 @@
 	.controls-row {
 		--chip-cols: 4;
 		--chip-gap: 0.4rem;
+		--setting-chip-flex: 0 1 calc((100% - (var(--chip-cols) - 1) * var(--chip-gap)) / var(--chip-cols));
+		--setting-chip-justify: space-between;
 		display: flex;
 		justify-content: center;
 		flex-wrap: wrap;
@@ -1005,23 +1005,6 @@
 			--chip-cols: 2;
 		}
 	}
-	.setting-chip {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.05rem;
-		flex: 0 1 calc((100% - (var(--chip-cols) - 1) * var(--chip-gap)) / var(--chip-cols));
-		min-width: 0;
-		max-width: 9rem;
-		min-height: 44px;
-		padding: 0.3rem 0.5rem;
-		background: transparent;
-		color: var(--color-text);
-		border: 1px solid var(--color-border, #ddd);
-		border-radius: 10px;
-		cursor: pointer;
-		transition: border-color 0.15s ease, background 0.15s ease;
-	}
 	.chip-label {
 		font-size: 0.6rem;
 		font-weight: 700;
@@ -1038,44 +1021,18 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	.setting-chip:hover:not(:disabled) {
-		border-color: var(--color-muted);
-	}
-	/* Same backstop for the field label: "CAPTIONS" is the widest thing in a
-	   quarter-row chip on a 360px phone. */
-	.setting-chip .chip-label {
-		max-width: 100%;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.setting-chip.active {
-		border-color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-	}
-	.setting-chip.active .chip-value {
-		color: var(--color-primary);
-	}
-	.setting-chip:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
 	/* Keep the transport pills on one tidy line down to small phones:
 	   never let a label wrap inside its pill, and tighten spacing instead. */
 	@media (max-width: 430px) {
 		.transport-row {
 			gap: 0.35rem;
 		}
-		/* A quarter of a 360px phone's row leaves ~51px for text at desktop
-		   padding — less than "CAPTIONS" needs. Buy it back from the gutters. */
 		.controls-row {
 			--chip-gap: 0.3rem;
-		}
-		.setting-chip {
-			padding-inline: 0.4rem;
-		}
-		.setting-chip .chip-label {
-			letter-spacing: 0.02em;
+			/* A quarter of a 360px phone's row leaves ~51px for text at desktop
+			   padding — less than "CAPTIONS" needs. Buy it back from the gutters. */
+			--setting-chip-pad-inline: 0.4rem;
+			--setting-chip-label-spacing: 0.02em;
 		}
 		.ctrl-btn {
 			padding: 0.5rem 0.6rem;
