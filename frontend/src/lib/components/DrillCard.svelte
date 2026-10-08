@@ -41,6 +41,12 @@
 	const deepExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'deep'));
 
 	let revealed = $state(false);
+
+	// A contrast card (tunatale-ve4p.6) whose sentence is its blank and nothing
+	// else. The grid already shows that blank beside its English, so the
+	// sentence line would only repeat "[...]". A card with a lesson line keeps
+	// the line, under the grid.
+	const blankOnly = $derived(item.paradigm != null && /^\{\{c1::[^}]*\}\}$/.test(item.source_sentence ?? ''));
 	let inFlight = $state(false);
 	let audioEl: HTMLAudioElement | undefined = $state();
 	let wordAudioEl: HTMLAudioElement | undefined = $state();
@@ -203,7 +209,33 @@
 			{/if}
 		{:else if direction === 'production'}
 			{#if item.card_type === 'cloze' && item.source_sentence}
-				<p class="main-text">{@html clozePromptHtml()}</p>
+				{#if item.paradigm}
+					<!-- One root across an affix pattern. The filled cells are the
+					     model; the blank is the form asked for, and it is filled in
+					     here, marked, once the card is revealed. -->
+					<div class="paradigm">
+						<p class="paradigm-root">
+							<span class="slovene">{item.paradigm.root}</span> · {item.paradigm.english}
+						</p>
+						<dl class="paradigm-grid">
+							{#each item.paradigm.cells as cell (cell.form)}
+								<dt>{cell.english}</dt>
+								<dd class="slovene">
+									{#if !cell.blank}
+										{cell.form}
+									{:else if revealed}
+										<mark class="cloze-answer">{cell.form}</mark>
+									{:else}
+										[...]
+									{/if}
+								</dd>
+							{/each}
+						</dl>
+					</div>
+				{/if}
+				{#if !blankOnly}
+					<p class="main-text">{@html clozePromptHtml()}</p>
+				{/if}
 			{:else if item.image_url != null}
 				<img src={item.image_url} alt={item.translation} class="prompt-image" />
 			{:else}
@@ -233,7 +265,9 @@
 						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
 						<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 					{/if}
-					<p class="main-text">{@html clozeAnswerHtml()}</p>
+					{#if !blankOnly}
+						<p class="main-text">{@html clozeAnswerHtml()}</p>
+					{/if}
 					{#if item.word_audio_url}
 						<audio bind:this={wordAudioEl} src={item.word_audio_url} preload="auto"></audio>
 						<button class="word-audio-btn" onclick={playWordAudio} aria-label={t('drillCard.playWordAudio')}>🔊 {item.text}</button>
@@ -248,9 +282,15 @@
 					{/if}
 					<p class="answer-text slovene">{headword}{posLabel}</p>
 				{/if}
-				<p class="answer-text english">{item.translation}</p>
-				{#if item.grammar}
-					<div class="gram">{@html item.grammar}</div>
+				<!-- A contrast card's grid already says both, above: the English of
+				     the form is its row label and the root line is its heading.
+				     Its `grammar` is the root line again, kept in the data for the
+				     Anki note and for a card the table has stopped vouching for. -->
+				{#if !item.paradigm}
+					<p class="answer-text english">{item.translation}</p>
+					{#if item.grammar}
+						<div class="gram">{@html item.grammar}</div>
+					{/if}
 				{/if}
 				{#if item.note}
 					<div class="note">{@html item.note}</div>
@@ -281,6 +321,40 @@
 		font-size: 1.5rem;
 		font-weight: bold;
 		margin-bottom: 0.5rem;
+	}
+	.paradigm {
+		margin-bottom: 0.75rem;
+	}
+	.paradigm-root {
+		font-size: 1rem;
+		color: var(--color-muted);
+		margin: 0 0 0.5rem;
+	}
+	.paradigm-root .slovene {
+		font-weight: bold;
+		color: var(--color-text);
+	}
+	/* Two columns meeting in the middle of the card: the English reads up to
+	   the gap from the left and the form starts at it, so a pair lines up as a
+	   pair whatever the lengths are. */
+	.paradigm-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 0.35rem 0.9rem;
+		align-items: baseline;
+		margin: 0;
+	}
+	.paradigm-grid dt {
+		text-align: right;
+		font-size: 1rem;
+		color: var(--color-muted);
+	}
+	.paradigm-grid dd {
+		margin: 0;
+		text-align: left;
+		font-size: 1.5rem;
+		font-weight: bold;
+		overflow-wrap: anywhere;
 	}
 	.context-sentence {
 		font-size: 1rem;

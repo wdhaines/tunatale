@@ -95,6 +95,7 @@ from app.srs.anki_mirror.queue_stats import (
 )
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.collocation_matcher import match_spans
+from app.srs.contrast_card import ContrastCard, paradigm
 from app.srs.feedback import rating_from_input
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
@@ -178,6 +179,20 @@ def _direction_to_dict(ds: DirectionState) -> dict:
     return result
 
 
+def _paradigm_dict(language_code: str, unit: SyntacticUnit) -> dict | None:
+    """A contrast card's grid for the review screen, or ``None`` for every other card."""
+    card = paradigm(language_code, unit)
+    if card is None:
+        return None
+    return {
+        "root": card.root,
+        "english": card.english,
+        "cells": [
+            {"form": form, "english": english, "blank": i == card.blank} for i, (form, english) in enumerate(card.cells)
+        ],
+    }
+
+
 def _item_to_dict(
     row_id: int,
     item: SRSItem,
@@ -225,6 +240,7 @@ def _item_to_dict(
         "image_url": image_url,
         "audio_url": audio_url,
         "grammar": item.syntactic_unit.grammar,
+        "paradigm": _paradigm_dict(language_code, item.syntactic_unit),
         "note": item.syntactic_unit.note,
         # Gender article (en/ei/et) — display-time prefix on the headword.
         "article": item.syntactic_unit.article,
@@ -470,8 +486,38 @@ async def undo_grade(item_id: int, direction: str, request: Request):
     }
 
 
-def _add_contrast_cards(db, store, lesson, content_id: str, *, budget: int) -> list[tuple[int, str, str, str]]:
-    """Add the contrast cards a listen of *lesson* is due, as far as *budget* reaches.
+def _due_contrast_cards(
+    db, store, lesson, content_id: str, *, intro_budget: int, new_state_rows: list, live_new: list, live_creates: list
+) -> list[tuple[ContrastCard, bool]]:
+    """The contrast cards a listen of *lesson* offers, each with whether the budget reaches it.
+
+    Called with the same arguments by the preview and by the commit, which is
+    what keeps a row's ``will_create`` and what the listen then does in step
+    (the 6a5c718 class). The cards draw on the SAME introduction budget as
+    everything else, after the pool has taken its share: what the pool charged
+    is its live NEW-state rows that were not free (created today), plus its
+    live creations.
+
+    A review session has no curriculum to read lesson lines from and no affix
+    drill, so it offers none.
+    """
+    row = store.get_lesson_row(content_id)
+    if row is None:
+        return []
+    charged = len(live_new) - sum(1 for new_row in new_state_rows if new_row[1]) + len(live_creates)
+    left = max(0, intro_budget - charged)
+    cards = contrast_cards(lesson, srs_db=db, store=store, curriculum_id=row["curriculum_id"])
+    return [(card, i < left) for i, card in enumerate(cards)]
+
+
+def _add_contrast_cards(
+    db, language_code: str, offered: list[tuple[ContrastCard, bool]], *, skipped: set[str], over_cap: set[str]
+) -> list[tuple[int, str, str, str]]:
+    """Add the *offered* contrast cards the learner left on.
+
+    A card the budget reaches is added unless its row was skipped; a skip
+    keeps its slot, so the next card is not promoted into it. A card past the
+    budget is added only when its row was opted in.
 
     Returns one ``(collocation_id, sentence, form, root)`` per card added, the
     shape ``_complete_listen_media`` voices after the response. The sentence
@@ -481,18 +527,15 @@ def _add_contrast_cards(db, store, lesson, content_id: str, *, budget: int) -> l
     Each card is written the way the card-adding contract asks of any card TT
     originates (``.claude/rules/anki-sync.md``): through ``add_collocation``,
     as a NEW production-only cloze with no Anki ids. The next sync mints its
-    note. A review session has no curriculum to read lines from and no affix
-    drill, so it adds none.
+    note.
     """
-    row = store.get_lesson_row(content_id)
-    if row is None:
-        return []
     added: list[tuple[int, str, str, str]] = []
-    cards = contrast_cards(lesson, srs_db=db, store=store, curriculum_id=row["curriculum_id"])
-    for card in cards[:budget]:
+    for card, live in offered:
+        if card.form in skipped or not (live or card.form in over_cap):
+            continue
         unit = card.unit()
-        db.add_collocation(unit, language_code=lesson.language_code)
-        guid = compute_guid(unit.text, lesson.language_code, unit.disambig_key)
+        db.add_collocation(unit, language_code=language_code)
+        guid = compute_guid(unit.text, language_code, unit.disambig_key)
         added.append((db.get_collocation_id_by_guid(guid), uncloze_text(unit.source_sentence), card.form, card.root))
     return added
 
@@ -1783,11 +1826,23 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     remaining_candidates = len(ranked) - created_count
 
     # ── Contrast cards for the lesson's affix drill (tunatale-ve4p.6) ────
-    # The same introduction budget, after everything above has taken its
-    # share: what the pool charged is its live NEW-state rows that were not
-    # free, plus its live creations.
-    charged = len(live_new) - sum(1 for row in new_state_pending if row[1]) + len(live_creates)
-    contrast = _add_contrast_cards(db, store, lesson, body.content_id, budget=max(0, intro_budget - charged))
+    offered = _due_contrast_cards(
+        db,
+        store,
+        lesson,
+        body.content_id,
+        intro_budget=intro_budget,
+        new_state_rows=new_state_pending,
+        live_new=live_new,
+        live_creates=live_creates,
+    )
+    contrast = _add_contrast_cards(
+        db,
+        lesson.language_code,
+        offered,
+        skipped=set(body.skipped_affix_cards),
+        over_cap=set(body.over_cap_affix_cards),
+    )
     pending_cloze += contrast
     created_count += len(contrast)
 
@@ -2479,7 +2534,28 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     for c in creates + tracked:
         c.pop("_group_rank", None)
 
-    return {"candidates": creates + tracked}
+    # Same call, same arguments as mark_lesson_listened.
+    offered = _due_contrast_cards(
+        db,
+        store,
+        lesson,
+        content_id,
+        intro_budget=intro_budget,
+        new_state_rows=new_state_rows,
+        live_new=live_new,
+        live_creates=live_creates,
+    )
+    affix_cards = [
+        {
+            "form": card.form,
+            "english": card.prompt,
+            "root": card.root,
+            "model": [form for i, (form, _) in enumerate(card.cells) if i != card.blank],
+            "will_create": live,
+        }
+        for card, live in offered
+    ]
+    return {"candidates": creates + tracked, "affix_cards": affix_cards}
 
 
 @router.get("/content/{content_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)

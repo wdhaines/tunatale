@@ -9,7 +9,14 @@ import type { components } from "./api-types";
 // Drift between backend and frontend is caught by svelte-check when the
 // generated shape changes and a consumer uses a vanished field.
 export type ListenPreviewCandidate = components["schemas"]["ListenPreviewCandidate"];
-export type ListenPreview = components["schemas"]["ListenPreviewResponse"];
+export type AffixCardPreview = components["schemas"]["AffixCardPreview"];
+// `affix_cards` is optional HERE though the server always sends it: FastAPI
+// marks a defaulted response field required, and 172 preview fixtures across
+// 15 test files predate it. A lesson with no affix drill sends an empty list,
+// so "absent" and "empty" mean the same thing to the modal.
+export type ListenPreview = Omit<components["schemas"]["ListenPreviewResponse"], "affix_cards"> & {
+  affix_cards?: AffixCardPreview[];
+};
 export type CommitPendingResponse = components["schemas"]["CommitPendingResponse"];
 export type ClozeSentenceVerdict = components["schemas"]["ClozeSentenceVerdict"];
 export type ProposeClozeResponse = components["schemas"]["ProposeClozeResponse"];
@@ -303,6 +310,10 @@ export interface ListenPayload {
   /** CREATE rows opted past the cap — card keys, since no card exists yet. */
   overCapCreates?: string[];
   overCapKps?: string[];
+  /** Contrast cards the learner turned off, named by the form each asks for. */
+  skippedAffixCards?: string[];
+  /** Contrast cards past the day's budget that the learner turned on. */
+  overCapAffixCards?: string[];
 }
 
 export interface WordToken {
@@ -510,6 +521,8 @@ export interface SRSItemDetail {
   audio_url?: string | null;
   word_audio_url?: string | null;
   grammar?: string;
+  /** A contrast card's grid, served with the card; null or absent on every other card. */
+  paradigm?: components["schemas"]["ItemParadigm"] | null;
   note?: string;
   // Gender/indefinite article (en/ei/et) — rendered as a display-time prefix on
   // the headword (e.g. "en orden"). Empty for non-nouns / languages without it.
@@ -1256,6 +1269,8 @@ export class TunaTaleAPI {
       overCapWords = [],
       overCapCreates = [],
       overCapKps = [],
+      skippedAffixCards = [],
+      overCapAffixCards = [],
     } = payload;
     // ⚠️ TYPED against the generated schema, not `Record<string, unknown>`.
     // This shipped posting `lesson_id` after the backend renamed the field to
@@ -1285,6 +1300,8 @@ export class TunaTaleAPI {
     if (overCapWords.length > 0) body.over_cap_words = overCapWords;
     if (overCapCreates.length > 0) body.over_cap_creates = overCapCreates;
     if (overCapKps.length > 0) body.over_cap_kps = overCapKps;
+    if (skippedAffixCards.length > 0) body.skipped_affix_cards = skippedAffixCards;
+    if (overCapAffixCards.length > 0) body.over_cap_affix_cards = overCapAffixCards;
     return this.request("/api/srs/listen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

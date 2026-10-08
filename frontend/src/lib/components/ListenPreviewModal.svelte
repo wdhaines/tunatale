@@ -4,6 +4,7 @@
 	import { dueStudyDay, studyDayOf } from '$lib/studyDay';
 	import {
 		api,
+		type AffixCardPreview,
 		type ListenPayload,
 		type ListenPreviewCandidate,
 		type ListenResponse,
@@ -26,6 +27,13 @@
 	} = $props();
 
 	let candidates = $state<ListenPreviewCandidate[]>([]);
+	// The contrast cards this listen would add (tunatale-ve4p.6). NOT
+	// candidates: a card is added or skipped, never graded, so a row has its
+	// own two-state choice and never enters `ratings`. A row the day's budget
+	// reaches starts 'add'. A row past it starts with NO entry, exactly like a
+	// tail candidate, and choosing Add there is the opt-in past the limit.
+	let affixCards = $state<AffixCardPreview[]>([]);
+	let affixChoice = $state<Record<string, 'add' | 'skip'>>({});
 	let loading = $state(true);
 	let error = $state('');
 	let committing = $state(false);
@@ -246,7 +254,10 @@
 	// exclude tail rows. Counting ratings ENTRIES rather than candidates does
 	// that for free: an over-budget tail row carries no entry at all, so it can
 	// never inflate the count.
-	let selectedCount = $derived(Object.values(ratings).filter((r) => r !== 'skip').length);
+	let selectedCount = $derived(
+		Object.values(ratings).filter((r) => r !== 'skip').length +
+			Object.values(affixChoice).filter((choice) => choice === 'add').length
+	);
 
 	/**
 	 * The seeding rule, in exactly one place. Returns the rating a fresh row
@@ -310,6 +321,8 @@
 			// lives in ONE function because the post-ignore refetch seeds new
 			// rows the exact same way — see `reconcileRatings`.
 			ratings = reconcileRatings(preview.candidates, {});
+			affixCards = preview.affix_cards ?? [];
+			affixChoice = liveAffixChoice('add');
 
 			// Start countdown only when the pref is not "off".
 			const prefValue = listenCountdownPref.value;
@@ -369,8 +382,20 @@
 	// rows: the known group is opt-in per row only, so a bulk action must
 	// never pull a well-known row out of 'skip' (F-3), just as a display-only
 	// tail row must not be pulled above the divider.
+	/** Every contrast-card row the budget reaches, set to *choice*. Rows past it are not named. */
+	function liveAffixChoice(choice: 'add' | 'skip'): Record<string, 'add' | 'skip'> {
+		return Object.fromEntries(affixCards.filter((a) => a.will_create).map((a) => [a.form, choice]));
+	}
+
+	function setAffix(form: string, choice: 'add' | 'skip') {
+		handleInteraction();
+		affixChoice = { ...affixChoice, [form]: choice };
+	}
+
 	function gradeAll() {
 		handleInteraction();
+		// Spread first: a row opted past the limit keeps what it was set to.
+		affixChoice = { ...affixChoice, ...liveAffixChoice('add') };
 		const rts: Record<string, WordRating> = { ...ratings };
 		const tailKeys = new Set(tailCandidates.map((c) => candidateKey(c)));
 		for (const c of candidates) {
@@ -390,6 +415,7 @@
 	// server's `will_create` flag), so no reconciliation is needed here.
 	function skipAll() {
 		handleInteraction();
+		affixChoice = { ...affixChoice, ...liveAffixChoice('skip') };
 		const rts: Record<string, WordRating> = { ...ratings };
 		for (const c of liveCandidates) {
 			const key = candidateKey(c);
@@ -584,7 +610,23 @@
 			overCapWords,
 			overCapCreates,
 			overCapKps,
+			...affixPayload(),
 		};
+	}
+
+	/**
+	 * The contrast-card half of the payload. `skipped` names only rows the
+	 * budget reached and `overCap` only rows past it, so a skipped tail row is
+	 * in neither: it emits nothing, which is what leaves its card unmade.
+	 *
+	 * A lesson with no affix cards adds NO keys, so the payload of every
+	 * ordinary listen is exactly what it was before these rows existed.
+	 */
+	function affixPayload(): Pick<ListenPayload, 'skippedAffixCards' | 'overCapAffixCards'> {
+		if (affixCards.length === 0) return {};
+		const named = (live: boolean, choice: 'add' | 'skip') =>
+			affixCards.filter((a) => a.will_create === live && affixChoice[a.form] === choice).map((a) => a.form);
+		return { skippedAffixCards: named(true, 'skip'), overCapAffixCards: named(false, 'add') };
 	}
 
 	async function doCommit() {
@@ -952,6 +994,61 @@
 						</ul>
 					</details>
 				{/if}
+			{/if}
+
+			{#if affixCards.length > 0}
+				<!-- Contrast cards for the lesson's affix drill. Its own group
+				     under the words, because these rows are added or skipped,
+				     never graded. Each row reuses the candidate grid so the three
+				     columns line up with the word list above; a row past the
+				     day's budget is a `.tail` row, dimmed until Add opts it in. -->
+				<section class="affix-group" aria-label={t('listenPreview.affixCards')}>
+					<div class="affix-head">
+						<span class="affix-title">{t('listenPreview.affixCards')}</span>
+						<span class="affix-count">{t('listenPreview.affixNewCards', { count: affixCards.length })}</span>
+					</div>
+					<div class="list-head" aria-hidden="true">
+						<span>{t('listenPreview.colCardAsksFor')}</span><span>{t('listenPreview.colDue')}</span><span>{t('listenPreview.colAdd')}</span>
+					</div>
+					<ul class="list">
+						{#each affixCards as a (a.form)}
+							{@const choice = affixChoice[a.form]}
+							<li class="candidate affix" class:tail={!a.will_create} class:opted={choice === 'add'}>
+								<span class="text" lang={languageCode}>{a.form}</span>
+								<div class="sub">
+									<span class="affix-gloss">{t('listenPreview.affixBeside', { english: a.english, model: a.model.join(', ') })}</span>
+								</div>
+								<span class="day-cell">
+									<span class="tag day is-new">{a.will_create ? t('listenPreview.new') : t('listenPreview.later')}</span>
+								</span>
+								<div class="grade" role="group" aria-label={t('listenPreview.addOrSkipFor', { text: a.form })}>
+									<button
+										class="skip"
+										class:active={choice === 'skip'}
+										data-affix={a.form}
+										data-choice="skip"
+										aria-pressed={choice === 'skip'}
+										aria-label={t('listenPreview.skipFor', { text: a.form })}
+										onclick={() => setAffix(a.form, 'skip')}
+										type="button"
+									>{t('listenPreview.skip')}</button>
+									<div class="grades">
+										<button
+											class="good"
+											class:active={choice === 'add'}
+											data-affix={a.form}
+											data-choice="add"
+											aria-pressed={choice === 'add'}
+											aria-label={t('listenPreview.addFor', { text: a.form })}
+											onclick={() => setAffix(a.form, 'add')}
+											type="button"
+										>{t('listenPreview.add')}</button>
+									</div>
+								</div>
+							</li>
+						{/each}
+					</ul>
+				</section>
 			{/if}
 			</div>
 		{/if}
@@ -1543,6 +1640,28 @@
 	   deliberate where the original defect was an omission: the tail group
 	   mirrored the well-known group in markup, but never received the styling,
 	   so it rendered as a default <details>. */
+	/* The contrast-card group: a titled block under the word list. */
+	.affix-group {
+		border-top: 1px solid var(--color-border);
+		padding-top: 0.5rem;
+		margin-top: 0.25rem;
+	}
+	.affix-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		padding-bottom: 0.4rem;
+	}
+	.affix-title {
+		font-size: 0.85rem;
+		font-weight: 700;
+	}
+	.affix-count,
+	.affix-gloss {
+		font-size: 0.72rem;
+		line-height: 1.25;
+		color: var(--color-muted);
+	}
 	.disclosure-group {
 		border-top: 1px solid var(--color-border);
 		padding-top: 0.5rem;
@@ -1599,6 +1718,24 @@
 		grid-row: 2;
 	}
 
+	/* A contrast-card row's control is a choice between two equals, so Skip and
+	   Add are the same width (on a word row Skip is the narrow exception beside
+	   four grades). It sits centred on the row at its floor height rather than
+	   stretching: these rows are taller than word rows, and a stretched Add was
+	   a block of colour bigger than the word. A row past the budget keeps its
+	   control on the same line as every other row here, since nothing else
+	   occupies that cell. */
+	.candidate.affix .grade,
+	.candidate.affix.tail .grade {
+		grid-row: 1 / 3;
+		align-self: center;
+		height: 2.15rem;
+	}
+	.candidate.affix .grade .skip,
+	.candidate.affix .grade .grades {
+		flex: 1 1 0;
+	}
+
 	/* Below the width where `1fr 3rem 11rem` stops leaving the word a readable
 	   column, the grade control drops to its own full-width line instead of the
 	   tracks squeezing until the modal outgrows the screen. 18rem, not 288px:
@@ -1627,7 +1764,9 @@
 			grid-column: 1 / -1;
 			grid-row: 3;
 		}
-		.candidate.tail .grade {
+		.candidate.tail .grade,
+		.candidate.affix .grade,
+		.candidate.affix.tail .grade {
 			grid-row: 3;
 		}
 		/* No `.sub.revealed` rule here either, for the same reason as the

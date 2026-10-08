@@ -46,6 +46,12 @@ class ListenRequest(BaseModel):
     over_cap_words: list[int] = []  # collocation ids (NEW-state tracked rows) opted past the cap
     over_cap_creates: list[str] = []  # card keys of CREATE rows opted past the cap
     over_cap_kps: list[str] = []  # key-phrase texts, same
+    # Contrast cards (tunatale-ve4p.6), named by the form the card asks for.
+    # A row is on unless it is listed in `skipped`; a row past the budget is
+    # added only when it is listed in `over_cap`. Two lists, not a ratings map:
+    # a contrast card is added or not, never graded.
+    skipped_affix_cards: list[str] = []
+    over_cap_affix_cards: list[str] = []
 
 
 class ImportListensRequest(BaseModel):
@@ -115,10 +121,24 @@ class ListenPreviewCandidate(BaseModel):
     produce_stability: float | None = None
 
 
+class AffixCardPreview(BaseModel):
+    """One contrast card a listen would add: one root, one form of an affix pair left to say."""
+
+    form: str  # the form the card asks for; also how the listen request names the row
+    english: str  # what the card asks for, in English
+    root: str
+    model: list[str]  # the root's other forms, shown on the card beside the blank
+    # False past the shared introduction budget, exactly as on a candidate row.
+    will_create: bool
+
+
 class ListenPreviewResponse(BaseModel):
     """Response of GET /lesson/{id}/listen-preview."""
 
     candidates: list[ListenPreviewCandidate]
+    # Not candidates: these rows are added or skipped, never graded, so they
+    # share none of a candidate's grade fields.
+    affix_cards: list[AffixCardPreview] = []
 
 
 class CommitPendingResponse(BaseModel):
@@ -1023,6 +1043,24 @@ class ItemDirections(BaseModel):
     production: DirectionStateResponse | None
 
 
+class ParadigmCell(BaseModel):
+    form: str
+    english: str
+    blank: bool  # the one cell the card asks for
+
+
+class ItemParadigm(BaseModel):
+    """A contrast card's grid: one root across an affix pattern, one cell left to say.
+
+    Built when the card is served (``app.srs.contrast_card.paradigm``), not
+    stored: the card's own sentence is its lesson line, or the bare form.
+    """
+
+    root: str
+    english: str
+    cells: list[ParadigmCell]
+
+
 class SrsItemResponse(BaseModel):
     """Response of create_item, patch_item, reset_item, restore_known_item,
     set_item_state, and suspend_item; the element of list_items and untrack_item.
@@ -1054,6 +1092,8 @@ class SrsItemResponse(BaseModel):
     image_url: str | None
     audio_url: str | None
     grammar: str
+    # Set on a contrast card only; the review screen draws it above the sentence.
+    paradigm: ItemParadigm | None = None
     note: str
     article: str
     extras: list[ItemExtra]

@@ -2299,6 +2299,22 @@ export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
     /**
+     * AffixCardPreview
+     * @description One contrast card a listen would add: one root, one form of an affix pair left to say.
+     */
+    AffixCardPreview: {
+      /** English */
+      english: string;
+      /** Form */
+      form: string;
+      /** Model */
+      model: string[];
+      /** Root */
+      root: string;
+      /** Will Create */
+      will_create: boolean;
+    };
+    /**
      * AuthStatusResponse
      * @description Response of GET /api/auth/status.
      *
@@ -3152,6 +3168,21 @@ export interface components {
       tier: string;
     };
     /**
+     * ItemParadigm
+     * @description A contrast card's grid: one root across an affix pattern, one cell left to say.
+     *
+     *     Built when the card is served (``app.srs.contrast_card.paradigm``), not
+     *     stored: the card's own sentence is its lesson line, or the bare form.
+     */
+    ItemParadigm: {
+      /** Cells */
+      cells: components["schemas"]["ParadigmCell"][];
+      /** English */
+      english: string;
+      /** Root */
+      root: string;
+    };
+    /**
      * LanguageItem
      * @description One element of LanguagesResponse.languages.
      */
@@ -3283,6 +3314,7 @@ export interface components {
       last_review: string | null;
       /** Note */
       note: string;
+      paradigm?: components["schemas"]["ItemParadigm"] | null;
       /** Pending Rating */
       pending_rating: string;
       /** Pos */
@@ -3483,6 +3515,11 @@ export interface components {
      * @description Response of GET /lesson/{id}/listen-preview.
      */
     ListenPreviewResponse: {
+      /**
+       * Affix Cards
+       * @default []
+       */
+      affix_cards: components["schemas"]["AffixCardPreview"][];
       /** Candidates */
       candidates: components["schemas"]["ListenPreviewCandidate"][];
     };
@@ -3515,6 +3552,11 @@ export interface components {
         [key: string]: "again" | "hard" | "good" | "easy" | "skip";
       };
       /**
+       * Over Cap Affix Cards
+       * @default []
+       */
+      over_cap_affix_cards: string[];
+      /**
        * Over Cap Creates
        * @default []
        */
@@ -3529,6 +3571,11 @@ export interface components {
        * @default []
        */
       over_cap_words: number[];
+      /**
+       * Skipped Affix Cards
+       * @default []
+       */
+      skipped_affix_cards: string[];
       /**
        * Word Ratings
        * @default {}
@@ -3682,6 +3729,15 @@ export interface components {
     NewCollocationsResponse: {
       /** New */
       new: components["schemas"]["SrsItemResponse"][];
+    };
+    /** ParadigmCell */
+    ParadigmCell: {
+      /** Blank */
+      blank: boolean;
+      /** English */
+      english: string;
+      /** Form */
+      form: string;
     };
     /**
      * PeerSyncResponse
@@ -3945,6 +4001,7 @@ export interface components {
       last_review: string | null;
       /** Note */
       note: string;
+      paradigm?: components["schemas"]["ItemParadigm"] | null;
       /** Pos */
       pos: string;
       /** Reps */
@@ -4398,6 +4455,7 @@ export interface components {
       last_review: string | null;
       /** Note */
       note: string;
+      paradigm?: components["schemas"]["ItemParadigm"] | null;
       /** Pos */
       pos: string;
       /** Reps */

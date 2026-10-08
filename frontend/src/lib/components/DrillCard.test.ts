@@ -1168,4 +1168,142 @@ describe("DrillCard has no cloze-rewrite control (tunatale-keb0)", () => {
     // The sentence itself is still shown — only the control went.
     expect(getByRole("button", { name: /^good$/i })).toBeTruthy();
   });
+
+  describe("contrast card", () => {
+    // tunatale-ve4p.6. A cloze over a small paradigm: the grid is served with
+    // the card (it is not in source_sentence), one cell is the blank, and the
+    // other cells are the model.
+    const paradigm = {
+      root: "uban",
+      english: "accompany",
+      cells: [
+        { form: "mouban", english: "will go along", blank: false },
+        { form: "miuban", english: "went along", blank: true },
+      ],
+    };
+    const bare = makeSRSItemDetail({
+      text: "miuban",
+      translation: "went along",
+      card_type: "cloze",
+      source_sentence: "{{c1::miuban}}",
+      grammar: "uban · accompany",
+      paradigm,
+    });
+    const cells = (container: HTMLElement) =>
+      [...container.querySelectorAll(".paradigm-grid > *")].map((cell) => cell.textContent!.trim());
+
+    it("front shows the root, the model form and a blank for the form asked for", () => {
+      const { container } = render(DrillCard, {
+        item: bare,
+        direction: "production",
+        onRate: vi.fn(),
+      });
+      expect(
+        container.querySelector(".paradigm-root")!.textContent!.replace(/\s+/g, " ").trim(),
+      ).toBe("uban · accompany");
+      expect(cells(container)).toEqual(["will go along", "mouban", "went along", "[...]"]);
+      // The answer is nowhere on the front.
+      expect(container.querySelector(".prompt")!.textContent).not.toContain("miuban");
+    });
+
+    it("front does not repeat the blank as a sentence when the card has no line", () => {
+      const { container } = render(DrillCard, {
+        item: bare,
+        direction: "production",
+        onRate: vi.fn(),
+      });
+      expect(container.querySelector(".prompt .main-text")).toBeNull();
+    });
+
+    it("a card with a lesson line shows the line under the grid, same blank", () => {
+      const item = makeSRSItemDetail({
+        ...bare,
+        text: "mouban",
+        source_sentence: "{{c1::Mouban}} ko ugma.",
+        paradigm: {
+          ...paradigm,
+          cells: [
+            { form: "mouban", english: "will go along", blank: true },
+            { form: "miuban", english: "went along", blank: false },
+          ],
+        },
+      });
+      const { container } = render(DrillCard, { item, direction: "production", onRate: vi.fn() });
+      expect(cells(container)).toEqual(["will go along", "[...]", "went along", "miuban"]);
+      expect(container.querySelector(".prompt .main-text")!.textContent).toBe("[...] ko ugma.");
+    });
+
+    it("back fills the blank cell with the answer, marked", async () => {
+      const { container, getByText } = render(DrillCard, {
+        item: bare,
+        direction: "production",
+        onRate: vi.fn(),
+      });
+      await fireEvent.click(getByText("Show"));
+      expect(cells(container)).toEqual(["will go along", "mouban", "went along", "miuban"]);
+      expect(container.querySelector(".paradigm-grid mark.cloze-answer")!.textContent).toBe(
+        "miuban",
+      );
+      // The model cell is not marked: only the form that was asked for.
+      expect(container.querySelectorAll(".paradigm-grid mark")).toHaveLength(1);
+    });
+
+    it("back of a card with no line adds nothing the grid already says", async () => {
+      const item = makeSRSItemDetail({ ...bare, word_audio_url: "/api/srs/media/tts_miuban.mp3" });
+      const { container, getByText } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate: vi.fn(),
+      });
+      await fireEvent.click(getByText("Show"));
+      const answer = container.querySelector(".answer")!;
+      // The answer is in the grid, marked, once: not a second time below it.
+      expect(container.querySelectorAll("mark.cloze-answer")).toHaveLength(1);
+      expect(answer.querySelector(".main-text")).toBeNull();
+      expect(answer.querySelector(".answer-text")).toBeNull();
+      expect(answer.querySelector(".gram")).toBeNull();
+      // What is left is the form's own audio.
+      expect(answer.querySelector(".word-audio-btn")!.textContent).toContain("miuban");
+    });
+
+    it("back of a card with a line shows the line answered and its English, and no more", async () => {
+      const item = makeSRSItemDetail({
+        ...bare,
+        text: "mouban",
+        translation: "will go along",
+        source_sentence: "{{c1::Mouban}} ko ugma.",
+        source_sentence_translation: "I will come along tomorrow.",
+      });
+      const { container, getByText } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate: vi.fn(),
+      });
+      await fireEvent.click(getByText("Show"));
+      const answer = container.querySelector(".answer")!;
+      expect(answer.querySelector(".main-text")!.textContent).toBe("Mouban ko ugma.");
+      expect([...answer.querySelectorAll(".answer-text")].map((line) => line.textContent)).toEqual([
+        "I will come along tomorrow.",
+      ]);
+      expect(answer.querySelector(".gram")).toBeNull();
+    });
+
+    it.each([
+      ["null", null],
+      ["absent", undefined],
+    ])("an ordinary cloze (paradigm %s) has no grid and keeps its sentence", (_name, value) => {
+      const item = makeSRSItemDetail({
+        text: "sa",
+        translation: "to",
+        card_type: "cloze",
+        source_sentence: "Moadto ko {{c1::sa}} merkado.",
+        paradigm: value,
+      });
+      const { container } = render(DrillCard, { item, direction: "production", onRate: vi.fn() });
+      expect(container.querySelector(".paradigm")).toBeNull();
+      expect(container.querySelector(".prompt .main-text")!.textContent).toBe(
+        "Moadto ko [...] merkado.",
+      );
+    });
+  });
 });

@@ -1342,6 +1342,47 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("markAsListened names contrast cards only when a row was changed", async () => {
+      // Same rule as over_cap_*: an untouched listen's request stays the
+      // five-key body (the first call below), and the two lists appear only
+      // when the learner turned a card off or took one past the day's limit.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk({
+            status: "ok",
+            created: 2,
+            staged: 0,
+            applied: 0,
+            remaining_candidates: 0,
+            listen_count: 1,
+          }),
+        ),
+      );
+      const untouched = {
+        content_id: "drill-1",
+        word_ratings: {},
+        create_ratings: {},
+        kp_ratings: {},
+        confirmed_words: [],
+        confirmed_kps: [],
+      };
+
+      await api.markAsListened("drill-1", { skippedAffixCards: [], overCapAffixCards: [] });
+      await api.markAsListened("drill-1", {
+        skippedAffixCards: ["miuban"],
+        overCapAffixCards: ["miadto"],
+      });
+
+      const bodies = vi
+        .mocked(fetch)
+        .mock.calls.map((call) => JSON.parse((call[1] as RequestInit).body as string));
+      expect(bodies).toEqual([
+        untouched,
+        { ...untouched, skipped_affix_cards: ["miuban"], over_cap_affix_cards: ["miadto"] },
+      ]);
+    });
+
     it("markAsListened routes an opted-past-the-cap CREATE row to over_cap_creates", async () => {
       // A create row has no card yet, so it cannot be named by a collocation id
       // — its card key is the only identity there is (bd tunatale-og4d). This
