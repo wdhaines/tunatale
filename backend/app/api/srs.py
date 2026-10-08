@@ -62,6 +62,7 @@ from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.field_map import upos_for_disambig
 from app.common.guid import compute_guid
 from app.config import settings
+from app.generation.grammar_lesson import contrast_cards
 from app.languages import (
     card_surface_variants,
     format_vocab_headword,
@@ -467,6 +468,33 @@ async def undo_grade(item_id: int, direction: str, request: Request):
         "restored_state": restored.state.value,
         "restored_due_at": restored.due_at.isoformat(),
     }
+
+
+def _add_contrast_cards(db, store, lesson, content_id: str, *, budget: int) -> list[tuple[int, str, str, str]]:
+    """Add the contrast cards a listen of *lesson* is due, as far as *budget* reaches.
+
+    Returns one ``(collocation_id, sentence, form, root)`` per card added, the
+    shape ``_complete_listen_media`` voices after the response. The sentence
+    is the card's lesson line, or its form when it has none: never the grid,
+    which is not stored (``app.srs.contrast_card``).
+
+    Each card is written the way the card-adding contract asks of any card TT
+    originates (``.claude/rules/anki-sync.md``): through ``add_collocation``,
+    as a NEW production-only cloze with no Anki ids. The next sync mints its
+    note. A review session has no curriculum to read lines from and no affix
+    drill, so it adds none.
+    """
+    row = store.get_lesson_row(content_id)
+    if row is None:
+        return []
+    added: list[tuple[int, str, str, str]] = []
+    cards = contrast_cards(lesson, srs_db=db, store=store, curriculum_id=row["curriculum_id"])
+    for card in cards[:budget]:
+        unit = card.unit()
+        db.add_collocation(unit, language_code=lesson.language_code)
+        guid = compute_guid(unit.text, lesson.language_code, unit.disambig_key)
+        added.append((db.get_collocation_id_by_guid(guid), uncloze_text(unit.source_sentence), card.form, card.root))
+    return added
 
 
 async def _complete_listen_media(db, llm, *, vocab, clozes, reglosses=(), language_code: str) -> None:
@@ -1753,6 +1781,15 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
                 pending_regloss.append((new_id, db.get_collocation_by_id(new_id)[1].guid, card_lemma, stored_sentence))
         created_count += 1
     remaining_candidates = len(ranked) - created_count
+
+    # ── Contrast cards for the lesson's affix drill (tunatale-ve4p.6) ────
+    # The same introduction budget, after everything above has taken its
+    # share: what the pool charged is its live NEW-state rows that were not
+    # free, plus its live creations.
+    charged = len(live_new) - sum(1 for row in new_state_pending if row[1]) + len(live_creates)
+    contrast = _add_contrast_cards(db, store, lesson, body.content_id, budget=max(0, intro_budget - charged))
+    pending_cloze += contrast
+    created_count += len(contrast)
 
     # Server-side listened state (TT-only, never syncs): one row per listen.
     db.record_listen(body.content_id)

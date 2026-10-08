@@ -13,6 +13,8 @@ path added to Settings inherits the guard instead of needing its own line here.
 
 from pathlib import Path
 
+import pytest
+
 from app.config import Settings, settings, tt_home
 
 
@@ -44,3 +46,23 @@ def test_no_settings_path_points_into_the_real_tt_home_during_tests():
         f"settings paths still inside the real {home} during tests: {sorted(leaking)} — "
         "pin each to tmp_path in conftest.py::_settings_overrides"
     )
+
+
+async def test_no_test_can_mint_a_gemini_token():
+    """The third paid vendor has no key to blank, so its credential is the pin.
+
+    With the conftest stand-in removed this mints a real token from the
+    developer's service account, and a Cebuano card test goes on to render
+    live audio with it (22 requests in one run, 2026-10-08).
+    """
+    import app.audio.gemini_tts as gemini_tts
+
+    with pytest.raises(RuntimeError, match="reached from a test"):
+        await gemini_tts.default_token_provider()
+
+
+async def test_a_card_render_in_a_gemini_voice_comes_back_empty_not_live():
+    """What a card test sees: no audio, at once, the same as in CI where there is no credential."""
+    from app.cards.media.tts import generate_tts_audio
+
+    assert await generate_tts_audio("miuban", voice="ceb-PH-KoreGemini") is None

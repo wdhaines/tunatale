@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from app.common.guid import compute_guid
 from app.generation.affix_drill import MIN_ROOTS, DrillRoot, build_affix_drill, drill_root
 from app.generation.section_builder import build_affix_drill_section
 from app.languages import get_a1_morphology
@@ -40,6 +41,8 @@ from app.models.language import Language
 from app.models.lesson import Lesson, SectionType, extract_sentence_translations_from_translated
 from app.models.srs_item import Direction, SRSState
 from app.srs.a1_morphology import AffixPattern
+from app.srs.contrast_card import ContrastCard, card_for, pair_key
+from app.srs.function_words import make_cloze_text
 from app.storage.store import ContentStore
 
 MODELLED = 3
@@ -146,6 +149,58 @@ def _story_lines(store: ContentStore, curriculum_id: str) -> list[tuple[str, str
                     if phrase.language_code == lesson.language_code
                 ]
     return lines
+
+
+def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id: str) -> list[ContrastCard]:
+    """The contrast cards a listen of *lesson* adds, in the order its drill takes the roots.
+
+    Only a lesson with an affix drill adds any, and only for that drill's
+    pattern. Per root, at most one card at a time:
+
+    * a root the learner no longer understands is skipped, like a root the
+      language no longer vouches for. It comes round on a later listen;
+    * the first card asks for the form the learner's lessons have NOT used,
+      beside the one they have. Used both or neither, it asks for the last;
+    * the root's next card waits until the cards it already has are in
+      review. Two cards of one root show each other's answer as the model,
+      and as separate Anki notes nothing would keep them apart while new.
+
+    A card carries a lesson line when one sentence of a story says its form.
+    Reads only; the caller adds what it can afford.
+    """
+    recorded = (lesson.generation_metadata or {}).get("affix_drill")
+    pattern = find_pattern(lesson.language_code, recorded["pattern"]) if recorded else None
+    if pattern is None:
+        return []
+    understood = _understood(lesson.language_code, pattern, srs_db)
+    story = [line for line in dict.fromkeys(_story_lines(store, curriculum_id)) if line[1]]
+    heard = {_fold(word) for text, _ in story for word in _WORD.findall(text)}
+
+    cards: list[ContrastCard] = []
+    for root in (*recorded["roots"], *recorded["new_roots"]):
+        ready = understood.get(root)
+        if ready is None:
+            continue
+        held = [
+            srs_db.get_collocation_by_guid(compute_guid(form, lesson.language_code, pair_key(feature)))
+            for (form, _), feature in zip(ready.cells, pattern.features, strict=True)
+        ]
+        missing = [i for i, item in enumerate(held) if item is None]
+        learned = all(item is None or item.directions[Direction.PRODUCTION].state in _UNDERSTOOD for item in held)
+        if not missing or not learned:
+            continue
+        blank = min(missing, key=lambda i: (_fold(ready.cells[i][0]) in heard, -i))
+        form = ready.cells[blank][0]
+        said = sorted(
+            (
+                line
+                for line in story
+                if not _SECOND_SENTENCE.search(line[0].strip()) and make_cloze_text(form, line[0]) != line[0]
+            ),
+            key=lambda line: len(line[0].split()),
+        )
+        cards.append(card_for(ready, pattern, blank, line=said[0] if said else None))
+    return cards
 
 
 def plan_grammar_lesson(

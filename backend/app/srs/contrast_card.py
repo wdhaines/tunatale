@@ -85,18 +85,13 @@ class ContrastCard:
         )
 
 
-def contrast_card(
-    language_code: str, pattern: AffixPattern, root: str, blank: int, *, line: tuple[str, str] | None = None
-) -> ContrastCard | None:
-    """*root*'s card in *pattern* with cell *blank* left to say, or ``None``.
+def card_for(
+    ready: DrillRoot, pattern: AffixPattern, blank: int, *, line: tuple[str, str] | None = None
+) -> ContrastCard:
+    """The card for a root already known to be drillable in *pattern*, cell *blank* left to say.
 
-    ``None`` when the language cannot drill the root in this pattern: it
-    cannot vouch for every form, or nobody has written down what they mean.
     *line* is ``(a lesson line, its English)`` and has to say the blanked form.
     """
-    ready = drill_root(language_code, root, pattern)
-    if not isinstance(ready, DrillRoot):
-        return None
     form = ready.cells[blank][0]
     text, english = line or ("", "")
     if text and make_cloze_text(form, text) == text:
@@ -110,6 +105,18 @@ def contrast_card(
         line=text,
         line_english=english,
     )
+
+
+def contrast_card(
+    language_code: str, pattern: AffixPattern, root: str, blank: int, *, line: tuple[str, str] | None = None
+) -> ContrastCard | None:
+    """*root*'s card in *pattern* with cell *blank* left to say, or ``None``.
+
+    ``None`` when the language cannot drill the root in this pattern: it
+    cannot vouch for every form, or nobody has written down what they mean.
+    """
+    ready = drill_root(language_code, root, pattern)
+    return card_for(ready, pattern, blank, line=line) if isinstance(ready, DrillRoot) else None
 
 
 def paradigm(language_code: str, unit: SyntacticUnit) -> ContrastCard | None:
