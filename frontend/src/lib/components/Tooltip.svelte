@@ -570,13 +570,20 @@
 		opacity: 1;
 		pointer-events: auto;
 	}
-	.tt::before {
-		content: '';
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
-		height: 8px;
+	/* The invisible hover-bridge (see `.tt.tt-below::before` below for what it
+	   is). Fine pointers only: nothing hovers on a touch screen, and there the
+	   strip sat over the top of the word row across the popover's whole width,
+	   so a tap on the word beside an open popover was delivered to the popover
+	   and did nothing. Guarded by tests/real-tap.spec.ts (drill-in, step 4b). */
+	@media (hover: hover) {
+		.tt::before {
+			content: '';
+			position: absolute;
+			top: 100%;
+			left: 0;
+			right: 0;
+			height: 8px;
+		}
 	}
 	/* Flipped below the word when there is no room above (see `flipBelow`).
 	   `::before` is not an arrow — it is the invisible hover-bridge that keeps
