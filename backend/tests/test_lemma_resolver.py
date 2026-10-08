@@ -173,6 +173,9 @@ class _RecordingTarget:
         self._lem = lem
         self.cached_at_write = None
 
+    def prepare(self, lesson) -> None:
+        return None
+
     def write(self, lesson) -> str:
         self.cached_at_write = cached(self._srs_db, self._lem, "Og så stoppet vi.")
         return "lesson-1"

@@ -77,6 +77,7 @@ from app.audio.renderer import build_lesson_renderer  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.story import build_lesson_from_story  # noqa: E402
+from app.generation.story_pattern import add_day_drill  # noqa: E402
 from app.languages import (  # noqa: E402
     get_language,
     resolve_db_path,
@@ -98,7 +99,12 @@ def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, l
         return None
     curriculum = store.get_curriculum(curriculum_id)
     review_words = curriculum.review_request(day) if curriculum is not None else ()
-    return build_lesson_from_story(story, language=language, review_words=review_words)
+    rebuilt = build_lesson_from_story(story, language=language, review_words=review_words)
+    # The closing affix drill is not in the Story JSON: it is added when a
+    # lesson is published into its day, so a rebuild has to add it too or the
+    # rebuilt lesson would lose the drill the stored one ends on.
+    add_day_drill(rebuilt, language, curriculum, day)
+    return rebuilt
 
 
 def _latest_lessons(store: ContentStore) -> list[tuple[str, str, int, Lesson]]:

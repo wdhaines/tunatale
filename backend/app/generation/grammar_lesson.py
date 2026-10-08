@@ -128,26 +128,33 @@ def understood_roots(language_code: str, pattern: AffixPattern, srs_db) -> list[
     return list(_understood(language_code, pattern, srs_db))
 
 
+def lesson_lines(lesson: Lesson) -> list[tuple[str, str]]:
+    """Every ``(line, its English)`` *lesson*'s story tells, in order.
+
+    What is read is the natural-speed section, which a grammar lesson does not
+    have: a drill's whole lines came from a story and are not read back.
+    """
+    english = (lesson.generation_metadata or {}).get(
+        "sentence_translations"
+    ) or extract_sentence_translations_from_translated(lesson)
+    return [
+        (phrase.text, english.get(phrase.text, ""))
+        for section in lesson.sections
+        if section.section_type is SectionType.NATURAL_SPEED
+        for phrase in section.phrases
+        if phrase.language_code == lesson.language_code
+    ]
+
+
 def _story_lines(store: ContentStore, curriculum_id: str) -> list[tuple[str, str]]:
     """Every ``(line, its English)`` the curriculum's stories tell, in lesson order.
 
-    The latest lesson of each day only. What is read is a lesson's
-    natural-speed section, which a grammar lesson does not have: a drill's
-    whole lines came from these same stories and are not read back.
+    The latest lesson of each day only.
     """
     lines: list[tuple[str, str]] = []
     for entry in store.get_lesson_days(curriculum_id):
         _, lesson = store.get_latest_lesson_by_day(curriculum_id, entry["day"])
-        english = (lesson.generation_metadata or {}).get(
-            "sentence_translations"
-        ) or extract_sentence_translations_from_translated(lesson)
-        for section in lesson.sections:
-            if section.section_type is SectionType.NATURAL_SPEED:
-                lines += [
-                    (phrase.text, english.get(phrase.text, ""))
-                    for phrase in section.phrases
-                    if phrase.language_code == lesson.language_code
-                ]
+        lines += lesson_lines(lesson)
     return lines
 
 
