@@ -23,6 +23,7 @@ from app.generation.affix_drill import build_affix_drill, drill_root
 from app.generation.grammar_lesson import (
     GrammarPlan,
     build_grammar_lesson,
+    drill_table,
     grammar_day,
     plan_grammar_lesson,
     understood_roots,
@@ -267,9 +268,11 @@ def test_the_lesson_is_one_drill_section_and_says_what_it_is(owner):
         "new_roots": ["anhi", "lakaw"],
     }
     drill = build_affix_drill(
-        "ceb", _MO_MI, roots=list(plan.roots), new_roots=list(plan.new_roots), lines=list(plan.lines)
+        "ceb", _MO_MI, roots=list(plan.roots), new_roots=list(plan.new_roots), lines=list(plan.lines), again=True
     )
     assert [p.text for p in lesson.sections[0].phrases[1:]] == [step.text for step in drill.steps]
+    # Each of the ten forms is asked twice, then the three lines.
+    assert [p.role for p in lesson.sections[0].phrases].count("prompt") == 23
 
 
 def test_the_forms_are_said_by_the_voice_that_reads_the_key_phrases(owner):
@@ -282,6 +285,48 @@ def test_the_forms_are_said_by_the_voice_that_reads_the_key_phrases(owner):
     voices = {p.voice_id for p in lesson.sections[0].phrases if p.language_code == "ceb"}
     assert voices == {language.tts_voice_map["female-1"]}
     assert lesson.narrator_voice == language.tts_voice_map["narrator"]
+
+
+def test_the_drills_table_marks_the_roots_left_for_the_learner_to_build(owner):
+    srs_db, store = owner
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+
+    table = drill_table(build_grammar_lesson(get_language("ceb"), plan))
+
+    assert (table["pattern"], table["title"]) == ("mo-mi", "Affix drill: mo- / mi-")
+    assert [(r["root"], r["new"]) for r in table["roots"]] == [
+        ("uban", False),
+        ("inom", False),
+        ("adto", False),
+        ("anhi", True),
+        ("lakaw", True),
+    ]
+    assert table["roots"][-1] == {
+        "root": "lakaw",
+        "english": "walk",
+        "new": True,
+        "forms": [{"form": "molakaw", "english": "will walk"}, {"form": "milakaw", "english": "walked"}],
+    }
+
+
+def test_a_root_the_language_no_longer_vouches_for_is_left_out_of_the_table():
+    """The lesson is a snapshot; the table is worded from today's data, and never guesses."""
+    lesson = Lesson(
+        title="t",
+        language_code="ceb",
+        kind="grammar",
+        generation_metadata={"affix_drill": {"pattern": "mo-mi", "roots": ["inom", "andam"], "new_roots": []}},
+    )
+    assert [r["root"] for r in drill_table(lesson)["roots"]] == ["inom"]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, {"affix_drill": {"pattern": "um-in", "roots": ["inom"], "new_roots": []}}],
+    ids=["a story lesson", "a pattern the language no longer has"],
+)
+def test_a_lesson_with_no_drill_to_describe_has_no_table(metadata):
+    assert drill_table(Lesson(title="t", language_code="ceb", generation_metadata=metadata)) is None
 
 
 def test_a_lesson_keeps_its_kind_in_storage():

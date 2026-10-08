@@ -3,9 +3,11 @@
 	import type { LessonAudio, ReadableLesson, TranscriptData } from '$lib/api';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import type { createReadingActions } from '$lib/reading/readingActions.svelte';
+	import { isDrillOnly } from '$lib/lessonKind';
 	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
 	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import DrillForms from './DrillForms.svelte';
 	import LessonPlayer from './LessonPlayer.svelte';
 	import ReadListenToggle from './ReadListenToggle.svelte';
 	import ReaderChips from './ReaderChips.svelte';
@@ -77,7 +79,12 @@
 		actions
 	}: Props = $props();
 
-	const mode = $derived(lessonModePref.mode);
+	// A lesson that is only an affix drill (a grammar lesson) has nothing to
+	// read: no story, so no transcript. It is always in Listen, the Read/Listen
+	// toggle is not offered, and the table of what it drills stands where the
+	// transcript would. The stored mode is left alone for the next lesson.
+	const drillOnly = $derived(isDrillOnly(content));
+	const mode = $derived(drillOnly ? 'listen' : lessonModePref.mode);
 	const recallInline = $derived(mode === 'read' && audio != null && playerCollapsedPref.collapsed);
 </script>
 
@@ -97,7 +104,9 @@
 			<div class="header-band">{@render headerAbove()}</div>
 		{/if}
 		{@render header()}
-		<ReadListenToggle collapsible={audio != null} />
+		{#if !drillOnly}
+			<ReadListenToggle collapsible={audio != null} />
+		{/if}
 		{#if headerBelow}
 			<div class="header-band">{@render headerBelow()}</div>
 		{/if}
@@ -125,7 +134,11 @@
 	{/if}
 </section>
 
-{#if mode === 'read'}
+{#if drillOnly && content.drill}
+	<section class="card">
+		<DrillForms drill={content.drill} />
+	</section>
+{:else if mode === 'read'}
 	<section class="card">
 		{#if transcript}
 			<Transcript {transcript} lesson={content} {controller} {...reading.transcriptProps} />

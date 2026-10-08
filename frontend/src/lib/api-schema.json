@@ -1813,6 +1813,84 @@
         "title": "Last429",
         "type": "object"
       },
+      "LessonDrill": {
+        "description": "LessonResponse.drill: the pattern a lesson drills and the roots it drills it on.",
+        "properties": {
+          "pattern": {
+            "title": "Pattern",
+            "type": "string"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/LessonDrillRoot"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern",
+          "title",
+          "roots"
+        ],
+        "title": "LessonDrill",
+        "type": "object"
+      },
+      "LessonDrillForm": {
+        "description": "One form of a drilled root, with its English.",
+        "properties": {
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "form": {
+            "title": "Form",
+            "type": "string"
+          }
+        },
+        "required": [
+          "form",
+          "english"
+        ],
+        "title": "LessonDrillForm",
+        "type": "object"
+      },
+      "LessonDrillRoot": {
+        "description": "One root of a lesson's affix drill. ``new`` roots are asked without being modelled first.",
+        "properties": {
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "forms": {
+            "items": {
+              "$ref": "#/components/schemas/LessonDrillForm"
+            },
+            "title": "Forms",
+            "type": "array"
+          },
+          "new": {
+            "title": "New",
+            "type": "boolean"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root",
+          "english",
+          "new",
+          "forms"
+        ],
+        "title": "LessonDrillRoot",
+        "type": "object"
+      },
       "LessonKeyPhrase": {
         "description": "One element of LessonResponse.key_phrases.",
         "properties": {
@@ -2079,6 +2157,16 @@
               }
             ],
             "title": "Day"
+          },
+          "drill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LessonDrill"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "gloss_entry_count": {
             "anyOf": [
@@ -4210,6 +4298,16 @@
               }
             ],
             "title": "Day"
+          },
+          "drill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LessonDrill"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "gloss_entry_count": {
             "anyOf": [

@@ -50,6 +50,11 @@ def _understand(db, root: str) -> None:
     )
 
 
+def _cards(db) -> int:
+    with db._get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) FROM collocations").fetchone()[0]
+
+
 def _wake() -> Lesson:
     line = Phrase(text="Mouban ko ugma.", voice_id="ceb-PH-CharonGemini", language_code="ceb", role="male-1")
     english = Phrase(text="I will come along tomorrow.", voice_id=_NARRATOR, language_code="en", role="narrator")
@@ -129,6 +134,73 @@ async def test_creating_a_grammar_lesson_appends_a_day_and_the_pipeline_builds_t
     assert [s.section_type for s in lesson.sections] == [SectionType.AFFIX_DRILL]
     assert generator.calls == []
     await pipeline.shutdown()
+
+
+async def test_the_lesson_is_served_with_the_table_of_what_it_drills(deck):
+    """The page under the player has no transcript to show; this is what it shows instead."""
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        await client.post(f"/api/curriculum/{_CID}/grammar-lessons", json={"pattern": "mo-mi"})
+        await wait_for_job(pipeline, "ceb", _CID, 2, "ready")
+        lesson = (await client.get(f"/api/curriculum/{_CID}/days/2/lesson")).json()
+        story = (await client.get(f"/api/curriculum/{_CID}/days/1/lesson")).json()
+    await pipeline.shutdown()
+
+    assert lesson["drill"] == {
+        "pattern": "mo-mi",
+        "title": "Affix drill: mo- / mi-",
+        "roots": [
+            {
+                "root": "uban",
+                "english": "accompany",
+                "new": False,
+                "forms": [
+                    {"form": "mouban", "english": "will go along"},
+                    {"form": "miuban", "english": "went along"},
+                ],
+            },
+            {
+                "root": "inom",
+                "english": "drink",
+                "new": False,
+                "forms": [{"form": "moinom", "english": "will drink"}, {"form": "miinom", "english": "drank"}],
+            },
+            {
+                "root": "adto",
+                "english": "go",
+                "new": False,
+                "forms": [{"form": "moadto", "english": "will go"}, {"form": "miadto", "english": "went"}],
+            },
+        ],
+    }
+    assert "drill" not in story
+
+
+async def test_a_grammar_lesson_can_be_previewed_read_and_marked_listened(deck, srs_db):
+    """It has no story, and every one of these routes was written for a lesson that does.
+
+    Nothing is minted yet (the contrast card is tunatale-ve4p.6): what is
+    pinned here is that the page a learner lands on does not error, and that
+    marking it listened is recorded without inventing a card.
+    """
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        await client.post(f"/api/curriculum/{_CID}/grammar-lessons", json={"pattern": "mo-mi"})
+        await wait_for_job(pipeline, "ceb", _CID, 2, "ready")
+        lesson_id, _ = store.get_latest_lesson_by_day(_CID, 2)
+        cards_before = _cards(srs_db)
+
+        transcript = await client.get(f"/api/srs/content/{lesson_id}/transcript")
+        preview = await client.get(f"/api/srs/content/{lesson_id}/listen-preview")
+        listened = await client.post("/api/srs/listen", json={"content_id": lesson_id})
+    await pipeline.shutdown()
+
+    assert (transcript.status_code, preview.status_code, listened.status_code) == (200, 200, 200)
+    assert (transcript.json()["key_phrases"], transcript.json()["dialogue_lines"]) == ([], [])
+    assert srs_db.count_listens(lesson_id) == 1
+    assert _cards(srs_db) == cards_before
 
 
 async def test_the_new_day_is_served_with_its_kind_and_pattern(deck):

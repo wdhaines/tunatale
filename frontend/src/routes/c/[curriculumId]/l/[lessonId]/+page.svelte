@@ -30,6 +30,7 @@
 	import Tooltip from '$lib/components/Tooltip.svelte';
 	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
 	import { t } from '$lib/i18n/i18n.svelte';
+	import { isDrillOnly } from '$lib/lessonKind';
 	import type { WordRating } from '$lib/api';
 	import type { PageData } from './$types';
 
@@ -523,7 +524,11 @@
 		{#snippet headerBelow()}
 				<!-- Stats read as lesson metadata under the title rather than a third
 				     stacked line in the action row — same information, no extra row. -->
-				<MasteryLine {transcript} loading={transcriptLoading} />
+				<!-- Counted from the transcript's words, and a grammar lesson has
+				     no transcript: the line would report on nothing. -->
+				{#if !isDrillOnly(data.lesson)}
+					<MasteryLine {transcript} loading={transcriptLoading} />
+				{/if}
 		{/snippet}
 		{#snippet noAudio()}
 				<div class="render-row">

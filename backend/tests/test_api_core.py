@@ -439,6 +439,7 @@ class TestCurriculumEndpoints:
             "review_used",
             "gloss_entry_count",
             "day",
+            "drill",
         }
 
     async def test_get_lesson_by_day_returns_most_recent(self):

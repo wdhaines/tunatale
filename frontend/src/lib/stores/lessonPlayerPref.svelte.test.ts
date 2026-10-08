@@ -119,6 +119,10 @@ describe("lessonPlayerPref", () => {
 });
 
 describe("pillsForSection", () => {
+  it("maps affix_drill to the Drill phase and leaves speed and English alone", () => {
+    expect(pillsForSection("affix_drill", "enunciated_0.9")).toEqual({ phase: "drill" });
+  });
+
   it("maps key_phrases to the Key Phrases phase (leaving enun/english untouched)", () => {
     expect(pillsForSection("key_phrases")).toEqual({ phase: "key_phrases" });
   });

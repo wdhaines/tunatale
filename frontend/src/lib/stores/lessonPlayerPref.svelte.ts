@@ -60,8 +60,12 @@ function enunciatedLevel(current: string | undefined): string {
 // row here, or a row keyed on a token that does not exist, is a compile error.
 // (A switch could not say that — an unlisted token would fall through to
 // returning nothing at all.)
+//
+// `phase` is wider than PlayerPhase: a drill is a place the player can BE, and
+// is never a place it is told to open (see LessonPlayer::persistSelection), so
+// the stored type does not learn the word.
 type Pills = {
-  phase?: PlayerPhase;
+  phase?: PlayerPhase | "drill";
   enunciation?: string;
   english?: EnglishMode;
 };
@@ -86,6 +90,8 @@ const PILLS_FOR_SECTION: Record<SectionType, (current: string | undefined) => Pi
     enunciation: enunciatedLevel(current),
     english: "en_first",
   }),
+  // Speed and English are not the drill's to set: it has one track.
+  affix_drill: () => ({ phase: "drill" }),
 };
 
 // The tokens come off the wire, so an unrecognised type (or none) is still

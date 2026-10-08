@@ -97,10 +97,15 @@
 	// so the button never selects a missing track.
 	const hasEnFirst =
 		sectionTypes.has('en_translated') && sectionTypes.has('slow_en_translated');
+	// The affix drill (bd tunatale-ve4p.5). A lesson that has one gets a third
+	// phase; a lesson that is ONLY a drill (a grammar lesson) has nothing to
+	// switch between, so the phase row is not drawn at all.
+	const hasDrill = sectionTypes.has('affix_drill');
+	const drillOnly = hasDrill && sectionTypes.size === 1;
 
 	// --- Phase / Enunciation / English state ---
 
-	const PHASES = ['key_phrases', 'dialogue'] as const;
+	const PHASES = ['key_phrases', 'dialogue', 'drill'] as const;
 	type Phase = (typeof PHASES)[number];
 
 	interface EnunciationOption {
@@ -144,6 +149,7 @@
 
 	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): SectionType {
 		if (phase === 'key_phrases') return 'key_phrases';
+		if (phase === 'drill') return 'affix_drill';
 		const natural = enunLevel === 'natural';
 		if (engMode === 'off') return natural ? 'natural_speed' : 'slow_speed';
 		if (engMode === 'l2_first') return natural ? 'translated' : 'slow_translated';
@@ -273,8 +279,15 @@
 		}
 	}
 
+	// The drill is never REMEMBERED as where to open. Most lessons have none, so
+	// a stored "drill" would open the next one on its first section instead of
+	// where the learner listens; the phase already in storage is kept.
 	function persistSelection() {
-		lessonPlayerPref.set({ phase, enunciation: enunLevel, english: englishMode });
+		lessonPlayerPref.set({
+			phase: phase === 'drill' ? lessonPlayerPref.selection.phase : phase,
+			enunciation: enunLevel,
+			english: englishMode
+		});
 	}
 
 	// Off -> On -> Repeat lesson -> Off. Toggling is a real user choice, so it
@@ -316,14 +329,14 @@
 	}
 
 	function onEnunClick() {
-		if (phase === 'key_phrases') return;
+		if (phase !== 'dialogue') return;
 		cycleEnunciation();
 		applyTrack();
 		persistSelection();
 	}
 
 	function onEnglishClick() {
-		if (phase === 'key_phrases') return;
+		if (phase !== 'dialogue') return;
 		cycleEnglish();
 		applyTrack();
 		persistSelection();
@@ -550,7 +563,7 @@
 	     Phrases and Dialogue, so collapsing it would strand the reader in
 	     whichever half they were already in. Space is never worth removing the
 	     only route somewhere. -->
-	{#if trackMode}
+	{#if trackMode && !drillOnly}
 		<div class="phase-row">
 			<button
 				class="phase-btn"
@@ -562,6 +575,13 @@
 				class:active={phase === 'dialogue'}
 				onclick={() => onPhaseClick('dialogue')}
 			>{t('lessonPlayer.dialogue')}</button>
+			{#if hasDrill}
+				<button
+					class="phase-btn"
+					class:active={phase === 'drill'}
+					onclick={() => onPhaseClick('drill')}
+				>{t('lessonPlayer.drill')}</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -671,7 +691,7 @@
 					class="setting-chip enunciation-btn"
 					class:active={enunLevel !== 'natural'}
 					onclick={onEnunClick}
-					disabled={phase === 'key_phrases'}
+					disabled={phase !== 'dialogue'}
 					title={t(ENUNCIATION_OPTIONS[enunIndex].titleKey)}
 				>
 					<span class="chip-label">{t('lessonPlayer.speed.label')}</span>
@@ -681,7 +701,7 @@
 					class="setting-chip english-btn"
 					class:active={englishMode !== 'off'}
 					onclick={onEnglishClick}
-					disabled={phase === 'key_phrases'}
+					disabled={phase !== 'dialogue'}
 				>
 					<span class="chip-label">{t('lessonPlayer.english.label')}</span>
 					<span class="chip-value">{t(ENGLISH_LABELS[englishMode])}</span>

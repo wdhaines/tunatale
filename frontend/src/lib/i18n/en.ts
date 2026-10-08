@@ -8,6 +8,7 @@ export const en = {
   // LessonPlayer.svelte
   "lessonPlayer.keyPhrases": "Key Phrases",
   "lessonPlayer.dialogue": "Dialogue",
+  "lessonPlayer.drill": "Drill",
   "lessonPlayer.play": "Play",
   "lessonPlayer.pause": "Pause",
   "lessonPlayer.seek": "Seek",
@@ -610,6 +611,24 @@ export const en = {
   "curriculum.confirmDelete": "Confirm delete",
   "curriculum.deleteTopic": "Delete {topic}",
   "curriculum.confirmDeleteTopic": "Confirm delete {topic}",
+
+  // AddGrammarLesson.svelte
+  "addGrammarLesson.toggle": "Add a grammar lesson",
+  "addGrammarLesson.roots": {
+    one: "{count} root you understand: {roots}.",
+    other: "{count} roots you understand: {roots}.",
+  },
+  "addGrammarLesson.noRoots": "No roots yet. A drill needs two you understand.",
+  "addGrammarLesson.needsTwo": "A drill needs two.",
+  "addGrammarLesson.add": "Add",
+  "addGrammarLesson.adding": "Adding…",
+  "addGrammarLesson.addPattern": "Add {title}",
+
+  // DrillForms.svelte
+  "drillForms.heading": "In this drill",
+  "drillForms.new": "New",
+  "drillForms.newTitle": "You are asked for these forms without hearing them first",
+  "drillForms.reveal": "Show the form for: {english}",
 
   // +error.svelte
   "error.genericFallback": "Something went wrong",
