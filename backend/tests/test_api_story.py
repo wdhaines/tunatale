@@ -147,6 +147,7 @@ class TestStoryEndpoints:
             "review_used",
             "gloss_entry_count",
             "day",
+            "drill",
         }
 
     async def test_get_lesson_returns_empty_key_phrases_for_old_lesson(self):

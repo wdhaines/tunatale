@@ -14,6 +14,7 @@ describe("SECTION_TYPES", () => {
       "slow_speed",
       "slow_translated",
       "slow_en_translated",
+      "affix_drill",
     ]);
   });
 

@@ -3184,6 +3184,42 @@ export interface components {
       retry_in_s: number | null;
     };
     /**
+     * LessonDrill
+     * @description LessonResponse.drill: the pattern a lesson drills and the roots it drills it on.
+     */
+    LessonDrill: {
+      /** Pattern */
+      pattern: string;
+      /** Roots */
+      roots: components["schemas"]["LessonDrillRoot"][];
+      /** Title */
+      title: string;
+    };
+    /**
+     * LessonDrillForm
+     * @description One form of a drilled root, with its English.
+     */
+    LessonDrillForm: {
+      /** English */
+      english: string;
+      /** Form */
+      form: string;
+    };
+    /**
+     * LessonDrillRoot
+     * @description One root of a lesson's affix drill. ``new`` roots are asked without being modelled first.
+     */
+    LessonDrillRoot: {
+      /** English */
+      english: string;
+      /** Forms */
+      forms: components["schemas"]["LessonDrillForm"][];
+      /** New */
+      new: boolean;
+      /** Root */
+      root: string;
+    };
+    /**
      * LessonKeyPhrase
      * @description One element of LessonResponse.key_phrases.
      */
@@ -3281,6 +3317,7 @@ export interface components {
     LessonResponse: {
       /** Day */
       day?: number | null;
+      drill?: components["schemas"]["LessonDrill"] | null;
       /** Gloss Entry Count */
       gloss_entry_count?: number | null;
       /** Id */
@@ -4190,6 +4227,7 @@ export interface components {
     ReviewSessionResponse: {
       /** Day */
       day?: number | null;
+      drill?: components["schemas"]["LessonDrill"] | null;
       /** Gloss Entry Count */
       gloss_entry_count?: number | null;
       /** Id */

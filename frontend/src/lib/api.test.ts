@@ -807,6 +807,39 @@ describe("TunaTaleAPI", () => {
       );
     });
 
+    it("listGrammarPatterns reads the patterns a curriculum's learner can drill", async () => {
+      const patterns = [
+        { key: "mo-mi", title: "Affix drill: mo- / mi-", roots: ["inom"], ready: false },
+      ];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(patterns)));
+
+      const result = await api.listGrammarPatterns("trip-1");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum/trip-1/grammar-patterns`);
+      expect(result).toEqual(patterns);
+    });
+
+    it("createGrammarLesson posts the pattern", async () => {
+      const created = {
+        day: 3,
+        position: 3,
+        title: "t",
+        pattern: "mo-mi",
+        roots: [],
+        new_roots: [],
+        lines: [],
+      };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(created)));
+
+      const result = await api.createGrammarLesson("trip-1", "mo-mi");
+
+      expect(fetch).toHaveBeenCalledWith(
+        `${BASE}/api/curriculum/trip-1/grammar-lessons`,
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ pattern: "mo-mi" }) }),
+      );
+      expect(result).toEqual(created);
+    });
+
     it("deleteCurriculumDay calls DELETE /api/curriculum/:id/days/:day", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ deleted_day: 2, days: 3 })));
 

@@ -18,6 +18,8 @@
 //
 // Spelling: the base name is the pass, `slow_` is the enunciated-rate version
 // of it, and `_en_` (or the `en_` prefix) marks the English-first ordering.
+// `affix_drill` is the one section not made from the story: a rule-built drill
+// on one affix pattern, where a prompt is followed by a pause for the answer.
 
 export const SECTION_TYPES = [
   "key_phrases",
@@ -27,6 +29,7 @@ export const SECTION_TYPES = [
   "slow_speed",
   "slow_translated",
   "slow_en_translated",
+  "affix_drill",
 ] as const;
 
 export type SectionType = (typeof SECTION_TYPES)[number];

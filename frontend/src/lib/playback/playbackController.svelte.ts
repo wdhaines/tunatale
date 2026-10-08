@@ -23,6 +23,9 @@ export const HANDS_FREE_SEQUENCE = [
   "natural_speed",
   "slow_speed",
   "translated",
+  // The affix drill closes a lesson that has one: it asks for forms the
+  // passes above have just been using.
+  "affix_drill",
 ] as const satisfies readonly SectionType[];
 
 // Where each track sits in HANDS_FREE_SEQUENCE, for the Section ▶ button
@@ -39,6 +42,7 @@ const SEQUENCE_STEP: ReadonlyMap<string, number> = new Map([
   ["slow_translated", 3],
   ["en_translated", 3],
   ["slow_en_translated", 3],
+  ["affix_drill", 4],
 ]);
 
 // Art for the lock screen / car head unit. One entry, shared by BOTH

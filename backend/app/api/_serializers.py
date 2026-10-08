@@ -1,5 +1,6 @@
 """Response serialization helpers for API endpoints."""
 
+from app.generation.grammar_lesson import drill_table
 from app.models.lesson import Lesson, project_key_phrases
 
 
@@ -32,4 +33,8 @@ def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) 
     }
     if day is not None:
         result["day"] = day
+    # Present only on a lesson that has an affix drill, like ``day`` above.
+    drill = drill_table(lesson)
+    if drill is not None:
+        result["drill"] = drill
     return result

@@ -99,6 +99,37 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_line():
     ]
 
 
+def test_the_mixed_round_asks_every_form_once_more_and_never_root_by_root():
+    """After the new roots and before the lines. The earlier rounds ask a root's
+    two forms back to back, so the second is half given away by the first; here
+    neighbours are different roots, and the cell alternates."""
+    drill = build_affix_drill(
+        "ceb",
+        _MAG_NAG,
+        roots=["lakaw", "ampo"],
+        new_roots=["luto"],
+        lines=[("Mag-ampo ta.", "Let's pray.")],
+        again=True,
+    )
+    answers = [s.text for s in drill.steps if s.kind == "answer"]
+
+    assert answers[:6] == ["naglakaw", "maglakaw", "nag-ampo", "mag-ampo", "nagluto", "magluto"]
+    assert answers[6:12] == ["maglakaw", "nag-ampo", "magluto", "naglakaw", "mag-ampo", "nagluto"]
+    assert answers[12:] == ["Mag-ampo ta."]
+    mixed = drill.steps[drill.steps.index(DrillStep("answer", "magluto", "ceb")) + 1 :]
+    assert mixed[:4] == [
+        DrillStep("prompt", "Say: will walk.", "en"),
+        DrillStep("answer", "maglakaw", "ceb"),
+        DrillStep("prompt", "Say: prayed.", "en"),
+        DrillStep("answer", "nag-ampo", "ceb"),
+    ]
+
+
+def test_there_is_no_mixed_round_unless_asked_for():
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
+    assert len([s for s in drill.steps if s.kind == "answer"]) == 4
+
+
 def test_roots_that_cannot_be_drilled_are_dropped_and_named():
     drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "andam", "ampo", "tulog"])
     assert drill.dropped == [

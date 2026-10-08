@@ -1853,6 +1853,37 @@ describe("playbackController", () => {
       expect(audioEl.play).toHaveBeenCalled();
     });
 
+    it("hands-free ON: a lesson with an affix drill plays it LAST, after the English pass", () => {
+      // The drill asks for forms the passes above have just been using, so it
+      // closes the run. From there the run is over, as it is from translated
+      // on a lesson with no drill.
+      const withDrill: LessonAudio = {
+        ...hfAudio,
+        sections: [
+          ...hfAudio.sections,
+          {
+            audio_id: "sec-drill",
+            section_index: 4,
+            section_type: "affix_drill",
+            title: "Affix Drill",
+            cues: translatedCues,
+          },
+        ],
+      };
+      const ctrl = createController({ audio: withDrill });
+      ctrl.setHandsFree(true);
+      ctrl.selectTrack("translated");
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("affix_drill");
+      expect(audioEl.src).toBe("/api/audio/sec-drill");
+      expect(ctrl.hasNextSection).toBe(true);
+
+      vi.mocked(audioEl.play).mockClear();
+      audioEl.dispatchEvent(new Event("ended"));
+      expect(ctrl.activeSectionType).toBe("affix_drill");
+      expect(audioEl.play).not.toHaveBeenCalled();
+    });
+
     it("hands-free ON on translated (last in sequence): ended does NOT advance, behaves as OFF", () => {
       const mediaSession = makeFakeMediaSession();
       const ctrl = createController({

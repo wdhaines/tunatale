@@ -238,7 +238,13 @@ export interface LessonDetail {
   // reporting that as 0 would tell its reader the glosses are missing when
   // nobody ever looked. The page keys its notice off `=== 0` for that reason.
   gloss_entry_count?: number | null;
+  /** What the lesson's affix drill covers. Absent on a lesson with no drill. */
+  drill?: LessonDrill | null;
 }
+
+export type LessonDrill = components["schemas"]["LessonDrill"];
+export type GrammarPatternOption = components["schemas"]["GrammarPatternOption"];
+export type CreatedGrammarLesson = components["schemas"]["CreateGrammarLessonResponse"];
 
 /** What the reading UI actually needs off a lesson.
  *
@@ -248,7 +254,7 @@ export interface LessonDetail {
  * through the SAME components as a lesson instead of a second, worse copy. */
 export type ReadableLesson = Pick<
   LessonDetail,
-  "id" | "language_code" | "sections" | "key_phrases"
+  "id" | "language_code" | "sections" | "key_phrases" | "drill"
 >;
 
 /** One element of GET /curriculum/{id}/progress.
@@ -969,6 +975,18 @@ export class TunaTaleAPI {
 
   async deleteCurriculum(id: string): Promise<{ deleted: string }> {
     return this.request(`/api/curriculum/${id}`, { method: "DELETE" });
+  }
+
+  async listGrammarPatterns(id: string): Promise<GrammarPatternOption[]> {
+    return this.request(`/api/curriculum/${id}/grammar-patterns`);
+  }
+
+  async createGrammarLesson(id: string, pattern: string): Promise<CreatedGrammarLesson> {
+    return this.request(`/api/curriculum/${id}/grammar-lessons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pattern }),
+    });
   }
 
   async deleteCurriculumDay(

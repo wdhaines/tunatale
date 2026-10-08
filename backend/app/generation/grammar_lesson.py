@@ -72,6 +72,33 @@ def pattern_title(pattern: AffixPattern) -> str:
     return "Affix drill: " + " / ".join(f"{feature.rsplit(':', 1)[-1]}-" for feature in pattern.features)
 
 
+def drill_table(lesson: Lesson) -> dict | None:
+    """What a lesson's affix drill covers, for the page that has no transcript to show.
+
+    ``None`` for a lesson with no drill. Read back from what the builder
+    recorded on the lesson, and worded by the language's own table as it is
+    today; a root that table no longer vouches for is left out.
+    """
+    recorded = (lesson.generation_metadata or {}).get("affix_drill")
+    pattern = find_pattern(lesson.language_code, recorded["pattern"]) if recorded else None
+    if pattern is None:
+        return None
+    roots = []
+    for new, names in ((False, recorded["roots"]), (True, recorded["new_roots"])):
+        for name in names:
+            ready = drill_root(lesson.language_code, name, pattern)
+            if isinstance(ready, DrillRoot):
+                roots.append(
+                    {
+                        "root": ready.root,
+                        "english": ready.english,
+                        "new": new,
+                        "forms": [{"form": form, "english": english} for form, english in ready.cells],
+                    }
+                )
+    return {"pattern": pattern.key, "title": pattern_title(pattern), "roots": roots}
+
+
 def find_pattern(language_code: str, key: str) -> AffixPattern | None:
     """The language's pattern called *key*, or ``None``."""
     bundle = get_a1_morphology(language_code)
@@ -162,7 +189,15 @@ def plan_grammar_lesson(
 def build_grammar_lesson(language: Language, plan: GrammarPlan) -> Lesson:
     """The lesson for *plan*: one AFFIX_DRILL section, in the voice that reads the key phrases."""
     drill = build_affix_drill(
-        language.code, plan.pattern, roots=list(plan.roots), new_roots=list(plan.new_roots), lines=list(plan.lines)
+        language.code,
+        plan.pattern,
+        roots=list(plan.roots),
+        new_roots=list(plan.new_roots),
+        lines=list(plan.lines),
+        # Five roots are ten forms, and asked once that is two minutes. Asked
+        # again in mixed order it is a lesson, and the second asking is the
+        # one that is recall rather than echo.
+        again=True,
     )
     voices = language.tts_voice_map
     narrator = voices["narrator"]

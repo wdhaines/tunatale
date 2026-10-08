@@ -6,8 +6,10 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 
 const mockGoto = vi.fn();
+const mockInvalidateAll = vi.fn(() => Promise.resolve());
 vi.mock("$app/navigation", () => ({
   goto: (...args: unknown[]) => mockGoto(...args),
+  invalidateAll: () => mockInvalidateAll(),
 }));
 
 vi.mock("$lib/api", () => ({
@@ -19,6 +21,10 @@ vi.mock("$lib/api", () => ({
     importStory: vi.fn(),
     deleteCurriculumDay: vi.fn(),
     deleteCurriculum: vi.fn(),
+    // No patterns by default, as for a language that has none: the control
+    // draws nothing, and every test not about it is undisturbed.
+    listGrammarPatterns: vi.fn().mockResolvedValue([]),
+    createGrammarLesson: vi.fn(),
   },
 }));
 
@@ -598,6 +604,46 @@ describe("Delete curriculum", () => {
     );
     finish({ deleted: "cid-1" });
     await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/"));
+  });
+});
+
+describe("adding a grammar lesson from the curriculum page", () => {
+  const pattern = {
+    key: "mo-mi",
+    title: "Affix drill: mo- / mi-",
+    roots: ["inom", "adto"],
+    ready: true,
+  };
+
+  it("is not offered for a language with no affix patterns", async () => {
+    const { queryByRole } = render(Page, { props: { data: { curriculum } } });
+
+    await waitFor(() => expect(vi.mocked(api.listGrammarPatterns)).toHaveBeenCalledWith("cid-1"));
+    expect(queryByRole("button", { name: /Add a grammar lesson/ })).toBeNull();
+  });
+
+  it("after one is added the plan is read again and the pipeline poll restarts", async () => {
+    vi.mocked(api.listGrammarPatterns).mockResolvedValueOnce([pattern]);
+    vi.mocked(api.createGrammarLesson).mockResolvedValue({
+      day: 4,
+      position: 4,
+      title: pattern.title,
+      pattern: "mo-mi",
+      roots: ["inom", "adto"],
+      new_roots: [],
+      lines: [],
+    });
+    const { findByRole, getByRole } = render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(await findByRole("button", { name: /Add a grammar lesson/ }));
+    await waitFor(() => expect(mockPipelineStoreStart).toHaveBeenCalledTimes(1));
+
+    await fireEvent.click(getByRole("button", { name: "Add Affix drill: mo- / mi-" }));
+
+    // The new day is in the plan the page re-reads, and it is rendering: the
+    // poll must not sit on its idle cadence while it does.
+    await waitFor(() => expect(mockPipelineStoreStart).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.createGrammarLesson)).toHaveBeenCalledWith("cid-1", "mo-mi");
+    expect(mockInvalidateAll).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -131,6 +131,47 @@ async def test_creating_a_grammar_lesson_appends_a_day_and_the_pipeline_builds_t
     await pipeline.shutdown()
 
 
+async def test_the_lesson_is_served_with_the_table_of_what_it_drills(deck):
+    """The page under the player has no transcript to show; this is what it shows instead."""
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        await client.post(f"/api/curriculum/{_CID}/grammar-lessons", json={"pattern": "mo-mi"})
+        await wait_for_job(pipeline, "ceb", _CID, 2, "ready")
+        lesson = (await client.get(f"/api/curriculum/{_CID}/days/2/lesson")).json()
+        story = (await client.get(f"/api/curriculum/{_CID}/days/1/lesson")).json()
+    await pipeline.shutdown()
+
+    assert lesson["drill"] == {
+        "pattern": "mo-mi",
+        "title": "Affix drill: mo- / mi-",
+        "roots": [
+            {
+                "root": "uban",
+                "english": "accompany",
+                "new": False,
+                "forms": [
+                    {"form": "mouban", "english": "will go along"},
+                    {"form": "miuban", "english": "went along"},
+                ],
+            },
+            {
+                "root": "inom",
+                "english": "drink",
+                "new": False,
+                "forms": [{"form": "moinom", "english": "will drink"}, {"form": "miinom", "english": "drank"}],
+            },
+            {
+                "root": "adto",
+                "english": "go",
+                "new": False,
+                "forms": [{"form": "moadto", "english": "will go"}, {"form": "miadto", "english": "went"}],
+            },
+        ],
+    }
+    assert "drill" not in story
+
+
 async def test_the_new_day_is_served_with_its_kind_and_pattern(deck):
     async with _client() as client:
         await client.post(f"/api/curriculum/{_CID}/grammar-lessons", json={"pattern": "mo-mi"})

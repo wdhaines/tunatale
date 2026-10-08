@@ -1438,6 +1438,30 @@ class LessonSection(BaseModel):
     phrases: list[LessonPhrase]
 
 
+class LessonDrillForm(BaseModel):
+    """One form of a drilled root, with its English."""
+
+    form: str
+    english: str
+
+
+class LessonDrillRoot(BaseModel):
+    """One root of a lesson's affix drill. ``new`` roots are asked without being modelled first."""
+
+    root: str
+    english: str
+    new: bool
+    forms: list[LessonDrillForm]
+
+
+class LessonDrill(BaseModel):
+    """LessonResponse.drill: the pattern a lesson drills and the roots it drills it on."""
+
+    pattern: str
+    title: str
+    roots: list[LessonDrillRoot]
+
+
 class LessonResponse(BaseModel):
     """Response of GET /api/story/{lesson_id} and
     GET /api/curriculum/{curriculum_id}/days/{day}/lesson
@@ -1457,6 +1481,8 @@ class LessonResponse(BaseModel):
     review_used: list[str] = []
     gloss_entry_count: int | None = None
     day: int | None = Field(default=None, exclude_if=lambda v: v is None)  # omitted when unset
+    # What the lesson's affix drill covers; omitted on a lesson with no drill.
+    drill: LessonDrill | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ReviewSessionResponse(LessonResponse):

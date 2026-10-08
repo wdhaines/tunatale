@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import { api } from '$lib/api';
+	import AddGrammarLesson from '$lib/components/AddGrammarLesson.svelte';
 	import DayPicker from '$lib/components/DayPicker.svelte';
 	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
 	import LlmActivityLog from '$lib/components/LlmActivityLog.svelte';
@@ -145,6 +146,16 @@
 			/>
 		{/if}
 		<a class="plan-link" href="/c/{data.curriculum.id}/plan">{t('curriculum.planLink')} →</a>
+		<AddGrammarLesson
+			curriculumId={data.curriculum.id}
+			onAdded={async () => {
+				// The plan gained a day: re-run the load so the picker shows it, and
+				// restart the pipeline poll so it pulses while the audio renders
+				// instead of waiting out the idle cadence.
+				await invalidateAll();
+				pipelineStore.start(data.curriculum.id);
+			}}
+		/>
 		<button
 			type="button"
 			class="delete-btn"
