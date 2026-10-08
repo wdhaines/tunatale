@@ -77,6 +77,50 @@ const DRILL = {
   ],
 };
 
+// What a listen of a drill lesson offers. The third row is past the day's
+// budget, and it carries the longest form and English these rows have to hold.
+const AFFIX_CARDS = [
+  { form: "miuban", english: "went along", root: "uban", model: ["mouban"], will_create: true },
+  { form: "moinom", english: "will drink", root: "inom", model: ["miinom"], will_create: true },
+  {
+    form: "nag-istoryahanay",
+    english: "talked with one another",
+    root: "istoryahanay",
+    model: ["mag-istoryahanay"],
+    will_create: false,
+  },
+];
+
+// A contrast card as the review queue serves it: the long pair again, with a
+// lesson line under the grid.
+const CONTRAST_ITEM = {
+  id: 1,
+  text: "mag-istoryahanay",
+  translation: "will talk with one another",
+  state: "new",
+  due_at: new Date().toISOString(),
+  stability: 0,
+  difficulty: 5,
+  reps: 0,
+  lapses: 0,
+  last_review: null,
+  language_code: "ceb",
+  card_type: "cloze",
+  source_sentence: "{{c1::Mag-istoryahanay}} sila ugma sa buntag.",
+  source_sentence_translation: "They will talk with one another tomorrow morning.",
+  grammar: "istoryahanay · talk with one another",
+  paradigm: {
+    root: "istoryahanay",
+    english: "talk with one another",
+    cells: [
+      { form: "mag-istoryahanay", english: "will talk with one another", blank: true },
+      { form: "nag-istoryahanay", english: "talked with one another", blank: false },
+    ],
+  },
+  direction: "production",
+  pending_rating: null,
+};
+
 let seededCurriculumId: string | null = null;
 
 async function curriculumId(
@@ -270,6 +314,120 @@ for (const [name, width, height] of [
       // every cell box above was still exactly where it should be.
       for (const cell of cells) expect(cell.wordRight).toBeLessThanOrEqual(cell.right + 0.5);
     }
+    expect(await overflowX(page)).toBe(0);
+  });
+
+  test(`the listen preview's affix cards on ${name}: columns line up and every control is on the screen`, async ({
+    page,
+    request,
+  }) => {
+    test.skip(!(await backendAvailable(request)), "Backend not available");
+    await page.setViewportSize({ width, height });
+    // No auto-commit: the modal has to stay open to be measured.
+    await page.addInitScript(() => localStorage.setItem("listenCountdown", "off"));
+    await stubGrammar(page);
+    await page.route("**/api/srs/content/*/listen-preview", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ candidates: [], affix_cards: AFFIX_CARDS }),
+      }),
+    );
+    await page.goto(`/c/${await curriculumId(request)}`);
+    await page.getByRole("button", { name: "Day 1" }).click();
+    await page.getByRole("button", { name: "Mark as Listened" }).click();
+
+    const group = page.locator(".affix-group");
+    await expect(group.locator(".candidate.affix")).toHaveCount(3);
+
+    // Every rect in ONE evaluate: reading them a box per await races content
+    // that is still arriving.
+    const measured = await group.evaluate((el) => {
+      const left = (node: Element) => node.getBoundingClientRect().left;
+      const modal = el.closest(".modal")!.getBoundingClientRect();
+      const head = el.querySelectorAll(".list-head span");
+      return {
+        modal: { left: modal.left, right: modal.right },
+        headDue: left(head[1]),
+        headAdd: left(head[2]),
+        rows: [...el.querySelectorAll(".candidate.affix")].map((row) => {
+          const text = row.querySelector(".text")!.getBoundingClientRect();
+          const control = row.querySelector(".grade")!.getBoundingClientRect();
+          const buttons = [...row.querySelectorAll(".grade button")].map((button) => {
+            const b = button.getBoundingClientRect();
+            return { left: b.left, right: b.right, clipped: button.scrollWidth > button.clientWidth };
+          });
+          return {
+            row: row.getBoundingClientRect().right,
+            textLeft: text.left,
+            textRight: text.right,
+            due: left(row.querySelector(".day-cell")!),
+            control: { left: control.left, right: control.right },
+            buttons,
+          };
+        }),
+      };
+    });
+
+    for (const row of measured.rows) {
+      // The word and its control are inside the modal, and no label is cut off.
+      expect(row.textLeft).toBeGreaterThanOrEqual(measured.modal.left);
+      expect(row.textRight).toBeLessThanOrEqual(row.row + 0.5);
+      expect(row.control.right).toBeLessThanOrEqual(measured.modal.right);
+      expect(row.buttons).toHaveLength(2);
+      for (const button of row.buttons) {
+        expect(button.clipped).toBe(false);
+        expect(button.right).toBeLessThanOrEqual(row.control.right + 0.5);
+      }
+    }
+    // Where the columns sit side by side (the wide arm of the row grid), each
+    // cell starts on its header's left edge. Narrower, the control drops to
+    // its own line and only the Due column has a header to answer to.
+    const sideBySide = measured.rows.every((row) => row.control.left >= row.textRight - 0.5);
+    for (const row of measured.rows) {
+      expect(Math.abs(row.due - measured.headDue)).toBeLessThanOrEqual(0.5);
+      if (sideBySide) expect(Math.abs(row.control.left - measured.headAdd)).toBeLessThanOrEqual(0.5);
+    }
+    expect(await overflowX(page)).toBe(0);
+  });
+
+  test(`a contrast card in review on ${name}: the pair reads as a pair, inside the card`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.route("**/api/srs/queue-stats", (route) =>
+      route.fulfill({ json: { new: 1, learning: 0, review: 0, daily_new_cap: 20, cap_source: "test" } }),
+    );
+    await page.route("**/api/srs/review-queue*", (route) => route.fulfill({ json: { queue: [CONTRAST_ITEM] } }));
+    await page.goto("/review");
+
+    const grid = page.locator(".paradigm-grid");
+    await expect(grid.locator("dd")).toHaveCount(2);
+
+    const measured = await page.locator(".drill-card").evaluate((card) => {
+      const box = card.getBoundingClientRect();
+      const rect = (node: Element) => {
+        const r = node.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      };
+      const labels = [...card.querySelectorAll(".paradigm-grid dt")].map(rect);
+      const forms = [...card.querySelectorAll(".paradigm-grid dd")].map(rect);
+      const line = card.querySelector(".prompt .main-text");
+      return { card: { left: box.left, right: box.right }, labels, forms, line: line ? rect(line) : null };
+    });
+
+    expect(measured.labels).toHaveLength(2);
+    for (let i = 0; i < 2; i++) {
+      const [label, form] = [measured.labels[i], measured.forms[i]];
+      // English on the left, its form to the right of it, neither outside the card.
+      expect(form.left).toBeGreaterThanOrEqual(label.right);
+      expect(label.left).toBeGreaterThanOrEqual(measured.card.left);
+      expect(form.right).toBeLessThanOrEqual(measured.card.right + 0.5);
+      // The two halves of a pair overlap vertically: they are one row.
+      expect(form.top).toBeLessThan(label.bottom);
+      expect(label.top).toBeLessThan(form.bottom);
+    }
+    // The second pair is under the first, and the lesson line under both.
+    expect(measured.forms[1].top).toBeGreaterThanOrEqual(measured.forms[0].bottom - 0.5);
+    expect(measured.line!.top).toBeGreaterThanOrEqual(measured.forms[1].bottom - 0.5);
     expect(await overflowX(page)).toBe(0);
   });
 }

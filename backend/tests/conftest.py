@@ -44,6 +44,19 @@ def anki_prev_day_anchor(today: date) -> datetime:
     return anki_day_anchor(today) - timedelta(seconds=1)
 
 
+class NoGeminiCredentials:
+    """A google-auth credential that is never valid and will not refresh.
+
+    ``RuntimeError``, not ``OSError``: the adapter retries transport errors six
+    times with a pacing delay between them, and this has to fail at once.
+    """
+
+    valid = False
+
+    def refresh(self, request) -> None:
+        raise RuntimeError("Gemini TTS reached from a test with no fake: hand the adapter a token provider")
+
+
 @pytest.fixture(autouse=True)
 def _settings_overrides(monkeypatch, tmp_path):
     """Override settings that touch user data to tmp_path so tests never write to ~/.tunatale.
@@ -139,6 +152,19 @@ def _settings_overrides(monkeypatch, tmp_path):
     # not set") instead of silently succeeding against the live endpoint. Tests
     # that exercise the adapter pass an explicit key (see test_azure_tts.py).
     monkeypatch.setattr(settings, "azure_speech_key", "")
+    # Same trap, a third provider along, and the one with no key to blank. Gemini
+    # resolves credentials through google-auth: a developer's .env names a real
+    # service-account file, and with that path pinned empty the adapter falls
+    # back to the machine's own default discovery (gcloud), which is just as
+    # real. So the pin is the credential: a stand-in that refuses to mint a
+    # token, which stops a synthesis before any request is made.
+    # Measured 2026-10-08: a Cebuano /listen test with no fake made 22 live
+    # requests in one run (real 5-9 KB mp3s in pytest's tmp dir, 108 s). Tests
+    # that exercise the adapter hand it a token provider or their own
+    # credentials (test_gemini_tts.py).
+    import app.audio.gemini_tts as gemini_tts
+
+    monkeypatch.setattr(gemini_tts, "_CREDENTIALS", NoGeminiCredentials())
     # The audio pre-stage (app.cards.media.audio_prestage) runs in the background
     # after a sync and on a deck open, and its fetch is the REAL media pipeline:
     # a Forvo request and a TTS render per card. Off by default, so no endpoint

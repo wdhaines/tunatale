@@ -47,6 +47,7 @@ SRS_ITEM_KEYS = {
     "image_url",
     "audio_url",
     "grammar",
+    "paradigm",
     "note",
     "article",
     "extras",

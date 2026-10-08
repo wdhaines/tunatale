@@ -1,6 +1,43 @@
 {
   "components": {
     "schemas": {
+      "AffixCardPreview": {
+        "description": "One contrast card a listen would add: one root, one form of an affix pair left to say.",
+        "properties": {
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "form": {
+            "title": "Form",
+            "type": "string"
+          },
+          "model": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Model",
+            "type": "array"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "will_create": {
+            "title": "Will Create",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "form",
+          "english",
+          "root",
+          "model",
+          "will_create"
+        ],
+        "title": "AffixCardPreview",
+        "type": "object"
+      },
       "AuthStatusResponse": {
         "description": "Response of GET /api/auth/status.\n\nOne boolean, and it must stay one boolean.  The endpoint is unauthenticated\nby necessity \u2014 the SPA asks it before it has a session \u2014 so anything added\nhere is published to anyone who can reach the port.  \"Does this deployment\nrequire a login?\" is safe; \"how many users exist\" or \"has anyone been\nbootstrapped\" is reconnaissance.  Pinned by\n``test_status_leaks_nothing_beyond_the_flag``.",
         "properties": {
@@ -1741,6 +1778,33 @@
         "title": "ItemExtra",
         "type": "object"
       },
+      "ItemParadigm": {
+        "description": "A contrast card's grid: one root across an affix pattern, one cell left to say.\n\nBuilt when the card is served (``app.srs.contrast_card.paradigm``), not\nstored: the card's own sentence is its lesson line, or the bare form.",
+        "properties": {
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/ParadigmCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "root",
+          "english",
+          "cells"
+        ],
+        "title": "ItemParadigm",
+        "type": "object"
+      },
       "LanguageItem": {
         "description": "One element of LanguagesResponse.languages.",
         "properties": {
@@ -2057,6 +2121,16 @@
           "note": {
             "title": "Note",
             "type": "string"
+          },
+          "paradigm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemParadigm"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pending_rating": {
             "title": "Pending Rating",
@@ -2574,6 +2648,14 @@
       "ListenPreviewResponse": {
         "description": "Response of GET /lesson/{id}/listen-preview.",
         "properties": {
+          "affix_cards": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AffixCardPreview"
+            },
+            "title": "Affix Cards",
+            "type": "array"
+          },
           "candidates": {
             "items": {
               "$ref": "#/components/schemas/ListenPreviewCandidate"
@@ -2640,6 +2722,14 @@
             "title": "Kp Ratings",
             "type": "object"
           },
+          "over_cap_affix_cards": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Over Cap Affix Cards",
+            "type": "array"
+          },
           "over_cap_creates": {
             "default": [],
             "items": {
@@ -2662,6 +2752,14 @@
               "type": "integer"
             },
             "title": "Over Cap Words",
+            "type": "array"
+          },
+          "skipped_affix_cards": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped Affix Cards",
             "type": "array"
           },
           "word_ratings": {
@@ -2940,6 +3038,29 @@
           "new"
         ],
         "title": "NewCollocationsResponse",
+        "type": "object"
+      },
+      "ParadigmCell": {
+        "properties": {
+          "blank": {
+            "title": "Blank",
+            "type": "boolean"
+          },
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "form": {
+            "title": "Form",
+            "type": "string"
+          }
+        },
+        "required": [
+          "form",
+          "english",
+          "blank"
+        ],
+        "title": "ParadigmCell",
         "type": "object"
       },
       "PeerSyncResponse": {
@@ -3554,6 +3675,16 @@
           "note": {
             "title": "Note",
             "type": "string"
+          },
+          "paradigm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemParadigm"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pos": {
             "title": "Pos",
@@ -4668,6 +4799,16 @@
           "note": {
             "title": "Note",
             "type": "string"
+          },
+          "paradigm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemParadigm"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pos": {
             "title": "Pos",

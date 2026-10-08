@@ -40,7 +40,11 @@ class TestListenPreviewContract:
         openapi = app.openapi()
         schema = _response_schema_for(openapi, PREVIEW_PATH, "get")
         assert schema, "GET listen-preview has no declared response schema"
-        assert set(schema.get("properties", {})) == {"candidates"}
+        assert set(schema.get("properties", {})) == {"candidates", "affix_cards"}
+        affix_schema = schema["properties"]["affix_cards"]["items"]
+        if "$ref" in affix_schema:
+            affix_schema = openapi["components"]["schemas"][affix_schema["$ref"].rsplit("/", 1)[-1]]
+        assert set(affix_schema["properties"]) == {"form", "english", "root", "model", "will_create"}
 
         candidates_schema = schema["properties"]["candidates"]
         item_schema = candidates_schema["items"]
