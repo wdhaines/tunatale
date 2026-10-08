@@ -107,6 +107,119 @@ def test_without_a_tts_limit_only_the_free_half_runs(tmp_path) -> None:
     assert _audio(db, "gabii") is None
 
 
+# --- A second run is free (tunatale-2f5a) -----------------------------------
+# The repair was started once as a background task with a ten-minute limit and
+# took about 35. Had it been killed, the obvious recovery — run it again — would
+# have dropped every clip it had just stored and paid for the same TTS twice.
+
+
+def test_a_second_identical_run_fetches_nothing_and_renames_nothing(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _seeded(url)
+    args = [*ARGS, "--db", url, "--tts-limit", "50", "--apply"]
+    assert main(args, fetch_fn=_Fetch()) == 0
+    first = {word: _audio(db, word) for word in ("gabii", "iro")}
+    assert all(name is not None and name.startswith("tts_") for name in first.values())
+    capsys.readouterr()
+
+    again = _Fetch()
+    assert main(args, fetch_fn=again) == 0
+
+    out = capsys.readouterr().out
+    assert again.calls == []
+    assert {word: _audio(db, word) for word in ("gabii", "iro")} == first
+    assert "0 card(s) to redo: 0 already met, 0 not yet." in out
+    assert "2 already redone, skipped." in out
+    assert "TTS: at most 0 render(s), 0 characters across the cards already met." in out
+
+
+def test_the_dry_run_counts_what_it_would_skip(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    _seeded(url)
+    assert main([*ARGS, "--db", url, "--tts-limit", "50", "--apply"], fetch_fn=_Fetch()) == 0
+    capsys.readouterr()
+
+    fetch = _Fetch()
+    assert main([*ARGS, "--db", url, "--tts-limit", "50"], fetch_fn=fetch) == 0
+
+    out = capsys.readouterr().out
+    assert fetch.calls == []
+    assert "0 card(s) to redo: 0 already met, 0 not yet." in out
+    assert "2 already redone, skipped." in out
+
+
+def test_a_first_run_skips_nothing_and_says_so(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    _seeded(url)
+
+    assert main([*ARGS, "--db", url, "--tts-limit", "50"], fetch_fn=_Fetch()) == 0
+
+    out = capsys.readouterr().out
+    assert "2 card(s) to redo: 1 already met, 1 not yet." in out
+    assert "0 already redone, skipped." in out
+    assert "0 of them have no audio now" in out
+
+
+def test_force_redoes_the_cards_a_run_already_redid(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    _seeded(url)
+    args = [*ARGS, "--db", url, "--tts-limit", "50", "--apply"]
+    assert main(args, fetch_fn=_Fetch()) == 0
+    capsys.readouterr()
+
+    again = _Fetch()
+    assert main([*args, "--force"], fetch_fn=again) == 0
+
+    out = capsys.readouterr().out
+    assert "2 card(s) to redo: 1 already met, 1 not yet." in out
+    assert "0 already redone, skipped." in out
+    for word in ("gabii", "iro"):
+        assert again.calls.count((word, "forvo")) == 1
+        assert again.calls.count((word, "full")) == 1
+
+
+def test_only_the_cards_not_yet_redone_are_touched(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _seeded(url)
+    one = ["--language", "ceb", "--word", "gabii", "--forvo-delay", "0", "--db", url, "--tts-limit", "50", "--apply"]
+    assert main(one, fetch_fn=_Fetch()) == 0
+    gabii = _audio(db, "gabii")
+    assert gabii is not None and gabii.startswith("tts_gabii_")
+    capsys.readouterr()
+
+    rest = _Fetch()
+    assert main([*ARGS, "--db", url, "--tts-limit", "50", "--apply"], fetch_fn=rest) == 0
+
+    out = capsys.readouterr().out
+    assert "1 card(s) to redo: 0 already met, 1 not yet." in out
+    assert "1 already redone, skipped." in out
+    # The estimate is for the cards to redo, not for every card named.
+    assert "TTS: at most 1 render(s), 0 characters across the cards already met." in out
+    assert [word for word, _audio_mode in rest.calls if word == "gabii"] == []
+    assert _audio(db, "gabii") == gabii
+    assert _audio(db, "iro").startswith("tts_iro_")
+
+
+def test_a_card_forvo_had_nothing_for_is_looked_up_again_and_the_plan_says_so(tmp_path, capsys) -> None:
+    # No TTS budget: after the first run both cards have NO audio row, which is
+    # also what a card never visited looks like. Revisiting costs one Forvo
+    # request and no TTS, so the run does it and the plan says how many.
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _seeded(url)
+    assert main([*ARGS, "--db", url, "--apply"], fetch_fn=_Fetch()) == 0
+    assert _audio(db, "gabii") is None and _audio(db, "iro") is None
+    capsys.readouterr()
+
+    again = _Fetch()
+    assert main([*ARGS, "--db", url, "--apply"], fetch_fn=again) == 0
+
+    out = capsys.readouterr().out
+    assert "2 card(s) to redo: 1 already met, 1 not yet." in out
+    assert "0 already redone, skipped." in out
+    assert "2 of them have no audio now: Forvo is asked again for each, and no TTS is spent on that." in out
+    assert sorted(again.calls) == [("gabii", "forvo"), ("iro", "forvo")]
+
+
 def test_naming_no_cards_is_refused(capsys) -> None:
     with pytest.raises(SystemExit):
         main(["--language", "ceb"])
