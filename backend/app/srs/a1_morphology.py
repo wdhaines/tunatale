@@ -58,3 +58,7 @@ class A1Morphology:
     patterns: tuple[AffixPattern, ...] = ()
     pattern_forms: Callable[[str, AffixPattern], tuple[str, ...] | None] | None = None
     pattern_glosses: Callable[[str, AffixPattern], tuple[str, tuple[str, ...]] | None] | None = None
+    # Every root somebody has worded for the pattern, in the order they were
+    # written down: what a drill may be built FROM, before the learner's own
+    # cards decide what it is built of.
+    pattern_roots: Callable[[AffixPattern], tuple[str, ...]] | None = None

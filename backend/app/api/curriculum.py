@@ -12,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api import app_state
 from app.api._serializers import serialize_lesson
 from app.api.models import (
+    CreateGrammarLessonRequest,
+    CreateGrammarLessonResponse,
     CurriculumProgressEntry,
     CurriculumSourceResponse,
     CurriculumSummary,
@@ -19,6 +21,7 @@ from app.api.models import (
     DeleteDayResponse,
     GenerationModeRequest,
     GetCurriculumResponse,
+    GrammarPatternOption,
     ImportCurriculumPlanResponse,
     ImportPlanRequest,
     LessonResponse,
@@ -39,7 +42,16 @@ from app.api.models import (
     StartPlanResponse,
     StatusResponse,
 )
+from app.generation.affix_drill import MIN_ROOTS
+from app.generation.grammar_lesson import (
+    find_pattern,
+    grammar_day,
+    pattern_title,
+    plan_grammar_lesson,
+    understood_roots,
+)
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
+from app.languages import get_a1_morphology
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
@@ -388,6 +400,81 @@ async def delete_day(curriculum_id: str, day: int, request: Request):
     store.save_curriculum(curriculum_id, curriculum)
 
     return {"deleted_day": day, "days": len(curriculum.days)}
+
+
+@router.get(
+    "/{curriculum_id}/grammar-patterns",
+    status_code=200,
+    response_model=list[GrammarPatternOption],
+    tags=["curriculum"],
+)
+async def list_grammar_patterns(curriculum_id: str, request: Request):
+    """The affix patterns a grammar lesson can drill, and whether this learner
+    understands enough roots for each. Empty for a language with no patterns."""
+    curriculum = _get_curriculum_or_404(request.state.content_store, curriculum_id)
+    code = curriculum.language_code
+    bundle = get_a1_morphology(code)
+    options = []
+    for pattern in bundle.patterns if bundle is not None else ():
+        roots = understood_roots(code, pattern, request.state.srs_db)
+        options.append(
+            {"key": pattern.key, "title": pattern_title(pattern), "roots": roots, "ready": len(roots) >= MIN_ROOTS}
+        )
+    return options
+
+
+@router.post(
+    "/{curriculum_id}/grammar-lessons",
+    status_code=201,
+    response_model=CreateGrammarLessonResponse,
+    tags=["curriculum"],
+)
+async def create_grammar_lesson(curriculum_id: str, body: CreateGrammarLessonRequest, request: Request):
+    """Append a grammar day for one affix pattern and hand it to the pipeline.
+
+    The plan is made HERE first, so a pattern the learner is not ready for is
+    refused before a day exists. The pipeline plans again when it builds the
+    lesson; the two read the same cards and lessons, seconds apart.
+
+    Enqueued whatever the curriculum's generation mode: ``manual`` exists to
+    keep the model from being called unasked, and a drill calls no model.
+
+    A planner proposal still waiting to be committed was numbered against the
+    old day list, so committing it after this answers 409 and asks for a
+    re-proposal, as it does after any other change to the days.
+    """
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    code = curriculum.language_code
+    pattern = find_pattern(code, body.pattern)
+    if pattern is None:
+        raise HTTPException(status_code=422, detail=f"Unknown affix pattern {body.pattern!r} for {code}")
+    try:
+        plan = plan_grammar_lesson(code, pattern, srs_db=request.state.srs_db, store=store, curriculum_id=curriculum_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
+
+    day = grammar_day(max((d.day for d in curriculum.days), default=0) + 1, plan)
+    curriculum.days.append(day)
+    position = curriculum.day_positions()[day.day]
+    state = get_planner_state(curriculum)
+    state["chat"].append({"role": "event", "content": f"Added a grammar lesson as day {position}: {day.title}."})
+    curriculum.metadata["planner"] = state
+    store.save_curriculum(curriculum_id, curriculum)
+
+    pipeline = app_state.pipeline(request)
+    if pipeline is not None:
+        pipeline.enqueue(code, curriculum_id, day.day, "generate", user_id=pipeline_user_id(request.state))
+
+    return {
+        "day": day.day,
+        "position": position,
+        "title": day.title,
+        "pattern": pattern.key,
+        "roots": list(plan.roots),
+        "new_roots": list(plan.new_roots),
+        "lines": [{"text": text, "translation": english} for text, english in plan.lines],
+    }
 
 
 @router.get(

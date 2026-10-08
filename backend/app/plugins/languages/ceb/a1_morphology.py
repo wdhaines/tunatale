@@ -26,7 +26,7 @@ only: ``niadto`` is also the demonstrative "back then", so its count would
 vouch for forms on the strength of a different word.
 """
 
-from app.plugins.languages.ceb.affix_patterns import PATTERNS, pattern_forms, pattern_glosses
+from app.plugins.languages.ceb.affix_patterns import PATTERNS, pattern_forms, pattern_glosses, pattern_roots
 from app.srs.a1_morphology import A1Morphology
 from app.srs.function_words import _default_format_morphology_hint
 from app.srs.lemmatizer import TokenAnalysis
@@ -106,4 +106,5 @@ CEBUANO_A1_MORPHOLOGY = A1Morphology(
     patterns=PATTERNS,
     pattern_forms=pattern_forms,
     pattern_glosses=pattern_glosses,
+    pattern_roots=pattern_roots,
 )

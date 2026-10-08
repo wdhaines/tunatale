@@ -58,7 +58,7 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_line():
         _MAG_NAG,
         roots=["lakaw", "ampo"],
         new_roots=["luto"],
-        line=("Naglakaw si Paul sa dalan.", "Paul walked on the road."),
+        lines=[("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Mag-ampo ta.", "Let's pray.")],
     )
     assert drill.dropped == []
     assert drill.steps == [
@@ -91,9 +91,11 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_line():
         DrillStep("answer", "nagluto", "ceb"),
         DrillStep("prompt", "Say: will cook.", "en"),
         DrillStep("answer", "magluto", "ceb"),
-        # The whole line.
+        # Whole lines, in the order given.
         DrillStep("prompt", "Say: Paul walked on the road.", "en"),
         DrillStep("answer", "Naglakaw si Paul sa dalan.", "ceb"),
+        DrillStep("prompt", "Say: Let's pray.", "en"),
+        DrillStep("answer", "Mag-ampo ta.", "ceb"),
     ]
 
 

@@ -555,6 +555,58 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/curriculum/{curriculum_id}/grammar-lessons": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Create Grammar Lesson
+     * @description Append a grammar day for one affix pattern and hand it to the pipeline.
+     *
+     *     The plan is made HERE first, so a pattern the learner is not ready for is
+     *     refused before a day exists. The pipeline plans again when it builds the
+     *     lesson; the two read the same cards and lessons, seconds apart.
+     *
+     *     Enqueued whatever the curriculum's generation mode: ``manual`` exists to
+     *     keep the model from being called unasked, and a drill calls no model.
+     *
+     *     A planner proposal still waiting to be committed was numbered against the
+     *     old day list, so committing it after this answers 409 and asks for a
+     *     re-proposal, as it does after any other change to the days.
+     */
+    post: operations["create_grammar_lesson_api_curriculum__curriculum_id__grammar_lessons_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/curriculum/{curriculum_id}/grammar-patterns": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Grammar Patterns
+     * @description The affix patterns a grammar lesson can drill, and whether this learner
+     *     understands enough roots for each. Empty for a language with no patterns.
+     */
+    get: operations["list_grammar_patterns_api_curriculum__curriculum_id__grammar_patterns_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/curriculum/{curriculum_id}/pipeline": {
     parameters: {
       query?: never;
@@ -2418,6 +2470,36 @@ export interface components {
       /** Was Created */
       was_created: boolean;
     };
+    /**
+     * CreateGrammarLessonRequest
+     * @description Body of POST /api/curriculum/{curriculum_id}/grammar-lessons.
+     */
+    CreateGrammarLessonRequest: {
+      /** Pattern */
+      pattern: string;
+    };
+    /**
+     * CreateGrammarLessonResponse
+     * @description Response of POST /api/curriculum/{curriculum_id}/grammar-lessons: the day
+     *     that was appended and what its drill was planned from. ``roots`` are
+     *     modelled before they are asked; ``new_roots`` are only asked.
+     */
+    CreateGrammarLessonResponse: {
+      /** Day */
+      day: number;
+      /** Lines */
+      lines: components["schemas"]["GrammarLessonLine"][];
+      /** New Roots */
+      new_roots: string[];
+      /** Pattern */
+      pattern: string;
+      /** Position */
+      position: number;
+      /** Roots */
+      roots: string[];
+      /** Title */
+      title: string;
+    };
     /** CreateItemRequest */
     CreateItemRequest: {
       /** Language Code */
@@ -2528,8 +2610,18 @@ export interface components {
       day: number;
       /** Focus */
       focus: string;
+      /**
+       * Kind
+       * @default thematic
+       */
+      kind: string;
       /** Learning Objective */
       learning_objective: string;
+      /**
+       * Pattern
+       * @default
+       */
+      pattern: string;
       /** Position */
       position: number;
       /** Story Guidance */
@@ -2564,8 +2656,12 @@ export interface components {
       day: number;
       /** Focus */
       focus: string;
+      /** Kind */
+      kind: string;
       /** Learning Objective */
       learning_objective: string;
+      /** Pattern */
+      pattern: string;
       /** Story Guidance */
       story_guidance: string;
       /** Title */
@@ -2808,6 +2904,33 @@ export interface components {
       system_prompt: string;
       /** User Prompt */
       user_prompt: string;
+    };
+    /**
+     * GrammarLessonLine
+     * @description One whole line a grammar lesson ends on.
+     */
+    GrammarLessonLine: {
+      /** Text */
+      text: string;
+      /** Translation */
+      translation: string;
+    };
+    /**
+     * GrammarPatternOption
+     * @description One element of GET /api/curriculum/{curriculum_id}/grammar-patterns.
+     *
+     *     ``roots`` are the roots this learner understands that the pattern can
+     *     drill; ``ready`` is whether that is enough to build a lesson from.
+     */
+    GrammarPatternOption: {
+      /** Key */
+      key: string;
+      /** Ready */
+      ready: boolean;
+      /** Roots */
+      roots: string[];
+      /** Title */
+      title: string;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -5216,6 +5339,72 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SetGenerationModeResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  create_grammar_lesson_api_curriculum__curriculum_id__grammar_lessons_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        curriculum_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateGrammarLessonRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CreateGrammarLessonResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  list_grammar_patterns_api_curriculum__curriculum_id__grammar_patterns_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        curriculum_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GrammarPatternOption"][];
         };
       };
       /** @description Validation Error */

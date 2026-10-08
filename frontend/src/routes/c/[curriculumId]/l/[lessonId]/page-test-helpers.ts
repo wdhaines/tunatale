@@ -94,6 +94,8 @@ export const curriculum = {
       collocations: ["kava"],
       learning_objective: "o",
       story_guidance: "",
+      kind: "thematic",
+      pattern: "",
     },
   ],
   proposed: null,

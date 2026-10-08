@@ -17,6 +17,8 @@ const proposed: Batch = {
       collocations: ["koliko stane", "eno kavo"],
       learning_objective: "ask prices",
       story_guidance: "haggling scene",
+      kind: "thematic",
+      pattern: "",
     },
     {
       day: 4,
@@ -26,6 +28,8 @@ const proposed: Batch = {
       collocations: ["jedilni list"],
       learning_objective: "order a meal",
       story_guidance: "",
+      kind: "thematic",
+      pattern: "",
     },
   ],
 };

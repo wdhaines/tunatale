@@ -15,7 +15,7 @@ import re
 import uuid
 from dataclasses import asdict
 
-from app.models.curriculum import Curriculum, CurriculumDay
+from app.models.curriculum import DAY_KINDS, Curriculum, CurriculumDay
 from app.storage.store import ContentStore
 
 
@@ -48,7 +48,9 @@ def validate_plan_days(days: object, *, start_day: int | None = None) -> None:
                 raise ValueError(f"days[{i}].day must be {expected} (got {actual})")
 
 
-_DAY_FIELDS = frozenset({"day", "title", "focus", "collocations", "learning_objective", "story_guidance"})
+_DAY_FIELDS = frozenset(
+    {"day", "title", "focus", "collocations", "learning_objective", "story_guidance", "kind", "pattern"}
+)
 
 
 def _validate_one_day(entry: object, index: int) -> None:
@@ -75,6 +77,12 @@ def _validate_one_day(entry: object, index: int) -> None:
     )
     if "story_guidance" in entry and not isinstance(entry["story_guidance"], str):
         raise ValueError(f"{path}.story_guidance must be a string")
+    # Both optional: an exported plan carries them (a grammar day would lose
+    # its drill on re-import otherwise), a hand-written or planner day need not.
+    if entry.get("kind", DAY_KINDS[0]) not in DAY_KINDS:
+        raise ValueError(f"{path}.kind must be one of {', '.join(DAY_KINDS)}")
+    if not isinstance(entry.get("pattern", ""), str):
+        raise ValueError(f"{path}.pattern must be a string")
 
 
 def _validate_collocations(entry: dict, path: str) -> None:

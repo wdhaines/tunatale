@@ -106,6 +106,10 @@ class Lesson:
     narrator_voice: str = NARRATOR_VOICE
     key_phrases: list[KeyPhraseInfo] = field(default_factory=list)
     generation_metadata: dict = field(default_factory=dict)
+    # ``thematic`` (a story) or ``grammar`` (an affix drill and nothing else);
+    # the same two values as ``CurriculumDay.kind``. On the lesson too, so that
+    # whatever holds a lesson knows what it is without finding its day.
+    kind: str = "thematic"
 
     def __post_init__(self) -> None:
         # The story LLM writes its own (unreliable) day number into the title;
@@ -116,6 +120,7 @@ class Lesson:
         data = {
             "title": self.title,
             "language_code": self.language_code,
+            "kind": self.kind,
             "narrator_voice": self.narrator_voice,
             "key_phrases": project_key_phrases(self.key_phrases),
             "sections": [
@@ -161,6 +166,7 @@ class Lesson:
             narrator_voice=data.get("narrator_voice", NARRATOR_VOICE),
             key_phrases=key_phrases,
             generation_metadata=data.get("generation_metadata", {}),
+            kind=data.get("kind", "thematic"),
         )
 
 

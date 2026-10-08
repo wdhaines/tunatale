@@ -110,7 +110,7 @@ def _lesson(code: str) -> Lesson:
     if code in _DRILLS:
         pattern_key, roots, line = _DRILLS[code]
         pattern = next(p for p in get_a1_morphology(code).patterns if p.key == pattern_key)
-        drill = build_affix_drill(code, pattern, roots=roots, line=line)
+        drill = build_affix_drill(code, pattern, roots=roots, lines=[line])
         sections.append(build_affix_drill_section(drill, narrator_voice=narrator, l2_voice=voices["female-1"]))
     return Lesson(title="A lesson", language_code=code, sections=sections, narrator_voice=narrator)
 

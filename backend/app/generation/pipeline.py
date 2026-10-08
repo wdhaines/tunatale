@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 
 from app.audio.render_service import render_lesson_audio
+from app.generation.grammar_lesson import build_grammar_lesson, find_pattern, plan_grammar_lesson
 from app.generation.publishing import CurriculumDayTarget, publish_lesson
 from app.generation.render_progress import RenderProgress
 from app.generation.story import StoryGenerationError
@@ -165,7 +166,10 @@ class LessonPipeline:
                 continue
             lesson_result = store.get_latest_lesson_by_day(curriculum_id, day)
             if lesson_result is None:
-                if not manual:
+                # Manual mode keeps the MODEL from being called unasked. A
+                # grammar day was asked for and calls no model, and its job
+                # lives in memory: a restart before it ran must not strand it.
+                if not manual or curriculum_day.kind == "grammar":
                     self.enqueue(language_code, curriculum_id, day, "generate", user_id=user_id)
             else:
                 lesson_id, lesson = lesson_result
@@ -352,6 +356,14 @@ class LessonPipeline:
         curriculum_day = curriculum_days[0]
         language = self._languages[language_code]
 
+        # Every route to a day's lesson ends here: the first generate, a retry,
+        # a regenerate. So this is the one place a grammar day has to turn off
+        # the road to the story generator, or regenerating a drill would write
+        # a story over it.
+        if curriculum_day.kind == "grammar":
+            await self._generate_grammar(record, store, srs_db, key, curriculum_day, language)
+            return
+
         record["state"] = "generating"
         record["updated_at"] = time.time()
         self._activity_log.record_pipeline(curriculum_id, day, "generating", "Generating story")
@@ -437,6 +449,61 @@ class LessonPipeline:
             # Transition to render step
             await self._render(record, store, key)
             return
+
+    async def _generate_grammar(
+        self, record: dict, store: ContentStore, srs_db, key: JobKey, curriculum_day, language
+    ) -> None:
+        """Build a grammar day's affix drill from the learner's cards and lessons, then render it.
+
+        No model call, so nothing here can be rate-limited and nothing is
+        retried: the same cards give the same answer. A day that cannot be
+        built FAILS and says why. It is never handed to the story generator.
+        """
+        user_id, language_code, curriculum_id, day = key
+
+        def fail(error: str) -> None:
+            record["state"] = "failed"
+            record["error"] = error
+            record["retryable"] = False
+            record["updated_at"] = time.time()
+            self._activity_log.record_pipeline(curriculum_id, day, "failed", error)
+
+        record["state"] = "generating"
+        record["attempts"] = 1
+        record["updated_at"] = time.time()
+        self._activity_log.record_pipeline(curriculum_id, day, "generating", "Building the affix drill")
+
+        if srs_db is None:
+            fail("A grammar lesson is built from your cards, and this deck has none to read")
+            return
+        pattern = find_pattern(language_code, curriculum_day.pattern)
+        if pattern is None:
+            fail(f"Unknown affix pattern {curriculum_day.pattern!r} for {language_code}")
+            return
+        try:
+            plan = plan_grammar_lesson(language_code, pattern, srs_db=srs_db, store=store, curriculum_id=curriculum_id)
+        except ValueError as e:
+            fail(str(e))
+            return
+
+        # srs_db=None on purpose: the lemma, UPOS and prewarm steps publish_lesson
+        # runs are for a story's text, and one of them may call the model.
+        record["lesson_id"] = await publish_lesson(
+            build_grammar_lesson(language, plan),
+            target=CurriculumDayTarget(
+                store=store,
+                language_code=language_code,
+                curriculum_id=curriculum_id,
+                day=day,
+                pipeline=self,
+                user_id=user_id,
+            ),
+            srs_db=None,
+            lemmatizer_kwargs={},
+            replace=record["force"],
+            llm=None,
+        )
+        await self._render(record, store, key)
 
     async def _render(self, record: dict, store: ContentStore, key: JobKey) -> None:
         _, _, curriculum_id, day = key

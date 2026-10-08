@@ -9,6 +9,11 @@ from dataclasses import asdict, dataclass, field
 from app.common.titles import strip_day_prefix
 from app.models.strategy import ReviewPressure
 
+# What a day's lesson is made from. ``thematic`` is a story the model writes;
+# ``grammar`` is a rule-built affix drill with no story and no model call
+# (``app.generation.grammar_lesson``).
+DAY_KINDS = ("thematic", "grammar")
+
 
 @dataclass
 class CurriculumDay:
@@ -26,10 +31,16 @@ class CurriculumDay:
     collocations: list[str]
     learning_objective: str
     story_guidance: str = ""
+    kind: str = "thematic"
+    # The affix pattern the day's lesson drills (``AffixPattern.key``). It lives
+    # on the DAY so that regenerating a grammar lesson rebuilds the same drill.
+    pattern: str = ""
 
     def __post_init__(self) -> None:
         if self.day < 1:
             raise ValueError(f"day must be ≥ 1, got {self.day}")
+        if self.kind not in DAY_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(DAY_KINDS)}, got {self.kind!r}")
         # Also normalizes titles already persisted with a stale prefix, since
         # from_json rebuilds every day through this constructor.
         self.title = strip_day_prefix(self.title)

@@ -54,6 +54,8 @@ const plan = (id: string, titles: Record<number, string>) => ({
     collocations: [],
     learning_objective: "",
     story_guidance: "",
+    kind: "thematic",
+    pattern: "",
   })),
 });
 

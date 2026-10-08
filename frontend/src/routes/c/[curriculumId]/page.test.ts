@@ -72,6 +72,8 @@ const day = (n: number, position = n) => ({
   collocations: ["kava"],
   learning_objective: `obj ${n}`,
   story_guidance: "",
+  kind: "thematic",
+  pattern: "",
 });
 
 const curriculum = {
