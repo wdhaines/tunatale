@@ -26,6 +26,7 @@ from app.generation.section_builder import (
     build_slow_translated_section,
     build_translated_section,
 )
+from app.generation.story_pattern import named_pattern, pattern_block, pattern_for_day
 from app.languages import get_story_text_normalizer
 from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
@@ -192,6 +193,20 @@ def build_story_prompts(
 
     system_prompt = build_story_system_prompt(language)
 
+    # The day's affix pattern (tunatale-ve4p.7). Read from the curriculum when
+    # there is one to read; with none, only a day that names its own pattern
+    # has one. A day with no pattern renders "" here, which is what keeps every
+    # prompt recorded before this block existed byte-identical.
+    curriculum = (
+        content_store.get_curriculum(curriculum_id) if content_store is not None and curriculum_id is not None else None
+    )
+    pattern = (
+        pattern_for_day(curriculum, curriculum_day)
+        if curriculum is not None
+        else named_pattern(language.code, curriculum_day)
+    )
+    affix_block = pattern_block(language.code, pattern, srs_db=srs_db) if pattern is not None else ""
+
     new_collocations = "\n".join(f"- {c}" for c in curriculum_day.collocations)
     user_prompt_template = get_strategy_prompt(strategy)
 
@@ -206,6 +221,7 @@ def build_story_prompts(
             review_collocations=build_review_block(review_words, review_pressure),
             source_block=_source_block(transcript),
             cefr_block=_build_cefr_block(cefr_level),
+            pattern_block=affix_block,
         )
 
     transcript = None

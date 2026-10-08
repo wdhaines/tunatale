@@ -259,7 +259,7 @@ STORY_PROMPT_WIDER_TEMPLATE = """\
 **Review Collocations to Include:**
 {review_collocations}
 
-**WIDER STRATEGY RULES**
+{pattern_block}**WIDER STRATEGY RULES**
 - Create NEW scenario contexts using familiar vocabulary
 - Maintain the SAME difficulty level as prior material
 - Introduce maximum 5 new words per scenario to maintain difficulty
@@ -286,7 +286,7 @@ STORY_PROMPT_DEEPER_TEMPLATE = """\
 **Review Collocations to Include:**
 {review_collocations}
 
-**DEEPER STRATEGY RULES**
+{pattern_block}**DEEPER STRATEGY RULES**
 - Enhance language complexity while keeping the same scenarios
 - 90%+ L2 dialogue (overrides the 80% floor above) — minimize English usage
 - Focus on sophisticated, authentic language patterns

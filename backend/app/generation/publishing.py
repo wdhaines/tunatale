@@ -6,6 +6,10 @@ bug that started this: creating a review session never rendered audio, while
 creating a lesson always did. ``publish_lesson`` is the one ordering every
 writer must share, and the ordering is load-bearing:
 
+-1. ``target.prepare(lesson)`` — finish the lesson with what only its
+   placement knows. For a curriculum day that is the closing affix drill of
+   the day's pattern (``app.generation.story_pattern``). First, so the section
+   it adds is resolved, tagged, written and rendered like every other.
 0. Lemma resolution, AWAITED and BEFORE the UPOS step, so the tags it reads
    already reflect context (``app.srs.lemma_resolver``; a no-op unless the
    language runs a table lemmatizer). *llm* is a required keyword so a new
@@ -45,6 +49,8 @@ from typing import Protocol
 from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
 from app.generation.lemma_annotation import _prewarm_lesson, annotate_chunk_upos_for_lesson
+from app.generation.story_pattern import add_day_drill
+from app.languages import get_language
 from app.models.lesson import Lesson
 from app.storage.lesson_io import sync_curriculum_day_title
 
@@ -60,6 +66,9 @@ _background_tasks: set[asyncio.Task] = set()
 
 class ContentTarget(Protocol):
     """Where a written Lesson goes, and what must follow it there."""
+
+    def prepare(self, lesson: Lesson) -> None:
+        """Finish *lesson* in place with what only its placement knows, before it is tagged."""
 
     def write(self, lesson: Lesson) -> str:
         """Persist the lesson and any placement bookkeeping. Returns content id."""
@@ -86,7 +95,8 @@ async def publish_lesson(
     replace: bool,
     llm,
 ) -> str:
-    """Lemmas + UPOS (awaited, pre-write) -> write -> invalidate -> prewarm -> render."""
+    """Prepare -> lemmas + UPOS (awaited, pre-write) -> write -> invalidate -> prewarm -> render."""
+    target.prepare(lesson)
     if srs_db is not None:
         from app.srs.lemma_resolver import resolve_lesson_lemmas
 
@@ -120,6 +130,18 @@ class CurriculumDayTarget:
         self._day = day
         self._pipeline = pipeline
         self._superseded_id: str | None = None
+
+    def prepare(self, lesson: Lesson) -> None:
+        """Append the closing drill of the day's affix pattern, when the day has one.
+
+        Here and not at the two call sites that generate or import a story, so
+        a lesson made by hand from the exported prompt ends on the same drill
+        as one the pipeline wrote. A grammar lesson and a lesson that already
+        has a drill are left alone (``add_closing_drill``).
+        """
+        add_day_drill(
+            lesson, get_language(self._language_code), self._store.get_curriculum(self._curriculum_id), self._day
+        )
 
     def write(self, lesson: Lesson) -> str:
         # A regenerate mints a FRESH id (mint_id is {slug}-{uuid4hex8}), so it
@@ -174,6 +196,9 @@ class ReviewSessionTarget:
         self._renderer = renderer
         self._audio_dir = audio_dir
         self._renders_in_flight = renders_in_flight
+
+    def prepare(self, lesson: Lesson) -> None:
+        """Nothing: a review session belongs to no curriculum day and has no pattern."""
 
     def write(self, lesson: Lesson) -> str:
         metadata = lesson.generation_metadata

@@ -592,3 +592,55 @@ class TestVoicesOnlyL2Drift:
         _rc, out = _run(store, monkeypatch, capsys, "--dry-run", "--voices-only")
 
         assert "kept stored text: key_phrases)" in out
+
+
+class TestTheClosingDrill:
+    """A rebuilt lesson ends on the affix drill a published one ends on (tunatale-ve4p.7).
+
+    The drill is not in the Story JSON; it is added when a lesson is published
+    into its day. A rebuild that forgot it would silently drop the drill, and
+    the contrast cards the listen reads off it, from a lesson that had both.
+    """
+
+    @staticmethod
+    def _store_with(story: dict) -> tuple[ContentStore, object]:
+        language = get_language("ceb")
+        store = ContentStore(":memory:")
+        day = CurriculumDay(day=1, title="A wake", focus="f", collocations=["haya"], learning_objective="o")
+        store.save_curriculum(
+            "funeral", Curriculum(id="funeral", topic="A funeral", language_code="ceb", cefr_level="A1", days=[day])
+        )
+        lesson = build_lesson_from_story(story, language=language)
+        store.save_lesson("wake-1", "funeral", 1, lesson)
+        return store, language
+
+    @staticmethod
+    def _wake(lines: list[tuple[str, str]]) -> dict:
+        return {
+            "title": "An Evening Wake",
+            "key_phrases": [{"phrase": "maayong gabii", "translation": "good evening"}],
+            "scenes": [
+                {
+                    "label": "At the wake",
+                    "lines": [{"speaker": "male-1", "text": text, "translation": english} for text, english in lines],
+                }
+            ],
+            "dialogue_glosses": [{"word": "kape", "translation": "coffee"}],
+        }
+
+    def test_a_story_that_carries_its_days_pattern_is_rebuilt_with_the_drill(self):
+        store, language = self._store_with(
+            self._wake([("Moadto ko sa haya.", "I am going to the wake."), ("Mouban ko ugma.", "I will come along.")])
+        )
+        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language)
+        assert rebuilt.generation_metadata["affix_drill"] == {
+            "pattern": "mo-mi",
+            "roots": ["adto", "uban"],
+            "new_roots": [],
+        }
+        assert rebuilt.sections[-1].section_type.value == "affix_drill"
+
+    def test_a_story_that_does_not_is_rebuilt_without_one(self):
+        store, language = self._store_with(self._wake([("Maayong gabii.", "Good evening.")]))
+        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language)
+        assert "affix_drill" not in rebuilt.generation_metadata
