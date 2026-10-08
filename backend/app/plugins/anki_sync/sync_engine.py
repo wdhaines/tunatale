@@ -51,6 +51,7 @@ from app.srs.anki_mirror.queue_stats import (
     resolve_relearning_steps,
 )
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
+from app.srs.contrast_card import cloze_note_text
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.fsrs import (
@@ -1375,7 +1376,14 @@ class AnkiSync:
                     # three describing the previous sentence — invisible until a
                     # later cloze produced the same text, computed a guid nothing
                     # matched, and minted a duplicate note (tunatale-keb0).
-                    cloze_text_update = item.syntactic_unit.source_sentence or ""
+                    #
+                    # Through `cloze_note_text`, the same function the mint
+                    # uses: a contrast card's field 0 is its grid above the
+                    # sentence, and sending the sentence alone would erase it.
+                    # For every other cloze it returns the sentence untouched.
+                    cloze_text_update = cloze_note_text(
+                        self._language_code, item.syntactic_unit, item.syntactic_unit.source_sentence or ""
+                    )
             else:
                 # Each role's field comes from the note's OWN notetype, through its
                 # profile: TT's vocab names (English / Note / Image, the L2 in the
@@ -1795,10 +1803,14 @@ class AnkiSync:
 
         for guid, item, coll_id in items:
             if item.syntactic_unit.card_type == "cloze":
-                cloze_text = make_cloze_text(
+                # Two texts, and they differ only for a contrast card: the
+                # sentence is what is SPOKEN, the note text is field 0, which
+                # for a contrast card is its grid above the sentence.
+                cloze_sentence = make_cloze_text(
                     item.syntactic_unit.text,
                     item.syntactic_unit.source_sentence or "",
                 )
+                cloze_text = cloze_note_text(self._language_code, item.syntactic_unit, cloze_sentence)
                 sentence_audio = self._db.get_sentence_audio_filename(coll_id)
                 if sentence_audio is None:
                     # tunatale-skyv. `_fallback_to_cloze` writes the TT row and stops
@@ -1824,7 +1836,7 @@ class AnkiSync:
                         await synthesize_cloze_audios(
                             self._db,
                             coll_id,
-                            uncloze_text(cloze_text),
+                            uncloze_text(cloze_sentence),
                             item.syntactic_unit.text,
                             voice=get_tts_voice(self._language_code),
                         )
