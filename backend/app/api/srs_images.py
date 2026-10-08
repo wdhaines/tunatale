@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from app.api.models import ImageCandidatesResponse, ImageItemResponse
 from app.cards.media import pixabay as _pixabay_mod
 from app.cards.media.pixabay import PixabaySearch
+from app.cards.media.query_llm import IMAGE_QUERY_MODEL_VERSION
 from app.cards.media.vocab_media import _drop_image_rows, replace_item_image
 from app.config import settings
 
@@ -92,7 +93,7 @@ async def get_image_candidates(
         cached = db.get_image_query(
             item.syntactic_unit.text,
             item.syntactic_unit.translation,
-            "v1",
+            IMAGE_QUERY_MODEL_VERSION,
         )
         query = cached if cached is not None else item.syntactic_unit.translation
 

@@ -162,6 +162,11 @@ function backendServer(i: number) {
 			// a real key. CI has none; empty here so a local run makes the same
 			// zero paid calls (backend/tests/conftest.py pins it the same way).
 			AZURE_SPEECH_KEY: '',
+			// Forvo needs no key (it is scraped), so blanking the two keys above
+			// does not stop it: the review queue's audio pre-stage fetched
+			// forvo.com for every seeded word (tunatale-hup0). Production sets the
+			// same flag. No spec asserts on a card's audio.
+			FORVO_ENABLED: 'false',
 			// E2E doesn't test lemmatization; force the fast lowercase lemmatizer
 			// so a local `lemmatizer_type=classla` in .env doesn't make the
 			// backend pay classla's ~26s model load and blow the webServer timeout.
