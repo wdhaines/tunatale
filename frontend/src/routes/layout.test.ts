@@ -490,6 +490,18 @@ describe("root +layout.svelte — the session guard", () => {
     // The page itself still renders — the layout wraps it, it does not replace it.
     expect(container.querySelector('[data-testid="slot"]')).not.toBeNull();
   });
+
+  it("renders no nav and no health banner on the invite route", async () => {
+    // An invitee is not signed in yet, so every nav destination would bounce
+    // them and the health banner reports on a backend they cannot reach.
+    nav.pathname = "/invite";
+
+    const { queryByRole, container } = renderLayout();
+
+    expect(queryByRole("link", { name: "TunaTale" })).toBeNull();
+    expect(container.querySelector("nav.global-nav")).toBeNull();
+    expect(container.querySelector('[data-testid="slot"]')).not.toBeNull();
+  });
 });
 
 describe("mediatrace URL switch", () => {

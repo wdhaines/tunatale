@@ -409,6 +409,10 @@ class Settings(BaseSettings):
     # app.auth.database.AuthDatabase.create_session. P1.2 rotates the token on
     # login rather than extending an existing session.
     session_ttl_days: int = 30
+    # Default lifetime of an invite token, read by
+    # app.auth.database.AuthDatabase.create_invite when no explicit ttl is
+    # given. Invites are single-use and are not extended.
+    invite_ttl_days: int = 7
     # Trusted proxy header for client-IP resolution.  Empty means "read the
     # socket peer", which is right for direct exposure and for local dev.
     # Behind the Caddy reverse proxy the socket peer is the proxy, so every

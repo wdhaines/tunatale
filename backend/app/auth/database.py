@@ -10,8 +10,9 @@ There is deliberately **no migration-function registry**.  The SRS package has
 one because it has 43 versions of history; auth has one version, and a registry
 with no entries is machinery whose tests would only shadow themselves.
 
-There is now a v2 (``login_attempts``, for login throttling) and it still needs
-no registry, because the change is a pure *addition*: the
+There is now a v2 (``login_attempts``, for login throttling) and a v3
+(``invites``, for invite-token registration) and neither needs a registry,
+because the change is a pure *addition*: the
 ``CREATE TABLE IF NOT EXISTS`` run at every open **is** the migration, and it is
 idempotent for a fresh database and an existing one alike.  The first change
 requiring an ``ALTER`` is what would force a registry.
@@ -26,11 +27,11 @@ from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
 
-from app.auth.models import Session, User
+from app.auth.models import Invite, Session, User
 from app.auth.passwords import hash_password, needs_rehash, verify_password
 from app.auth.tokens import hash_token, mint_token
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @cache
@@ -58,6 +59,14 @@ def _dummy_hash() -> str:
 
 class EmailExistsError(ValueError):
     """Raised when attempting to create a user with an already-registered email."""
+
+
+class InvalidInviteError(ValueError):
+    """Raised when an invite is unknown, expired, or already redeemed."""
+
+
+class NoAccountsError(RuntimeError):
+    """Raised when minting an invite on a store that has no accounts yet."""
 
 
 class SchemaTooNewError(RuntimeError):
@@ -103,6 +112,16 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 """
 _CREATE_INDEX_LOGIN_ATTEMPTS = """\
 CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(scope, subject, attempted_at)
+"""
+
+_CREATE_INVITES = """\
+CREATE TABLE IF NOT EXISTS invites (
+    token_hash  TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    redeemed_at TEXT,
+    redeemed_by INTEGER REFERENCES users(id)
+)
 """
 
 SCOPE_IP = "ip"
@@ -223,6 +242,7 @@ class AuthDatabase:
         conn.execute(_CREATE_INDEXES_EXPIRES)
         conn.execute(_CREATE_LOGIN_ATTEMPTS)
         conn.execute(_CREATE_INDEX_LOGIN_ATTEMPTS)
+        conn.execute(_CREATE_INVITES)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         conn.commit()
 
@@ -534,6 +554,108 @@ class AuthDatabase:
         """
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM login_attempts").fetchone()[0]
+
+    # ── Invite methods ───────────────────────────────────────────────────
+
+    def create_invite(self, *, ttl: timedelta | None = None, now: datetime | None = None) -> tuple[str, Invite]:
+        """Mint an invite and return ``(plaintext_token, Invite)``.
+
+        The plaintext is returned **once and never stored**; the row holds only
+        ``hash_token(token)``. ``ttl=None`` means
+        ``timedelta(days=settings.invite_ttl_days)``. Refuses to mint into a
+        store with no accounts — an invite redeemed first would become the
+        owner of the flat databases.
+        """
+        if ttl is None:
+            from app.config import settings
+
+            ttl = timedelta(days=settings.invite_ttl_days)
+        if now is None:
+            now = datetime.now(UTC)
+        expires = now + ttl
+        token = mint_token()
+        token_h = hash_token(token)
+        with self._get_conn() as conn:
+            # Opportunistic purge, in the same transaction as the insert: an
+            # expired unredeemed row is still a credential on disk. Only
+            # UNREDEEMED rows go — a redeemed row's hash is useless and it is
+            # the record of who came in on which invite.
+            #
+            # It also runs FIRST for the reason ``redeem_invite`` leads with
+            # its UPDATE: a transaction that opens with a write waits for the
+            # lock, while one that reads and then upgrades fails with "database
+            # is locked" if a redemption commits in between.
+            conn.execute(
+                "DELETE FROM invites WHERE redeemed_at IS NULL AND expires_at <= ?",
+                (_to_iso(now),),
+            )
+            if conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None:
+                conn.rollback()
+                msg = "cannot mint an invite before the first account exists"
+                raise NoAccountsError(msg)
+            conn.execute(
+                "INSERT INTO invites (token_hash, created_at, expires_at, redeemed_at, redeemed_by)"
+                " VALUES (?, ?, ?, NULL, NULL)",
+                (token_h, _to_iso(now), _to_iso(expires)),
+            )
+            self._commit(conn)
+        invite = Invite(
+            token_hash=token_h,
+            created_at=now,
+            expires_at=expires,
+            redeemed_at=None,
+            redeemed_by=None,
+        )
+        return token, invite
+
+    def redeem_invite(self, token: str, email: str, password: str, *, now: datetime | None = None) -> User:
+        """Spend an invite to create an account, and return the new user.
+
+        The order of operations is the security property (see the locked tests):
+        the token is CLAIMED atomically before anything else, the password is
+        hashed only once the token is known good, and a failed insert undoes the
+        claim so the invite stays usable.
+        """
+        if now is None:
+            now = datetime.now(UTC)
+        norm = _normalize_email(email)
+        token_h = hash_token(token)
+        with self._get_conn() as conn:
+            # The FIRST statement is the claim, not a SELECT: under WAL a
+            # read-then-upgrade transaction fails with "database is locked"
+            # instead of waiting, and a check-then-write lets two concurrent
+            # callers both pass the check.
+            cursor = conn.execute(
+                "UPDATE invites SET redeemed_at = ? WHERE token_hash = ? AND redeemed_at IS NULL AND expires_at > ?",
+                (_to_iso(now), token_h, _to_iso(now)),
+            )
+            if cursor.rowcount != 1:
+                msg = "invite is unknown, expired, or already redeemed"
+                raise InvalidInviteError(msg)
+            # Hashed only now: argon2 is deliberately slow and this route is
+            # reachable unauthenticated, so it must not run for a dead token.
+            hashed = hash_password(password)
+            try:
+                conn.execute(
+                    "INSERT INTO users (email, password_hash, created_at, is_active) VALUES (?, ?, ?, 1)",
+                    (norm, hashed, _to_iso(now)),
+                )
+            except sqlite3.IntegrityError:
+                # Undo the claim with the insert. A file store discards the
+                # pending work when the exception leaves ``_get_conn``; the
+                # in-memory store holds ONE connection and needs it explicit.
+                conn.rollback()
+                raise EmailExistsError(f"Email {norm!r} already registered") from None
+            row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute("UPDATE invites SET redeemed_by = ? WHERE token_hash = ?", (row_id, token_h))
+            self._commit(conn)
+        return User(
+            id=row_id,
+            email=norm,
+            password_hash=hashed,
+            created_at=now,
+            is_active=True,
+        )
 
     # ── Internal helpers ─────────────────────────────────────────────────
 

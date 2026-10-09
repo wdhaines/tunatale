@@ -383,6 +383,30 @@ class LoginResponse(BaseModel):
     email: str
 
 
+class InviteRedeemRequest(BaseModel):
+    """Body of POST /api/auth/invite/redeem.
+
+    ``email`` carries its own bounds rather than ``EmailStr`` (whose package is
+    not installed); ``password`` is capped because the endpoint is
+    unauthenticated and argon2 is slow — an unbounded password is a CPU-burn
+    primitive.
+    """
+
+    token: str
+    email: str = Field(max_length=254, pattern=r"^[^@\s]+@[^@\s]+$")
+    password: str = Field(min_length=8, max_length=1024)
+
+
+class InviteRedeemResponse(BaseModel):
+    """Response of POST /api/auth/invite/redeem.
+
+    The email and nothing else: redeeming creates the identity but sets no
+    cookie, so the person signs in through ``/api/auth/login`` afterwards.
+    """
+
+    email: str
+
+
 class MeResponse(BaseModel):
     """Response of GET /api/auth/me.
 

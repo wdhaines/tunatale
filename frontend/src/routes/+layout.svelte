@@ -189,10 +189,11 @@
 	const onReview = $derived(path === '/review');
 	const onCards = $derived(path.startsWith('/cards'));
 	const onSettings = $derived(path.startsWith('/settings'));
-	// The login page carries no chrome: every nav destination behind it needs a
-	// session, and the health banner reports on a backend we have not been
-	// allowed to ask about yet.
-	const onLogin = $derived(path === '/login');
+	// The public routes carry no chrome: every nav destination behind them needs
+	// a session, and the health banner reports on a backend we have not been
+	// allowed to ask about yet. `/invite` joins `/login` so an invitee sees the
+	// redeem form alone rather than the app's shell.
+	const onPublic = $derived(path === '/login' || path === '/invite');
 </script>
 
 <svelte:head>
@@ -213,7 +214,7 @@
 	{/if}
 </main>
 {:else}
-{#if !onLogin}
+{#if !onPublic}
 <LlmHealthBanner />
 <PresetChangeBanner syncAvailable={languageStore.syncAvailable} />
 

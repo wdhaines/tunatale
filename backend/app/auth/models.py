@@ -35,3 +35,20 @@ class Session:
     created_at: datetime
     expires_at: datetime
     last_seen_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class Invite:
+    """A single-use registration invite.
+
+    ``token_hash`` is the SHA-256 of the invite token; the plaintext is
+    returned to the caller once and never stored. ``redeemed_at`` /
+    ``redeemed_by`` are ``None`` until the invite is spent, and their presence
+    is the record that the invite was used and by whom.
+    """
+
+    token_hash: str
+    created_at: datetime
+    expires_at: datetime
+    redeemed_at: datetime | None
+    redeemed_by: int | None

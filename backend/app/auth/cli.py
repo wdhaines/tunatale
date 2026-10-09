@@ -1,11 +1,13 @@
 """Account management from the command line.
 
-There is deliberately **no self-serve signup** in Phases 1–3, so this is how
-every account comes into existence — including the first one, on a freshly
-deployed box. See ``docs/deployment.md`` § "Creating the first account" for the
-exact ``docker compose exec`` invocation.
+There is deliberately **no self-serve signup**: every account comes into
+existence either because an operator ran ``create-user`` here — including the
+first one, on a freshly deployed box — or because someone redeemed an
+admin-minted invite from ``create-invite``. See ``docs/deployment.md`` §
+"Creating the first account" for the exact ``docker compose exec`` invocation.
 
     uv run python -m app.auth.cli create-user alice@example.com
+    uv run python -m app.auth.cli create-invite
     uv run python -m app.auth.cli set-password alice@example.com
     uv run python -m app.auth.cli list-users
     uv run python -m app.auth.cli deactivate-user alice@example.com
@@ -34,9 +36,10 @@ import getpass
 import os
 import sys
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import TextIO
 
-from app.auth.database import AuthDatabase, EmailExistsError
+from app.auth.database import AuthDatabase, EmailExistsError, NoAccountsError
 from app.config import settings
 
 #: Environment variable read as the password when set and non-empty.
@@ -94,6 +97,33 @@ def _cmd_create_user(args: argparse.Namespace, env: Mapping[str, str], stdin: Te
     finally:
         db.close()
     print(f"created user {user.id}: {user.email}", file=out)
+    return EXIT_OK
+
+
+def _cmd_create_invite(args: argparse.Namespace, env: Mapping[str, str], stdin: TextIO, out: TextIO) -> int:
+    """Mint a single-use invite and print its redeem link.
+
+    The token goes in the URL FRAGMENT (``/invite#…``), never a query string: a
+    fragment is not sent to the server, so it stays out of the reverse proxy's
+    access log and out of any ``Referer``. Only its hash is stored, so a lost
+    link cannot be recovered — mint a new one.
+    """
+    if args.ttl_days is not None and args.ttl_days < 1:
+        raise InputError("--ttl-days must be at least 1")
+    db = _open_db()
+    try:
+        ttl = timedelta(days=args.ttl_days) if args.ttl_days is not None else None
+        token, invite = db.create_invite(ttl=ttl)
+    except NoAccountsError:
+        print(
+            "create-invite: no accounts exist yet — run create-user first",
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
+    finally:
+        db.close()
+    print(f"invite created; expires {invite.expires_at.isoformat()}", file=out)
+    print(f"redeem at: /invite#{token}", file=out)
     return EXIT_OK
 
 
@@ -167,6 +197,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_create = sub.add_parser("create-user", help="create an account (password from stdin or $TT_AUTH_PASSWORD)")
     p_create.add_argument("email")
     p_create.set_defaults(handler=_cmd_create_user)
+
+    p_invite = sub.add_parser("create-invite", help="mint a single-use invite link")
+    p_invite.add_argument(
+        "--ttl-days", type=int, default=None, help="days until the invite expires (default: the setting)"
+    )
+    p_invite.set_defaults(handler=_cmd_create_invite)
 
     p_set = sub.add_parser("set-password", help="change a password and revoke that account's sessions")
     p_set.add_argument("email")

@@ -504,6 +504,15 @@ export const en = {
   "login.tryAgainInMinutes": ". Try again in about {count} minutes",
   "login.tryAgainInSeconds": ". Try again in {count} seconds",
 
+  // invite/+page.svelte
+  "invite.pageTitle": "Accept invite",
+  "invite.lede": "Choose an email and password to set up your account.",
+  "invite.tokenLabel": "Invite token",
+  "invite.emailLabel": "Email",
+  "invite.passwordLabel": "Password",
+  "invite.redeeming": "Creating account…",
+  "invite.redeem": "Create account",
+
   // c/[curriculumId]/l/[lessonId]/+page.svelte
   "lessonPage.synced": "Synced with AnkiWeb",
   "lessonPage.confirmRegenerate":

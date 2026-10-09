@@ -262,6 +262,41 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/invite/redeem": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Invite Redeem
+     * @description Create an account from an admin-minted invite.
+     *
+     *     **Unauthenticated on purpose:** creating an account from an invite cannot
+     *     require already having one. The invite token is the credential — 256 bits,
+     *     admin-minted, single-use and expiring — so, like ``login``, this route
+     *     requires no session.
+     *
+     *     **Every dead token gets one indistinguishable answer.** Unknown, expired
+     *     and already-redeemed all raise the same 403 with the same body, because
+     *     telling them apart would tell a stranger which strings were once real
+     *     invites. The token is judged BEFORE the email is touched, so the endpoint
+     *     is not an account-enumeration oracle for anyone without a live invite.
+     *
+     *     **No session is created.** Redeeming an invite yields an identity only; the
+     *     person signs in through ``/api/auth/login`` afterwards, so there is exactly
+     *     one way in and it carries the throttle.
+     */
+    post: operations["invite_redeem_api_auth_invite_redeem_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/login": {
     parameters: {
       query?: never;
@@ -3148,6 +3183,34 @@ export interface components {
       translation: string;
     };
     /**
+     * InviteRedeemRequest
+     * @description Body of POST /api/auth/invite/redeem.
+     *
+     *     ``email`` carries its own bounds rather than ``EmailStr`` (whose package is
+     *     not installed); ``password`` is capped because the endpoint is
+     *     unauthenticated and argon2 is slow — an unbounded password is a CPU-burn
+     *     primitive.
+     */
+    InviteRedeemRequest: {
+      /** Email */
+      email: string;
+      /** Password */
+      password: string;
+      /** Token */
+      token: string;
+    };
+    /**
+     * InviteRedeemResponse
+     * @description Response of POST /api/auth/invite/redeem.
+     *
+     *     The email and nothing else: redeeming creates the identity but sets no
+     *     cookie, so the person signs in through ``/api/auth/login`` afterwards.
+     */
+    InviteRedeemResponse: {
+      /** Email */
+      email: string;
+    };
+    /**
      * ItemDirections
      * @description SrsItemResponse.directions; production is None for single-template notes.
      */
@@ -5062,6 +5125,39 @@ export interface operations {
         };
         content: {
           "application/octet-stream": unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  invite_redeem_api_auth_invite_redeem_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InviteRedeemRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InviteRedeemResponse"];
         };
       };
       /** @description Validation Error */
