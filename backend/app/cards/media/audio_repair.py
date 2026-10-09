@@ -16,12 +16,21 @@ they come up, so an unseen card costs no metered render.
 
 Nothing here opens an Anki file, and no media file is deleted (the media dir is
 shared by DBs this call cannot see — tunatale-ja9q).
+
+A second run must be free (tunatale-2f5a). Nothing records that a card has been
+redone except the name of its audio file: this repair and the audio pre-stage
+are the only writers of ``<prefix>_<stem>_<sha8>.mp3``, so a card whose word
+audio carries such a name of its own is marked ``repaired`` in the plan. The
+script leaves those out unless told to force them; without that, running it
+again dropped every clip the first run stored and rendered the same metered TTS
+a second time.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Collection
 from typing import Any, NamedTuple
 
@@ -39,6 +48,7 @@ class AudioRepair(NamedTuple):
     old_filename: str | None  # None: the card had no word audio to drop
     seen: bool  # a learner has met it, so it is first in line for a TTS render
     linked: bool  # has an Anki note, whose Audio field the next sync rewrites
+    repaired: bool  # its word audio already has a content-hash name of its own: the repair or the pre-stage was here
 
 
 class AudioRepairReport(NamedTuple):
@@ -48,11 +58,31 @@ class AudioRepairReport(NamedTuple):
     awaiting_tts_unseen: int = 0
 
 
-def plan_audio_repair(db: Any, *, sources: Collection[str], words: Collection[str] = ()) -> list[AudioRepair]:
+def _has_content_hash_name(filename: str | None, text: str, language_code: str) -> bool:
+    """Whether *filename* is one the pre-stage or this repair wrote for this card.
+
+    ``tts_<stem>_<sha8>.mp3`` for a render, ``<language>_<stem>_<sha8>.mp3`` for
+    a Forvo recording, and nothing looser: a name that merely ends in eight hex
+    letters (a legacy ``tts_kape_deadbeef.mp3``), or one from another language's
+    Forvo section, is exactly the wrong audio this exists to redo.
+    """
+    if filename is None:
+        return False
+    return any(
+        re.fullmatch(re.escape(safe_stem(text, prefix)) + r"_[0-9a-f]{8}\.mp3", filename)
+        for prefix in ("tts", language_code)
+    )
+
+
+def plan_audio_repair(
+    db: Any, *, sources: Collection[str], words: Collection[str] = (), language_code: str
+) -> list[AudioRepair]:
     """Every vocab card whose ``source`` is in *sources* or whose text is in *words*.
 
     Named by the caller, not inferred: which cards carry the wrong audio is a
     fact about how they were minted, and nothing in a media row records it.
+    Cards already redone are still listed, marked ``repaired``; leaving them
+    out is the caller's decision.
     """
     rows, _ = db.list_collocations(limit=1_000_000)
     plan = []
@@ -61,14 +91,17 @@ def plan_audio_repair(db: Any, *, sources: Collection[str], words: Collection[st
         if unit.card_type != "vocab" or not (unit.source in sources or unit.text in words):
             continue
         seen = any(d.state.value not in _OUT_OF_ROTATION for d in item.directions.values())
+        old_filename = db.get_audio_filename(coll_id)
+        repaired = _has_content_hash_name(old_filename, unit.text, language_code)
         plan.append(
             AudioRepair(
                 coll_id,
                 unit.text,
                 unit.translation,
-                db.get_audio_filename(coll_id),
+                old_filename,
                 seen,
                 item.anki_note_id is not None,
+                repaired,
             )
         )
     return plan
