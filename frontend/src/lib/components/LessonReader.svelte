@@ -86,6 +86,13 @@
 	const drillOnly = $derived(isDrillOnly(content));
 	const mode = $derived(drillOnly ? 'listen' : lessonModePref.mode);
 	const recallInline = $derived(mode === 'read' && audio != null && playerCollapsedPref.collapsed);
+
+	// The player claims `controller` as it is built and cannot safely release
+	// it (see its cleanup), so the release is here: no audio means no player,
+	// and the transcript must not offer ▶ against a destroyed controller.
+	$effect.pre(() => {
+		if (!audio) controller = null;
+	});
 </script>
 
 <!-- The sticky card owns everything reached for mid-lesson: the title, the

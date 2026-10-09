@@ -553,7 +553,13 @@
 
 		return () => {
 			ctrl.destroy();
-			controller = null;
+			// The binding is NOT released here; LessonReader does that when there
+			// is no player. On a lesson-to-lesson navigation its {#key} builds the
+			// next player before this cleanup runs, so the binding already holds
+			// THAT player's controller, and nulling it hid every transcript ▶
+			// until a reload. Nor can this cleanup tell whose it is: a teardown
+			// reads state as it was BEFORE the change that triggered it, and the
+			// binding holds a state proxy, never `ctrl` itself.
 		};
 	});
 </script>

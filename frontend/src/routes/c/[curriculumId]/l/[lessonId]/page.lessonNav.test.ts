@@ -27,7 +27,7 @@ import { syncStore } from "$lib/stores/sync.svelte";
 import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
 import { pipelineStore } from "$lib/stores/pipeline.svelte";
 import Page from "./+page.svelte";
-import { curriculum, lesson, audio, stubViewport } from "./page-test-helpers";
+import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
 
 const mockGetProgress = vi.mocked(api.getCurriculumProgress);
 const mockGetTranscript = vi.mocked(api.getTranscript);
@@ -331,6 +331,85 @@ describe("hands-free carries on into the next day", () => {
     } finally {
       cap.restore();
     }
+  });
+});
+
+describe("the transcript's ▶ buttons across a lesson-to-lesson navigation", () => {
+  // The day pager and the hands-free hand-off both swap `data` on the SAME page
+  // component, so the reader's {#key audio.audio_id} builds the next lesson's
+  // player BEFORE it tears the previous one down. The outgoing player's cleanup
+  // used to null the bound controller unconditionally — after the incoming one
+  // had set it — and the transcript, handed null, hid every ▶ until a reload.
+  // Each lesson needs its own audio ids: an unchanged key would swap nothing.
+  function audioFor(n: number) {
+    return {
+      ...trackAudio,
+      audio_id: `a${n}`,
+      lesson_id: `l${n}`,
+      sections: trackAudio.sections.map((s) => ({
+        ...s,
+        audio_id: `l${n}-${s.audio_id}`,
+        cues: s.cues.map((c) =>
+          s.section_type === "key_phrases"
+            ? { ...c, ref: { kind: "key_phrase" as const, target_index: 0 } }
+            : c,
+        ),
+      })),
+    };
+  }
+
+  it("keeps the ▶ on the lesson navigated to", async () => {
+    mockGetProgress.mockResolvedValue([d(1, 1, "l1"), d(2, 2, "l2")]);
+    const cap = captureAudio();
+    try {
+      const { container, rerender } = render(Page, {
+        props: { data: { curriculum, lesson, audio: audioFor(1), transcript } },
+      });
+      await waitFor(() => expect(container.querySelectorAll(".seek-btn").length).toBe(1));
+      const playersBefore = cap.els.length;
+
+      await rerender({
+        data: {
+          curriculum,
+          lesson: { ...lesson, id: "l2", day: 2 },
+          audio: audioFor(2),
+          transcript: { ...transcript, lesson_id: "l2" },
+        },
+      });
+
+      // The premise: a second player really was built, so the first one's
+      // cleanup has run. Without this the assertion below passes on a page
+      // that never swapped.
+      await waitFor(() => expect(cap.els.length).toBeGreaterThan(playersBefore));
+      await waitFor(() => expect(container.querySelectorAll(".seek-btn").length).toBe(1));
+    } finally {
+      cap.restore();
+    }
+  });
+
+  // The other half: the player no longer releases the binding itself, so when
+  // one goes away with nothing replacing it the reader must, or the transcript
+  // keeps offering ▶ against a destroyed controller.
+  it("drops the ▶ when the lesson navigated to has no audio", async () => {
+    mockGetProgress.mockResolvedValue([d(1, 1, "l1"), d(2, 2, "l2")]);
+    const { container, rerender } = render(Page, {
+      props: { data: { curriculum, lesson, audio: audioFor(1), transcript } },
+    });
+    await waitFor(() => expect(container.querySelectorAll(".seek-btn").length).toBe(1));
+
+    await rerender({
+      data: {
+        curriculum,
+        lesson: { ...lesson, id: "l2", day: 2 },
+        audio: null,
+        transcript: { ...transcript, lesson_id: "l2" },
+      },
+    });
+
+    await waitFor(() => expect(container.querySelector(".player")).toBeNull());
+    // The key phrase is still listed — only its ▶ is gone.
+    expect(container.querySelectorAll(".key-phrases-list li").length).toBe(1);
+    expect(container.querySelectorAll(".seek-btn").length).toBe(0);
   });
 });
 
