@@ -157,6 +157,20 @@ async def test_a_multi_word_drill_step_is_spoken_from_the_ipa_of_its_words(tmp_p
     assert planned["phonemes"] == {"yong": "ˈjoŋ"}
 
 
+async def test_a_multi_word_affix_drill_step_is_spoken_from_the_ipa_of_its_words(tmp_path):
+    """The affix drill builds lines up the Key Phrases way (tunatale-ve4p.20), so
+    its multi-word steps take the Key Phrases reading too: a whole line and a
+    piece like 'moadto ko.' would otherwise reach Gemini as bare text, the path
+    that said 'ugma' as 'uglak'. Tagalog stays plain, for the same reason as above."""
+    drill = _lesson("ceb", [_ceb(_PHRASE)], section_type=SectionType.AFFIX_DRILL)
+    [step] = await _render(tmp_path, drill, get_phoneme_planner("ceb"), "ceb-PH")
+    assert step["phonemes"] == _PHRASE_IPAS
+
+    tl_drill = _lesson("tl", [_tl(_PHRASE)], section_type=SectionType.AFFIX_DRILL)
+    [tl_step] = await _render(tmp_path, tl_drill, get_phoneme_planner("tl"), "fil-PH")
+    assert tl_step["phonemes"] is None
+
+
 async def test_a_punctuated_chunk_keys_its_ipa_by_the_bare_word(tmp_path):
     lesson = _lesson("tl", [_tl("bing?", source_word="libing?", syllable_span=(1, 2))])
 

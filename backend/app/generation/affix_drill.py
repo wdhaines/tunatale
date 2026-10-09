@@ -3,7 +3,9 @@
 Built with no model call. For one pattern (Cebuano ``mag-`` / ``nag-``) and a
 handful of roots the learner knows, the script is:
 
-1. **Meet the pair.** Each root, then each of its forms after its English.
+1. **Meet the pair.** "Listen and repeat", then each root, then each of its
+   forms after its English, built up the Key Phrases way (whole, the pieces
+   from the end, whole again: the owner's Pimsleur verdict, tunatale-ve4p.16).
 2. **Your turn.** Each form asked by its English, done-first so it is not an
    echo of the order just modelled; the answer follows.
 3. **New on this root.** Roots named but NOT modelled: the learner has to
@@ -11,7 +13,8 @@ handful of roots the learner knows, the script is:
 4. **Once more, mixed**, when asked for: every form again, a different root
    each time. In rounds 2 and 3 a root's forms are asked back to back, so the
    second is half given away by the first; here it is not.
-5. **Whole lines**, when the caller supplies any.
+5. **Whole lines**, when the caller supplies any: every line taught first,
+   built up like a form, and only then asked for (tunatale-ve4p.20).
 
 Two things can stop a root being drilled, and both DROP it with a reason
 rather than guess: the language cannot vouch for every form
@@ -29,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.generation.section_builder import build_word_breakdown_spans
 from app.languages import get_a1_morphology
 from app.srs.a1_morphology import AffixPattern
 
@@ -37,16 +41,22 @@ MIN_ROOTS = 2
 _NO_PATTERNS = "the language registers no affix patterns"
 _NO_FORMS = "native news does not use every form"
 _NO_ENGLISH = "no checked English for this root in this pattern"
+_LISTEN = "Listen and repeat."
 
 
 @dataclass(frozen=True)
 class DrillStep:
     """One spoken line. ``model`` is said for the learner, ``prompt`` asks, and
-    ``answer`` follows the pause a prompt leaves."""
+    ``answer`` follows the pause a prompt leaves.
+
+    A piece of a built-up word carries the word and its syllable span, as a
+    Key Phrases piece does, so it is voiced from the word's reading."""
 
     kind: Literal["model", "prompt", "answer"]
     text: str
     language_code: str
+    source_word: str | None = None
+    span: tuple[int, int] | None = None
 
 
 @dataclass
@@ -103,6 +113,19 @@ def _named(found: DrillRoot, language_code: str) -> list[DrillStep]:
     return [DrillStep("model", found.english, "en"), DrillStep("model", found.root, language_code)]
 
 
+def _taught(english: str, text: str, language_code: str) -> list[DrillStep]:
+    """*text* after its English, built up as Key Phrases builds a phrase.
+
+    The breakdown opens and closes on the whole of *text*, so the learner hears
+    it, repeats it piece by piece, and hears it whole again; every target-language
+    step leaves its own repeat gap (``pause_calculator``).
+    """
+    return [DrillStep("model", english, "en")] + [
+        DrillStep("model", chunk.text, language_code, chunk.source_word, chunk.span)
+        for chunk in build_word_breakdown_spans(text, language_code)
+    ]
+
+
 def _mixed(found: list[DrillRoot], language_code: str) -> list[DrillStep]:
     """Every form of every root, once, with no two neighbours on the same root.
 
@@ -150,10 +173,11 @@ def build_affix_drill(
         why = "; ".join(f"{root}: {reason}" for root, reason in drill.dropped) or "none were given"
         raise ValueError(f"a {pattern.key} drill needs at least {MIN_ROOTS} roots, got {len(modelled)} usable ({why})")
 
+    drill.steps.append(DrillStep("model", _LISTEN, "en"))
     for found in modelled:
         drill.steps += _named(found, language_code)
         for form, english in found.cells:
-            drill.steps += [DrillStep("model", english, "en"), DrillStep("model", form, language_code)]
+            drill.steps += _taught(english, form, language_code)
     for found in modelled:
         drill.steps += _prompts(found, language_code)
     unmodelled = usable(new_roots or [])
@@ -161,6 +185,10 @@ def build_affix_drill(
         drill.steps += _named(found, language_code) + _prompts(found, language_code)
     if again:
         drill.steps += _mixed([*modelled, *unmodelled], language_code)
-    for text, english in lines or []:
-        drill.steps += [DrillStep("prompt", f"Say: {english}", "en"), DrillStep("answer", text, language_code)]
+    if lines:
+        drill.steps.append(DrillStep("model", _LISTEN, "en"))
+        for text, english in lines:
+            drill.steps += _taught(english, text, language_code)
+        for text, english in lines:
+            drill.steps += [DrillStep("prompt", f"Say: {english}", "en"), DrillStep("answer", text, language_code)]
     return drill

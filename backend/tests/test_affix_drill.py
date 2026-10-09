@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from app.generation.affix_drill import MIN_ROOTS, DrillRoot, DrillStep, build_affix_drill, drill_root
+from app.generation.section_builder import build_word_breakdown_spans
 from app.languages import get_a1_morphology
 
 _PATTERNS = {p.key: p for p in get_a1_morphology("ceb").patterns}
@@ -52,7 +53,33 @@ def test_a_language_without_patterns_cannot_drill():
     assert drill_root("no", "gå", _MAG_NAG) == "the language registers no affix patterns"
 
 
-def test_the_script_is_model_then_your_turn_then_new_roots_then_the_line():
+def _built(text: str) -> list[DrillStep]:
+    """*text* the way Key Phrases builds it up: whole, the pieces from the end, whole again."""
+    return [DrillStep("model", c.text, "ceb", c.source_word, c.span) for c in build_word_breakdown_spans(text, "ceb")]
+
+
+def test_a_new_form_is_built_up_the_way_key_phrases_builds_a_phrase():
+    """The owner's ear verdict (tunatale-ve4p.16): English, then the Cebuano, room
+    to repeat, then the Cebuano again; for something brand new, the Key Phrases
+    breakdown. The breakdown opens and closes on the whole form, so it IS the
+    'say it, then say it again'; every Cebuano step leaves its repeat gap.
+
+    Pinned as a literal once, so the shape is visible without the builder."""
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
+
+    start = drill.steps.index(DrillStep("model", "will walk", "en"))
+    assert drill.steps[start : start + 7] == [
+        DrillStep("model", "will walk", "en"),
+        DrillStep("model", "maglakaw", "ceb"),
+        DrillStep("model", "kaw", "ceb", "maglakaw", (2, 3)),
+        DrillStep("model", "la", "ceb", "maglakaw", (1, 2)),
+        DrillStep("model", "lakaw", "ceb", "maglakaw", (1, 3)),
+        DrillStep("model", "mag", "ceb", "maglakaw", (0, 1)),
+        DrillStep("model", "maglakaw", "ceb"),
+    ]
+
+
+def test_the_script_is_model_then_your_turn_then_new_roots_then_the_lines():
     drill = build_affix_drill(
         "ceb",
         _MAG_NAG,
@@ -62,19 +89,21 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_line():
     )
     assert drill.dropped == []
     assert drill.steps == [
-        # Meet the pair: the root, then each form after its English.
+        # Meet the pair: the round is announced, then the root, then each form
+        # after its English, built up.
+        DrillStep("model", "Listen and repeat.", "en"),
         DrillStep("model", "walk", "en"),
         DrillStep("model", "lakaw", "ceb"),
         DrillStep("model", "will walk", "en"),
-        DrillStep("model", "maglakaw", "ceb"),
+        *_built("maglakaw"),
         DrillStep("model", "walked", "en"),
-        DrillStep("model", "naglakaw", "ceb"),
+        *_built("naglakaw"),
         DrillStep("model", "pray", "en"),
         DrillStep("model", "ampo", "ceb"),
         DrillStep("model", "will pray", "en"),
-        DrillStep("model", "mag-ampo", "ceb"),
+        *_built("mag-ampo"),
         DrillStep("model", "prayed", "en"),
-        DrillStep("model", "nag-ampo", "ceb"),
+        *_built("nag-ampo"),
         # Your turn: asked done-first, so it is not an echo of the model order.
         DrillStep("prompt", "Say: walked.", "en"),
         DrillStep("answer", "naglakaw", "ceb"),
@@ -91,12 +120,35 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_line():
         DrillStep("answer", "nagluto", "ceb"),
         DrillStep("prompt", "Say: will cook.", "en"),
         DrillStep("answer", "magluto", "ceb"),
-        # Whole lines, in the order given.
+        # Whole lines: every one taught first, the Key Phrases way, and only
+        # then asked for (tunatale-ve4p.20, 'Or both. A la key phrases.').
+        DrillStep("model", "Listen and repeat.", "en"),
+        DrillStep("model", "Paul walked on the road.", "en"),
+        *_built("Naglakaw si Paul sa dalan."),
+        DrillStep("model", "Let's pray.", "en"),
+        *_built("Mag-ampo ta."),
         DrillStep("prompt", "Say: Paul walked on the road.", "en"),
         DrillStep("answer", "Naglakaw si Paul sa dalan.", "ceb"),
         DrillStep("prompt", "Say: Let's pray.", "en"),
         DrillStep("answer", "Mag-ampo ta.", "ceb"),
     ]
+
+
+def test_a_line_is_never_asked_before_every_line_has_been_taught():
+    """Teaching a line and asking for it straight after would be an echo, the
+    thing the done-first order of the forms already avoids."""
+    lines = [("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Mag-ampo ta.", "Let's pray.")]
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], lines=lines)
+
+    first_ask = drill.steps.index(DrillStep("prompt", "Say: Paul walked on the road.", "en"))
+    assert DrillStep("model", "Mag-ampo ta.", "ceb") in drill.steps[:first_ask]
+
+
+def test_a_drill_with_no_lines_says_nothing_about_them():
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
+
+    assert [s.text for s in drill.steps].count("Listen and repeat.") == 1
+    assert drill.steps[-1] == DrillStep("answer", "mag-ampo", "ceb")
 
 
 def test_the_mixed_round_asks_every_form_once_more_and_never_root_by_root():

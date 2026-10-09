@@ -68,6 +68,17 @@ def test_the_section_opens_with_its_spoken_title_then_one_phrase_per_step():
     ]
 
 
+def test_a_built_up_piece_keeps_where_it_came_from():
+    """A piece of a word is voiced from the word's reading, the way a Key Phrases
+    piece is (synth_plan plans a chunk from its source word and span), so the
+    section carries both through."""
+    drill = AffixDrill(steps=[DrillStep("model", "nom", "ceb", "moinom", (2, 3)), DrillStep("model", "moinom", "ceb")])
+
+    piece, whole = _section(drill).phrases[1:]
+    assert (piece.source_word, piece.syllable_span, piece.role) == ("moinom", (2, 3), "model")
+    assert (whole.source_word, whole.syllable_span) == (None, None)
+
+
 def test_a_real_drill_keeps_every_step_in_order():
     """Built from the real script, so the builder is not just fitted to a stub."""
     drill = build_affix_drill("ceb", _MO_MI, roots=["inom", "lakaw"])
@@ -332,7 +343,33 @@ def test_drill_cues_never_point_at_a_dialogue_line():
     assert {ref["kind"] for ref in refs} == {"narration", "drill"}
     items = [ref["target_index"] for ref in refs if ref["kind"] == "drill"]
     assert items == sorted(items)
-    assert all(items.count(n) == 2 for n in set(items))
+    assert all(items.count(n) >= 2 for n in set(items))
+
+
+def test_a_built_up_form_is_one_item_with_the_english_before_it():
+    """The player's sentence step and repeat latch move by item, so a build-up
+    split into one item per piece would repeat 'nom' alone. Key Phrases keeps
+    a phrase and its pieces together; so does the drill (tunatale-ve4p.16)."""
+    drill = AffixDrill(
+        steps=[
+            DrillStep("model", "will drink", "en"),
+            DrillStep("model", "moinom", "ceb"),
+            DrillStep("model", "nom", "ceb", "moinom", (2, 3)),
+            DrillStep("model", "moinom", "ceb"),
+            DrillStep("prompt", "Say: will drink.", "en"),
+            DrillStep("answer", "moinom", "ceb"),
+        ]
+    )
+
+    assert _cue_refs(_section(drill)) == [
+        {"kind": "narration"},
+        {"kind": "drill", "target_index": 0},
+        {"kind": "drill", "target_index": 0},
+        {"kind": "drill", "target_index": 0},
+        {"kind": "drill", "target_index": 0},
+        {"kind": "drill", "target_index": 1},
+        {"kind": "drill", "target_index": 1},
+    ]
 
 
 def test_english_with_no_form_after_it_is_narration():
