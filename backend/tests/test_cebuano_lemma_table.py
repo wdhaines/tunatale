@@ -215,6 +215,65 @@ def test_affixed_forms_are_generated_for_verb_and_adjective_roots_only(real):
     assert real.readings("nagbalay") == []
 
 
+# ── headwords that are only a form of another word (tunatale-ve4p.10) ─────────
+# Added 2026-10-09, measured against the same extract. Wiktionary gives 605
+# Cebuano verb forms an entry of their own whose every sense is "<form> of X"
+# (557 imperatives). The table used to file each under itself, so the root
+# reading was reachable only when a context tag happened to pick the first row.
+
+FORM_OF_HEADWORDS = {
+    "andama": "andam",
+    "andami": "andam",
+    "abangi": "abang",
+    "hatagi": "hatag",
+    "tan-awa": "tan-aw",
+    "ligoa": "ligo",
+}
+
+# Verbs that are words of their own and only LOOK like a root plus an affix:
+# naa is not na + -a, ania not ani + -a, pangita "search" not pang- + kita "see".
+# A lesson's context tag (VERB) cannot tell the two VERB readings apart, so the
+# table's default must stand under the tag as well.
+OWN_VERBS = ["naa", "ania", "pangita", "tipi", "aproba", "paminaw"]
+
+
+@pytest.mark.parametrize("surface,root", FORM_OF_HEADWORDS.items())
+def test_a_headword_that_is_only_a_form_lemmatizes_to_its_root(real, surface, root):
+    assert real.lemmatize(surface, "ceb") == root
+    # No reading of its own survives: one would be a second VERB reading.
+    assert surface not in {r.lemma for r in real.readings(surface)}
+
+
+# Forms Cebuano builds on such a stem. All three occur in the news corpus
+# (mabas-a 169 times, mahatagi 56, nagtinabangay 81) and each used to
+# lemmatize to the stem, a word no card is keyed on.
+STEM_FORMS = {
+    "mabas-a": "basa",  # bas-a, the syncopated imperative of basa
+    "mahatagi": "hatag",
+    "nagtinabangay": "tabang",  # tinabangay, the reciprocal of tabang
+    "magtinabangay": "tabang",
+}
+
+
+@pytest.mark.parametrize("surface,root", STEM_FORMS.items())
+def test_a_form_built_on_a_form_of_stem_lemmatizes_to_the_root(real, surface, root):
+    assert real.lemmatize(surface, "ceb") == root
+
+
+@pytest.mark.parametrize("word", OWN_VERBS)
+def test_a_verb_of_its_own_keeps_itself_with_and_without_a_verb_tag(real, word):
+    assert real.lemmatize(word, "ceb") == word
+    tagged = real.analyze_sentence_with_tags(word, "ceb", {0: "VERB"})
+    assert [(a.lemma, a.upos) for a in tagged] == [(word, "VERB")]
+
+
+def test_orasa_is_the_noun_hour_with_its_particle(real):
+    # "Unsa orasa?" (what time is it): oras + the -a particle, not a verb form.
+    # The generator's root + -a reading stays for the context resolver.
+    readings = {(r.upos, r.lemma, r.is_default) for r in real.readings("orasa")}
+    assert readings == {("NOUN", "oras", True), ("VERB", "oras", False)}
+
+
 class TestFactory:
     @pytest.fixture(autouse=True)
     def _fresh_factory(self):

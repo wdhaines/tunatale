@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import anyio
 
 from app.llm.call_sites import CallSite
-from app.srs.lemma_table import tokenize
+from app.srs.lemma_table import readings_by_tag, tokenize
 from app.srs.lemmatizer import _serialize_analyses
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ SYSTEM_PROMPT = (
     "number to its tag, and nothing else."
 )
 
-# (sentence, token index, token, readings) for one ambiguous token.
+# (sentence, token index, token, one reading per tag) for one ambiguous token.
 Item = tuple[str, int, str, "list[Reading]"]
 
 
@@ -53,10 +53,15 @@ def _is_ambiguous(readings: list[Reading]) -> bool:
 
 
 def ambiguous_items(sentence: str, lemmatizer: TableLemmatizer) -> list[Item]:
-    """The tokens of *sentence* whose readings disagree on the lemma."""
+    """The tokens of *sentence* whose lemma depends on the tag.
+
+    Each item carries one reading per tag, the one that tag selects
+    (:func:`app.srs.lemma_table.readings_by_tag`). A word whose readings differ
+    only within a tag is not an item: no answer could change its lemma.
+    """
     items: list[Item] = []
     for i, token in enumerate(tokenize(sentence)):
-        readings = lemmatizer.readings(token)
+        readings = readings_by_tag(lemmatizer.readings(token))
         if _is_ambiguous(readings):
             items.append((sentence, i, token, readings))
     return items

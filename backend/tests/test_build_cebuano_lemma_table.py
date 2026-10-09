@@ -21,6 +21,7 @@ from scripts.build_cebuano_lemma_table import (
     build_from_path,
     extract,
     extract_attested,
+    extract_form_of,
     generate_forms,
     linker_rows,
 )
@@ -489,6 +490,135 @@ def test_a_word_wiktionary_has_keeps_wiktionarys_part_of_speech(tmp_path):
 def test_no_base_list_adds_nothing(tmp_path):
     assert base_list_headwords(None) == (set(), {})
     assert base_list_headwords(tmp_path / "missing.tsv") == (set(), {})
+
+
+# ── rule 2b: headwords Wiktionary defines only as a form of another word ──────
+
+
+def form_of_entry(word: str, *targets: str, pos: str = "verb") -> dict:
+    """An entry with one sense per target, each "<some form> of <target>"."""
+    return {"word": word, "pos": pos, "senses": [{"form_of": [{"word": t}]} for t in targets]}
+
+
+def derived_entry(word: str, template: str, *args: str) -> dict:
+    """A verb entry whose etymology is one template: ``{{template|ceb|*args}}``."""
+    positional = {str(i): value for i, value in enumerate(("ceb", *args), start=1)}
+    return {
+        "word": word,
+        "pos": "verb",
+        "senses": [{"glosses": ["x"]}],
+        "etymology_templates": [{"name": template, "args": positional}],
+    }
+
+
+def built_rows(tmp_path, entries: list[dict]) -> set[tuple[str, str, str, int]]:
+    out = tmp_path / "out.tsv.gz"
+    build_from_path(write_fixture(tmp_path, entries), out)
+    with gzip.open(out, "rt", encoding="utf-8") as fh:
+        lines = [line.rstrip("\n").split("\t") for line in fh if not line.startswith("#")]
+    return {(s, u, lem, int(d)) for s, u, lem, d in lines}
+
+
+def test_a_headword_defined_only_as_a_form_names_the_word_it_is_a_form_of():
+    assert extract_form_of([form_of_entry("andama", "andam")]) == {"andama": {"andam"}}
+
+
+def test_a_headword_with_a_sense_of_its_own_is_not_a_form():
+    # One "form of" sense beside a real one: the word means something itself.
+    mixed = {"word": "tipi", "pos": "verb", "senses": [{"form_of": [{"word": "tip"}]}, {"glosses": ["to kill"]}]}
+    assert extract_form_of([mixed]) == {}
+    # The same split across two entries of the word (Wiktionary's etymology 1 / 2).
+    assert extract_form_of([form_of_entry("tipi", "tip"), entry("tipi", "verb")]) == {}
+    # An entry with no senses at all says nothing about being a form.
+    assert extract_form_of([entry("lakaw", "verb")]) == {}
+
+
+def test_a_form_of_target_is_normalized_and_must_be_another_single_word():
+    assert extract_form_of([form_of_entry("andama", "Andám")]) == {"andama": {"andam"}}
+    assert extract_form_of([form_of_entry("andama", "andama")]) == {}  # a form of itself names nothing
+    assert extract_form_of([form_of_entry("andama", "andam na")]) == {}  # not one word
+    # Every sense must name a usable target, or the headword keeps itself.
+    assert extract_form_of([form_of_entry("andama", "andam", "andam na")]) == {}
+    assert extract_form_of([form_of_entry("gikan", "kan", "gikan")]) == {}
+
+
+def test_two_senses_can_name_two_words():
+    assert extract_form_of([form_of_entry("panawa", "tawa", "sawa")]) == {"panawa": {"tawa", "sawa"}}
+
+
+def test_only_verb_entries_are_read_for_form_of():
+    # A noun "plural of" entry stays a noun headword (rule 1); rule 2b is about verbs.
+    assert extract_form_of([form_of_entry("mga-bata", "bata", pos="noun")]) == {}
+    assert extract_form_of([form_of_entry("-a", "andam")]) == {}  # not a word
+
+
+def test_a_form_of_headword_takes_the_root_and_is_no_root_itself(tmp_path):
+    rows = built_rows(tmp_path, [entry("andam", "verb"), form_of_entry("andama", "andam")])
+    assert ("andama", "VERB", "andam", 1) in rows
+    # No reading of its own: one would be a second VERB reading no tag could tell apart.
+    assert not any(row[:3] == ("andama", "VERB", "andama") for row in rows)
+    # Nothing in the table is filed under it either.
+    assert not any(row[2] == "andama" for row in rows)
+
+
+def test_forms_built_on_a_form_of_stem_take_the_stems_root(tmp_path):
+    # bas-a is "imperative of basa", syncopated, so ma- + basa never produces
+    # mabas-a: only the stem does. The form belongs to basa.
+    rows = built_rows(tmp_path, [entry("basa", "verb"), form_of_entry("bas-a", "basa")])
+    assert ("mabas-a", "VERB", "basa", 1) in rows
+    assert ("nagbas-a", "VERB", "basa", 1) in rows
+    assert ("mabasa", "VERB", "basa", 1) in rows  # the plain root's own form, untouched
+    assert not any(row[2] == "bas-a" for row in rows)
+
+
+def test_a_form_a_conjugation_table_already_lists_is_not_a_stem(tmp_path):
+    # balia is in bali's own table AND has a form-of entry. The table carries
+    # the paradigm, so nothing more is built on it (no `mobalia`, no `baliaa`).
+    forms = [{"form": "ceb-infl-mo", "tags": ["inflection-template"]}, {"form": "bali"}, {"form": "balia"}]
+    rows = built_rows(tmp_path, [inflected_entry("bali", forms), form_of_entry("balia", "bali")])
+    assert ("balia", "VERB", "bali", 1) in rows
+    surfaces = {row[0] for row in rows}
+    assert "mobalia" not in surfaces
+    assert "baliaa" not in surfaces
+
+
+def test_a_stem_of_two_words_gives_its_forms_both_roots(tmp_path):
+    rows = built_rows(tmp_path, [entry("tawa", "verb"), entry("sawa", "verb"), form_of_entry("panawa", "tawa", "sawa")])
+    assert {row[2] for row in rows if row[0] == "mopanawa"} == {"tawa", "sawa"}
+
+
+def test_a_form_of_headword_keeps_a_non_verb_reading_as_its_default(tmp_path):
+    # A noun headword that is also "imperative of kaon": rule 5a still wins. The
+    # form is syncopated (kan-a, where the generator makes kaona), so the VERB
+    # reading can only have come from the form-of sense.
+    rows = built_rows(tmp_path, [entry("kaon", "verb"), entry("kan-a", "noun"), form_of_entry("kan-a", "kaon")])
+    assert ("kan-a", "NOUN", "kan-a", 1) in rows
+    assert ("kan-a", "VERB", "kaon", 0) in rows
+
+
+def test_a_headword_the_generator_reads_differently_stays_itself(tmp_path):
+    # tipi "to kill" is also tip + -i. Nothing in Wiktionary calls it a form of
+    # tip, so it keeps itself and the generated reading stays a non-default.
+    rows = built_rows(tmp_path, [entry("tip", "verb"), entry("tipi", "verb")])
+    assert ("tipi", "VERB", "tipi", 1) in rows
+    assert ("tipi", "VERB", "tip", 0) in rows
+
+
+def test_a_derived_headword_keeps_itself_whatever_its_etymology_says(tmp_path):
+    # mogawas "to go out" has its own senses and an etymology of mo- + gawas.
+    # That is a word DERIVED from gawas, not a form of it, and the rule that
+    # would file it under its root was measured and rejected (2026-10-09): the
+    # same shape is natawo "born" from tawo "person" and managat "to fish" from
+    # dagat "sea". The ones that are plain inflection go in closed_class.tsv.
+    rows = built_rows(tmp_path, [entry("gawas", "verb"), derived_entry("mogawas", "prefix", "mo", "gawas")])
+    assert ("mogawas", "VERB", "mogawas", 1) in rows
+    assert ("mogawas", "VERB", "gawas", 0) in rows
+
+
+def test_the_report_counts_form_of_headwords(tmp_path):
+    entries = [entry("andam", "verb"), form_of_entry("andama", "andam"), entry("gawas", "verb")]
+    stats = build_from_path(write_fixture(tmp_path, entries), tmp_path / "out.tsv.gz")
+    assert stats["form_of_count"] == 1
 
 
 def test_build_from_path_writes_a_valid_table(tmp_path):
