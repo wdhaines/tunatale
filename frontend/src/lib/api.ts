@@ -95,6 +95,12 @@ export type AuthStatus = components["schemas"]["AuthStatusResponse"];
  */
 export type AuthUser = components["schemas"]["MeResponse"];
 
+/**
+ * The body of POST /auth/invite/redeem: the email the new account was created
+ * with. No session is established — see `redeemInvite`.
+ */
+export type InviteRedeemed = components["schemas"]["InviteRedeemResponse"];
+
 export interface LanguageOption {
   code: string;
   name: string;
@@ -1586,6 +1592,22 @@ export class TunaTaleAPI {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
+    });
+  }
+
+  /**
+   * Redeem a single-use invite token for an account.
+   *
+   * Unauthenticated, like `login`: the token IS the credential. The backend
+   * sets no cookie and creates no session here — redeeming only brings the
+   * identity into existence, and the person signs in through `/api/auth/login`
+   * afterwards.
+   */
+  async redeemInvite(token: string, email: string, password: string): Promise<InviteRedeemed> {
+    return this.request("/api/auth/invite/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, email, password }),
     });
   }
 

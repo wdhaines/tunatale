@@ -3007,6 +3007,19 @@ describe("auth endpoints", () => {
     expect(result.email).toBe("a@b.c");
   });
 
+  it("redeemInvite POSTs the token, email and password as JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ email: "a@b.c" })));
+
+    const result = await api.redeemInvite("tok-123", "a@b.c", "hunter2");
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/auth/invite/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "tok-123", email: "a@b.c", password: "hunter2" }),
+    });
+    expect(result.email).toBe("a@b.c");
+  });
+
   it("logout POSTs /api/auth/logout", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ status: "logged out" })));
 
@@ -3072,6 +3085,23 @@ describe("401 interception", () => {
     setUnauthorizedHandler(onUnauthorized);
 
     await expect(api.login("a@b.c", "wrong")).rejects.toThrow("Invalid credentials");
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("does NOT notify when a 403 came from the invite endpoint", async () => {
+    // A dead invite token is an ordinary answer, not a session expiry. Like
+    // login, the invite page owns the message and a bounce would lose it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockFailBody({ detail: "Invalid or expired invite" }, 403)),
+    );
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+
+    await expect(api.redeemInvite("tok", "a@b.c", "hunter2")).rejects.toThrow(
+      "Invalid or expired invite",
+    );
 
     expect(onUnauthorized).not.toHaveBeenCalled();
   });

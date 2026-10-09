@@ -665,10 +665,11 @@ safety property in § "How it stays safe" holds unchanged.
 
 ## Accounts
 
-There is **no self-serve signup**, by design, at any point in Phases 1–3. Every
-account is created from the command line, including the first one on a fresh
-box. Until you run this, nobody can log in — the API answers 401 to everything
-except `/api/health`.
+There is **no open signup**, by design. An account
+exists only because an operator created it from the command line (§ Creating the
+first account) or because someone redeemed a single-use invite the operator
+minted (§ Inviting someone). Until the first account exists, nobody can log in —
+the API answers 401 to everything except `/api/health`.
 
 ### Creating the first account
 
@@ -714,6 +715,36 @@ leaked is useless if the sessions opened with it keep working.
 There is deliberately no `activate-user`. Re-enabling an account somebody
 disabled should take more thought than pressing ↑ and Enter; do it from a
 Python shell against `AuthDatabase.set_active`.
+
+### Inviting someone
+
+Create the account for somebody without handling their password: mint a
+single-use invite and send them the link.
+
+```bash
+$CLI create-invite                 # expires in INVITE_TTL_DAYS (default 7)
+$CLI create-invite --ttl-days 1    # a tighter window
+```
+
+The command prints two lines: the expiry, and
+
+```
+redeem at: /invite#<token>
+```
+
+The path is relative — append it to the site's origin
+(`https://<your-domain>/invite#<token>`) and send that. The token is in the URL
+**fragment**, not the query string, so it is never part of a URL the server is
+asked for: it stays out of the reverse proxy's access log and out of any
+`Referer`. It reaches the server once, in the body of the redeem request.
+
+The invite is **single-use**: redeeming it creates the account and the token is
+spent. It also expires — 7 days by default, set with `INVITE_TTL_DAYS` or
+`--ttl-days`. The store keeps only the token's hash, so a lost link cannot be
+recovered; mint a new one.
+
+The new account is an identity only. Like any fresh account it has no languages
+until you run the § "A second learner" step for it.
 
 ### A second learner
 

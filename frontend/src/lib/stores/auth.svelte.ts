@@ -20,6 +20,12 @@ import { goto } from "$app/navigation";
 import { api } from "$lib/api";
 
 const LOGIN_PATH = "/login";
+const INVITE_PATH = "/invite";
+
+// Paths a logged-out visitor may stay on. Redirecting an invitee off /invite
+// would send them to `/login?next=%2Finvite` and drop the URL fragment — which
+// is where the invite token lives.
+const PUBLIC_PATHS = new Set([LOGIN_PATH, INVITE_PATH]);
 
 function createAuthStore() {
   let enabled = $state<boolean | null>(null);
@@ -77,12 +83,13 @@ function createAuthStore() {
   /**
    * Send the visitor to the login page, remembering where they were.
    *
-   * A no-op when they are already there: the login page's own requests can
-   * 401, and redirecting would remount it mid-typing and nest one `next`
-   * inside another.
+   * A no-op on the public paths: the login and invite pages carry their own
+   * reason to be reached logged out. The login page's own requests can 401,
+   * and redirecting would remount it mid-typing; the invite page's token lives
+   * in the fragment, which a `next=` round-trip would not carry.
    */
   async function redirectToLogin(): Promise<void> {
-    if (window.location.pathname === LOGIN_PATH) return;
+    if (PUBLIC_PATHS.has(window.location.pathname)) return;
     await goto(loginHref());
   }
 

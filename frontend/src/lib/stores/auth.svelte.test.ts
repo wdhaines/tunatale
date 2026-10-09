@@ -206,6 +206,19 @@ describe("handleUnauthorized", () => {
     expect(mockGoto).not.toHaveBeenCalled();
   });
 
+  it("does not redirect an invitee off the invite page", async () => {
+    // The invite token lives in the URL FRAGMENT, which a `/login?next=` round
+    // trip would not carry — the redirect would silently destroy it.
+    mockStatus.mockResolvedValue({ auth_enabled: true });
+    mockMe.mockRejectedValue(new Error("401"));
+    await store.init();
+    atPath("/invite");
+
+    await store.handleUnauthorized();
+
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
   it("redirects without a `next` when the user was at the root", async () => {
     mockStatus.mockResolvedValue({ auth_enabled: true });
     mockMe.mockResolvedValue({ email: "a@b.c" });

@@ -352,6 +352,18 @@ def _unknown_language(code: str) -> JSONResponse:
     )
 
 
+def _language_free(path: str) -> bool:
+    """Routes a non-owner may reach whatever language they do or do not have.
+
+    ``/api/languages`` is how a client learns its set. ``/api/auth/*`` and
+    ``/api/health`` read no language data at all, and refusing them traps an
+    account with no deck yet — which is every freshly invited one
+    (tunatale-1mh): ``me`` answers 400, the SPA reads that as "not signed in",
+    signing in again lands in the same place, and ``logout`` is refused too.
+    """
+    return path in ("/api/languages", "/api/health") or path.startswith("/api/auth/")
+
+
 @app.middleware("http")
 async def _resolve_language_state(request, call_next):
     """Bind the request's connection set onto ``request.state``, by user AND language.
@@ -416,7 +428,7 @@ async def _serve_from_user_files(request, call_next, user_id: int, requested: st
     request.state.user_languages = codes
     code = requested or (codes[0] if codes else "")
     if code not in codes:
-        if request.url.path != "/api/languages":
+        if not _language_free(request.url.path):
             if not codes:
                 return JSONResponse(status_code=400, content={"detail": "No language is set up for this account yet"})
             return _unknown_language(code)

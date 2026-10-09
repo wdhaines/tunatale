@@ -15,12 +15,15 @@ from fastapi.responses import JSONResponse
 from app.api import app_state
 from app.api.models import (
     AuthStatusResponse,
+    InviteRedeemRequest,
+    InviteRedeemResponse,
     LoginRequest,
     LoginResponse,
     LogoutResponse,
     MeResponse,
 )
 from app.auth import throttle
+from app.auth.database import EmailExistsError, InvalidInviteError
 from app.auth.dependencies import require_user
 from app.auth.models import User
 from app.auth.session import (
@@ -114,6 +117,39 @@ async def login(request: Request, body: LoginRequest) -> Response:
         max_age=settings.session_ttl_days * 86400,
     )
     return response
+
+
+@router.post("/api/auth/invite/redeem", response_model=InviteRedeemResponse)
+async def invite_redeem(request: Request, body: InviteRedeemRequest) -> dict[str, str]:
+    """Create an account from an admin-minted invite.
+
+    **Unauthenticated on purpose:** creating an account from an invite cannot
+    require already having one. The invite token is the credential — 256 bits,
+    admin-minted, single-use and expiring — so, like ``login``, this route
+    requires no session.
+
+    **Every dead token gets one indistinguishable answer.** Unknown, expired
+    and already-redeemed all raise the same 403 with the same body, because
+    telling them apart would tell a stranger which strings were once real
+    invites. The token is judged BEFORE the email is touched, so the endpoint
+    is not an account-enumeration oracle for anyone without a live invite.
+
+    **No session is created.** Redeeming an invite yields an identity only; the
+    person signs in through ``/api/auth/login`` afterwards, so there is exactly
+    one way in and it carries the throttle.
+    """
+    auth_db = app_state.auth_db(request)
+    if auth_db is None:
+        raise HTTPException(status_code=503, detail="Auth unavailable")
+
+    try:
+        user = auth_db.redeem_invite(body.token, body.email, body.password)
+    except InvalidInviteError:
+        raise HTTPException(status_code=403, detail="Invalid or expired invite") from None
+    except EmailExistsError:
+        raise HTTPException(status_code=409, detail="Email already registered") from None
+
+    return {"email": user.email}
 
 
 @router.post("/api/auth/logout", response_model=LogoutResponse)

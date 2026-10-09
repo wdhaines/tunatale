@@ -160,6 +160,41 @@ class TestLanguages:
         assert "No language" in items.json()["detail"]
         assert langs.json() == {"languages": [], "active": "", "sync_available": False}
 
+    async def test_an_account_with_no_deck_can_still_ask_who_it_is_and_log_out(self, world):
+        """Identity and liveness read no language data, so no language may refuse them.
+
+        Every freshly invited account is in this state until a deck is seeded
+        for it (tunatale-1mh). Refusing ``/api/auth/me`` here was a trap with no
+        exit: the SPA reads a failed ``me`` as "not signed in" and sends the
+        person to the login page, where signing in succeeds and lands them in
+        the same place — and ``logout`` was refused too, so the session could
+        not even be ended. The ``items`` line is the control: the data routes
+        are still refused, so this is not the refusal quietly going away.
+        """
+        stranger = world["auth_db"].create_user("stranger@example.com", PASSWORD)
+        async with _client(world["auth_db"], stranger.id) as client:
+            me = await client.get("/api/auth/me")
+            status = await client.get("/api/auth/status")
+            health = await client.get("/api/health")
+            items = await client.get("/api/srs/items")
+            out = await client.post("/api/auth/logout")
+            after = await client.get("/api/auth/me")
+        assert (me.status_code, me.json()) == (200, {"email": "stranger@example.com"})
+        assert (status.status_code, status.json()) == (200, {"auth_enabled": True})
+        assert health.status_code != 400
+        assert "No language" not in health.text
+        assert items.status_code == 400
+        assert out.status_code == 200
+        assert after.status_code == 401
+
+    async def test_a_stale_language_does_not_refuse_the_identity_routes(self, world):
+        """Same rule for a learner WITH a deck whose client holds a code it has no deck for."""
+        async with _client(world["auth_db"], world["learner"].id) as learner:
+            me = await learner.get("/api/auth/me", headers={"X-TT-Language": "sl"})
+            items = await learner.get("/api/srs/items", headers={"X-TT-Language": "sl"})
+        assert (me.status_code, me.json()) == (200, {"email": LEARNER})
+        assert items.status_code == 400
+
     async def test_owner_still_sees_every_configured_language_and_sync(self, world):
         async with _client(world["auth_db"], world["owner"].id) as owner:
             body = (await owner.get("/api/languages")).json()
