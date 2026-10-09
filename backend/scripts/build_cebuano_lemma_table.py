@@ -27,6 +27,17 @@ Rules, in order (see the brief for rationale):
    that root, UPOS VERB. Skip table-tags/canonical forms, affix markers
    (leading/trailing ``-``), anything with a space or ``{``, table labels, and
    forms tagged ``alternative``/``obsolete``.
+2b. Form-of headwords: Wiktionary gives 605 verb forms an entry of their own
+   whose every sense is "<form> of X" (``andama``: "imperative of andam"; 557
+   are imperatives, measured 2026-10-09). Such a headword is an attested form
+   of X, exactly like a conjugation-table row: it gets no reading of its own
+   and is not a root for rule 3. It is still a STEM: rule 3's affixes are
+   applied to it too, and those forms (``mabas-a`` on ``bas-a``, "imperative
+   of basa") get X as their lemma. One sense that is NOT a form-of and the
+   headword keeps itself (rule 5). A headword merely DERIVED from a root (its
+   etymology says ``mo-`` + ``gawas``, but it has senses of its own) is not
+   covered: that shape is also ``natawo`` "born" from ``tawo`` "person". The
+   plain inflections among those are listed by hand in ``closed_class.tsv``.
 3. Generated forms: roots = every headword with a VERB or ADJ reading (NOT
    noun-only). For each root ``r``, emit VERB rows ``form → r`` for:
    - prefixes ``mo mi ni maka naka ma na gi i ka`` + r;
@@ -210,6 +221,33 @@ def extract_attested(entries: Iterable[dict]) -> tuple[dict[str, set[str]], dict
                 i += 1
 
     return dict(verb_surfaces), dict(root_form_count)
+
+
+def extract_form_of(entries: Iterable[dict]) -> dict[str, set[str]]:
+    """Rule 2b: verb headwords Wiktionary defines only as a form of another word.
+
+    Returns headword → the word(s) it is a form of. A headword qualifies when
+    EVERY sense of its verb entries names another single word in ``form_of``;
+    one sense of its own (``tipi`` "to kill") and it is a word, not a form.
+    """
+    senses_by_word: dict[str, list[dict]] = defaultdict(list)
+    for entry in entries:
+        if entry.get("pos") != "verb":
+            continue
+        word = _normalize(entry.get("word") or "")
+        if not _is_word(word):
+            continue
+        # An entry with no senses says nothing about being a form: it counts
+        # as one sense that names no target.
+        senses_by_word[word].extend(entry.get("senses") or [{}])
+
+    form_of: dict[str, set[str]] = {}
+    for word, senses in senses_by_word.items():
+        named = [{_normalize(f.get("word") or "") for f in sense.get("form_of") or []} for sense in senses]
+        targets = [{t for t in sense_targets if _is_word(t) and t != word} for sense_targets in named]
+        if all(targets):
+            form_of[word] = set().union(*targets)
+    return form_of
 
 
 def _is_vowel_initial(word: str) -> bool:
@@ -485,6 +523,15 @@ def build_from_path(
 
     # Rule 2: attested forms
     attested_surfaces, root_form_count = extract_attested(entries)
+    # Rule 2b: a headword that is only a form of another word is attested as
+    # that word's form. From here on it is treated like a conjugation-table row:
+    # it loses its own reading and is not a root (below).
+    form_of = extract_form_of(entries)
+    # A conjugation table that already lists the form lists its paradigm too,
+    # so only the other form-of headwords are stems for rule 3 (below).
+    stems = set(form_of) - set(attested_surfaces)
+    for surface, targets in form_of.items():
+        attested_surfaces.setdefault(surface, set()).update(targets)
 
     # Rule 3's roots are HEADWORDS only (verb, or adjective): computed before the
     # attested forms are merged in, or every attested form would be treated as a
@@ -504,6 +551,14 @@ def build_from_path(
         verb_surfaces.setdefault(surface, set()).update(attested_roots)
 
     generated = generate_forms(roots, headword_upos)
+    # Rule 2b's headwords are STEMS as well as forms: Cebuano builds further
+    # forms on an imperative or syncopated stem (``mabas-a`` on ``bas-a``,
+    # ``mahatagi`` on ``hatagi``, ``nagtinabangay`` on ``tinabangay``; 22 such
+    # stem + affix pairs occur in the news corpus). Those forms belong to the
+    # stem's root, never to the stem.
+    for surface, surface_stems in generate_forms(stems, dict.fromkeys(stems, {"VERB"})).items():
+        for stem in surface_stems:
+            generated.setdefault(surface, set()).update(form_of[stem])
 
     # Merge generated (attested already merged, so attested wins)
     for surface, generated_roots in generated.items():
@@ -557,12 +612,14 @@ def build_from_path(
         "generated_count": generated_count,
         "linker_count": linker_count,
         "base_list_added": base_added,
+        "form_of_count": len(form_of),
     }
 
     print(f"source: {source} ({sha_hex[:12]})")
     print(f"per-pos entry counts: {dict(sorted(counts.items()))}")
     print(f"headwords: {headword_count}")
     print(f"attested surface→root pairs: {attested_count}")
+    print(f"headwords that are only a form of another word: {len(form_of)}")
     print(f"generated surface→root pairs: {generated_count}")
     print(f"linker rows: {linker_count}")
     print(f"base-list headwords Wiktionary lacks: {base_added}")

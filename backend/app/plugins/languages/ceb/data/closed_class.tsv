@@ -16,6 +16,12 @@
 # keeps its own reading by default, so a lesson's nagdala never reached dala (the user, 2026-10-03). Each
 # is a verb in nearly every use; the noun stays as a non-default for the context resolver. sais is the
 # main spelling of six (sayis is its variant, spelling_variants.tsv), and Wiktionary has no sais at all.
+#
+# Verb headwords that are plain inflection (tunatale-ve4p.10, 2026-10-09). Wiktionary gives mogawas "to go out" an
+# entry with senses of its own, and a verb headword keeps itself, so mogawas never reached gawas except where a
+# lesson's context tag happened to pick the generated row. Listed by hand, not by rule: the same headword shape is
+# natawo "born" (tawo "person") and managat "to fish" (dagat "sea"), which must stay themselves.
+# orasa is the generator's mistake the other way: root + -a is an imperative only on a verb.
 surface	upos	lemma	note
 ang	DET	ang	topic marker (Wiktionary: article; its only other reading was a PROPN)
 mga	DET	mga	plural marker
@@ -49,3 +55,11 @@ naghikog	VERB	hikog	"committed suicide"; Wiktionary's noun is "a suicide" (the p
 nagbuhi	VERB	buhi	"raised, kept (a pet, a child)"; Wiktionary's noun is "the one who raises"
 gibuhi	VERB	buhi	"was raised, was kept"; Wiktionary's noun is "a pet" (or vulgar)
 gipangandoy	VERB	pangandoy	"wished for"; Wiktionary's noun "dreams" has the same root
+orasa	NOUN	oras	"the hour" in "unsa orasa?": oras + the -a particle; the generator read it as a verb form
+mogawas	VERB	gawas	"to go out": mo- + gawas
+mopalit	VERB	palit	"to buy": mo- + palit
+mobaligya	VERB	baligya	"to sell": mo- + baligya
+mohilom	VERB	hilom	"to be silent": mo- + hilom
+maghilom	VERB	hilom	"to keep quiet": mag- + hilom
+nabuhi	VERB	buhi	"lived": na- + buhi
+dalaon	VERB	dala	"to bring, to carry": dala + -on

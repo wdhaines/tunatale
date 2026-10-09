@@ -143,6 +143,18 @@ def test_the_ng_linker_strips_to_the_headword(real, surface, base):
     assert real.lemmatize(surface, "tl") == base
 
 
+def test_a_verb_tag_keeps_the_default_among_two_verb_readings(real):
+    # umupo is VERB opo (listed first, from the rare alternative umopo) and VERB
+    # upo (the default). A lesson's VERB tag cannot choose between them, and
+    # row order read "Umupo siya" as opo, "yes" (tunatale-ve4p.10).
+    assert [(r.upos, r.lemma, r.is_default) for r in real.readings("umupo")] == [
+        ("VERB", "opo", False),
+        ("VERB", "upo", True),
+    ]
+    tagged = real.analyze_sentence_with_tags("umupo", "tl", {0: "VERB"})
+    assert [(a.lemma, a.upos) for a in tagged] == [("upo", "VERB")]
+
+
 @pytest.mark.parametrize("root,infinitive", DISPLAY.items())
 def test_a_verb_card_front_is_the_actor_focus_infinitive(root, infinitive):
     assert format_vocab_headword(root, "VERB", "tl") == infinitive

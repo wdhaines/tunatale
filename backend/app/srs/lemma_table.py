@@ -173,6 +173,23 @@ class LemmaTable:
         return []
 
 
+def readings_by_tag(readings: list[Reading]) -> list[Reading]:
+    """The reading each tag selects: one per UPOS, in table order.
+
+    A model's table has one reading per tag, but a dictionary-built one can hold
+    several (Cebuano ``naa`` is VERB *naa* and VERB *na*), and a tag cannot
+    choose between them. The default is the table's considered answer, so it
+    wins among the readings of its own tag; under any other tag the first
+    listed stands. Row order alone read "Naa ko diri" as the root *na*
+    (tunatale-ve4p.10).
+    """
+    chosen: dict[str, Reading] = {}
+    for reading in readings:
+        if reading.upos not in chosen or reading.is_default:
+            chosen[reading.upos] = reading
+    return list(chosen.values())
+
+
 def _analyze_token(token: str, readings: list[Reading], upos: str | None) -> TokenAnalysis:
     if not readings:
         if token.isdigit():
@@ -181,7 +198,7 @@ def _analyze_token(token: str, readings: list[Reading], upos: str | None) -> Tok
             # The model lemmatizes punctuation as "$" + the mark ("." -> "$.").
             return TokenAnalysis(surface=token, lemma=f"${token}", upos="PUNCT")
         return TokenAnalysis(surface=token, lemma=token.lower(), upos="")
-    chosen = next((r for r in readings if r.upos == upos), None) if upos else None
+    chosen = next((r for r in readings_by_tag(readings) if r.upos == upos), None) if upos else None
     if chosen is None:
         chosen = next(r for r in readings if r.is_default)
     return TokenAnalysis(surface=token, lemma=chosen.lemma, upos=chosen.upos)

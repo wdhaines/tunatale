@@ -22,6 +22,7 @@ from app.srs.lemma_table import (
     build_lemma_table_db,
     db_path_for,
     ensure_lemma_table_db,
+    readings_by_tag,
     tokenize,
 )
 from app.srs.lemmatizer import (
@@ -43,6 +44,14 @@ ROWS = [
     ("ser", "VERB", "se", 1),
     ("så", "VERB", "se", 1),
     ("så", "ADV", "så", 0),
+    # Two readings under ONE tag: the Cebuano table's shape (1,059 surfaces,
+    # measured 2026-10-09). The Norwegian table has none, a model's lemma being a
+    # function of (word, UPOS). Rows sit in alphabetical lemma order, as built.
+    ("naa", "VERB", "na", 0),
+    ("naa", "VERB", "naa", 1),
+    ("mapa", "NOUN", "mapa", 1),
+    ("mapa", "VERB", "apa", 0),
+    ("mapa", "VERB", "pa", 0),
 ]
 
 
@@ -162,6 +171,22 @@ class TestTableLemmatizer:
 
     def test_a_tag_outside_the_readings_falls_back_to_the_default(self, lem):
         assert pairs(lem.analyze_sentence_with_tags("så", "no", {0: "NOUN"})) == [("så", "se", "VERB")]
+
+    def test_a_tag_shared_by_several_readings_takes_the_default_among_them(self, lem):
+        # The tag cannot choose between VERB na and VERB naa, so the table's own
+        # default stands. Taking the first listed read Cebuano "Naa ko diri" as
+        # the root na (tunatale-ve4p.10).
+        assert pairs(lem.analyze_sentence_with_tags("naa", "no", {0: "VERB"})) == [("naa", "naa", "VERB")]
+
+    def test_a_tag_shared_by_several_non_default_readings_takes_the_first_listed(self, lem):
+        # The default is the NOUN, so it cannot settle the two VERB readings.
+        assert pairs(lem.analyze_sentence_with_tags("mapa", "no", {0: "VERB"})) == [("mapa", "apa", "VERB")]
+        assert pairs(lem.analyze_sentence_with_tags("mapa", "no", {0: "NOUN"})) == [("mapa", "mapa", "NOUN")]
+
+    def test_readings_by_tag_keeps_one_reading_per_tag_in_table_order(self, lem):
+        assert [(r.upos, r.lemma) for r in readings_by_tag(lem.readings("mapa"))] == [("NOUN", "mapa"), ("VERB", "apa")]
+        assert [(r.upos, r.lemma) for r in readings_by_tag(lem.readings("naa"))] == [("VERB", "naa")]
+        assert readings_by_tag([]) == []
 
     def test_other_language_is_lowercased(self, lem):
         assert pairs(lem.analyze_sentence("Dober dan", "sl")) == [("Dober", "dober", ""), ("dan", "dan", "")]

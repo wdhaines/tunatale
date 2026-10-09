@@ -64,6 +64,17 @@ class TestItems:
         prompt = build_prompt(ambiguous_items("Og så stoppet vi.", lem))
         assert prompt == '1. "så" (word 2) in: Og så stoppet vi.\n   tags: VERB (se) | ADV (så)'
 
+    def test_a_word_no_tag_can_change_is_not_an_item(self, lem):
+        # naa is VERB na and VERB naa: two lemmas, one tag. Whatever the model
+        # answers, the reading is the same, so the question is never asked.
+        assert ambiguous_items("naa", lem) == []
+
+    def test_a_tag_is_offered_once_with_the_lemma_it_would_select(self, lem):
+        # mapa has two VERB readings. Offering both would show the model a choice
+        # its answer ("VERB") cannot express.
+        prompt = build_prompt(ambiguous_items("naa mapa", lem))
+        assert prompt == '1. "mapa" (word 2) in: naa mapa\n   tags: NOUN (mapa) | VERB (apa)'
+
 
 class TestParse:
     def test_keeps_valid_tags_only(self, lem):
