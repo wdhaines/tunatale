@@ -7,12 +7,17 @@ transform that raw data into the four structured Lesson sections deterministical
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-from app.generation.affix_drill import AffixDrill
 from app.generation.syllabify import syllabify_word
 from app.languages import get_breakdown_spans
 from app.models.breakdown import BreakdownChunk
 from app.models.lesson import DRILL_PROMPT_ROLE, Phrase, Section, SectionType
+
+if TYPE_CHECKING:
+    # The drill script builds its forms up with this module's breakdown, so the
+    # import runs the other way at runtime.
+    from app.generation.affix_drill import AffixDrill
 
 logger = logging.getLogger(__name__)
 
@@ -509,5 +514,14 @@ def build_affix_drill_section(drill: AffixDrill, *, narrator_voice: str, l2_voic
             role = DRILL_PROMPT_ROLE if step.kind == "prompt" else "narrator"
             phrases.append(Phrase(text=step.text, voice_id=narrator_voice, language_code="en", role=role))
         else:
-            phrases.append(Phrase(text=step.text, voice_id=l2_voice, language_code=step.language_code, role=step.kind))
+            phrases.append(
+                Phrase(
+                    text=step.text,
+                    voice_id=l2_voice,
+                    language_code=step.language_code,
+                    role=step.kind,
+                    source_word=step.source_word,
+                    syllable_span=step.span,
+                )
+            )
     return Section(section_type=SectionType.AFFIX_DRILL, phrases=phrases)

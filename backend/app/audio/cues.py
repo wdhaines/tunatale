@@ -97,12 +97,15 @@ def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: i
 
 
 def _build_drill_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
-    """Build cues for the affix drill: an English line and the form after it are one item.
+    """Build cues for the affix drill: an English line and the forms after it are one item.
 
-    That pairing is the drill's unit both ways it occurs, the narrator naming a
-    form before it is modelled and a prompt before its answer, so both cues
-    share one ``drill`` ref and the player's sentence step and repeat latch move
-    by the pair. English with no form after it (the section title) is narration.
+    That grouping is the drill's unit every way it occurs, the narrator naming a
+    form before it is built up and a prompt before its answer, so the cues share
+    one ``drill`` ref and the player's sentence step and repeat latch move by the
+    item. English with no form after it (the section title, "Listen and
+    repeat.") is narration. The section always opens on its English title, so
+    a form never comes before the first item; ``max`` only keeps a malformed
+    section's index from going negative.
 
     Never a ``line`` ref: that is an index into the transcript's dialogue, and
     a drill item is not in it.
@@ -110,14 +113,17 @@ def _build_drill_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int)
     section = lesson.sections[section_idx]
     cues: list[Cue] = []
     l2_code = lesson.language_code
-    item_n = 0
+    # The item the cues are in; an English line with a form after it opens the
+    # next one. Every form until the next English stays in it, so a built-up
+    # form (whole, its pieces, whole again) is ONE item, as a key phrase is.
+    item_n = -1
 
     for i, te in enumerate(timing):
         phrase = section.phrases[te.phrase_index]
         if phrase.language_code == l2_code:
-            ref: dict = {"kind": "drill", "target_index": item_n}
-            item_n += 1
+            ref: dict = {"kind": "drill", "target_index": max(item_n, 0)}
         elif _next_is_l2(section, timing, i, l2_code):
+            item_n += 1
             ref = {"kind": "drill", "target_index": item_n}
         else:
             ref = {"kind": "narration"}

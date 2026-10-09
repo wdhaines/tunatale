@@ -196,11 +196,14 @@ def test_the_drill_is_built_from_the_roots_the_story_used():
 def test_a_closing_drill_is_short():
     lesson = _story_lesson("An Evening Wake", _WAKE)
     add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
-    spoken = [p for p in lesson.sections[-1].phrases if p.language_code == "ceb"]
-    # Three roots: each named once, each of its two forms modelled once and
-    # answered once; then the one whole line of the story that says a drilled
-    # form in a single sentence. No second, mixed round.
-    assert len(spoken) == 3 * (1 + 2 + 2) + 1
+    phrases = lesson.sections[-1].phrases
+    # Three roots, each named once, each of its two forms built up once
+    # (tunatale-ve4p.16) and answered once; then the one whole line of the
+    # story that says a drilled form in a single sentence, taught and then
+    # asked. No second, mixed round: every answer is asked exactly once.
+    answers = [p.text for p in phrases if p.role == "answer"]
+    assert len(answers) == 3 * 2 + 1
+    assert len(set(answers)) == len(answers)
 
 
 def test_a_root_the_story_used_in_both_forms_leads():

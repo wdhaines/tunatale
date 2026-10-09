@@ -47,6 +47,10 @@ from app.models.lesson import Phrase, Section, SectionType
 # the last three is an attribute of the text, and each changes the audio.
 MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None]
 
+# The sections whose multi-word steps are build-up steps, read word by word
+# (``_drill_phrase_phonemes``); every other section is dialogue.
+_PHRASE_IPA_SECTIONS = frozenset({SectionType.KEY_PHRASES, SectionType.AFFIX_DRILL})
+
 # Leading/trailing characters that are not part of a word ("bing?" -> "bing").
 _WORD_EDGES = re.compile(r"^\W+|\W+$")
 
@@ -174,8 +178,10 @@ def plan_section(
 
         Four conditions, each a refusal rather than a guess:
 
-        * a KEY_PHRASES section — dialogue is a full sentence, and phrase IPA
-          on one is untested, so it stays plain for every language;
+        * a KEY_PHRASES or AFFIX_DRILL section — dialogue is a full sentence,
+          and phrase IPA on one is untested, so it stays plain for every
+          language. The affix drill builds its forms and lines up the Key
+          Phrases way (tunatale-ve4p.16/.20), so its steps read the same way;
         * a language that asked for this (``get_ipa_for_drill_phrases``) —
           the channel is the adapter's, and another language's Azure voice
           would wrap every word of the step in ``<phoneme>``;
@@ -191,7 +197,7 @@ def plan_section(
         aligned to the wrong readings, and a wrong reading is worse than the
         plain render this replaces.
         """
-        if section.section_type != SectionType.KEY_PHRASES:
+        if section.section_type not in _PHRASE_IPA_SECTIONS:
             return None
         if not get_ipa_for_drill_phrases(language_code):
             return None
