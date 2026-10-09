@@ -63,12 +63,13 @@ adj	vertical	pasaka	unconfirmed	vertical; standing, pointing, or moving straight
 adj	whole	tibuok	reviewed	whole; entire
 noun	plan	plano	reviewed	plan; intention
 noun	weapon	armas	reviewed	a weapon
+noun	help	tabang	reviewed	help; aid; assistance
 adv	true	tinuod	reviewed	indeed
 noun	law	balaod	reviewed	law (body of rules established in a community by its authorities)
 adj	take long	dugay	reviewed	taking a long time
+noun	answer	tubag	reviewed	an answer
 noun	suspect	suspetsado	reviewed	a suspect
 noun	province	lalawigan	reviewed	province
-noun	answer	tubag	reviewed	an answer
 adv	always	kanunay	reviewed	always; all the time; constantly
 noun	amount	kantidad	reviewed	an amount; a quantity
 noun	hospital	hospital	reviewed	a hospital
@@ -78,7 +79,6 @@ noun	police	kapolisan	reviewed	the police force
 noun	request	hangyo	reviewed	a request; an appeal; a plea
 noun	do	buhat	reviewed	something made
 noun	councilor	konsehal	reviewed	councilor; alderman
-noun	help	tabang	reviewed	help; aid; assistance
 noun	report	taho	reviewed	account, report
 adj	safe	luwas	reviewed	safe; free from harm or risk
 adj	free (no charge)	libre	reviewed	without charge; free, gratis
@@ -93,12 +93,12 @@ adv	alike	susama	unconfirmed	alike
 noun	guard	bantay	unconfirmed	guard; sentinel; watchman
 adv	can, allowed	pwede	reviewed	maybe
 noun	sum	kabat	unconfirmed	the sum; a quantity obtained by addition or aggregation
+noun	string of a kite	tugot	unconfirmed	the string of a kite
 noun	issue	isyu	unconfirmed	issue (instalment of a publication)
 noun	driver	drayber	unconfirmed	a driver (a person who drives a motorized vehicle)
 noun	member	miyembro	unconfirmed	member
 noun	alias	alyas	unconfirmed	an alias; another name; an assumed name
 noun	condition	kahimtang	unconfirmed	a condition, a state, a status
-noun	string of a kite	tugot	unconfirmed	the string of a kite
 verb	urge	awhag	unconfirmed	to urge
 verb	involve	lambigit	unconfirmed	to involve, to relate
 noun	passenger	pasahero	unconfirmed	a passenger
@@ -106,11 +106,11 @@ noun	clinic	tambalanan	unconfirmed	a clinic
 adj	difficult	lisod	reviewed	difficult; hard
 noun	finish, end	tapos	reviewed	the last day of the novena for a dead person
 noun	choose	pili	reviewed	pili tree (Canarium ovatum)
+noun	visitor; visit	bisita	reviewed	guest; visitor
 noun	province	probinsiya	reviewed	province
 adj	upcoming	umaabot	reviewed	future; forthcoming; upcoming; approaching
 noun	step (a measure taken)	lakang	reviewed	step; pace
 adv	downwards	paubos	unconfirmed	downwards
-noun	visitor; visit	bisita	reviewed	guest; visitor
 adv	immediately	gilayon	reviewed	immediately
 noun	publish, print	patik	reviewed	a tattoo; an image made in the skin with ink and a needle
 adj	experience (undergo)	sinati	reviewed	acquainted; familiar
@@ -181,17 +181,18 @@ noun	advice	tambag	reviewed	an advice
 noun	surroundings	palibot	reviewed	surroundings
 noun	personnel, staff	personahe	reviewed	a character; a being in a story
 noun	mall	mall	reviewed	mall; shopping center
+verb	appeal	manawagan	unconfirmed	to appeal; to call on (someone) for aid, especially on radio or television
 verb	seize, confiscate	sakmit	reviewed	to confiscate; to nab
 noun	witness	saksi	reviewed	witness
 noun	rebel	rebelde	reviewed	rebel
 verb	challenge	hagit	reviewed	to dare; to defy or challenge (someone to do something)
 noun	ordinance	ordinansa	reviewed	ordinance
 noun	health	panglawas	unconfirmed	health
+verb	understand	sabot	unconfirmed	to understand
 noun	one's proper place under the sun	luna	unconfirmed	one's proper place under the sun
 noun	employee	trabahante	unconfirmed	an employee; especially one who does manual labor
 noun	island	isla	unconfirmed	island; isle
 adj	according to	suma	unconfirmed	according to
-verb	understand	sabot	unconfirmed	to understand
 verb	slow down	menor	unconfirmed	to slow down
 adv	indeed	tuod	unconfirmed	indeed
 verb	hand over	tunol	unconfirmed	to hand over; to relinquish control or possession of something to someone
@@ -238,15 +239,15 @@ noun	robbery	tulis	unconfirmed	robbery
 adj	passed	pasar	unconfirmed	passed
 noun	rice wine	basi	unconfirmed	rice wine
 noun	belief	pagtuo	unconfirmed	belief; faith
+noun	zenith	tutok	unconfirmed	the zenith
 noun	member of one's immediate family	kabanay	unconfirmed	a member of one's immediate family
 adj	having a complexion that is tanned or a shade darker than most Filipinos	moreno	unconfirmed	having a complexion that is tanned or a shade darker than most Filipinos
 noun	quantity counted	gidaghanon	unconfirmed	a quantity counted; count; number; sum
 noun	uncertainty	duda	unconfirmed	an uncertainty; doubt; disbelief
-noun	zenith	tutok	unconfirmed	the zenith
+verb	admire	dayeg	unconfirmed	to admire; to commend; praise
 noun	dread	kahadlok	unconfirmed	dread, fear, fright
 noun	subtraction	pagkuha	unconfirmed	subtraction; the process of subtracting numbers
 noun	word	pulong	unconfirmed	word
-verb	admire	dayeg	unconfirmed	to admire; to commend; praise
 noun	accusation	pasangil	unconfirmed	accusation, blame, charge, imputation
 noun	kind	matang	unconfirmed	a kind, a sort; a type, race or category
 verb	participate	salmot	unconfirmed	to participate
@@ -266,15 +267,16 @@ noun	Christmas	pasko	unconfirmed	Christmas; a festival, commemorating the birth 
 noun	couple	magtiayon	unconfirmed	a couple; especially a married couple
 noun	spokesperson	tigpamaba	unconfirmed	spokesperson
 adj	sickly	daot	unconfirmed	sickly, malnourished
-noun	congressional district	distrito	unconfirmed	a congressional district
 verb	fail	pakyas	unconfirmed	to fail
+noun	congressional district	distrito	unconfirmed	a congressional district
 noun	visit	pagbisita	unconfirmed	a visit; a single act of visiting
-adj	powerful	gamhanan	unconfirmed	powerful
 adj	opposite	pikas	unconfirmed	opposite
+adj	powerful	gamhanan	unconfirmed	powerful
 noun	small village or a group of houses under a barangay	sityo	unconfirmed	a small village or a group of houses under a barangay; a hamlet
+verb	mention	hisgot	unconfirmed	to mention
+noun	red dragon tile	dunggab	unconfirmed	the red dragon tile
 noun	education	edukasyon	unconfirmed	education
 verb	To suffer a miscarriage	nakuhaan	unconfirmed	To suffer a miscarriage; to experience the involuntary, premature loss of a fetus.
-verb	mention	hisgot	unconfirmed	to mention
 adj	wounded	samdan	unconfirmed	wounded; suffering from a wound, especially one acquired in battle from a weapon, such as a gun or a knife
 noun	glue	kula	unconfirmed	glue; or any sticky adhesive substance
 noun	need	panginahanglan	unconfirmed	a need; a requirement for something; something needed
@@ -293,7 +295,6 @@ noun	city hall	munisipyo	unconfirmed	a city hall, a town hall, a municipal hall
 noun	tourist	turista	unconfirmed	a tourist
 adj	differing	managlahi	unconfirmed	differing; different from each other or from someone or something else
 noun	favor	pabor	unconfirmed	favor
-noun	red dragon tile	dunggab	unconfirmed	the red dragon tile
 noun	government office	katungdanan	unconfirmed	government office
 noun	term	termino	unconfirmed	term (word or phrase, especially one from a special used area of knowledge)
 noun	politics	politika	unconfirmed	politics
@@ -327,8 +328,8 @@ noun	investigator	imbestigador	unconfirmed	an investigator
 adj	person who knows something	kahibalo	unconfirmed	a person who knows something
 noun	penalty	silot	unconfirmed	penalty
 noun	police officer	polis	unconfirmed	a police officer; a cop
-adj	wavy	kulong	unconfirmed	wavy
 noun	prisoner	priso	unconfirmed	prisoner; inmate
+adj	wavy	kulong	unconfirmed	wavy
 noun	cash	salapi	unconfirmed	cash, money
 noun	celebration	selebrasyon	unconfirmed	celebration
 noun	room	lawak	unconfirmed	a room, a chamber
@@ -336,10 +337,10 @@ verb	go against	sukol	unconfirmed	to go against; to oppose; to resist
 noun	firecracker	pabuto	unconfirmed	a firecracker
 noun	going with or accompanying someone to a certain place	kuyog	unconfirmed	going with or accompanying someone to a certain place
 verb	deny	himakak	unconfirmed	to deny; to assert that something is not true
+verb	replace	hulip	unconfirmed	to replace; to take the place of; to supply the want of; to fulfill the end or office of
 noun	involvement	kalambigitan	unconfirmed	involvement
 adv	until	kutob	unconfirmed	until
 noun	experience	kasinatian	unconfirmed	experience
-verb	replace	hulip	unconfirmed	to replace; to take the place of; to supply the want of; to fulfill the end or office of
 noun	truth	kamatuoran	unconfirmed	truth; veracity
 noun	forgiveness	pasaylo	unconfirmed	forgiveness
 noun	ombudsman	ombudsman	unconfirmed	an ombudsman
@@ -360,6 +361,7 @@ noun	celebration	kasaulogan	unconfirmed	a celebration
 adj	complete	kompleto	unconfirmed	complete
 noun	whale shark	tuki	unconfirmed	a whale shark
 num	one	isa	unconfirmed	one
+verb	expect	dahom	unconfirmed	to expect
 adv	exactly	insakto	unconfirmed	exactly
 adj	wanted	wanted	unconfirmed	wanted
 noun	nobility	tumaw	unconfirmed	the nobility; the descendants of a datu
@@ -385,13 +387,13 @@ adj	ancient	karaan	unconfirmed	ancient; very old
 noun	solution	solusyon	unconfirmed	solution (answer to a problem)
 adj	characteristic of or resembling the Plio-Pleistocene Carcar formation	carcar	unconfirmed	characteristic of or resembling the Plio-Pleistocene Carcar formation
 noun	tourism	turismo	unconfirmed	tourism
-adv	apart	buwag	unconfirmed	apart; aside
+noun	story	estorya	unconfirmed	story
 verb	clean up	hipos	unconfirmed	to clean up; to collect, to gather
+adv	apart	buwag	unconfirmed	apart; aside
 verb	sign  official by writing one's signature)	pirmahan	unconfirmed	to sign (make (a document) official by writing one's signature)
 adj	back to back	sunod-sunod	unconfirmed	back to back
 noun	kith	kaubanan	unconfirmed	kith; friendships and acquaintances
 adj	famous	sikat	unconfirmed	famous, popular
-noun	story	estorya	unconfirmed	story
 noun	alarm	alarma	unconfirmed	alarm
 noun	living room	sala	unconfirmed	living room
 noun	establishment	establisemento	unconfirmed	an establishment
@@ -410,8 +412,10 @@ noun	title	titulo	unconfirmed	title
 noun	Society	katilingban	unconfirmed	Society; community; the collective body of people living together within a shared structural framework, governed by mutual relations, institutions, and cultural systems.
 noun	competition	kompetisyon	unconfirmed	competition (contest)
 noun	livelihood	panginabuhian	unconfirmed	a livelihood; a person's means of supporting themselves
+verb	cut down	tigbas	unconfirmed	to cut down; to chop; to hack
 noun	hardship	kalisod	unconfirmed	hardship; difficulty or trouble; hard times
 noun	deed	binuhatan	unconfirmed	deed, work
+verb	hang oneself	hikog	unconfirmed	to hang oneself
 verb	register	rehistro	unconfirmed	to register
 noun	attack	atake	unconfirmed	attack
 noun	road	kalsada	unconfirmed	road; street
@@ -437,11 +441,9 @@ adj	sure	segurado	unconfirmed	sure; certain; positive
 noun	evacuee	bakwit	unconfirmed	an evacuee
 noun	beneficiary	benepisyaryo	unconfirmed	beneficiary
 noun	threat	bahad	unconfirmed	a threat
-noun	mutual assistance	tinabangay	unconfirmed	mutual assistance
 adj	containing a greater amount of lean meat over fat	suot	unconfirmed	containing a greater amount of lean meat over fat
 noun	surrender	surender	unconfirmed	surrender
 noun	robber	kawatan	unconfirmed	robber; burglar; thief
-verb	cut down	tigbas	unconfirmed	to cut down; to chop; to hack
 noun	narrow strip of rubber	chinese	unconfirmed	a narrow strip of rubber, usually a meter long, used in various jumping games
 verb	ask	kutana	unconfirmed	to ask (a question)
 noun	hearing	husay	unconfirmed	a hearing
@@ -452,6 +454,7 @@ verb	spread	katap	unconfirmed	to spread; to scatter; to disperse
 verb	bear	antos	unconfirmed	to bear; to endure
 noun	accusation	kiha	unconfirmed	an accusation
 noun	cigarette	sigarilyo	unconfirmed	cigarette
+noun	end of a firearm opposite to that from which a bullet is fired	kulata	unconfirmed	the end of a firearm opposite to that from which a bullet is fired; the butt; the gunstock
 noun	gang	gang	unconfirmed	gang (company of persons)
 verb	imprison	balhog	unconfirmed	to imprison
 noun	opponent	kaatbang	unconfirmed	an opponent
@@ -464,7 +467,6 @@ noun	relative	paryente	unconfirmed	relative
 verb	take back	bawi	unconfirmed	to take back; to regain possession of something
 noun	to batter	butangan	unconfirmed	to batter; to beat up; to maul
 noun	that which is set aside	tagana	unconfirmed	that which is set aside
-noun	end of a firearm opposite to that from which a bullet is fired	kulata	unconfirmed	the end of a firearm opposite to that from which a bullet is fired; the butt; the gunstock
 adj	pornographic	bomba	unconfirmed	pornographic
 verb	perform an action	dayong	unconfirmed	to perform an action, task, or movement in coordination with another person or group.
 noun	mountains	kabukiran	unconfirmed	mountains
@@ -480,16 +482,17 @@ noun	base	punoan	unconfirmed	base, foot (of trees)
 num	twelve	dose	unconfirmed	twelve
 noun	copycat	sunodsunod	unconfirmed	a copycat
 noun	advancement	kauswagan	unconfirmed	advancement; improvement
+noun	any of two cyprinid fish endemic to Lake Lanao in the Philippines	tumba	unconfirmed	any of two cyprinid fish endemic to Lake Lanao in the Philippines
 noun	velvet apple	mabolo	unconfirmed	velvet apple; velvet persimmon
 adj	mountainous	bukiran	unconfirmed	mountainous
-noun	any of two cyprinid fish endemic to Lake Lanao in the Philippines	tumba	unconfirmed	any of two cyprinid fish endemic to Lake Lanao in the Philippines
+noun	dreams	pangandoy	unconfirmed	dreams; aspirations
 noun	fisherman	mananagat	unconfirmed	a fisherman
 noun	bridge	tulay	unconfirmed	bridge
 noun	passage	agianan	unconfirmed	a passage; a passageway
 noun	advisory	pahimangno	unconfirmed	an advisory
 verb	witness	saksihan	unconfirmed	to witness
-verb	spread	kuyanap	unconfirmed	to spread; to scatter; to disperse
 noun	lease	abang	unconfirmed	a lease
+verb	spread	kuyanap	unconfirmed	to spread; to scatter; to disperse
 verb	collect	kolekta	unconfirmed	to collect
 verb	befall	dangat	unconfirmed	to befall; to happen to
 noun	power	gahom	unconfirmed	power; authority; might
@@ -497,12 +500,12 @@ noun	capacity	kapasidad	unconfirmed	capacity
 noun	risk	risgo	unconfirmed	risk
 verb	worry	guol	unconfirmed	to worry
 noun	bang	bang	unconfirmed	bang (the sound of an explosion or a gun)
-noun	supply	suplay	unconfirmed	a supply
 noun	bath	ligo	unconfirmed	a bath
+noun	supply	suplay	unconfirmed	a supply
 verb	plan	laraw	unconfirmed	plan; devise; scheme
+verb	stab using a knife	luba	unconfirmed	to stab using a knife, icepick, etc.
 noun	customer	kustomer	unconfirmed	customer
 adv	across	tabok	unconfirmed	across; on the other side
-verb	stab using a knife	luba	unconfirmed	to stab using a knife, icepick, etc.
 noun	judgment	hukom	unconfirmed	judgment
 noun	anger	kasuko	unconfirmed	anger
 noun	exit	lusot	unconfirmed	an exit; a way out
@@ -516,13 +519,13 @@ adj	good-looking	kapa	unconfirmed	good-looking, cool
 noun	continuation	pagpadayon	unconfirmed	a continuation; the act or state of continuing or being continued
 verb	remember	hinumdom	unconfirmed	to remember
 verb	implement	implementar	unconfirmed	to implement
+adj	cluttered	katag	unconfirmed	cluttered
 adj	closed	sirado	unconfirmed	closed; shut
+noun	discipline	disiplina	unconfirmed	discipline
 noun	ability	abilidad	unconfirmed	ability; capability
 num	billion	bilyon	unconfirmed	billion; thousand million
-noun	discipline	disiplina	unconfirmed	discipline
 verb	go there	anha	unconfirmed	to go there (to a place near the listener)
 adv	last night	kagabii	unconfirmed	last night
-adj	cluttered	katag	unconfirmed	cluttered
 adj	sad	subo	unconfirmed	sad
 noun	quality	kalidad	unconfirmed	quality
 noun	boxer	boksidor	unconfirmed	a boxer; a participant (fighter) in a boxing match
@@ -530,6 +533,7 @@ verb	investigate	imbestigar	unconfirmed	to investigate
 adj	junior	manghod	unconfirmed	junior; younger
 noun	cousin	ig-agaw	unconfirmed	cousin (of any degrees of cousinhood)
 adj	fake	peke	unconfirmed	fake; counterfeit; fraudulent
+noun	food offering to spirits or one's ancestors	dagit	unconfirmed	a food offering to spirits or one's ancestors
 noun	capital	puhunan	unconfirmed	capital
 noun	pomegranate	granada	unconfirmed	pomegranate (Punica granatum)
 adv	one of each	tagsa	unconfirmed	one of each
@@ -537,7 +541,6 @@ verb	debate	lalis	unconfirmed	to debate, disagree, or discuss opposing or differ
 noun	convention	tigom	unconfirmed	a convention
 verb	thwart	pakgang	unconfirmed	to thwart; to prevent; to halt; to cause to fail; to foil; to frustrate
 verb	give a name to	nganlan	unconfirmed	to give a name to
-noun	food offering to spirits or one's ancestors	dagit	unconfirmed	a food offering to spirits or one's ancestors
 noun	bout	hugna	unconfirmed	a bout
 noun	hopbush	takod	unconfirmed	the hopbush (Dodonaea viscosa)
 adj	happening once every year	tinuig	unconfirmed	happening once every year
@@ -577,15 +580,14 @@ noun	detail	detalye	unconfirmed	detail
 adj	stern	estrikto	unconfirmed	stern; strict
 adj	determined	naningkamot	unconfirmed	determined
 noun	transaction	transaksyon	unconfirmed	a transaction
+adj	bothersome	hasol	unconfirmed	bothersome
 noun	defeat	kapildihan	unconfirmed	a defeat; the act or instance of being defeated, of being overcome or vanquished; a loss
 noun	cooperation	kooperasyon	unconfirmed	cooperation
 noun	barred garfish	sasa	unconfirmed	the barred garfish (Hemiramphus far)
-adj	bothersome	hasol	unconfirmed	bothersome
 noun	valuation	banabana	unconfirmed	a valuation
 verb	bring	dad-on	unconfirmed	to bring; to carry
 noun	future	kaugmaon	unconfirmed	future
 verb	pity	luoy	unconfirmed	to pity
-verb	expect	dahom	unconfirmed	to expect
 adv	fourth time	ikaupat	unconfirmed	fourth time
 adj	transparent in colour	tin-aw	unconfirmed	transparent in colour
 adv	apart	bulag	unconfirmed	apart; aside
@@ -593,7 +595,6 @@ verb	float	lutaw	unconfirmed	to float, to cause something to be suspended in a l
 noun	marker	timailhan	unconfirmed	a marker
 verb	embrace	hangop	unconfirmed	to embrace; to clasp (someone or each other) in the arms with affection; to take in the arms; to hug
 noun	height	gitas-on	unconfirmed	height
-noun	dreams	pangandoy	unconfirmed	dreams; aspirations
 noun	night	kagabhion	unconfirmed	night, nighttime
 verb	elude	ikyas	unconfirmed	to elude; to evade
 noun	running	pagdagan	unconfirmed	running; the activity of running as a form of exercise, as a sport, or for any other reason
@@ -601,12 +602,13 @@ verb	come	anhi	unconfirmed	to come; to go here (to a place near the speaker)
 noun	record	rekord	unconfirmed	record (an item of information put into a temporary or permanent physical medium)
 noun	interest	interes	unconfirmed	interest (attention given to something)
 noun	actress	aktres	unconfirmed	an actress; a female who performs on stage and film
-adj	able to cut easily	hait	unconfirmed	able to cut easily, sharp, razor-sharp
 verb	admonish	badlong	unconfirmed	to admonish; to reprove
+adj	able to cut easily	hait	unconfirmed	able to cut easily, sharp, razor-sharp
 noun	attachment	sumpay	unconfirmed	attachment, connection
 noun	disaster	katalagman	unconfirmed	a disaster; a calamity; a catastrophe
 noun	deer	binaw	unconfirmed	a deer
 noun	extension	lugway	unconfirmed	an extension
+verb	yell	singgit	unconfirmed	to yell
 noun	night before the day of the burial	championship	unconfirmed	the night before the day of the burial (see usage notes)
 noun	garden	garden	unconfirmed	a garden
 noun	teaching	pagtudlo	unconfirmed	teaching; the profession of educating people
@@ -614,7 +616,6 @@ noun	helmet	helmet	unconfirmed	a helmet; a protective head covering, usually par
 noun	zone	sona	unconfirmed	a zone; a given area distinguished on the basis of a particular characteristic, use, restriction, etc.
 noun	salary	suweldo	unconfirmed	salary
 noun	mental hospital	mental	unconfirmed	mental hospital
-verb	yell	singgit	unconfirmed	to yell
 adj	older	maguwang	unconfirmed	older, elder
 verb	regret	mahay	unconfirmed	to regret
 verb	burn down	ugdaw	unconfirmed	to burn down
@@ -652,12 +653,12 @@ noun	act of stealing	pagpangawat	unconfirmed	the act of stealing
 noun	breath	ginhawa	unconfirmed	breath
 verb	know	hibalo	unconfirmed	to know
 adv	around	libot	unconfirmed	around
-adj	veteran	beterano	unconfirmed	veteran
 verb	adopt	sagop	unconfirmed	to adopt
+adj	veteran	beterano	unconfirmed	veteran
+adj	nude	hubo	unconfirmed	nude, naked
 verb	explain or describe an event in detail	batbat	unconfirmed	to explain or describe an event in detail
 noun	firefighter	bombero	unconfirmed	firefighter
 verb	unite	hiusa	unconfirmed	to unite
-adj	nude	hubo	unconfirmed	nude, naked
 adj	gently	mahinay	unconfirmed	gently
 verb	How .	giunsa	unconfirmed	How (queries the exact manner, protocol, or mechanism by which a past action was completed).
 noun	higher office	kadagkoan	unconfirmed	higher office
@@ -665,9 +666,9 @@ noun	anniversary	anibersaryo	unconfirmed	anniversary
 noun	fruit	bunga	unconfirmed	a fruit (especially in the context of its parent tree/plant)
 noun	coconut palm	lubi	unconfirmed	the coconut palm (Cocos nucifera)
 noun	box-like trap woven from bamboo slats allowing entrance but no egress	bubo	unconfirmed	box-like trap woven from bamboo slats allowing entrance but no egress, used to catch fish or monkeys
+noun	feast	hikay	unconfirmed	a feast; a very large meal, often of a ceremonial nature
 noun	further away	unahan	unconfirmed	further away; a place in the distance
 adv	not	aw	unconfirmed	not
-noun	feast	hikay	unconfirmed	a feast; a very large meal, often of a ceremonial nature
 noun	price	bili	unconfirmed	price
 noun	feast day	pista	unconfirmed	feast day
 noun	small bars of ivory	tugbok	unconfirmed	small bars of ivory, gold, brass or lead or a tube of tin driven across the head of the penis, often serving as an anchor of a sakra
@@ -683,9 +684,10 @@ noun	group of barangays collectively	kabarangayan	unconfirmed	a group of baranga
 verb	accomplish	lampos	unconfirmed	to accomplish, to finish, to succeed
 num	eleven	onse	unconfirmed	eleven
 noun	eating place	kan-anan	unconfirmed	an eating place; a restaurant, dining room
+adj	changed to a contrary or counterchanged order or direction	bali	unconfirmed	changed to a contrary or counterchanged order or direction; characterized by inversion; turned upside down; reversed; opposite; contrary
+verb	hold	gunit	unconfirmed	to hold; to clutch, to grasp
 noun	rest	pahuway	unconfirmed	a rest; a short time for relaxing and doing something else
 adj	at fault	sad-an	unconfirmed	at fault
-verb	hold	gunit	unconfirmed	to hold; to clutch, to grasp
 verb	catch	sapon	unconfirmed	to catch; to discover unexpectedly in the act; to unpleasantly surprise (someone doing something)
 noun	beloved	hinigugma	unconfirmed	a beloved, a sweetheart; a boyfriend or girlfriend
 noun	instance of going to church or attending church services	simba	unconfirmed	an instance of going to church or attending church services
@@ -697,14 +699,12 @@ noun	blotting paper	blotter	unconfirmed	blotting paper
 adj	affluent	adunahan	unconfirmed	affluent; wealthy
 noun	light	suga	unconfirmed	light
 noun	type of bolo knife	sundang	unconfirmed	a type of bolo knife; a large, long-bladed, sharp-pointed cutting tool similar to a machete
-adj	changed to a contrary or counterchanged order or direction	bali	unconfirmed	changed to a contrary or counterchanged order or direction; characterized by inversion; turned upside down; reversed; opposite; contrary
-noun	face	dagway	unconfirmed	face
 adj	unruly	bungkag	unconfirmed	unruly
+noun	face	dagway	unconfirmed	face
 adj	tangled	gubot	unconfirmed	tangled
 noun	client	kliyente	unconfirmed	client
 num	five	singko	unconfirmed	five
 noun	administrator	tagdumala	unconfirmed	an administrator; a manager; a head or leader
-verb	hang oneself	hikog	unconfirmed	to hang oneself
 noun	plant	planta	unconfirmed	plant (factory)
 verb	shake	tay-og	unconfirmed	to shake
 adj	dead	anhing	unconfirmed	dead; deceased; late
@@ -750,7 +750,6 @@ adv	by pairs	duha-duha	unconfirmed	by pairs; two by two; two at a time
 adj	left-handed	walhon	unconfirmed	left-handed
 noun	motorcycle	honda	unconfirmed	motorcycle
 noun	comment	komentaryo	unconfirmed	comment
-noun	battle using small arms	pinusilay	unconfirmed	a battle using small arms; a gunfight; a shootout
 adj	empty	basiyo	unconfirmed	empty
 adv	bit by bit	ginagmay	unconfirmed	bit by bit
 verb	drown	lumos	unconfirmed	to drown
@@ -788,6 +787,7 @@ noun	western	western	unconfirmed	a western
 noun	barrier	ali	unconfirmed	barrier
 noun	game where one team attempts to clear sections of a field while the members of the opposing side	inin	unconfirmed	a game where one team attempts to clear sections of a field while the members of the opposing side, with arms outstretched, try to guard their designated line
 noun	disastrous event	trahedya	unconfirmed	a disastrous event; a tragedy
+verb	touch or move something one doesn't own	hilabot	unconfirmed	to touch or move something one doesn't own
 noun	boxing	boksing	unconfirmed	boxing
 noun	cement	semento	unconfirmed	cement
 verb	encounter	tagbo	unconfirmed	to encounter; to meet
@@ -797,8 +797,9 @@ noun	tree trunk	lindog	unconfirmed	the tree trunk
 noun	post	poste	unconfirmed	post; column
 adj	annoyed	sapot	unconfirmed	annoyed; irritated
 noun	floating woven container used to temporarily hold fish caught from fish traps	buhian	unconfirmed	a floating woven container used to temporarily hold fish caught from fish traps
-adj	truthful	matinud-anon	unconfirmed	truthful
 adj	false	bakak	unconfirmed	false
+adj	false	ilad	unconfirmed	false
+adj	truthful	matinud-anon	unconfirmed	truthful
 verb	cancel	kanselar	unconfirmed	to cancel
 verb	land	landing	unconfirmed	to land; to descend to a surface, especially from the air to touch down
 adj	deserted	mingaw	unconfirmed	deserted
@@ -807,7 +808,6 @@ noun	grass	humay	unconfirmed	the grass, Oryza sativa; rice
 adj	shaky	huyang	unconfirmed	shaky
 adj	tired	kapoy	unconfirmed	tired; weary; exhausted
 verb	broadcast	sibya	unconfirmed	to broadcast; to transmit a message or signal through radio waves or electronic means
-adj	false	ilad	unconfirmed	false
 noun	female servant or cleaner	katabang	unconfirmed	a female servant or cleaner; a maid
 adj	Last	kataposan	unconfirmed	Last; final; ultimate.
 noun	master of a household	senyor	unconfirmed	the master of a household
@@ -815,15 +815,18 @@ noun	victor	mananaog	unconfirmed	a victor; a winner
 noun	funeral home	punerarya	unconfirmed	funeral home; funeral parlor
 verb	deject	sagmuyo	unconfirmed	to deject
 verb	submit	sumiter	unconfirmed	to submit
+noun	weight	timbang	unconfirmed	weight
 noun	jewelry	alahas	unconfirmed	jewelry (US); jewellery (Canada, UK)
 noun	meadow	laguna	unconfirmed	meadow, pasture, grassland
 verb	commit suicide	pakamatay	unconfirmed	to commit suicide
 noun	culture-bound syndrome characterized by fear caused by exposure to frightful experiences	ugmad	unconfirmed	a culture-bound syndrome characterized by fear caused by exposure to frightful experiences
 noun	wake	haya	unconfirmed	a wake; a period after a person's death before the body is buried, in some cultures accompanied by a party
+noun	battle using small arms	pinusilay	unconfirmed	a battle using small arms; a gunfight; a shootout
 verb	remove	tanggal	unconfirmed	to remove
 noun	general	heneral	unconfirmed	a general
 noun	rest	pahulay	unconfirmed	a rest; a short time for relaxing and doing something else
 noun	package	putos	unconfirmed	package; small bundle
+verb	shake	taktak	unconfirmed	to shake; to dislodge or dispense (something) by short, quick, forcible movements of its container
 noun	uncle	uyoan	unconfirmed	an uncle; the brother of either parent
 noun	treasure	bahandi	unconfirmed	treasure; wealth; riches;
 verb	bring	dalhon	unconfirmed	to bring; to carry
@@ -838,8 +841,6 @@ noun	dominant color	dayag	unconfirmed	the dominant color
 noun	open space	hawanan	unconfirmed	an open space; an open ground
 noun	tortoise	iyon	unconfirmed	tortoise
 noun	mosquito	lamok	unconfirmed	mosquito
-verb	shake	taktak	unconfirmed	to shake; to dislodge or dispense (something) by short, quick, forcible movements of its container
-noun	weight	timbang	unconfirmed	weight
 adj	economical	ekonomikanhon	unconfirmed	economical
 noun	ghost	kalag	unconfirmed	ghost; specter; wraith
 noun	brown-marbled grouper	lapulapu	unconfirmed	brown-marbled grouper (Epinephelus fuscoguttatus)
@@ -850,6 +851,7 @@ verb	respond	balos	unconfirmed	to respond
 noun	crown	korona	unconfirmed	crown
 noun	link	dugtong	unconfirmed	link; a piece that joins another piece
 noun	mistress	kabit	unconfirmed	mistress, paramour, lover, concubine
+verb	direct or give attention	tagad	unconfirmed	to direct or give attention
 noun	chance	tsansa	unconfirmed	a chance; a possibility; a probability
 noun	storeroom	bodega	unconfirmed	a storeroom
 noun	competence	katakos	unconfirmed	competence
@@ -863,6 +865,7 @@ verb	maintain	mintinar	unconfirmed	to maintain; to keep up; to preserve; to upho
 noun	Mrs	misis	unconfirmed	Mrs
 noun	cough	ubo	unconfirmed	cough
 noun	session	sesyon	unconfirmed	session
+verb	endure	agwanta	unconfirmed	to endure; to put up with; to tolerate
 noun	fate	kapalaran	unconfirmed	fate; fortune
 noun	hope	paglaom	unconfirmed	hope; prospect
 noun	uncle	tito	unconfirmed	an uncle; the brother of either parent
@@ -872,6 +875,7 @@ noun	criticism	batikos	unconfirmed	a criticism
 noun	democracy	demokrasya	unconfirmed	democracy
 noun	runaway	layas	unconfirmed	runaway
 noun	stopping place	estasyon	unconfirmed	a stopping place
+verb	bite	paak	unconfirmed	to bite
 noun	three-spot cardinalfish	pangan	unconfirmed	the three-spot cardinalfish (Pristicon trimaculatus)
 noun	piece	buok	unconfirmed	a piece
 verb	invite	imbitar	unconfirmed	to invite
@@ -883,11 +887,9 @@ noun	aunt	iyaan	unconfirmed	an aunt; the sister of either parent
 noun	roasted suckling piglet	lechon	unconfirmed	a roasted suckling piglet; a roasted pig
 noun	attempt	pagsuway	unconfirmed	an attempt
 adj	fertile	tabunok	unconfirmed	fertile
-verb	endure	agwanta	unconfirmed	to endure; to put up with; to tolerate
 noun	ambush	banhig	unconfirmed	an ambush
-verb	bite	paak	unconfirmed	to bite
-noun	inspiration	inspirasyon	unconfirmed	inspiration
 noun	eraser	papas	unconfirmed	an eraser
+noun	inspiration	inspirasyon	unconfirmed	inspiration
 verb	subvert	pukan	unconfirmed	to subvert
 noun	oath	sumpa	unconfirmed	an oath
 noun	application	aplikasyon	unconfirmed	application
@@ -917,10 +919,9 @@ adj	brave	isog	unconfirmed	brave; courageous; bold
 noun	accusation	akusasyon	unconfirmed	accusation
 noun	inspection	inspeksyon	unconfirmed	inspection
 adj	able to see	kakita	unconfirmed	able to see
+verb	swallow	lamoy	unconfirmed	to swallow
 noun	father	tatay	unconfirmed	a father
 noun	waterfall	busay	unconfirmed	waterfall
-verb	touch or move something one doesn't own	hilabot	unconfirmed	to touch or move something one doesn't own
-verb	swallow	lamoy	unconfirmed	to swallow
 noun	realm	ginsakpan	unconfirmed	realm, dominion
 noun	motorcycle taxi	habalhabal	unconfirmed	motorcycle taxi
 noun	participation	pagsalmot	unconfirmed	participation; the act of participating, of taking part in something
@@ -944,7 +945,7 @@ noun	archbishop	arsobispo	unconfirmed	archbishop
 noun	practice	praktis	unconfirmed	practice, rehearsal
 noun	railroad car	bagon	unconfirmed	railroad car (US); railway carriage (UK)
 noun	coconut husk	bunot	unconfirmed	coconut husk
-verb	direct or give attention	tagad	unconfirmed	to direct or give attention
+verb	embrace	gakos	unconfirmed	to embrace; to hug
 verb	land	tugpa	unconfirmed	to land; to touch down
 verb	graduate from university	gradwar	unconfirmed	to graduate from university, preschool, high school, etc.
 noun	relationship between siblings	managsuon	unconfirmed	the relationship between siblings
@@ -966,7 +967,6 @@ noun	compassion	kaluoy	unconfirmed	compassion
 noun	candle	kandila	unconfirmed	candle
 verb	retract	bakwi	unconfirmed	to retract
 adj	bubbly	bula	unconfirmed	bubbly
-verb	embrace	gakos	unconfirmed	to embrace; to hug
 adj	quick	igmat	unconfirmed	quick
 noun	elder brother	kuya	unconfirmed	an elder brother
 noun	wandering	laag	unconfirmed	a wandering
