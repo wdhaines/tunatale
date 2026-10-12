@@ -80,7 +80,7 @@ PROMPT_VERSION = 1
 # its own counter: bump this when that sentence is reworded. It is separate so
 # that rewording one instruction never throws away the clips the other made —
 # an enunciated key carries both, a drill key only the one above.
-ENUNCIATION_VERSION = 1
+ENUNCIATION_VERSION = 2
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
 # service account's own role, and a wrong scope is a 403 at synthesis time.
@@ -241,12 +241,19 @@ def _phrase_ipa_prompt(name: str, ipa: str) -> str:
 # it (``input.ssml`` with ``<break>`` is refused, HTTP 400) and no punctuation in
 # the text is reliable: measured 2026-10-06 over 45 word gaps per device, " ... "
 # paused at 32, "[short pause]" tags, commas and periods at 37-39, and asking in
-# the prompt at all 45, in 9 of 9 takes. Of seven wordings the user chose this
-# one by ear ("Each word whole, at normal speed is sounding best"); "the way a
-# language teacher dictates" went syllable by syllable and is ruled out. Pauses
-# come out at 0.5-1.0 s whatever length is asked for, and a line about twice as
-# long as its natural-speed take.
-_ENUNCIATION_INSTRUCTION = "Say each word whole and at a normal speaking speed, then stop briefly before the next word."
+# the prompt at all 45, in 9 of 9 takes. "The way a language teacher dictates"
+# went syllable by syllable and is ruled out.
+#
+# The wording sets the length, and small changes swing it a long way. The first
+# one shipped ("at a normal speaking speed, then stop briefly before the next
+# word") ran about 2.45x the natural-speed take, which the user found far too
+# slow in a lesson. Measured 2026-10-09 over 3 lines x 5 fresh takes: this one
+# 1.72x with a pause in every take, and "with a short pause between words" back
+# at 2.40x, so nothing was found between the two. The user heard this one as
+# the best of the set, with the pauses possibly on the short side.
+_ENUNCIATION_INSTRUCTION = (
+    "Say each word whole, at a natural conversational pace, with only a very short pause between words."
+)
 
 
 def _enunciated_prompt(name: str, ipa: str | None) -> str:

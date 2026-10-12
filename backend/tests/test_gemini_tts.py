@@ -1193,7 +1193,7 @@ _LINE_INPUT = {
     "text": "Buntag sa Jimenez. Naglakaw si Paul.",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
+        "Say each word whole, at a natural conversational pace, with only a very short pause between words. "
         "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
     ),
 }
@@ -1204,7 +1204,7 @@ _GREETING_INPUT = {
     "text": "Liza! Maayong buntag. Kumusta ka?",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
+        "Say each word whole, at a natural conversational pace, with only a very short pause between words. "
         "Pronounce it exactly as the IPA /lisa! maʔajoŋ buntaɡ. kumusta ka?/."
     ),
 }
@@ -1278,7 +1278,7 @@ async def test_a_line_with_no_reading_is_still_asked_to_pause(tmp_path, caplog):
             "text": _LINE,
             "prompt": (
                 "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-                "Say each word whole and at a normal speaking speed, then stop briefly before the next word."
+                "Say each word whole, at a natural conversational pace, with only a very short pause between words."
             ),
         }
     ]
@@ -1297,7 +1297,7 @@ async def test_a_mapping_missing_a_word_of_the_line_warns_and_only_pauses(tmp_pa
         )
 
     assert "IPA" not in inputs[0]["prompt"]
-    assert "stop briefly before the next word." in inputs[0]["prompt"]
+    assert "with only a very short pause between words." in inputs[0]["prompt"]
     assert len(_warnings(caplog)) == 1
 
 
@@ -1352,6 +1352,16 @@ async def test_an_enunciated_line_is_cached_and_reused(tmp_path):
 
     assert route.call_count == 1
     assert (tmp_path / "two.mp3").read_bytes() == b"ID3-audio"
+
+
+def test_the_enunciation_wording_and_its_version_move_together():
+    """The cache key holds the version, not the words. A reworded sentence under
+    the old number is served the audio the old words produced, so the pair is
+    pinned: whoever changes one meets this test and changes the other."""
+    assert (gemini_tts._ENUNCIATION_INSTRUCTION, gemini_tts.ENUNCIATION_VERSION) == (
+        "Say each word whole, at a natural conversational pace, with only a very short pause between words.",
+        2,
+    )
 
 
 def test_the_enunciation_wording_has_its_own_version_in_the_key(tmp_path, monkeypatch):
