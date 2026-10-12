@@ -214,6 +214,7 @@ class AzureTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        line: bool = False,
     ) -> None:
         """Synthesize *text* to *output_path* using Azure Speech.
 
@@ -237,6 +238,9 @@ class AzureTTSService:
                 word and a shorter one between parts; *text* then only names
                 the line in the cache key. ``None``/``()`` change nothing,
                 including the cache key.
+            line: Accepted and IGNORED. It tells an instruction-led voice that
+                *phonemes* reads a whole line; here *phonemes* is already
+                applied token by token, to a line as to anything else.
         """
         self._require_credentials()
 

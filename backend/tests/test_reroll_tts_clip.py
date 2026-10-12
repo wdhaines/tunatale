@@ -27,9 +27,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.audio.enunciation import line_phonemes, plan_line
 from app.audio.gemini_tts import GeminiTTSService, resolve_ipa
 from app.audio.slicer import PARENT_RATE
-from app.languages import get_preprocessor
+from app.languages import get_phoneme_planner, get_preprocessor
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.storage.store import ContentStore
 from scripts.report_render_cost import GeminiLegStats, collect_keys, gemini_cache_path, price_lessons
@@ -71,8 +72,16 @@ def _lesson(*phrases: Phrase) -> Lesson:
 
 
 def _value(text: str, voice: str = KORE, rate: str = "+0%", phonemes=None, speak_locale: str = LOCALE) -> tuple:
-    """The value tuple ``collect_keys`` stores for a Cebuano phrase key."""
-    return (text, voice, rate, phonemes, speak_locale, None)
+    """The value tuple ``collect_keys`` stores for a Cebuano phrase key.
+
+    These lessons are one natural-speed section, where a line of two words or
+    more is sent with its reading and as a line (tunatale-u8nz.26). The reading
+    comes from the real planner, as it does in the report.
+    """
+    line = plan_line(text)
+    if phonemes is None and line is not None:
+        return (text, voice, rate, line_phonemes(line, get_phoneme_planner(LANGUAGE)), speak_locale, None, True)
+    return (text, voice, rate, phonemes, speak_locale, None, False)
 
 
 def _seed(lesson: Lesson, db_path: Path, lesson_id: str = "lesson-1") -> None:
@@ -127,15 +136,18 @@ def _args(
 def _price(lesson: Lesson, cache_dir: Path):
     """``price_lessons`` on the same resolvers the script wires for ``ceb``.
 
-    Deliberately the REAL preprocessor and a null planner: the script resolves
-    the lesson's own language, so an oracle that used a different preprocessor
-    could disagree with it and the disagreement would read as a re-roll bug.
+    Deliberately the REAL preprocessor and the REAL planner: the script
+    resolves the lesson's own language, so an oracle that used different ones
+    could disagree with it and the disagreement would read as a re-roll bug. The
+    planner matters since a natural-speed line carries its reading
+    (tunatale-u8nz.26): without one the oracle prices the plain clip, which the
+    render no longer asks for.
     """
     return price_lessons(
         [lesson],
         language_code=LANGUAGE,
         preprocessor=get_preprocessor(LANGUAGE),
-        planner=None,
+        planner=get_phoneme_planner(LANGUAGE),
         target_locale=LOCALE,
         syllabify_fn=None,
         slicer_enabled=False,
@@ -423,24 +435,29 @@ def test_o7_gemini_cache_path_agrees_with_the_adapter_itself(tmp_path: Path) -> 
 
     readings = {"maayong": "ˈmaʔa", "buntag": "ˈbuntag"}
     plain = _value("hi")
-    prompted = ("Maayong buntag", KORE, "+0%", readings, LOCALE, None)
+    prompted = ("Maayong buntag", KORE, "+0%", readings, LOCALE, None, False)
     # An Enunciated line: the same text and readings are a THIRD file, read by
     # lookup and carrying the pause instruction's part of the key.
-    enunciated = ("Maayong buntag", KORE, "+0%", readings, LOCALE, (("Maayong",), ("buntag",)))
+    enunciated = ("Maayong buntag", KORE, "+0%", readings, LOCALE, (("Maayong",), ("buntag",)), False)
+    # The line at natural speed: read by lookup too, so its punctuation stays
+    # in the reading, and with no pause in the key. A FOURTH file.
+    spoken = ("Maayong buntag.", KORE, "+0%", readings, LOCALE, None, True)
+    assert resolve_ipa("Maayong buntag.", readings, None, True)[0].endswith(".")
+    assert not resolve_ipa("Maayong buntag.", readings)[0].endswith(".")
 
-    for value in (plain, prompted, enunciated):
-        text, voice, rate, phonemes, _locale, enunciation = value
-        ipa, _phrase_flag = resolve_ipa(text, phonemes, enunciation)
+    for value in (plain, prompted, enunciated, spoken):
+        text, voice, rate, phonemes, _locale, enunciation, line = value
+        ipa, _phrase_flag = resolve_ipa(text, phonemes, enunciation, line)
         assert gemini_cache_path(gemini, value) == GeminiTTSService(cache_dir=tmp_path / "cache")._cache_path(
             text, voice, rate, ipa, enunciation is not None
         )
-    assert len({gemini_cache_path(gemini, value) for value in (plain, prompted, enunciated)}) == 3
+    assert len({gemini_cache_path(gemini, value) for value in (plain, prompted, enunciated, spoken)}) == 4
 
     # The prompted case must actually be PROMPTED, or this guard would pass on a
     # gemini_cache_path that dropped resolve_ipa entirely.
     assert resolve_ipa("Maayong buntag", {"maayong": "ˈmaʔa", "buntag": "ˈbuntag"})[0] == "ˈmaʔa ˈbuntag"
     assert gemini_cache_path(gemini, prompted) != gemini_cache_path(
-        gemini, ("Maayong buntag", KORE, "+0%", None, LOCALE, None)
+        gemini, ("Maayong buntag", KORE, "+0%", None, LOCALE, None, False)
     )
 
 

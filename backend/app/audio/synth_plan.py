@@ -39,17 +39,23 @@ from app.languages import (
     PhonemePlanner,
     get_ipa_for_drill_phrases,
     get_ipa_for_enunciated_lines,
+    get_ipa_for_natural_lines,
     get_ipa_read_in_voice_locale,
 )
 from app.models.lesson import Phrase, Section, SectionType
 
 # (text, voice_id, rate, phoneme mapping, speak locale, enunciation) — none of
 # the last three is an attribute of the text, and each changes the audio.
-MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None]
+MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None, bool]
 
 # The sections whose multi-word steps are build-up steps, read word by word
-# (``_drill_phrase_phonemes``); every other section is dialogue.
+# (``_drill_phrase_phonemes``); every other section is dialogue, whose lines are
+# read as lines or not at all.
 _PHRASE_IPA_SECTIONS = frozenset({SectionType.KEY_PHRASES, SectionType.AFFIX_DRILL})
+
+# The sections that say a target-language line whole, at natural speed: the
+# Enunciated sections' counterparts (``enunciation.ENUNCIATED_SECTIONS``).
+_NATURAL_LINE_SECTIONS = frozenset({SectionType.NATURAL_SPEED, SectionType.TRANSLATED, SectionType.EN_TRANSLATED})
 
 # Leading/trailing characters that are not part of a word ("bing?" -> "bing").
 _WORD_EDGES = re.compile(r"^\W+|\W+$")
@@ -69,6 +75,7 @@ class SynthRequest:
     phonemes: Mapping[str, str] | None = None
     speak_locale: str | None = None
     enunciation: Enunciation | None = None
+    line: bool = False
 
     @property
     def key(self) -> MemoKey:
@@ -89,6 +96,10 @@ class SynthRequest:
         has the natural-speed section's (text, voice, rate), so whichever
         section was submitted first would voice both. Sorted, so the order a
         mapping was built in cannot split one request into two.
+
+        ``line`` is part of it because it changes what an instruction-led voice
+        is told: the same words and readings are one request as a drill phrase
+        and another as a line.
         """
         return (
             self.text,
@@ -97,6 +108,7 @@ class SynthRequest:
             tuple(sorted(self.phonemes.items())) if self.phonemes else None,
             self.speak_locale,
             self.enunciation,
+            self.line,
         )
 
 
@@ -139,7 +151,19 @@ def plan_section(
     ]
     line_ipa = get_ipa_for_enunciated_lines(language_code)
 
-    def _phrase_phonemes(phrase: Phrase, line: EnunciatedLine | None) -> Mapping[str, str] | None:
+    # The same line at natural speed, for a language whose voice is told how it
+    # sounds there too. ``plan_line`` is asked only where the words are: it
+    # answers ``None`` for a lone word, which is not a line and stays plain,
+    # the very clip the Enunciated section plays for it.
+    natural_ipa = section.section_type in _NATURAL_LINE_SECTIONS and get_ipa_for_natural_lines(language_code)
+    natural_lines: list[EnunciatedLine | None] = [
+        plan_line(text) if natural_ipa and phrase.language_code == language_code else None
+        for text, phrase in zip(texts, section.phrases, strict=True)
+    ]
+
+    def _phrase_phonemes(
+        phrase: Phrase, line: EnunciatedLine | None, natural: EnunciatedLine | None
+    ) -> Mapping[str, str] | None:
         """Compute phonemes for a sub-word chunk, or None for plain synthesis.
 
         Stage 2d: sub-word chunks get IPA from the lexicon; whole phrases and
@@ -154,6 +178,8 @@ def plan_section(
             # told how a line sounds. Never a chunk's: an Enunciated line
             # has no provenance, and for every other language it is plain.
             return line_phonemes(line, planner) if line_ipa else None
+        if natural is not None:
+            return line_phonemes(natural, planner)
         if phrase.source_word is None or phrase.syllable_span is None:
             return _drill_phrase_phonemes(phrase)
         result = planner.plan_chunk(
@@ -178,9 +204,9 @@ def plan_section(
 
         Four conditions, each a refusal rather than a guess:
 
-        * a KEY_PHRASES or AFFIX_DRILL section — dialogue is a full sentence,
-          and phrase IPA on one is untested, so it stays plain for every
-          language. The affix drill builds its forms and lines up the Key
+        * a KEY_PHRASES or AFFIX_DRILL section — a dialogue line is not a
+          drill step: where it is read at all it is read as a LINE, by the
+          paths above. The affix drill builds its forms and lines up the Key
           Phrases way (tunatale-ve4p.16/.20), so its steps read the same way;
         * a language that asked for this (``get_ipa_for_drill_phrases``) —
           the channel is the adapter's, and another language's Azure voice
@@ -234,8 +260,8 @@ def plan_section(
         return target_locale
 
     requests: list[SynthRequest] = []
-    for text, phrase, line in zip(texts, section.phrases, lines, strict=True):
-        phonemes = _phrase_phonemes(phrase, line)
+    for text, phrase, line, natural in zip(texts, section.phrases, lines, natural_lines, strict=True):
+        phonemes = _phrase_phonemes(phrase, line, natural)
         requests.append(
             SynthRequest(
                 # What goes to the voice as text is the line as written, with
@@ -246,6 +272,9 @@ def plan_section(
                 phonemes=phonemes,
                 speak_locale=_phrase_locale(phrase, phonemes),
                 enunciation=line.words if line is not None else None,
+                # Only with a reading: a line whose reading has a hole in it is
+                # sent as plain text, and a plain request is not a line's.
+                line=natural is not None and phonemes is not None,
             )
         )
     return requests

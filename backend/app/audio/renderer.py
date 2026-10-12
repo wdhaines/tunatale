@@ -530,6 +530,7 @@ class LessonRenderer:
                             phonemes=request.phonemes,
                             speak_locale=request.speak_locale,
                             enunciation=request.enunciation,
+                            line=request.line,
                         )
                     )
                     entry = (canonical, task)

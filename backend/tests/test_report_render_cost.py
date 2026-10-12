@@ -982,7 +982,7 @@ def test_collect_keys_carries_the_cut_for_a_caller_that_addresses_a_clip() -> No
         slow_word_fn=None,
     )
 
-    assert list(keys.phrase.values()) == [("Hei du", FINN, "+0%", None, TARGET_LOCALE, (("Hei",), ("du",)))]
+    assert list(keys.phrase.values()) == [("Hei du", FINN, "+0%", None, TARGET_LOCALE, (("Hei",), ("du",)), False)]
 
 
 _CEB_LINE = "Buntag sa Jimenez. Naglakaw si Paul."

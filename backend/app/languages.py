@@ -353,9 +353,8 @@ class LanguageConfig:
     #
     # Per-language, because the CHANNEL is the adapter's: Azure honours
     # ``<phoneme>`` per token, so a per-word map there would re-speak every word
-    # of a drill nobody has listened to. Dialogue stays plain for everyone — this
-    # is about a key phrase, and phrase IPA on a full sentence is untested. See
-    # ``get_ipa_for_drill_phrases``.
+    # of a drill nobody has listened to. This is about a key phrase; a dialogue
+    # line has its own two flags below. See ``get_ipa_for_drill_phrases``.
     ipa_for_drill_phrases: bool = False
     # True when an ENUNCIATED dialogue line should reach its voice with the
     # reading of every word in it. For a voice that is told how a line sounds
@@ -368,6 +367,14 @@ class LanguageConfig:
     # read a word in a line (``plan_line_word``). See
     # ``get_ipa_for_enunciated_lines``.
     ipa_for_enunciated_lines: bool = False
+    # True when a dialogue line said at NATURAL speed should reach its voice
+    # with the same reading. For a voice that reads plain text loosely: the
+    # Cebuano one says "ugna" for "ugma" now and then, and with the line's
+    # reading it did not (the owner's ear, 2026-10-12, on eight lines by four
+    # takes; tunatale-u8nz.26). A voice that marks up tokens has no such fault
+    # and stays plain. Same planner requirement as the flag above. See
+    # ``get_ipa_for_natural_lines``.
+    ipa_for_natural_lines: bool = False
     # A multi-word card matches a lesson phrase only on its exact surface form,
     # not on its lemmas (tunatale-w4m7.17). For a language whose lemma table
     # keys every verb form on the root, lemma matching lights up — and grades —
@@ -628,6 +635,14 @@ def get_ipa_for_enunciated_lines(code: str) -> bool:
     every language sends unless its plugin opts in.
     """
     return _facet(code, "ipa_for_enunciated_lines", False)
+
+
+def get_ipa_for_natural_lines(code: str) -> bool:
+    """Do *code*'s natural-speed dialogue lines reach the voice with a reading of every word?
+
+    ``False`` for an unknown code, like its siblings above.
+    """
+    return _facet(code, "ipa_for_natural_lines", False)
 
 
 def get_phrase_match_exact_form(code: str) -> bool:

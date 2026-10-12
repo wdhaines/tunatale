@@ -285,7 +285,15 @@ async def test_an_exhausted_clip_reaches_the_retry_loop_as_TTSExhausted(tmp_path
 
     class ExhaustingTTS(_BlockingTTS):
         async def synthesize(
-            self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+            self,
+            text,
+            voice_id,
+            output_path,
+            rate="+0%",
+            phonemes=None,
+            speak_locale=None,
+            enunciation=None,
+            line=False,
         ):
             if text == self._failing:
                 raise TTSExhausted("Azure TTS synthesis failed after 6 attempts")

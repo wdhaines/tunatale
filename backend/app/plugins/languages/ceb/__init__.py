@@ -142,6 +142,10 @@ register(
         # and told how the line sounds, in one request. Per-word requests
         # "sounded American", and the reading is what the heard version had.
         ipa_for_enunciated_lines=True,
+        # The natural-speed lines carry it too (tunatale-u8nz.26, the owner's
+        # ear, 2026-10-12): read plain, this voice says "ugna" for "ugma" now
+        # and then, and told the line's reading it did not.
+        ipa_for_natural_lines=True,
         # Onset maximization with Cebuano phonotactics (tunatale-u8nz.6): `ng`
         # opens a syllable (pa|nga|lan) and loan clusters do too (es|kwe|la|han),
         # where the generic default cut pan|ga|lan and esk|we|la|han. The

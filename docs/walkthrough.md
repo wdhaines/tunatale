@@ -1589,6 +1589,8 @@ Two repair paths exist for lessons stored without glosses: `POST /api/story/{les
 - **Azure** (`AzureTTSService._enunciated_body`): plain text with `<break time="450ms"/>` after each word and `<break time="150ms"/>` at a cut inside a word. Markup is billable, so a word gap costs 21 characters; `report_render_cost.py` counts it.
 - **Gemini** (`gemini_tts._enunciated_prompt`): the natural line as text, and in `input.prompt` an instruction to say each word whole and stop briefly before the next, with the line's IPA when the language asks for it (`ipa_for_enunciated_lines`, Cebuano). This provider refuses `<break>`, and no punctuation in the text paused reliably.
 
+The natural-speed sections of a language that asks for it (`ipa_for_natural_lines`, Cebuano) send each target-language line of two words or more with the same reading and no pause instruction: `synth_plan.plan_section` marks the request as a line (`SynthRequest.line`), and `gemini_tts.resolve_ipa` then reads it by lookup, punctuation kept. Read as plain text, the Cebuano voice now and then says a word that is not in the line.
+
 A lesson stored before this holds `jeg ... vil ... ha ... kaffe` in these sections, with `, ` inside a split word. `plan_line` reads that notation too, so an old lesson needs a re-render and not a rebuild. Each English line is read by `tts_en_voice_map[speaker]` when the language has one and by the narrator otherwise, and keeps `role="narrator"` either way.
 
 ```bash

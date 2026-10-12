@@ -77,6 +77,7 @@ class RoutingTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        line: bool = False,
     ) -> None:
         """Hand *voice_id* to the adapter that serves it.
 
@@ -91,6 +92,8 @@ class RoutingTTSService:
                 warning; one that can, does.
             enunciation: The line cut into words, passed through uninterpreted.
                 Each adapter pauses between them in its own way.
+            line: Whether *text* is a whole natural-speed line, passed through
+                uninterpreted.
         """
         adapter = self._adapter_for(voice_id)
         await adapter.synthesize(
@@ -101,6 +104,7 @@ class RoutingTTSService:
             phonemes=phonemes,
             speak_locale=speak_locale,
             enunciation=enunciation,
+            line=line,
         )
 
     async def list_voices(self, language_code: str | None = None) -> list[dict]:
