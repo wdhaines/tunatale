@@ -58,8 +58,8 @@ _GEMINI_ENUNCIATED_LENGTH_FACTOR = 1.7
 
 # The value carried for a key (``synth_plan.MemoKey``, the renderer's own dedupe
 # key): the same fields, phonemes in the dict form ``_cache_path`` /
-# ``_billable_body`` expect.
-_SynthValue = tuple[str, str, str, Mapping[str, str] | None, str | None, Enunciation | None]
+# ``_billable_body`` expect. The last field is ``SynthRequest.line``.
+_SynthValue = tuple[str, str, str, Mapping[str, str] | None, str | None, Enunciation | None, bool]
 
 
 @dataclass(frozen=True)
@@ -280,6 +280,7 @@ def collect_keys(
                         request.phonemes,
                         request.speak_locale,
                         request.enunciation,
+                        request.line,
                     ),
                 )
 
@@ -307,7 +308,7 @@ def collect_keys(
                     leg = keys.gemini_slicer if provider_for(phrase.voice_id) == "gemini" else keys.slicer
                     leg.setdefault(
                         skey,
-                        (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale, None),
+                        (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale, None, False),
                     )
 
     return keys
@@ -369,8 +370,8 @@ def gemini_cache_path(gemini: GeminiTTSService, value: _SynthValue) -> Path:
     never recompute a digest by hand (a hand-rolled digest is a silent miss,
     and a silent miss here is a clip that is evicted from nowhere).
     """
-    text, voice_id, rate, phonemes, _speak_locale, enunciation = value
-    ipa, _phrase = resolve_ipa(text, phonemes, enunciation)
+    text, voice_id, rate, phonemes, _speak_locale, enunciation, line = value
+    ipa, _phrase = resolve_ipa(text, phonemes, enunciation, line)
     return gemini._cache_path(text, voice_id, rate, ipa, enunciates(enunciation))
 
 
@@ -383,7 +384,7 @@ def _leg_stats(keys: Mapping[object, _SynthValue], tts: AzureTTSService) -> LegS
     """
     hits = misses = 0
     billable = 0
-    for text, voice_id, rate, phonemes, speak_locale, enunciation in keys.values():
+    for text, voice_id, rate, phonemes, speak_locale, enunciation, _line in keys.values():
         if tts._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation).exists():
             hits += 1
         else:
@@ -412,7 +413,7 @@ def _gemini_leg_stats(keys: Mapping[object, _SynthValue], gemini: GeminiTTSServi
     # request, so the leg dedupes again on the adapter's own key.
     files: set[Path] = set()
     for value in keys.values():
-        text, _voice_id, rate, _phonemes, _speak_locale, enunciation = value
+        text, _voice_id, rate, _phonemes, _speak_locale, enunciation, _line = value
         path = gemini_cache_path(gemini, value)
         if path in files:
             continue

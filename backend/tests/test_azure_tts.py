@@ -639,7 +639,15 @@ async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
             self._semaphore = asyncio.Semaphore(settings.tts_max_concurrent_requests)
 
         async def synthesize(
-            self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+            self,
+            text,
+            voice_id,
+            output_path,
+            rate="+0%",
+            phonemes=None,
+            speak_locale=None,
+            enunciation=None,
+            line=False,
         ):
             nonlocal in_flight, observed_max
             async with self._semaphore:
@@ -1351,6 +1359,22 @@ async def test_synthesize_sends_the_breaks_to_the_wire_and_caches_the_clip(tmp_p
     assert route.call_count == 2
     assert route.calls[0].request.content.decode() == _TL_HEARD
     assert "<break" not in route.calls[1].request.content.decode()
+    assert (tmp_path / "two.mp3").read_bytes() == b"a"
+
+
+@respx.mock
+async def test_a_whole_line_is_marked_up_token_by_token_as_any_text_is(tmp_path):
+    """``line`` is for a voice that is TOLD how a line sounds. This one marks up
+    tokens, which is what *phonemes* already means here, so the flag changes
+    neither the body nor the clip: the second call is a hit on the first's."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"a"))
+    svc = _svc(cache_dir=tmp_path / "cache")
+    reading = {"jeg": "ˈjæ͡ɪ", "må": "ˈmoː"}
+
+    await svc.synthesize("Jeg må", _VOICE, tmp_path / "one.mp3", phonemes=reading)
+    await svc.synthesize("Jeg må", _VOICE, tmp_path / "two.mp3", phonemes=reading, line=True)
+
+    assert route.call_count == 1
     assert (tmp_path / "two.mp3").read_bytes() == b"a"
 
 

@@ -52,6 +52,7 @@ class TTSService(Protocol):
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        line: bool = False,
     ) -> None:
         """Synthesize *text*, optionally wrapping known tokens in ``<phoneme>``.
 
@@ -73,6 +74,12 @@ class TTSService(Protocol):
         another asks for it in an instruction and says *text* — which is why
         both travel. ``None`` must behave identically to a provider without the
         capability, cache key included.
+
+        *line* says *text* is a whole line said at natural speed and *phonemes*
+        reads its words. It matters to an adapter that is TOLD how a text
+        sounds, which has to know a line from a drill phrase to put the reading
+        together; one that marks up tokens does exactly what *phonemes* already
+        asks and ignores it. ``False`` must change nothing.
         """
         ...
 

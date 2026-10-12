@@ -23,6 +23,7 @@ from app.audio.renderer import LessonRenderer
 from app.languages import (
     get_ipa_for_drill_phrases,
     get_ipa_for_enunciated_lines,
+    get_ipa_for_natural_lines,
     get_ipa_read_in_voice_locale,
     get_phoneme_planner,
 )
@@ -53,9 +54,9 @@ async def _render(tmp_path, lesson: Lesson, planner, locale: str, section_idx: i
     fake_audio = _make_wav_bytes()
 
     async def fake_synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
     ):
-        calls.append({"text": text, "phonemes": phonemes, "speak_locale": speak_locale})
+        calls.append({"text": text, "phonemes": phonemes, "speak_locale": speak_locale, "line": line})
         output_path.write_bytes(fake_audio)
 
     tts = AsyncMock()
@@ -135,18 +136,27 @@ async def test_a_multi_word_drill_step_is_spoken_from_the_ipa_of_its_words(tmp_p
     got "ugma" wrong 2 of 3 blind, told the reading 2 of 2).
 
     The three controls are the whole reason the path is a flag and not a
-    default. The same words inside a DIALOGUE line stay plain, because a
-    sentence is not a drill step and phrase IPA on a full sentence is untested.
+    default. The same words inside a DIALOGUE line are not read as a drill step:
+    a line has its own reading, one-syllable words unstressed, and is sent as a
+    line (tunatale-u8nz.26), where a drill step is neither.
     The same drill step in another language stays plain, because that language's
     drill runs on Azure, where a per-word map would wrap every word in
     ``<phoneme>`` and change audio nobody has listened to.
     """
     [drill] = await _render(tmp_path, _lesson("ceb", [_ceb(_PHRASE)]), get_phoneme_planner("ceb"), "ceb-PH")
-    assert drill["phonemes"] == _PHRASE_IPAS
+    assert (drill["phonemes"], drill["line"]) == (_PHRASE_IPAS, False)
 
     dialogue = _lesson("ceb", [_ceb("Ilubong ugma. Alas dyis sa buntag.")], section_type=SectionType.NATURAL_SPEED)
     [line] = await _render(tmp_path, dialogue, get_phoneme_planner("ceb"), "ceb-PH")
-    assert line["phonemes"] is None
+    assert line["phonemes"] == {
+        "ilubong": "ʔiluboŋ",
+        "ugma": "ʔuɡma",
+        "alas": "ʔalas",
+        "dyis": "djis",
+        "sa": "sa",
+        "buntag": "buntaɡ",
+    }
+    assert line["line"] is True
 
     [tl_drill] = await _render(tmp_path, _lesson("tl", [_tl(_PHRASE)]), get_phoneme_planner("tl"), "fil-PH")
     assert tl_drill["phonemes"] is None
@@ -287,3 +297,13 @@ def test_only_cebuano_asks_for_line_ipa():
     assert get_ipa_for_enunciated_lines("tl") is False
     assert get_ipa_for_enunciated_lines("no") is False
     assert get_ipa_for_enunciated_lines("zz") is False
+
+
+def test_only_cebuano_asks_for_a_reading_on_natural_speed_lines():
+    """Its voice invents a word now and then when it reads plain text ("ugna"
+    for "ugma"), and the line's reading stopped that (the owner's ear,
+    2026-10-12). The Azure languages mark up tokens and have no such fault."""
+    assert get_ipa_for_natural_lines("ceb") is True
+    assert get_ipa_for_natural_lines("tl") is False
+    assert get_ipa_for_natural_lines("no") is False
+    assert get_ipa_for_natural_lines("zz") is False

@@ -24,7 +24,7 @@ class _RecordingTTS:
         self.calls: list[dict] = []
 
     async def synthesize(
-        self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
     ) -> None:
         self.calls.append(
             {
@@ -35,6 +35,7 @@ class _RecordingTTS:
                 "phonemes": phonemes,
                 "speak_locale": speak_locale,
                 "enunciation": enunciation,
+                "line": line,
             }
         )
         if self.error is not None:
@@ -90,8 +91,10 @@ async def test_the_optional_arguments_reach_the_chosen_adapter(tmp_path):
         phonemes={"hei": "hei̯"},
         speak_locale="en-US",
         enunciation=(("hei",), ("du",)),
+        line=True,
     )
 
+    assert azure.calls[0]["line"] is True
     assert azure.calls[0]["phonemes"] == {"hei": "hei̯"}
     assert azure.calls[0]["speak_locale"] == "en-US"
     assert azure.calls[0]["rate"] == "-40%"

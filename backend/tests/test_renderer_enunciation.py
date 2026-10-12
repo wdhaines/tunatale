@@ -77,10 +77,17 @@ async def _calls(tmp_path, code: str, sections: list[Section], **kw) -> list[dic
     fake_audio = _make_wav_bytes()
 
     async def fake_synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None
+        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
     ):
         calls.append(
-            {"text": text, "voice": voice_id, "phonemes": phonemes, "locale": speak_locale, "enunciation": enunciation}
+            {
+                "text": text,
+                "voice": voice_id,
+                "phonemes": phonemes,
+                "locale": speak_locale,
+                "enunciation": enunciation,
+                "line": line,
+            }
         )
         output_path.write_bytes(fake_audio)
 
@@ -115,6 +122,7 @@ async def test_a_target_language_line_in_an_enunciated_section_is_cut_into_words
         "phonemes": None,
         "locale": "en-US",
         "enunciation": None,
+        "line": False,
     }
 
 
@@ -218,13 +226,29 @@ async def test_a_cebuano_line_with_an_unreadable_word_is_still_enunciated(tmp_pa
     assert calls[0]["enunciation"] == (("Naa",), ("koy",), ("3",), ("ka",), ("anak.",))
 
 
-async def test_a_natural_cebuano_line_stays_plain(tmp_path):
-    """Dialogue at natural speed is unchanged: no reading, no instruction."""
-    section = Section(SectionType.NATURAL_SPEED, [_line("Liza! Maayong buntag.", _ORUS, "ceb")])
+async def test_a_natural_cebuano_line_carries_its_reading_and_is_not_enunciated(tmp_path):
+    """Dialogue at natural speed is told how the line sounds, and that is all:
+    the Enunciated line's reading, sent as a line, with no words to pause between."""
+    natural = Section(SectionType.NATURAL_SPEED, [_line("Liza! Maayong buntag.", _ORUS, "ceb")])
+    slow = Section(SectionType.SLOW_SPEED, [_line("Liza! Maayong buntag.", _ORUS, "ceb")])
 
-    calls = await _calls(tmp_path, "ceb", [section], planner=get_phoneme_planner("ceb"))
+    calls = await _calls(tmp_path, "ceb", [natural, slow], planner=get_phoneme_planner("ceb"))
 
-    assert (calls[0]["phonemes"], calls[0]["enunciation"]) == (None, None)
+    reading = {"liza": "lisa", "maayong": "maʔajoŋ", "buntag": "buntaɡ"}
+    assert (calls[0]["phonemes"], calls[0]["enunciation"], calls[0]["line"]) == (reading, None, True)
+    # The Enunciated section's copy is a second request, not a reuse of this one.
+    assert (calls[1]["phonemes"], calls[1]["line"]) == (reading, False)
+    assert calls[1]["enunciation"] is not None
+
+
+@pytest.mark.parametrize("code,voice,text", [("no", _ISELIN, "Hei på deg."), ("tl", _ANGELO, "Magandang gabi po.")])
+async def test_a_natural_line_in_another_language_is_not_a_line_request(tmp_path, code, voice, text):
+    """Only a language that asked for the reading sends one."""
+    section = Section(SectionType.NATURAL_SPEED, [_line(text, voice, code)])
+
+    calls = await _calls(tmp_path, code, [section], planner=get_phoneme_planner(code))
+
+    assert (calls[0]["phonemes"], calls[0]["line"]) == (None, False)
 
 
 @pytest.mark.parametrize("code", ["no", "tl", "ceb", "sl"])
@@ -267,9 +291,11 @@ _CEB_HEARD = {
 }
 
 
-async def _render_real(tmp_path, tts, code: str, text: str, voice: str) -> None:
+async def _render_real(
+    tmp_path, tts, code: str, text: str, voice: str, section_type: SectionType = SectionType.SLOW_SPEED
+) -> None:
     renderer = build_lesson_renderer(tts, [code], settings)
-    section = Section(SectionType.SLOW_SPEED, [_line(text, voice, code)])
+    section = Section(section_type, [_line(text, voice, code)])
     await renderer._render_section(section, tmp_path, 0, code, {}, asyncio.Lock())
 
 
@@ -334,3 +360,76 @@ async def test_a_cebuano_line_reaches_gemini_as_the_request_the_user_chose(tmp_p
     await _render_real(tmp_path, gemini, "ceb", stored, _ORUS)
 
     assert inputs == [_CEB_HEARD]
+
+
+# ---------------------------------------------------------------------------
+# The same line at natural speed (tunatale-u8nz.26)
+# ---------------------------------------------------------------------------
+
+_NATURAL = (SectionType.NATURAL_SPEED, SectionType.TRANSLATED, SectionType.EN_TRANSLATED)
+_CEB_NATURAL_HEARD = {
+    "text": "Buntag sa Jimenez. Naglakaw si Paul.",
+    "prompt": (
+        "Say exactly this Cebuano phrase, once, with nothing before or after it. "
+        "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
+    ),
+}
+
+
+async def _gemini_inputs(tmp_path, text: str, section_type: SectionType) -> list[dict]:
+    """Render one Cebuano line through the real planner and adapter; return what was sent."""
+    inputs: list[dict] = []
+
+    async def _record(request):
+        inputs.append(json.loads(request.content)["input"])
+        return httpx.Response(200, json={"audioContent": __import__("base64").b64encode(_make_wav_bytes()).decode()})
+
+    respx.post(_GEMINI_URL).mock(side_effect=_record)
+
+    async def _token() -> str:
+        return "test-access-token"
+
+    gemini = GeminiTTSService(min_delay=0, token_provider=_token)
+    await _render_real(tmp_path, gemini, "ceb", text, _ORUS, section_type)
+    return inputs
+
+
+@respx.mock
+@pytest.mark.parametrize("section_type", _NATURAL)
+async def test_a_cebuano_line_at_natural_speed_reaches_gemini_with_its_reading(tmp_path, section_type):
+    """Read plain, this voice says "ugna" for "ugma" now and then; told the
+    line's reading it does not (the owner's ear, 2026-10-12). It is the
+    Enunciated request with the pause left out: the same reading, names
+    corrected and particles unstressed, so both sections say the same sounds."""
+    assert await _gemini_inputs(tmp_path, "Buntag sa Jimenez. Naglakaw si Paul.", section_type) == [_CEB_NATURAL_HEARD]
+
+
+@respx.mock
+async def test_a_one_word_cebuano_line_is_said_plainly_at_natural_speed(tmp_path):
+    """One word is not a line. Left plain, it is the very clip the Enunciated
+    section plays for the same word, as it was before."""
+    assert await _gemini_inputs(tmp_path, "Salamat.", SectionType.NATURAL_SPEED) == [{"text": "Salamat."}]
+
+
+@respx.mock
+async def test_a_cebuano_line_with_an_unreadable_word_is_said_plainly_at_natural_speed(tmp_path):
+    """A digit has no reading. A line with a hole in its reading is sent with
+    none, and as a plain request: no half-used mapping for the adapter to warn about."""
+    assert await _gemini_inputs(tmp_path, "Naa koy 3 ka iro.", SectionType.NATURAL_SPEED) == [
+        {"text": "Naa koy 3 ka iro."}
+    ]
+
+
+@respx.mock
+@pytest.mark.parametrize("section_type", _NATURAL)
+async def test_a_tagalog_line_at_natural_speed_is_still_plain_text(tmp_path, section_type):
+    """The reading is for a language that asked for it. Every Tagalog IPA route
+    was heard and turned down, and this must not open one by the back door."""
+    route = respx.post(_AZURE_URL).mock(return_value=httpx.Response(200, content=_make_wav_bytes()))
+
+    await _render_real(tmp_path, _azure(), "tl", "Magandang gabi po. Nakikiramay po ako.", _ANGELO, section_type)
+
+    [body] = [c.request.content.decode() for c in route.calls]
+    assert "<phoneme" not in body
+    assert "<break" not in body
+    assert "Magandang gabi po. Nakikiramay po ako." in body

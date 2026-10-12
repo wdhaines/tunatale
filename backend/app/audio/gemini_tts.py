@@ -319,7 +319,7 @@ def _phrase_ipa(text: str, phonemes: Mapping[str, str]) -> str | None:
 
 
 def resolve_ipa(
-    text: str, phonemes: Mapping[str, str] | None, enunciation: Enunciation | None = None
+    text: str, phonemes: Mapping[str, str] | None, enunciation: Enunciation | None = None, line: bool = False
 ) -> tuple[str | None, bool]:
     """The ``(ipa, phrase)`` a synthesis of *text* would carry, without rendering.
 
@@ -340,10 +340,15 @@ def resolve_ipa(
     LINE, read by lookup (:func:`_line_ipa`) and never by the two shapes below.
     Whether the line is enunciated is the caller's to ask :func:`enunciates`;
     this still answers only what reading it carries.
+
+    *line* says the same of a line said at natural speed, which has no
+    enunciation to say it. It has to be said: a line whose words are all
+    different fits the phrase shape too, and read by position it would lose
+    its punctuation, which is not the reading that was heard.
     """
     if not phonemes:
         return None, False
-    if enunciates(enunciation):
+    if line or enunciates(enunciation):
         ipa = _line_ipa(text, phonemes)
         return ipa, ipa is not None
     ipa = _single_token_ipa(text, phonemes)
@@ -422,6 +427,7 @@ class GeminiTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        line: bool = False,
     ) -> None:
         """Synthesize *text* to *output_path* using Google Cloud TTS.
 
@@ -445,11 +451,16 @@ class GeminiTTSService:
                 after each word is asked for in ``input.prompt``, with the
                 line's reading when *phonemes* covers every word of it. Fewer
                 change nothing, including the cache key.
+            line: *text* is a whole line said at natural speed, and *phonemes*
+                reads its words. It is sent with the phrase instruction and the
+                line's reading, punctuation kept, and no pause is asked for.
+                A reading with a word missing is not sent: one warning, and a
+                plain render under the plain cache key.
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)
         enunciated = enunciates(enunciation)
-        ipa, phrase = resolve_ipa(text, phonemes, enunciation)
+        ipa, phrase = resolve_ipa(text, phonemes, enunciation, line)
         # A mapping we could not use is announced here and not inside
         # resolve_ipa, which is also called by callers that never render.
         if phonemes and ipa is None:

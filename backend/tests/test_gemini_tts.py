@@ -1392,5 +1392,78 @@ def test_resolve_ipa_for_an_enunciated_line(text, phonemes, enunciation, expecte
     assert resolve_ipa(text, phonemes, enunciation) == expected
 
 
+# A natural-speed line (tunatale-u8nz.26). Read plain, this voice invents a word
+# now and then ("ugna" for "ugma"); told the line's reading it does not (the
+# owner's ear, 2026-10-12). It is the Enunciated line's request with no pause
+# asked for, so the two sections say the same sounds at two speeds.
+_NATURAL_LINE_INPUT = {
+    "text": "Buntag sa Jimenez. Naglakaw si Paul.",
+    "prompt": (
+        "Say exactly this Cebuano phrase, once, with nothing before or after it. "
+        "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
+    ),
+}
+
+
+@respx.mock
+async def test_a_natural_speed_line_is_told_its_reading_and_asked_for_no_pause(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        inputs = await _inputs(
+            lambda: _svc().synthesize(_LINE, VOICE, tmp_path / "1.mp3", phonemes=_LINE_IPAS, line=True)
+        )
+
+    assert inputs == [_NATURAL_LINE_INPUT]
+    assert _warnings(caplog) == []
+
+
+@respx.mock
+async def test_a_natural_speed_line_that_repeats_a_word_is_still_read(tmp_path):
+    """Read by LOOKUP, as an Enunciated line is: by position this line has four
+    tokens over three readings and would be refused."""
+    inputs = await _inputs(
+        lambda: _svc().synthesize(
+            "Ako, ako si Liza.",
+            VOICE,
+            tmp_path / "1.mp3",
+            phonemes={"ako": "ʔako", "si": "si", "liza": "lisa"},
+            line=True,
+        )
+    )
+
+    assert inputs[0]["prompt"].endswith("Pronounce it exactly as the IPA /ʔako, ʔako si lisa./.")
+
+
+@respx.mock
+async def test_a_natural_speed_line_with_a_gap_in_its_reading_is_said_plainly_and_says_so(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        inputs = await _inputs(
+            lambda: _svc().synthesize(
+                _LINE, VOICE, tmp_path / "1.mp3", phonemes={"buntag": "buntaɡ", "sa": "sa"}, line=True
+            )
+        )
+
+    assert inputs == [{"text": _LINE}]
+    assert len(_warnings(caplog)) == 1
+
+
+def test_resolve_ipa_reads_a_line_by_lookup_and_a_phrase_by_position():
+    """The same map, two shapes. Six tokens over six readings fits a drill
+    phrase too, and by position the line's punctuation is gone: only being told
+    it is a line keeps the reading the one that was heard."""
+    assert resolve_ipa(_LINE, _LINE_IPAS, line=True) == ("buntaɡ sa himɛnɛs. naɡlakaw si pol.", True)
+    assert resolve_ipa(_LINE, _LINE_IPAS) == ("buntaɡ sa himɛnɛs naɡlakaw si pol", True)
+    assert resolve_ipa(_LINE, None, line=True) == (None, False)
+
+
+def test_a_natural_speed_line_is_neither_the_plain_clip_nor_the_enunciated_one(tmp_path):
+    svc = _svc(cache_dir=tmp_path)
+    ipa, _ = resolve_ipa(_LINE, _LINE_IPAS, line=True)
+
+    natural = svc._cache_path(_LINE, VOICE, "+0%", ipa)
+
+    assert natural != svc._cache_path(_LINE, VOICE, "+0%")
+    assert natural != svc._cache_path(_LINE, VOICE, "+0%", ipa, True)
+
+
 def test_punctuation_standing_alone_passes_through_the_reading():
     assert resolve_ipa("Ja – takk", {"ja": "ja", "takk": "tak"}, (("Ja –",), ("takk",))) == ("ja – tak", True)

@@ -84,8 +84,8 @@ _NEAR_MATCH_LIMIT = 20
 def _describe(path: Path, value: _SynthValue) -> str:
     """One key as a block of ``field<TAB>value`` lines — the shape this repo's
     reports already print, so it diffs and greps like the rest."""
-    text, voice_id, rate, phonemes, _speak_locale, enunciation = value
-    ipa, _phrase = resolve_ipa(text, phonemes, enunciation)
+    text, voice_id, rate, phonemes, _speak_locale, enunciation, line = value
+    ipa, _phrase = resolve_ipa(text, phonemes, enunciation, line)
     return "\n".join(
         [
             f"digest\t{path.stem}",
@@ -267,7 +267,7 @@ def main(argv: list[str] | None = None, *, now: Callable[[], datetime] | None = 
         "text": value[0],
         "voice_id": value[1],
         "rate": value[2],
-        "ipa": resolve_ipa(value[0], value[3], value[5])[0],
+        "ipa": resolve_ipa(value[0], value[3], value[5], value[6])[0],
         "evicted_to": str(destination),
     }
     with (reroll_dir / LOG_NAME).open("a", encoding="utf-8") as log:
