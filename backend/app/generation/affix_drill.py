@@ -101,24 +101,27 @@ def drill_root(language_code: str, root: str, pattern: AffixPattern) -> DrillRoo
     return DrillRoot(root, english, tuple(zip(forms, form_english, strict=True)))
 
 
-def _ask(english: str, answer: str, language_code: str) -> list[DrillStep]:
-    """The narrator asks for *english*, and *answer* follows the pause.
+def _round(asks: list[tuple[str, str]], language_code: str) -> list[DrillStep]:
+    """One round of "your turn": each of *asks* is ``(English prompt, answer)``.
 
-    The frame was chosen by ear over a whole round (2026-10-12), against
-    "Say: X.", the bare English, and the question on the first prompt only:
-    "Say: X." read the English as the tail of a sentence, and no punctuation of
-    it changed that. The question mark belongs to the frame, so a line's own
-    closing mark is dropped.
+    The narrator asks 'How do you say "X"?' on the round's first prompt and
+    gives the English alone after that. Chosen by ear over a whole round
+    (2026-10-12) against "Say: X." on every prompt, the question on every
+    prompt, and the bare English throughout: "Say: X." read the English as the
+    tail of a sentence and no punctuation of it changed that, and the question
+    every time is more than a round needs once it has been asked. The question
+    mark belongs to the frame, so the first prompt's own closing mark is dropped.
     """
-    asked = english.rstrip(".?!")
-    return [DrillStep("prompt", f'How do you say "{asked}"?', "en"), DrillStep("answer", answer, language_code)]
-
-
-def _prompts(found: DrillRoot, language_code: str) -> list[DrillStep]:
     steps: list[DrillStep] = []
-    for form, english in reversed(found.cells):
-        steps += _ask(english, form, language_code)
+    for i, (english, answer) in enumerate(asks):
+        prompt = english if i else f'How do you say "{english.rstrip(".?!")}"?'
+        steps += [DrillStep("prompt", prompt, "en"), DrillStep("answer", answer, language_code)]
     return steps
+
+
+def _asks(found: DrillRoot) -> list[tuple[str, str]]:
+    """A root's forms as asks, done-first so it is not an echo of the model order."""
+    return [(f"{english}.", form) for form, english in reversed(found.cells)]
 
 
 def _named(found: DrillRoot, language_code: str) -> list[DrillStep]:
@@ -144,13 +147,13 @@ def _mixed(found: list[DrillRoot], language_code: str) -> list[DrillStep]:
     One pass per cell; in each pass root *i* is asked for the cell *i* steps on
     from the pass's own, so the cell changes from one prompt to the next too.
     """
-    steps: list[DrillStep] = []
+    asks: list[tuple[str, str]] = []
     cells = len(found[0].cells)
     for turn in range(cells):
         for i, root in enumerate(found):
             form, english = root.cells[(i + turn) % cells]
-            steps += _ask(english, form, language_code)
-    return steps
+            asks.append((f"{english}.", form))
+    return _round(asks, language_code)
 
 
 def build_affix_drill(
@@ -190,17 +193,15 @@ def build_affix_drill(
         drill.steps += _named(found, language_code)
         for form, english in found.cells:
             drill.steps += _taught(english, form, language_code)
-    for found in modelled:
-        drill.steps += _prompts(found, language_code)
+    drill.steps += _round([ask for found in modelled for ask in _asks(found)], language_code)
     unmodelled = usable(new_roots or [])
     for found in unmodelled:
-        drill.steps += _named(found, language_code) + _prompts(found, language_code)
+        drill.steps += _named(found, language_code) + _round(_asks(found), language_code)
     if again:
         drill.steps += _mixed([*modelled, *unmodelled], language_code)
     if lines:
         drill.steps.append(DrillStep("model", _LISTEN, "en"))
         for text, english in lines:
             drill.steps += _taught(english, text, language_code)
-        for text, english in lines:
-            drill.steps += _ask(english, text, language_code)
+        drill.steps += _round([(english, text) for text, english in lines], language_code)
     return drill
