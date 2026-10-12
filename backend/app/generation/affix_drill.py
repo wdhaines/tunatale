@@ -101,11 +101,23 @@ def drill_root(language_code: str, root: str, pattern: AffixPattern) -> DrillRoo
     return DrillRoot(root, english, tuple(zip(forms, form_english, strict=True)))
 
 
+def _ask(english: str, answer: str, language_code: str) -> list[DrillStep]:
+    """The narrator asks for *english*, and *answer* follows the pause.
+
+    The frame was chosen by ear over a whole round (2026-10-12), against
+    "Say: X.", the bare English, and the question on the first prompt only:
+    "Say: X." read the English as the tail of a sentence, and no punctuation of
+    it changed that. The question mark belongs to the frame, so a line's own
+    closing mark is dropped.
+    """
+    asked = english.rstrip(".?!")
+    return [DrillStep("prompt", f'How do you say "{asked}"?', "en"), DrillStep("answer", answer, language_code)]
+
+
 def _prompts(found: DrillRoot, language_code: str) -> list[DrillStep]:
     steps: list[DrillStep] = []
     for form, english in reversed(found.cells):
-        steps.append(DrillStep("prompt", f"Say: {english}.", "en"))
-        steps.append(DrillStep("answer", form, language_code))
+        steps += _ask(english, form, language_code)
     return steps
 
 
@@ -137,7 +149,7 @@ def _mixed(found: list[DrillRoot], language_code: str) -> list[DrillStep]:
     for turn in range(cells):
         for i, root in enumerate(found):
             form, english = root.cells[(i + turn) % cells]
-            steps += [DrillStep("prompt", f"Say: {english}.", "en"), DrillStep("answer", form, language_code)]
+            steps += _ask(english, form, language_code)
     return steps
 
 
@@ -190,5 +202,5 @@ def build_affix_drill(
         for text, english in lines:
             drill.steps += _taught(english, text, language_code)
         for text, english in lines:
-            drill.steps += [DrillStep("prompt", f"Say: {english}", "en"), DrillStep("answer", text, language_code)]
+            drill.steps += _ask(english, text, language_code)
     return drill
