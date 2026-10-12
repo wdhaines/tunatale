@@ -105,20 +105,21 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_lines():
         DrillStep("model", "prayed", "en"),
         *_built("nag-ampo"),
         # Your turn: asked done-first, so it is not an echo of the model order.
-        DrillStep("prompt", "Say: walked.", "en"),
+        # The narrator asks the question once, then gives the English alone.
+        DrillStep("prompt", 'How do you say "walked"?', "en"),
         DrillStep("answer", "naglakaw", "ceb"),
-        DrillStep("prompt", "Say: will walk.", "en"),
+        DrillStep("prompt", "will walk.", "en"),
         DrillStep("answer", "maglakaw", "ceb"),
-        DrillStep("prompt", "Say: prayed.", "en"),
+        DrillStep("prompt", "prayed.", "en"),
         DrillStep("answer", "nag-ampo", "ceb"),
-        DrillStep("prompt", "Say: will pray.", "en"),
+        DrillStep("prompt", "will pray.", "en"),
         DrillStep("answer", "mag-ampo", "ceb"),
         # New on this root: the root is named, the forms are NOT modelled.
         DrillStep("model", "cook", "en"),
         DrillStep("model", "luto", "ceb"),
-        DrillStep("prompt", "Say: cooked.", "en"),
+        DrillStep("prompt", 'How do you say "cooked"?', "en"),
         DrillStep("answer", "nagluto", "ceb"),
-        DrillStep("prompt", "Say: will cook.", "en"),
+        DrillStep("prompt", "will cook.", "en"),
         DrillStep("answer", "magluto", "ceb"),
         # Whole lines: every one taught first, the Key Phrases way, and only
         # then asked for (tunatale-ve4p.20, 'Or both. A la key phrases.').
@@ -127,10 +128,63 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_lines():
         *_built("Naglakaw si Paul sa dalan."),
         DrillStep("model", "Let's pray.", "en"),
         *_built("Mag-ampo ta."),
-        DrillStep("prompt", "Say: Paul walked on the road.", "en"),
+        DrillStep("prompt", 'How do you say "Paul walked on the road"?', "en"),
         DrillStep("answer", "Naglakaw si Paul sa dalan.", "ceb"),
-        DrillStep("prompt", "Say: Let's pray.", "en"),
+        DrillStep("prompt", "Let's pray.", "en"),
         DrillStep("answer", "Mag-ampo ta.", "ceb"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("english", "asked"),
+    [
+        ("Paul walked on the road.", 'How do you say "Paul walked on the road"?'),
+        ("Are you happy, Paul?", 'How do you say "Are you happy, Paul"?'),
+        ("Yes, I'm very happy.", 'How do you say "Yes, I\'m very happy"?'),
+        ("Stop!", 'How do you say "Stop"?'),
+    ],
+)
+def test_the_first_line_is_asked_for_as_a_question_about_its_english(english, asked):
+    """The frame the owner chose by ear on a whole round (2026-10-12): the
+    narrator asks the question on a round's first prompt. The question mark is
+    the frame's, so the line's own closing mark goes; a comma inside it stays."""
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], lines=[("Naglakaw si Paul sa dalan.", english)])
+
+    assert [step.text for step in drill.steps if step.kind == "prompt"][-1] == asked
+
+
+def test_only_the_first_prompt_of_a_round_carries_the_question():
+    """'Question then bare English' (the owner, 2026-10-12): once the narrator
+    has asked, every later prompt of that round is the English alone, with its
+    own punctuation. Each round opens with the question again: the modelled
+    roots, each new root after it is named, the mixed round, and the lines."""
+    drill = build_affix_drill(
+        "ceb",
+        _MAG_NAG,
+        roots=["lakaw", "ampo"],
+        new_roots=["luto"],
+        lines=[
+            ("Naglakaw si Paul sa dalan.", "Paul walked on the road."),
+            ("Malipayon ka, Paul?", "Are you happy, Paul?"),
+        ],
+        again=True,
+    )
+
+    assert [step.text for step in drill.steps if step.kind == "prompt"] == [
+        'How do you say "walked"?',
+        "will walk.",
+        "prayed.",
+        "will pray.",
+        'How do you say "cooked"?',
+        "will cook.",
+        'How do you say "will walk"?',
+        "prayed.",
+        "will cook.",
+        "walked.",
+        "will pray.",
+        "cooked.",
+        'How do you say "Paul walked on the road"?',
+        "Are you happy, Paul?",
     ]
 
 
@@ -140,7 +194,7 @@ def test_a_line_is_never_asked_before_every_line_has_been_taught():
     lines = [("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Mag-ampo ta.", "Let's pray.")]
     drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], lines=lines)
 
-    first_ask = drill.steps.index(DrillStep("prompt", "Say: Paul walked on the road.", "en"))
+    first_ask = drill.steps.index(DrillStep("prompt", 'How do you say "Paul walked on the road"?', "en"))
     assert DrillStep("model", "Mag-ampo ta.", "ceb") in drill.steps[:first_ask]
 
 
@@ -170,9 +224,9 @@ def test_the_mixed_round_asks_every_form_once_more_and_never_root_by_root():
     assert answers[12:] == ["Mag-ampo ta."]
     mixed = drill.steps[drill.steps.index(DrillStep("answer", "magluto", "ceb")) + 1 :]
     assert mixed[:4] == [
-        DrillStep("prompt", "Say: will walk.", "en"),
+        DrillStep("prompt", 'How do you say "will walk"?', "en"),
         DrillStep("answer", "maglakaw", "ceb"),
-        DrillStep("prompt", "Say: prayed.", "en"),
+        DrillStep("prompt", "prayed.", "en"),
         DrillStep("answer", "nag-ampo", "ceb"),
     ]
 

@@ -44,7 +44,7 @@ renderer's own functions, it does not re-derive their rules:
   ``tests/test_synth_plan_parity.py`` renders through the real renderer and
   compares. For an Enunciated line Azure bills the ``<break>`` the cut becomes
   (21 characters a word gap, most of such a request), and Gemini's line is
-  priced at about twice its natural length.
+  priced at about 1.7 times its natural length.
 - **slicer leg**: one key per ``(source_word, voice_id)`` — the slicer's
   ``_words`` memo key — for every provenance phrase the renderer's
   ``_apply_slicing`` hands to ``ChunkSlicer._build_parent``, which synthesizes

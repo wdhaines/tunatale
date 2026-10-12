@@ -285,7 +285,7 @@ _CEB_HEARD = {
     "text": "Buntag sa Jimenez. Naglakaw si Paul.",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
+        "Say each word whole, at a natural conversational pace, with only a very short pause between words. "
         "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
     ),
 }

@@ -1004,7 +1004,7 @@ def test_an_enunciated_gemini_line_is_priced_at_the_length_it_runs_to(tmp_path: 
 
     assert cost.gemini_phrase.misses == 1
     assert cost.gemini_phrase.chars == len(_CEB_LINE)
-    assert cost.gemini_phrase.audio_tokens == pytest.approx(len(_CEB_LINE) / 11 * 25 * 2)
+    assert cost.gemini_phrase.audio_tokens == pytest.approx(len(_CEB_LINE) / 11 * 25 * 1.7)
 
 
 def test_an_enunciated_gemini_line_is_a_hit_only_on_the_clip_made_from_its_reading(tmp_path: Path) -> None:

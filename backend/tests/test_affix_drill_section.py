@@ -46,7 +46,7 @@ def _drill() -> AffixDrill:
         steps=[
             DrillStep("model", "walk", "en"),
             DrillStep("model", "lakaw", "ceb"),
-            DrillStep("prompt", "Say: walked.", "en"),
+            DrillStep("prompt", 'How do you say "walked"?', "en"),
             DrillStep("answer", "milakaw", "ceb"),
         ]
     )
@@ -63,7 +63,7 @@ def test_the_section_opens_with_its_spoken_title_then_one_phrase_per_step():
         (SECTION_TITLES[SectionType.AFFIX_DRILL], _NARRATOR, "en", "narrator"),
         ("walk", _NARRATOR, "en", "narrator"),
         ("lakaw", _KORE, "ceb", "model"),
-        ("Say: walked.", _NARRATOR, "en", "prompt"),
+        ('How do you say "walked"?', _NARRATOR, "en", "prompt"),
         ("milakaw", _KORE, "ceb", "answer"),
     ]
 
@@ -197,7 +197,7 @@ def test_the_assembled_gap_after_a_prompt_is_sized_by_the_answer_clip(tmp_path):
 def test_a_prompt_that_ends_the_section_does_not_read_past_it(tmp_path):
     section = Section(
         section_type=SectionType.AFFIX_DRILL,
-        phrases=[Phrase(text="Say: walked.", voice_id=_NARRATOR, language_code="en", role="prompt")],
+        phrases=[Phrase(text='How do you say "walked"?', voice_id=_NARRATOR, language_code="en", role="prompt")],
     )
 
     assert _gaps(section, [_wav(tmp_path / "0.wav", 900)]) == [2000]
@@ -208,7 +208,7 @@ def test_the_answers_length_is_taken_from_its_pace_file(tmp_path):
     section = Section(
         section_type=SectionType.AFFIX_DRILL,
         phrases=[
-            Phrase(text="Say: walked.", voice_id=_NARRATOR, language_code="en", role="prompt"),
+            Phrase(text='How do you say "walked"?', voice_id=_NARRATOR, language_code="en", role="prompt"),
             Phrase(text="milakaw", voice_id=_KORE, language_code="ceb", role="answer"),
         ],
     )
@@ -255,7 +255,7 @@ def test_a_drill_clip_is_cut_to_what_is_said_and_paced_from_that(tmp_path):
         section_type=SectionType.AFFIX_DRILL,
         phrases=[
             Phrase(text="walk", voice_id=_NARRATOR, language_code="en", role="narrator"),
-            Phrase(text="Say: walked.", voice_id=_NARRATOR, language_code="en", role="prompt"),
+            Phrase(text='How do you say "walked"?', voice_id=_NARRATOR, language_code="en", role="prompt"),
             Phrase(text="milakaw", voice_id=_KORE, language_code="ceb", role="answer"),
         ],
     )
@@ -356,7 +356,7 @@ def test_a_built_up_form_is_one_item_with_the_english_before_it():
             DrillStep("model", "moinom", "ceb"),
             DrillStep("model", "nom", "ceb", "moinom", (2, 3)),
             DrillStep("model", "moinom", "ceb"),
-            DrillStep("prompt", "Say: will drink.", "en"),
+            DrillStep("prompt", 'How do you say "will drink"?', "en"),
             DrillStep("answer", "moinom", "ceb"),
         ]
     )
@@ -378,9 +378,9 @@ def test_english_with_no_form_after_it_is_narration():
         phrases=[
             Phrase(text="Affix Drill", voice_id=_NARRATOR, language_code="en", role="narrator"),
             Phrase(text="Now you.", voice_id=_NARRATOR, language_code="en", role="narrator"),
-            Phrase(text="Say: walked.", voice_id=_NARRATOR, language_code="en", role="prompt"),
+            Phrase(text='How do you say "walked"?', voice_id=_NARRATOR, language_code="en", role="prompt"),
             Phrase(text="milakaw", voice_id=_KORE, language_code="ceb", role="answer"),
-            Phrase(text="Say: drank.", voice_id=_NARRATOR, language_code="en", role="prompt"),
+            Phrase(text='How do you say "drank"?', voice_id=_NARRATOR, language_code="en", role="prompt"),
         ],
     )
 
