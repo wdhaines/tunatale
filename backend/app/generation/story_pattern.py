@@ -26,6 +26,7 @@ storing the choice.
 from __future__ import annotations
 
 from app.generation.affix_drill import MIN_ROOTS, DrillRoot, build_affix_drill, drill_root
+from app.generation.drill_lines import admitted_lines
 from app.generation.grammar_lesson import (
     _SECOND_SENTENCE,
     _WORD,
@@ -40,6 +41,7 @@ from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.srs.a1_morphology import AffixPattern
+from app.srs.lemmatizer import Lemmatizer
 
 ASKED = 4  # roots the story is asked to use in both forms; the target is three
 DRILLED = 3  # roots in the closing drill: it ends a lesson, it is not one
@@ -98,13 +100,20 @@ def pattern_block(language_code: str, pattern: AffixPattern, *, srs_db=None) -> 
     )
 
 
-def add_closing_drill(lesson: Lesson, language: Language, pattern: AffixPattern) -> None:
+def add_closing_drill(
+    lesson: Lesson, language: Language, pattern: AffixPattern, *, srs_db, lemmatizer: Lemmatizer | None
+) -> None:
     """Append to *lesson* a drill of *pattern* on the roots its story used. In place.
 
     A root the story said in both forms leads; the rest follow in the order
     the story first says them, up to :data:`DRILLED`. Fewer than ``MIN_ROOTS``
     is a word and not a pattern, and the lesson is left as it was. So is a
     lesson that already has a drill, and a grammar lesson, which is one.
+
+    The drill ends on whole lines of the story only where the learner has every
+    word (``drill_lines.admitted_lines``). What this lesson teaches counts as
+    had: the drilled forms, and the words of its key phrases. With no *srs_db*
+    no line is admitted. *lemmatizer* of ``None`` is the language's own.
     """
     if lesson.kind != "thematic" or any(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections):
         return
@@ -123,12 +132,15 @@ def add_closing_drill(lesson: Lesson, language: Language, pattern: AffixPattern)
         return
 
     forms = {_fold(form) for root in drilled for form, _ in root.cells}
+    taught = forms | {_fold(word) for key_phrase in lesson.key_phrases for word in _WORD.findall(key_phrase.phrase)}
+    admitted = admitted_lines(lesson, srs_db=srs_db, lemmatizer=lemmatizer, taught=taught)
     whole = [
         line
         for line in story
         if line[1]
         and not _SECOND_SENTENCE.search(line[0].strip())
         and any(_fold(word) in forms for word in _WORD.findall(line[0]))
+        and line[0] in admitted
     ]
     roots = [root.root for root in drilled]
     drill = build_affix_drill(
@@ -146,7 +158,15 @@ def add_closing_drill(lesson: Lesson, language: Language, pattern: AffixPattern)
     lesson.generation_metadata["affix_drill"] = {"pattern": pattern.key, "roots": roots, "new_roots": []}
 
 
-def add_day_drill(lesson: Lesson, language: Language, curriculum: Curriculum | None, day: int) -> None:
+def add_day_drill(
+    lesson: Lesson,
+    language: Language,
+    curriculum: Curriculum | None,
+    day: int,
+    *,
+    srs_db,
+    lemmatizer: Lemmatizer | None,
+) -> None:
     """Append to *lesson* the closing drill of the pattern its curriculum *day* is planned around. In place.
 
     The one call every writer of a curriculum day's lesson makes: the publish
@@ -157,4 +177,4 @@ def add_day_drill(lesson: Lesson, language: Language, curriculum: Curriculum | N
     planned = next((d for d in curriculum.days if d.day == day), None) if curriculum is not None else None
     pattern = pattern_for_day(curriculum, planned) if planned is not None else None
     if pattern is not None:
-        add_closing_drill(lesson, language, pattern)
+        add_closing_drill(lesson, language, pattern, srs_db=srs_db, lemmatizer=lemmatizer)

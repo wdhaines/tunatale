@@ -33,7 +33,7 @@ _MO_MI = next(p for p in get_a1_morphology("ceb").patterns if p.key == "mo-mi")
 
 def _drill(srs_db, store) -> Lesson:
     """The owner's mo-/mi- lesson, built the way the pipeline builds it."""
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
     return build_grammar_lesson(get_language("ceb"), plan)
 
 
