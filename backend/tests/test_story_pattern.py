@@ -18,18 +18,24 @@ a byte, because every story cassette is keyed on sha256(system + user).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 
 import pytest
 
+from app.generation import publishing
 from app.generation.grammar_lesson import contrast_cards
+from app.generation.publishing import CurriculumDayTarget, publish_lesson
 from app.generation.story import PROMPT_TOKEN_BUDGET, build_story_prompts
 from app.generation.story_pattern import add_closing_drill, add_day_drill, named_pattern, pattern_block, pattern_for_day
 from app.languages import get_a1_morphology, get_language
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.lesson import SectionType
+from app.models.lesson import KeyPhraseInfo, SectionType
+from app.models.srs_item import SRSState
 from app.models.strategy import ContentStrategy
-from tests.test_grammar_lesson import _BURIAL, _WAKE, _story_lesson, owner  # noqa: F401
+from app.storage.store import ContentStore
+from tests._helpers.lemmatizer import StubLemmatizer
+from tests.test_grammar_lesson import _BURIAL, _WAKE, _card, _story_lesson, owner  # noqa: F401
 
 _PATTERNS = {p.key: p for p in get_a1_morphology("ceb").patterns}
 
@@ -180,7 +186,7 @@ def test_the_drill_is_built_from_the_roots_the_story_used():
     lesson = _story_lesson("An Evening Wake", _WAKE)
     sections_before = len(lesson.sections)
 
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
 
     assert len(lesson.sections) == sections_before + 1
     assert lesson.sections[-1].section_type is SectionType.AFFIX_DRILL
@@ -193,30 +199,173 @@ def test_the_drill_is_built_from_the_roots_the_story_used():
     assert lesson.kind == "thematic"
 
 
-def test_a_closing_drill_is_short():
-    lesson = _story_lesson("An Evening Wake", _WAKE)
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
-    phrases = lesson.sections[-1].phrases
+def _answers(lesson) -> list[str]:
+    return [p.text for p in lesson.sections[-1].phrases if p.role == "answer"]
+
+
+def _closed(lines, srs_db, *, key_phrases=()):
+    """The wake, with its closing mo-/mi- drill chosen against *srs_db*."""
+    lesson = _story_lesson("An Evening Wake", lines)
+    lesson.key_phrases = [KeyPhraseInfo(phrase=phrase, translation="") for phrase in key_phrases]
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=srs_db, lemmatizer=None)
+    return lesson
+
+
+def test_a_closing_drill_is_short(srs_db):
+    for word in ("ko", "ugma"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
+    lesson = _closed(_WAKE, srs_db)
     # Three roots, each named once, each of its two forms built up once
     # (tunatale-ve4p.16) and answered once; then the one whole line of the
     # story that says a drilled form in a single sentence, taught and then
     # asked. No second, mixed round: every answer is asked exactly once.
-    answers = [p.text for p in phrases if p.role == "answer"]
+    answers = _answers(lesson)
     assert len(answers) == 3 * 2 + 1
     assert len(set(answers)) == len(answers)
+    assert answers[-1] == "Mouban ko ugma."
+
+
+# --- which whole lines it may end on (tunatale-ve4p.20) -------------------------
+#
+# The owner, 2026-10-09: "The full sentences at the end are too hard right now
+# because we're introducing things I don't know." A line is asked for only when
+# the learner has every word of it, or the lesson teaches it. The rule itself is
+# pinned in test_drill_lines.py; these pin what a closing drill hands it.
+
+
+def test_a_line_with_a_word_the_learner_has_not_met_is_not_asked_for(srs_db):
+    """`ugma` has no card: the drill keeps its forms and ends without the line."""
+    _card(srs_db, "ko", recognition=SRSState.REVIEW)
+
+    answers = _answers(_closed(_WAKE, srs_db))
+
+    assert len(answers) == 3 * 2
+    assert "Mouban ko ugma." not in answers
+
+
+def test_the_drilled_form_needs_no_card_of_its_own(srs_db):
+    """`mouban` is what the drill teaches. Nothing in the deck is spelled that way
+    (the card is `uban`, and the suite's lemmatizer does not strip an affix), and
+    the line is still asked for once its OTHER words are understood."""
+    for word in ("ko", "ugma"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
+    assert srs_db.get_collocation("mouban") is None
+
+    assert _answers(_closed(_WAKE, srs_db))[-1] == "Mouban ko ugma."
+
+
+def test_a_word_of_this_lessons_key_phrases_counts_as_taught(srs_db):
+    """The lesson's new words are not in the deck yet; its key phrases are what it teaches."""
+    _card(srs_db, "ko", recognition=SRSState.REVIEW)
+
+    assert "Mouban ko ugma." not in _answers(_closed(_WAKE, srs_db))
+    assert _answers(_closed(_WAKE, srs_db, key_phrases=["Ugma na lang"]))[-1] == "Mouban ko ugma."
+
+
+def test_with_no_deck_to_ask_the_drill_ends_on_its_forms(srs_db):
+    for word in ("ko", "ugma"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
+
+    assert len(_answers(_closed(_WAKE, None))) == 3 * 2
+
+
+def test_the_lemmatizer_handed_in_is_the_one_that_reads_the_line(srs_db):
+    """`ko` has no card; `ako` does. Only a lemmatizer that knows `ko` is `ako` admits the line."""
+    for word in ("ako", "ugma"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
+    stub = StubLemmatizer()
+    stub.set_lemma("ko", "ako")
+
+    def answers(lemmatizer):
+        lesson = _story_lesson("An Evening Wake", _WAKE)
+        add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=srs_db, lemmatizer=lemmatizer)
+        return _answers(lesson)
+
+    assert "Mouban ko ugma." not in answers(None)
+    assert answers(stub)[-1] == "Mouban ko ugma."
+
+
+def test_a_curriculum_day_target_hands_its_drill_the_deck_and_the_lemmatizer(srs_db):
+    """The publish seam's half: ``prepare`` is where a published lesson gets its drill."""
+    for word in ("ako", "ugma"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
+    stub = StubLemmatizer()
+    stub.set_lemma("ko", "ako")
+    store = ContentStore(":memory:")
+    store.save_curriculum("funeral", _curriculum([_day(1, pattern="mo-mi")]))
+    target = CurriculumDayTarget(store, "ceb", "funeral", 1, None, user_id=None)
+
+    def answers(**prepare):
+        lesson = _story_lesson("An Evening Wake", _WAKE)
+        target.prepare(lesson, **prepare)
+        return _answers(lesson)
+
+    assert answers(srs_db=srs_db, lemmatizer=stub)[-1] == "Mouban ko ugma."
+    assert "Mouban ko ugma." not in answers(srs_db=srs_db, lemmatizer=None)
+    assert "Mouban ko ugma." not in answers(srs_db=None, lemmatizer=stub)
+
+
+async def test_publishing_hands_the_target_the_publishs_own_deck_and_lemmatizer(srs_db):
+    """``publish_lesson`` already holds both for the tagging steps; ``prepare`` runs
+    before them and used to be handed neither."""
+    seen: dict[str, object] = {}
+
+    class _Target:
+        def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
+            seen.update(srs_db=srs_db, lemmatizer=lemmatizer)
+
+        def write(self, lesson) -> str:
+            return "written"
+
+        def invalidate_audio(self, content_id) -> None:
+            raise AssertionError("nothing is being replaced")
+
+        async def schedule_render(self, content_id, lesson) -> None:
+            return None
+
+    stub = StubLemmatizer()
+    lesson = _story_lesson("An Evening Wake", _WAKE)
+
+    await publish_lesson(
+        lesson,
+        target=_Target(),
+        srs_db=srs_db,
+        lemmatizer_kwargs={"lemmatizer": stub, "model_version": "stub-1"},
+        replace=False,
+        llm=None,
+    )
+    await asyncio.gather(*publishing._background_tasks)
+
+    assert seen == {"srs_db": srs_db, "lemmatizer": stub}
+
+    seen.clear()
+    await publish_lesson(lesson, target=_Target(), srs_db=None, lemmatizer_kwargs={}, replace=False, llm=None)
+    assert seen == {"srs_db": None, "lemmatizer": None}
+
+
+def test_the_day_drill_asks_the_same_deck(srs_db):
+    """``add_day_drill`` is the call every writer makes; it must not drop the deck on the way."""
+    for word in ("ko", "ugma"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
+    curriculum = _curriculum([_day(1, pattern="mo-mi")])
+    lesson = _story_lesson("An Evening Wake", _WAKE)
+
+    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=srs_db, lemmatizer=None)
+
+    assert _answers(lesson)[-1] == "Mouban ko ugma."
 
 
 def test_a_root_the_story_used_in_both_forms_leads():
     lines = [*_WAKE, ("Miuban siya.", "She came along.")]
     lesson = _story_lesson("An Evening Wake", lines)
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
     assert lesson.generation_metadata["affix_drill"]["roots"] == ["uban", "adto", "anhi"]
 
 
 def test_at_most_three_roots_are_drilled():
     # The wake says four roots of the pattern; a closing drill is not a grammar lesson.
     lesson = _story_lesson("An Evening Wake", _WAKE)
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
     assert "inom" not in lesson.generation_metadata["affix_drill"]["roots"]
     assert len(lesson.generation_metadata["affix_drill"]["roots"]) == 3
 
@@ -226,7 +375,7 @@ def test_a_story_that_used_one_root_of_the_pattern_gets_no_drill():
     lesson = _story_lesson("The Burial Morning", _BURIAL)
     sections_before = len(lesson.sections)
 
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mag-nag"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mag-nag"], srs_db=None, lemmatizer=None)
 
     assert len(lesson.sections) == sections_before
     assert "affix_drill" not in lesson.generation_metadata
@@ -234,9 +383,9 @@ def test_a_story_that_used_one_root_of_the_pattern_gets_no_drill():
 
 def test_adding_it_twice_adds_it_once():
     lesson = _story_lesson("An Evening Wake", _WAKE)
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
     sections = len(lesson.sections)
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
     assert len(lesson.sections) == sections
 
 
@@ -244,7 +393,7 @@ def test_the_story_lesson_then_adds_contrast_cards_like_a_grammar_lesson(owner):
     """The listen path reads ``affix_drill`` and nothing else, so a story lesson needs no code of its own."""
     srs_db, store = owner
     lesson = _story_lesson("An Evening Wake", _WAKE)
-    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"])
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
 
     cards = contrast_cards(lesson, srs_db=srs_db, store=store, curriculum_id="funeral")
 
@@ -261,7 +410,7 @@ def test_the_story_lesson_then_adds_contrast_cards_like_a_grammar_lesson(owner):
 def test_a_lesson_published_into_its_day_gets_that_days_drill():
     curriculum = _curriculum([_day(1), _day(2)])
     lesson = _story_lesson("An Evening Wake", _WAKE)
-    add_day_drill(lesson, get_language("ceb"), curriculum, 1)
+    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=None, lemmatizer=None)
     assert lesson.generation_metadata["affix_drill"]["pattern"] == "mo-mi"
 
 
@@ -277,7 +426,7 @@ def test_a_lesson_published_into_its_day_gets_that_days_drill():
 def test_a_lesson_with_no_planned_pattern_is_left_as_it_was(curriculum, day):
     lesson = _story_lesson("An Evening Wake", _WAKE)
     before = len(lesson.sections)
-    add_day_drill(lesson, get_language("ceb"), curriculum, day)
+    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=None, lemmatizer=None)
     assert len(lesson.sections) == before
     assert "affix_drill" not in lesson.generation_metadata
 

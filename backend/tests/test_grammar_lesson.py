@@ -30,7 +30,7 @@ from app.generation.grammar_lesson import (
 )
 from app.languages import get_a1_morphology, get_language
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.lesson import Lesson, Phrase, Section, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.storage.store import ContentStore
@@ -98,6 +98,10 @@ def owner(srs_db):
         _card(srs_db, root, recognition=SRSState.REVIEW)
     for root in ("balik", "kaon", "sulod", "sulti", "tan-aw"):
         _card(srs_db, root, recognition=SRSState.NEW)
+    # The small words of the two stories, which the owner has. `nag-istorya` is
+    # not among them: it is the word the owner was asked for cold (ve4p.20).
+    for word in ("ko", "ugma", "oo", "sila", "siya", "og", "ug", "kape"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
     store = ContentStore(":memory:")
     store.save_curriculum(
         "funeral",
@@ -160,16 +164,18 @@ def test_the_owners_first_lesson(owner):
     """uban has to be modelled; the best-met roots join it; the least-met are left to build."""
     srs_db, store = owner
 
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     assert plan == GrammarPlan(
         pattern=_MO_MI,
         roots=("uban", "inom", "adto"),
         new_roots=("anhi", "lakaw"),
+        # "Miinom sila og kape ug nag-istorya sila." says a drilled form too, and
+        # is left out: nag-istorya is a word the owner has not met, in an affix
+        # this lesson does not teach.
         lines=(
             ("Mouban ko ugma.", "I will come along tomorrow."),
             ("Oo, moadto ko.", "Yes, I'll go."),
-            ("Miinom sila og kape ug nag-istorya sila.", "They drank coffee and they talked."),
         ),
         forms=_FORMS,
     )
@@ -178,7 +184,7 @@ def test_the_owners_first_lesson(owner):
 def test_the_new_roots_end_on_the_one_never_met_in_this_pattern(owner):
     """lakaw has only been heard as maglakaw / naglakaw: getting molakaw right is the affix."""
     srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
     assert plan.new_roots[-1] == "lakaw"
 
 
@@ -186,7 +192,7 @@ def test_with_no_lessons_the_plan_falls_back_to_the_tables_order(owner):
     srs_db, _ = owner
     empty = ContentStore(":memory:")
 
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=empty, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=empty, curriculum_id="funeral", lemmatizer=None)
 
     assert (plan.roots, plan.new_roots, plan.lines) == (("uban", "lakaw", "inom"), ("adto", "anhi"), ())
     assert plan.forms[:4] == ("mouban", "miuban", "molakaw", "milakaw")
@@ -195,7 +201,9 @@ def test_with_no_lessons_the_plan_falls_back_to_the_tables_order(owner):
 def test_too_few_understood_roots_is_refused_with_the_count(srs_db):
     _card(srs_db, "inom", recognition=SRSState.REVIEW)
     with pytest.raises(ValueError, match="needs at least 2 roots you understand, and mo-mi has 1: inom"):
-        plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=ContentStore(":memory:"), curriculum_id="x")
+        plan_grammar_lesson(
+            "ceb", _MO_MI, srs_db=srs_db, store=ContentStore(":memory:"), curriculum_id="x", lemmatizer=None
+        )
 
 
 def test_a_language_without_patterns_is_refused(srs_db):
@@ -209,7 +217,7 @@ def test_a_language_without_patterns_is_refused(srs_db):
 def test_a_line_is_one_sentence_that_uses_a_drilled_form(owner):
     """Two-sentence lines are left out: the prompt would ask for both."""
     srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
     texts = [text for text, _ in plan.lines]
     assert "Maayong gabii, Liza. Moadto ko sa haya." not in texts
     assert "Mag-ampo pud ko, Nang." not in texts  # one sentence, but not this pattern
@@ -222,20 +230,65 @@ def test_the_drill_ends_on_three_lines_at_most_the_shortest_first(owner):
         ("Miadto siya.", "He went."),
     ]
     store.save_lesson("more-1", "funeral", 3, _story_lesson("More", extra))
+    # Understood too, so four lines qualify and the longest is the one cut.
+    for word in ("tubig", "karon", "dayon"):
+        _card(srs_db, word, recognition=SRSState.REVIEW)
 
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     assert [text for text, _ in plan.lines] == ["Miadto siya.", "Mouban ko ugma.", "Oo, moadto ko."]
+
+
+def test_a_line_asks_only_for_words_the_learner_understands(owner):
+    """The owner, 2026-10-09: "The full sentences at the end are too hard right now
+    because we're introducing things I don't know." (tunatale-ve4p.20)"""
+    srs_db, store = owner
+
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
+    assert "Miinom sila og kape ug nag-istorya sila." not in [text for text, _ in plan.lines]
+
+    # Not because of its length or its place: with that one word in the deck it is asked for.
+    _card(srs_db, "nag-istorya", recognition=SRSState.REVIEW)
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
+    assert "Miinom sila og kape ug nag-istorya sila." in [text for text, _ in plan.lines]
+
+
+def test_a_storys_key_phrases_are_not_what_a_grammar_lesson_teaches(srs_db):
+    """A story's own closing drill may ask for its key phrases; a later grammar
+    lesson built from that story's lines does not teach them, and may not."""
+    for root in ("uban", "adto"):
+        _card(srs_db, root, recognition=SRSState.REVIEW)
+    _card(srs_db, "ko", recognition=SRSState.REVIEW)
+    store = ContentStore(":memory:")
+    story = _story_lesson("An Evening Wake", [("Mouban ko ugma.", "I will come along tomorrow.")])
+    story.key_phrases = [KeyPhraseInfo(phrase="ugma", translation="tomorrow")]
+    store.save_lesson("wake-1", "funeral", 1, story)
+
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
+
+    assert plan.lines == ()
+
+
+def test_with_no_qualifying_line_the_drill_is_still_planned(srs_db):
+    """None when none qualify: the forms are the lesson, the lines are extra."""
+    for root in ("uban", "adto"):
+        _card(srs_db, root, recognition=SRSState.REVIEW)
+    store = ContentStore(":memory:")
+    store.save_lesson("wake-1", "funeral", 1, _story_lesson("An Evening Wake", _WAKE))
+
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
+
+    assert (plan.roots, plan.lines) == (("uban", "adto"), ())
 
 
 def test_an_earlier_grammar_lesson_is_not_a_source_of_lines(owner):
     """Lines are read from stories. A drill's whole lines came from those same
     stories, and its section is not one the planner reads."""
     srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
     store.save_lesson("drill-1", "funeral", 3, build_grammar_lesson(get_language("ceb"), plan))
 
-    again = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    again = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     assert again == plan
 
@@ -245,7 +298,7 @@ def test_a_superseded_lesson_is_not_read(owner):
     store.save_lesson("wake-0", "funeral", 1, _story_lesson("An older wake", [("Moanhi siya.", "He will come.")]))
     store.save_lesson("wake-2", "funeral", 1, _story_lesson("An Evening Wake", _WAKE))
 
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     assert "Moanhi siya." not in [text for text, _ in plan.lines]
 
@@ -255,7 +308,7 @@ def test_a_superseded_lesson_is_not_read(owner):
 
 def test_the_lesson_is_one_drill_section_and_says_what_it_is(owner):
     srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     lesson = build_grammar_lesson(get_language("ceb"), plan)
 
@@ -271,14 +324,14 @@ def test_the_lesson_is_one_drill_section_and_says_what_it_is(owner):
         "ceb", _MO_MI, roots=list(plan.roots), new_roots=list(plan.new_roots), lines=list(plan.lines), again=True
     )
     assert [p.text for p in lesson.sections[0].phrases[1:]] == [step.text for step in drill.steps]
-    # Each of the ten forms is asked twice, then the three lines.
-    assert [p.role for p in lesson.sections[0].phrases].count("prompt") == 23
+    # Each of the ten forms is asked twice, then the two lines the owner has every word of.
+    assert [p.role for p in lesson.sections[0].phrases].count("prompt") == 22
 
 
 def test_the_forms_are_said_by_the_voice_that_reads_the_key_phrases(owner):
     srs_db, store = owner
     language = get_language("ceb")
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     lesson = build_grammar_lesson(language, plan)
 
@@ -289,7 +342,7 @@ def test_the_forms_are_said_by_the_voice_that_reads_the_key_phrases(owner):
 
 def test_the_drills_table_marks_the_roots_left_for_the_learner_to_build(owner):
     srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     table = drill_table(build_grammar_lesson(get_language("ceb"), plan))
 
@@ -342,7 +395,7 @@ def test_a_lesson_stored_before_kinds_existed_is_thematic():
 
 def test_the_day_names_the_pattern_and_lists_the_forms(owner):
     srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral")
+    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
 
     day = grammar_day(3, plan)
 

@@ -184,7 +184,7 @@ class _RecordingTarget:
         self._lem = lem
         self.cached_at_write = None
 
-    def prepare(self, lesson) -> None:
+    def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
         return None
 
     def write(self, lesson) -> str:

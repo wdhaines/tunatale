@@ -450,7 +450,14 @@ async def create_grammar_lesson(curriculum_id: str, body: CreateGrammarLessonReq
     if pattern is None:
         raise HTTPException(status_code=422, detail=f"Unknown affix pattern {body.pattern!r} for {code}")
     try:
-        plan = plan_grammar_lesson(code, pattern, srs_db=request.state.srs_db, store=store, curriculum_id=curriculum_id)
+        plan = plan_grammar_lesson(
+            code,
+            pattern,
+            srs_db=request.state.srs_db,
+            store=store,
+            curriculum_id=curriculum_id,
+            lemmatizer=app_state.lemmatizer(request),
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
 

@@ -23,8 +23,9 @@ import pytest
 import respx
 
 from app.audio import gemini_tts
-from app.audio.gemini_tts import GeminiTTSService, resolve_ipa
+from app.audio.gemini_tts import GeminiTTSService, RepeatedLineError, repeat_limit_seconds, resolve_ipa
 from app.audio.ports import TTSExhausted
+from app.audio.speech_length import speech_seconds
 
 SYNTHESIS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
 
@@ -61,6 +62,11 @@ def _svc(**kw):
     # have meant a mock_allowlist.txt entry for a tuning knob.
     kw.setdefault("min_delay", 0)
     kw.setdefault("token_provider", _fake_token)
+    # The fake provider answers with nine bytes that are not audio, so the real
+    # measurement (ffmpeg) is replaced for every test that is not about it. Zero
+    # seconds is under any limit: the repeat guard is inert unless a test hands
+    # it a measurement of its own.
+    kw.setdefault("speech_seconds", lambda audio: 0.0)
     return GeminiTTSService(**kw)
 
 
@@ -1467,3 +1473,178 @@ def test_a_natural_speed_line_is_neither_the_plain_clip_nor_the_enunciated_one(t
 
 def test_punctuation_standing_alone_passes_through_the_reading():
     assert resolve_ipa("Ja – takk", {"ja": "ja", "takk": "tak"}, (("Ja –",), ("takk",))) == ("ja – tak", True)
+
+
+# ── The repeat guard on an Enunciated line (bd tunatale-u8nz.28) ─────────────
+#
+# The provider sometimes says an Enunciated line two or more times over. It is
+# random per take, the clip is cached, and every later render plays it. The
+# adapter measures how long each fresh take SPEAKS for and takes another when
+# that is too long for the text.
+
+
+def _takes(*clips: bytes):
+    """A provider that answers with *clips* in order, one per request."""
+    answers = iter(clips)
+    return lambda request: httpx.Response(200, json={"audioContent": base64.b64encode(next(answers)).decode()})
+
+
+def _measured(lengths: dict[bytes, float]):
+    """A measurement that knows each clip's speech length, and counts its calls."""
+    calls: list[bytes] = []
+
+    def measure(audio: bytes) -> float:
+        calls.append(audio)
+        return lengths[audio]
+
+    measure.calls = calls  # type: ignore[attr-defined]
+    return measure
+
+
+# _LINE is 36 characters: at 11 characters a second it speaks for about 3.3 s,
+# and the limit is 1.8 times that.
+_LIMIT = gemini_tts.REPEAT_SPEECH_FACTOR * len(_LINE) / gemini_tts.CHARS_PER_SECOND
+
+
+@respx.mock
+async def test_a_repeated_take_is_thrown_away_and_only_the_good_one_is_kept(tmp_path):
+    """One re-roll, the second clip on disk, and ONLY the second clip in the cache."""
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"said-twice", b"said-once"))
+    measure = _measured({b"said-twice": _LIMIT * 1.3, b"said-once": _LIMIT * 0.6})
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, speech_seconds=measure)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, enunciation=_LINE_WORDS)
+
+    assert route.call_count == 2
+    assert (tmp_path / "out.mp3").read_bytes() == b"said-once"
+    assert [f.read_bytes() for f in cache.iterdir()] == [b"said-once"]
+    assert measure.calls == [b"said-twice", b"said-once"]
+
+
+@respx.mock
+async def test_a_line_repeated_on_every_take_raises_and_caches_nothing(tmp_path):
+    """Loud, not a warning: no clip is written, none is cached, and the error says why."""
+    takes = [b"a", b"b", b"c"]
+    assert len(takes) == gemini_tts.MAX_ENUNCIATED_TAKES
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(*takes))
+    measure = _measured({b"a": _LIMIT * 2, b"b": _LIMIT * 1.5, b"c": _LIMIT * 3})
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, speech_seconds=measure)
+
+    with pytest.raises(RepeatedLineError) as raised:
+        await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, enunciation=_LINE_WORDS)
+
+    assert route.call_count == gemini_tts.MAX_ENUNCIATED_TAKES
+    assert not (tmp_path / "out.mp3").exists()
+    assert not cache.exists() or list(cache.iterdir()) == []
+    message = str(raised.value)
+    assert _LINE in message
+    # Every take's measurement and the limit: with them a reader can tell a line
+    # that repeats (lengths all over the place) from a limit that is wrong for
+    # this line (lengths all alike), without re-rendering anything.
+    for seconds in (_LIMIT * 2, _LIMIT * 1.5, _LIMIT * 3, _LIMIT):
+        assert f"{seconds:.2f}" in message
+
+
+def test_a_repeated_line_is_not_a_throttling_episode():
+    """The render-level retry loop re-runs ``TTSExhausted`` and nothing else. Three
+    takes in a row have already been spent here; a fourth render would spend three more."""
+    assert issubclass(RepeatedLineError, RuntimeError)
+    assert not issubclass(RepeatedLineError, TTSExhausted)
+
+
+@respx.mock
+async def test_a_take_exactly_at_the_limit_is_kept(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"at-the-limit"))
+    svc = _svc(speech_seconds=_measured({b"at-the-limit": _LIMIT}))
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", enunciation=_LINE_WORDS)
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_a_take_just_over_the_limit_is_taken_again(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"just-over", b"fine"))
+    svc = _svc(speech_seconds=_measured({b"just-over": _LIMIT + 0.01, b"fine": 1.0}))
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", enunciation=_LINE_WORDS)
+
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_a_line_that_is_not_enunciated_is_never_measured(tmp_path):
+    """Natural-speed lines, drill phrases and single words are not what repeats,
+    and a one-word Enunciated line is the natural clip (``enunciates``)."""
+
+    def never(audio: bytes) -> float:
+        raise AssertionError("measured a clip the guard does not cover")
+
+    route = respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    svc = _svc(speech_seconds=never)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "plain.mp3")
+    await svc.synthesize(_LINE, VOICE, tmp_path / "line.mp3", phonemes=_LINE_IPAS, line=True)
+    await svc.synthesize("Oo.", VOICE, tmp_path / "one-word.mp3", enunciation=(("Oo.",),))
+
+    assert route.call_count == 3
+
+
+@respx.mock
+async def test_a_cached_enunciated_line_is_not_measured_again(tmp_path):
+    """The guard is on fresh takes. A hit costs nothing and is served as it is."""
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    measure = _measured({b"ID3-audio": 0.5})
+    svc = _svc(cache_dir=tmp_path / "cache", speech_seconds=measure)
+
+    for name in ("one.mp3", "two.mp3"):
+        await svc.synthesize(_LINE, VOICE, tmp_path / name, enunciation=_LINE_WORDS)
+
+    assert measure.calls == [b"ID3-audio"]
+
+
+@respx.mock
+async def test_a_slowed_line_is_allowed_proportionally_longer(tmp_path):
+    """The limit is in seconds of speech, and speakingRate stretches speech."""
+    slowed = _LIMIT * 1.2  # over the limit at +0%, under it at -20% (limit / 0.8)
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"slowed"))
+    svc = _svc(speech_seconds=_measured({b"slowed": slowed}))
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", rate="-20%", enunciation=_LINE_WORDS)
+
+    assert route.call_count == 1
+    assert repeat_limit_seconds(_LINE, 0.8) == pytest.approx(_LIMIT / 0.8)
+
+
+# Speech-only seconds of real cached clips, measured 2026-10-13 with
+# ``speech_seconds`` (the live Cebuano cache; 138 clips under wording 1, 51
+# under wording 2). The three repeats were confirmed apart from their length:
+# two by the owner's ear on 2026-10-09, the third by its shape (three words,
+# then 1.11 s of silence, then the same three segment lengths again).
+@pytest.mark.parametrize(
+    ("text", "spoken", "is_repeat"),
+    [
+        ("Pwede ko moapil kadiyot?", 7.29, True),  # wording 1, heard: said several times
+        ("Mouban ko ugma.", 3.87, True),  # wording 1, heard: said several times
+        ("Pila man ni?", 2.57, True),  # wording 2: said twice, 2.36x
+        ("Asa mo gikan?", 1.79, False),  # wording 2's longest single saying, 1.51x
+        ("Moadto ta sa baybayon?", 2.62, False),  # wording 2's next longest, 1.31x
+        ("Nong, pila man?", 1.22, False),  # wording 2's shortest, 0.90x
+    ],
+)
+def test_the_limit_separates_the_measured_repeats_from_the_measured_lines(text, spoken, is_repeat):
+    assert (spoken > repeat_limit_seconds(text, 1.0)) is is_repeat
+
+
+def test_the_repeat_limit_was_measured_on_the_wording_in_force():
+    """The wording sets how long a line speaks for (wording 1 ran a median 1.51x
+    its text's length, wording 2 runs 1.08x), so the factor is a measurement OF a
+    wording. Whoever rewords the instruction bumps ENUNCIATION_VERSION and lands
+    here: re-measure the cached clips before moving this number."""
+    assert gemini_tts.REPEAT_FACTOR_MEASURED_ON_VERSION == gemini_tts.ENUNCIATION_VERSION
+
+
+def test_the_adapter_measures_with_ffmpeg_unless_told_otherwise():
+    assert GeminiTTSService(min_delay=0, token_provider=_fake_token)._speech_seconds is speech_seconds
