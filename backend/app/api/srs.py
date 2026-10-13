@@ -1270,6 +1270,37 @@ def _choose_card_for_lemma(
     return LemmaCard(res, False)
 
 
+def _choose_card_for_card_key(
+    db,
+    lemma: str,
+    card_key: str,
+    surfaces: set[str],
+    variant_index: dict[str, tuple[int, SRSItem]] | None = None,
+    inflection_index: dict[str, int] | None = None,
+    surface_upos: dict[str, str] | None = None,
+    gloss: str | None = None,
+) -> LemmaCard:
+    """The preview's resolution: by *card_key*, then exactly as the commit resolves.
+
+    The preview names a row by its card key and looks the card up on it (bd
+    tunatale-q5pl); ``mark_lesson_listened`` looks it up on the lemmatizer's raw
+    *lemma*. The two agree except for a card whose stored ``lemma`` IS the
+    rejected fragment (`text='trøtt'`, `lemma='trø'`): the key is the surface
+    `trøtt`, the lemma lookup on it misses, and the surface fallback skips a
+    surface equal to the key. The commit and the reader found that card and the
+    preview offered the word as a card to create (bd tunatale-706z).
+
+    Falling back to the commit's own call — same arguments, raw lemma — makes
+    the miss impossible by construction: the preview calls a word untracked only
+    when the commit would too. The key lookup stays first, so nothing that
+    resolved before resolves differently.
+    """
+    choice = _choose_card_for_lemma(db, card_key, surfaces, variant_index, inflection_index, surface_upos, gloss)
+    if choice.card is None and card_key != lemma:
+        choice = _choose_card_for_lemma(db, lemma, surfaces, variant_index, inflection_index, surface_upos, gloss)
+    return choice
+
+
 def _lemma_gloss(lemma: str, surfaces: set[str], token_glosses: dict[str, str]) -> str:
     """Every gloss the lesson gave *lemma* or one of its surfaces, as one string.
 
@@ -1319,7 +1350,8 @@ def _lemmas_losing_a_shared_card(
     commit share.
 
     Pure function over an already-resolved map: the two call sites resolve by
-    different keys (the preview by card key, the commit by lemma), so what is
+    different keys (the preview by card key, falling back to the commit's lemma
+    lookup — ``_choose_card_for_card_key``; the commit by lemma), so what is
     shared here is the TIE-BREAK, which is the half that must not drift.
     """
     sharers_by_card: dict[int, list[str]] = {}
@@ -2290,15 +2322,16 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             lemma_plausible=lemma_plausible,
         )
         _preview_card_keys[lemma] = _key
-        _preview_resolved[lemma] = _resolve_card_for_lemma(
+        _preview_resolved[lemma] = _choose_card_for_card_key(
             db,
+            lemma,
             _key,
             words.surfaces.get(lemma, set()),
             variant_index,
             inflection_index,
             words.surface_upos,
             _lemma_gloss(lemma, words.surfaces.get(lemma, set()), token_glosses),
-        )
+        ).card
     dropped_lemmas = _lemmas_losing_a_shared_card(_preview_resolved, _preview_card_keys)
 
     # ── Word-level candidates (tracked + untracked) ─────────────────────
@@ -2325,8 +2358,9 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         )
         card_key_by_lemma[lemma] = card_key
 
-        res, sense_undecided = _choose_card_for_lemma(
+        res, sense_undecided = _choose_card_for_card_key(
             db,
+            lemma,
             card_key,
             words.surfaces.get(lemma, set()),
             variant_index,
