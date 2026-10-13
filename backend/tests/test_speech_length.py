@@ -17,6 +17,10 @@ import pytest
 
 from app.audio.speech_length import speech_seconds
 
+# Every test here shells out to a real ffmpeg. The two hostile-clock CI jobs run
+# `-m "not ffmpeg"` on runners that do not install it (ci.yml says why).
+pytestmark = pytest.mark.ffmpeg
+
 _RATE = 16000
 
 
