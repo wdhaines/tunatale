@@ -81,7 +81,7 @@ Tagalog was the pathfinder for Cebuano. The comparison below answers whether tha
 
 **Reused, with adaptation:**
 - **Lemma table:** `scripts/build_cebuano_lemma_table.py` imports its core from `scripts/build_kaikki_lemma_table.py` (Tagalog's), adding Cebuano's affix reduction and hand-curated closed-class readings (`7b22233`).
-- **Spelled IPA:** the Latin letter table is duplicated in `ceb/phoneme_plan.py` (plugins cannot import each other). The shared logic (glottal stop, digraphs, lone-syllable stress) moved into core as `app.audio.spelled_ipa.SpelledPhonemePlanner`.
+- **Spelled IPA:** the Latin letter table is duplicated in `ceb/phoneme_plan.py` (plugins cannot import each other). The shared logic (glottal stop, digraphs, lone-syllable stress, an optional mark at each syllable break) moved into core as `app.audio.spelled_ipa.SpelledPhonemePlanner`.
 - **Starter cards from cognates:** `scripts/seed_cognate_cards.py` seeded Cebuano review cards from the Tagalog deck's cognates, gated on an equivalent English gloss (`8a1c330`, `ce95e3b`).
 - **Style guide:** same shape. Cebuano's guards against Tagalog, its closest and most training-data-dominant relative.
 

@@ -89,6 +89,17 @@ _WHOLE_WORD_IPA = {"mga": "maˈŋa"}
 _LINE_WORD_IPA = {"jimenez": "himɛnɛs", "paul": "pol", "liza": "lisa"}
 
 
+# Every reading shows where its syllables part. Run together, a glottal stop
+# between two like vowels was lost on the voice these readings go to: miinom
+# sent as /miʔinom/ ran its two i's into one in 9 takes of 9, and as plain text
+# kept them apart in 7 of 7; sent as /mi.ʔi.nom/ the stop was there in 6 of 8
+# (2026-10-13, tunatale-ve4p.24; the owner's ear on seven of those clips agreed
+# with the measure on every one). The owner's call, the same day: "I'd do it
+# everywhere", so it is the planner's, and a drill piece, a drilled form and a
+# line all get it.
+_SYLLABLE_BREAK = "."
+
+
 def create_phoneme_planner() -> SpelledPhonemePlanner:
     """Zero-arg factory registered on the plugin's ``LanguageConfig``.
 
@@ -104,4 +115,5 @@ def create_phoneme_planner() -> SpelledPhonemePlanner:
         syllabify=lambda word: syllabify_word(word, "ceb"),
         whole_word_ipa=_WHOLE_WORD_IPA,
         line_word_ipa=_LINE_WORD_IPA,
+        syllable_break=_SYLLABLE_BREAK,
     )
