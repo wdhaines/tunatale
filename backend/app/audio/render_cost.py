@@ -51,11 +51,13 @@ _GEMINI_CHARS_PER_SECOND = gemini_tts.CHARS_PER_SECOND
 _GEMINI_AUDIO_TOKENS_PER_SECOND = 25.0
 _GEMINI_USD_PER_MILLION_AUDIO_TOKENS = 10.0  # gemini-2.5-flash-tts on Cloud TTS
 # An Enunciated line is asked to stop after each word, and the audio is what
-# this provider bills. Measured 2026-10-09 (tunatale-u8nz.26) on the wording in
-# ``gemini_tts._ENUNCIATION_INSTRUCTION``: a mean of 1.72 times the same line
-# at natural speed, three lines by five takes. The wording sets this number
-# (the one before it ran about 2.45), so re-measure it when the sentence changes.
-_GEMINI_ENUNCIATED_LENGTH_FACTOR = 1.7
+# this provider bills: the take AS SPOKEN, before its pauses are rewritten and
+# its speech sped (``gemini_tts.rewrite_enunciated_take``), which is why this is
+# well over the 1.4 the learner hears. Measured 2026-10-13 (tunatale-u8nz.32)
+# on the wording in ``gemini_tts._ENUNCIATION_INSTRUCTION``: 51 fresh takes ran
+# 2.07 times their natural-speed clips. The wording sets this number (the one
+# before it ran about 1.7), so re-measure it when the sentence changes.
+_GEMINI_ENUNCIATED_LENGTH_FACTOR = 2.1
 
 # The value carried for a key (``synth_plan.MemoKey``, the renderer's own dedupe
 # key): the same fields, phonemes in the dict form ``_cache_path`` /

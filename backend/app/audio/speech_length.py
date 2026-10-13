@@ -30,16 +30,19 @@ _MIN_SILENCE_SECONDS = 0.12
 _SAMPLE_RATE = 8000
 _BYTES_PER_SECOND = _SAMPLE_RATE * 2  # s16le, one channel
 
-_SILENCE_RE = re.compile(r"silence_duration: ([0-9.]+)")
+_SILENCE_START_RE = re.compile(r"silence_start: (-?[0-9.]+)")
+_SILENCE_END_RE = re.compile(r"silence_end: ([0-9.]+)")
+
+# A sliver between two silences shorter than this is the detector's edge, not speech.
+_MIN_STRETCH_SECONDS = 0.03
 
 
-def speech_seconds(audio: bytes) -> float:
-    """Seconds of *audio* that are not silence. *audio* is any container ffmpeg reads.
+def _silences(audio: bytes) -> tuple[float, list[tuple[float, float]]]:
+    """The length of *audio* and each of its silences as ``(start, end)`` seconds.
 
-    Total length minus every silence of ``_MIN_SILENCE_SECONDS`` or more under
-    ``_NOISE_FLOOR``, the leading and trailing ones included. Raises
-    ``RuntimeError`` when ffmpeg cannot decode the bytes: a clip that cannot be
-    measured cannot be vouched for, and saying "0.0 seconds" would pass it.
+    A silence is ``_MIN_SILENCE_SECONDS`` or more under ``_NOISE_FLOOR``, the
+    leading and trailing ones included. Raises ``RuntimeError`` when ffmpeg
+    cannot decode the bytes.
     """
     proc = subprocess.run(  # noqa: S603
         [  # noqa: S607
@@ -65,5 +68,40 @@ def speech_seconds(audio: bytes) -> float:
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg could not measure the clip: {proc.stderr.decode(errors='replace')[-300:]}")
     total = len(proc.stdout) / _BYTES_PER_SECOND
-    silent = sum(float(seconds) for seconds in _SILENCE_RE.findall(proc.stderr.decode(errors="replace")))
-    return max(0.0, total - silent)
+    log = proc.stderr.decode(errors="replace")
+    starts = [max(0.0, float(seconds)) for seconds in _SILENCE_START_RE.findall(log)]
+    ends = [float(seconds) for seconds in _SILENCE_END_RE.findall(log)]
+    # A silence still running when the clip stops is reported with no end.
+    ends += [total] * (len(starts) - len(ends))
+    return total, list(zip(starts, ends, strict=True))
+
+
+def speech_seconds(audio: bytes) -> float:
+    """Seconds of *audio* that are not silence. *audio* is any container ffmpeg reads.
+
+    Total length minus every silence of ``_MIN_SILENCE_SECONDS`` or more under
+    ``_NOISE_FLOOR``, the leading and trailing ones included. Raises
+    ``RuntimeError`` when ffmpeg cannot decode the bytes: a clip that cannot be
+    measured cannot be vouched for, and saying "0.0 seconds" would pass it.
+    """
+    total, silences = _silences(audio)
+    return max(0.0, total - sum(end - start for start, end in silences))
+
+
+def speech_stretches(audio: bytes) -> list[tuple[float, float]]:
+    """Each stretch of speech in *audio* as ``(start, end)`` seconds, in order.
+
+    What lies between the silences ``speech_seconds`` takes out, so the two
+    agree about what a pause is. One stretch per word is what a line said one
+    word at a time looks like; the count is the caller's to judge.
+    """
+    total, silences = _silences(audio)
+    stretches: list[tuple[float, float]] = []
+    at = 0.0
+    for start, end in silences:
+        if start - at > _MIN_STRETCH_SECONDS:
+            stretches.append((at, start))
+        at = end
+    if total - at > _MIN_STRETCH_SECONDS:
+        stretches.append((at, total))
+    return stretches

@@ -67,6 +67,9 @@ def _svc(**kw):
     # seconds is under any limit: the repeat guard is inert unless a test hands
     # it a measurement of its own.
     kw.setdefault("speech_seconds", lambda audio: 0.0)
+    # The same for the pause rewrite, which is ffmpeg too: an Enunciated take
+    # comes back as it went in unless a test hands the adapter a rewrite.
+    kw.setdefault("rewrite_gaps", lambda audio, words: audio)
     return GeminiTTSService(**kw)
 
 
@@ -1199,7 +1202,7 @@ _LINE_INPUT = {
     "text": "Buntag sa Jimenez. Naglakaw si Paul.",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Say each word whole, at a natural conversational pace, with only a very short pause between words. "
+        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
         "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
     ),
 }
@@ -1210,7 +1213,7 @@ _GREETING_INPUT = {
     "text": "Liza! Maayong buntag. Kumusta ka?",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Say each word whole, at a natural conversational pace, with only a very short pause between words. "
+        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
         "Pronounce it exactly as the IPA /lisa! maʔajoŋ buntaɡ. kumusta ka?/."
     ),
 }
@@ -1284,7 +1287,7 @@ async def test_a_line_with_no_reading_is_still_asked_to_pause(tmp_path, caplog):
             "text": _LINE,
             "prompt": (
                 "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-                "Say each word whole, at a natural conversational pace, with only a very short pause between words."
+                "Say each word whole and at a normal speaking speed, then stop briefly before the next word."
             ),
         }
     ]
@@ -1303,7 +1306,7 @@ async def test_a_mapping_missing_a_word_of_the_line_warns_and_only_pauses(tmp_pa
         )
 
     assert "IPA" not in inputs[0]["prompt"]
-    assert "with only a very short pause between words." in inputs[0]["prompt"]
+    assert "then stop briefly before the next word." in inputs[0]["prompt"]
     assert len(_warnings(caplog)) == 1
 
 
@@ -1365,8 +1368,8 @@ def test_the_enunciation_wording_and_its_version_move_together():
     the old number is served the audio the old words produced, so the pair is
     pinned: whoever changes one meets this test and changes the other."""
     assert (gemini_tts._ENUNCIATION_INSTRUCTION, gemini_tts.ENUNCIATION_VERSION) == (
-        "Say each word whole, at a natural conversational pace, with only a very short pause between words.",
-        2,
+        "Say each word whole and at a normal speaking speed, then stop briefly before the next word.",
+        3,
     )
 
 
@@ -1502,9 +1505,10 @@ def _measured(lengths: dict[bytes, float]):
     return measure
 
 
-# _LINE is 36 characters: at 11 characters a second it speaks for about 3.3 s,
-# and the limit is 1.8 times that.
-_LIMIT = gemini_tts.REPEAT_SPEECH_FACTOR * len(_LINE) / gemini_tts.CHARS_PER_SECOND
+# _LINE is 36 characters: at 11 characters a second it speaks for about 3.3 s.
+# An Enunciated take may speak for 2.5 times that; a natural-speed one for 1.8.
+_LIMIT = gemini_tts.ENUNCIATED_REPEAT_SPEECH_FACTOR * len(_LINE) / gemini_tts.CHARS_PER_SECOND
+_NATURAL_LIMIT = gemini_tts.REPEAT_SPEECH_FACTOR * len(_LINE) / gemini_tts.CHARS_PER_SECOND
 
 
 @respx.mock
@@ -1581,7 +1585,7 @@ async def test_a_repeated_natural_speed_take_is_thrown_away_and_only_the_good_on
     """A natural-speed line told its reading repeats too: "Oo, Nong. Nalipay kaayo
     mi." was cached said twice, and the owner heard it on 2026-10-13."""
     route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"said-twice", b"said-once"))
-    measure = _measured({b"said-twice": _LIMIT * 1.3, b"said-once": _LIMIT * 0.6})
+    measure = _measured({b"said-twice": _NATURAL_LIMIT * 1.3, b"said-once": _NATURAL_LIMIT * 0.6})
     cache = tmp_path / "cache"
     svc = _svc(cache_dir=cache, speech_seconds=measure)
 
@@ -1603,7 +1607,7 @@ async def test_a_natural_speed_line_repeated_on_every_take_raises_and_names_its_
     assert len(takes) == gemini_tts.MAX_LINE_TAKES
     route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(*takes))
     cache = tmp_path / "cache"
-    svc = _svc(cache_dir=cache, speech_seconds=_measured(dict.fromkeys(takes, _LIMIT * 2)))
+    svc = _svc(cache_dir=cache, speech_seconds=_measured(dict.fromkeys(takes, _NATURAL_LIMIT * 2)))
 
     with pytest.raises(RepeatedLineError) as raised:
         await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, line=True)
@@ -1614,7 +1618,7 @@ async def test_a_natural_speed_line_repeated_on_every_take_raises_and_names_its_
     message = str(raised.value)
     assert "natural-speed line" in message
     assert "Enunciated" not in message
-    assert f"{_LIMIT:.2f}" in message
+    assert f"{_NATURAL_LIMIT:.2f}" in message
 
 
 @respx.mock
@@ -1657,6 +1661,162 @@ async def test_a_cached_enunciated_line_is_not_measured_again(tmp_path):
     assert measure.calls == [b"ID3-audio"]
 
 
+# ── The pause rewrite on an Enunciated take (bd tunatale-u8nz.32) ────────────
+#
+# The voice is asked to stop after every word and does, but unevenly, and it
+# breaks some words. Each kept take has its pauses rewritten (``word_gaps``)
+# before it is written or cached; a take that ran two words together has no
+# pause to rewrite and is taken again.
+
+
+def _rewrites(answers: dict[bytes, bytes | None]):
+    """A rewrite that knows what each take becomes (``None``: words ran together), and records its calls."""
+    calls: list[tuple[bytes, int]] = []
+
+    def rewrite(audio: bytes, words: int) -> bytes | None:
+        calls.append((audio, words))
+        return answers[audio]
+
+    rewrite.calls = calls  # type: ignore[attr-defined]
+    return rewrite
+
+
+@respx.mock
+async def test_an_enunciated_take_is_rewritten_before_it_is_written_or_cached(tmp_path):
+    respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"as-spoken"))
+    rewrite = _rewrites({b"as-spoken": b"gaps-rewritten"})
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, rewrite_gaps=rewrite)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, enunciation=_LINE_WORDS)
+
+    assert (tmp_path / "out.mp3").read_bytes() == b"gaps-rewritten"
+    assert [f.read_bytes() for f in cache.iterdir()] == [b"gaps-rewritten"]
+    # The count it is handed is the line's WORDS, which is what sets how many gaps there are.
+    assert rewrite.calls == [(b"as-spoken", len(_LINE_WORDS))]
+
+
+@respx.mock
+async def test_the_repeat_limit_is_read_off_the_take_as_spoken_not_as_rewritten(tmp_path):
+    """The rewrite speeds the speech up, so a line said twice could come out
+    under the limit. It is measured first, and a repeat is never rewritten."""
+    respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"said-twice", b"said-once"))
+    measure = _measured({b"said-twice": _LIMIT * 1.2, b"said-once": _LIMIT * 0.5})
+    rewrite = _rewrites({b"said-once": b"rewritten"})
+    svc = _svc(speech_seconds=measure, rewrite_gaps=rewrite)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", enunciation=_LINE_WORDS)
+
+    assert measure.calls == [b"said-twice", b"said-once"]
+    assert rewrite.calls == [(b"said-once", len(_LINE_WORDS))]
+    assert (tmp_path / "out.mp3").read_bytes() == b"rewritten"
+
+
+@respx.mock
+async def test_a_take_that_ran_words_together_is_taken_again(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"run-together", b"word-by-word"))
+    rewrite = _rewrites({b"run-together": None, b"word-by-word": b"rewritten"})
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, rewrite_gaps=rewrite)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", enunciation=_LINE_WORDS)
+
+    assert route.call_count == 2
+    assert (tmp_path / "out.mp3").read_bytes() == b"rewritten"
+    assert [f.read_bytes() for f in cache.iterdir()] == [b"rewritten"]
+
+
+@respx.mock
+async def test_a_line_run_together_on_every_take_raises_and_says_so(tmp_path):
+    takes = [b"a", b"b", b"c"]
+    assert len(takes) == gemini_tts.MAX_LINE_TAKES
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(*takes))
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, rewrite_gaps=_rewrites(dict.fromkeys(takes)))
+
+    with pytest.raises(gemini_tts.UnusableLineError) as raised:
+        await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", enunciation=_LINE_WORDS)
+
+    assert route.call_count == gemini_tts.MAX_LINE_TAKES
+    assert not (tmp_path / "out.mp3").exists()
+    assert not cache.exists() or list(cache.iterdir()) == []
+    # Not a repeat, and the message must not send a reader to the repeat limit.
+    assert not isinstance(raised.value, RepeatedLineError)
+    assert "ran words together" in str(raised.value)
+    assert _LINE in str(raised.value)
+
+
+@respx.mock
+async def test_takes_that_failed_for_different_reasons_are_each_named(tmp_path):
+    """One said twice, two run together: neither word alone describes the line,
+    so the error is the general one and carries what each take did."""
+    respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"twice", b"run1", b"run2"))
+    measure = _measured({b"twice": _LIMIT * 2, b"run1": 1.0, b"run2": 1.0})
+    svc = _svc(speech_seconds=measure, rewrite_gaps=_rewrites({b"run1": None, b"run2": None}))
+
+    with pytest.raises(gemini_tts.UnusableLineError) as raised:
+        await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", enunciation=_LINE_WORDS)
+
+    assert not isinstance(raised.value, RepeatedLineError)
+    assert f"{_LIMIT * 2:.2f}" in str(raised.value)
+    assert str(raised.value).count("ran words together") == 2
+
+
+def test_a_repeated_line_is_one_kind_of_unusable_line():
+    assert issubclass(RepeatedLineError, gemini_tts.UnusableLineError)
+    assert issubclass(gemini_tts.UnusableLineError, RuntimeError)
+    assert not issubclass(gemini_tts.UnusableLineError, TTSExhausted)
+
+
+@respx.mock
+async def test_a_natural_speed_line_is_never_rewritten(tmp_path):
+    """Its pauses are the line's own. Only a line asked to stop after each word has gaps to set."""
+
+    def never(audio: bytes, words: int) -> bytes:
+        raise AssertionError("rewrote a clip that is not an Enunciated line")
+
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    svc = _svc(rewrite_gaps=never)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "plain.mp3")
+    await svc.synthesize(_LINE, VOICE, tmp_path / "line.mp3", phonemes=_LINE_IPAS, line=True)
+    await svc.synthesize("Oo.", VOICE, tmp_path / "one-word.mp3", enunciation=(("Oo.",),))
+
+    assert (tmp_path / "line.mp3").read_bytes() == b"ID3-audio"
+
+
+@respx.mock
+async def test_a_cached_enunciated_line_is_not_rewritten_again(tmp_path):
+    respx.post(SYNTHESIS_URL).mock(return_value=_ok())
+    rewrite = _rewrites({b"ID3-audio": b"rewritten"})
+    svc = _svc(cache_dir=tmp_path / "cache", rewrite_gaps=rewrite)
+
+    for name in ("one.mp3", "two.mp3"):
+        await svc.synthesize(_LINE, VOICE, tmp_path / name, enunciation=_LINE_WORDS)
+
+    assert len(rewrite.calls) == 1
+    assert (tmp_path / "two.mp3").read_bytes() == b"rewritten"
+
+
+def test_the_gap_the_shut_pause_and_the_speed_are_the_ones_that_were_heard():
+    """The owner's ear, 2026-10-13, on 25 lines: a 0.45 s gap with the speech at
+    1.5x, which is 1.39 times natural. These numbers are in the cached audio and
+    not in the cache key, so they are pinned with the version that IS in the key:
+    change one and bump ENUNCIATION_VERSION, or old clips keep the old gaps."""
+    assert (
+        gemini_tts.WORD_GAP_SECONDS,
+        gemini_tts.SHUT_PAUSE_SECONDS,
+        gemini_tts.ENUNCIATED_SPEECH_SPEED,
+        gemini_tts.ENUNCIATION_VERSION,
+    ) == (0.45, 0.03, 1.5, 3)
+
+
+def test_the_adapter_rewrites_with_ffmpeg_unless_told_otherwise():
+    svc = GeminiTTSService(min_delay=0, token_provider=_fake_token)
+
+    assert svc._rewrite_gaps is gemini_tts.rewrite_enunciated_take
+
+
 @respx.mock
 async def test_a_slowed_line_is_allowed_proportionally_longer(tmp_path):
     """The limit is in seconds of speech, and speakingRate stretches speech."""
@@ -1667,31 +1827,36 @@ async def test_a_slowed_line_is_allowed_proportionally_longer(tmp_path):
     await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", rate="-20%", enunciation=_LINE_WORDS)
 
     assert route.call_count == 1
-    assert repeat_limit_seconds(_LINE, 0.8) == pytest.approx(_LIMIT / 0.8)
+    assert repeat_limit_seconds(_LINE, 0.8, enunciated=True) == pytest.approx(_LIMIT / 0.8)
 
 
-# Speech-only seconds of real cached clips, measured 2026-10-13 with
-# ``speech_seconds`` (the live Cebuano cache; 138 clips under wording 1, 51
-# under wording 2). The three repeats were confirmed apart from their length:
-# two by the owner's ear on 2026-10-09, the third by its shape (three words,
-# then 1.11 s of silence, then the same three segment lengths again).
+# Speech-only seconds of real clips, measured 2026-10-13 with ``speech_seconds``.
+# Enunciated rows are the wording in force (the one that stops after every word):
+# 138 stored clips and 51 fresh takes. The two repeats were heard by the owner on
+# 2026-10-09. Natural-speed rows are lines told their reading (51 clips).
 @pytest.mark.parametrize(
-    ("text", "spoken", "is_repeat"),
+    ("text", "spoken", "enunciated", "is_repeat"),
     [
-        ("Pwede ko moapil kadiyot?", 7.29, True),  # wording 1, heard: said several times
-        ("Mouban ko ugma.", 3.87, True),  # wording 1, heard: said several times
-        ("Pila man ni?", 2.57, True),  # wording 2: said twice, 2.36x
-        ("Asa mo gikan?", 1.79, False),  # wording 2's longest single saying, 1.51x
-        ("Moadto ta sa baybayon?", 2.62, False),  # wording 2's next longest, 1.31x
-        ("Nong, pila man?", 1.22, False),  # wording 2's shortest, 0.90x
-        # Natural-speed lines told their reading (51 clips, one lesson):
-        ("Oo, Nong. Nalipay kaayo mi.", 5.84, True),  # heard 2026-10-13: said twice, 2.38x
-        ("Oo. Tan-awa, naay iro.", 2.71, False),  # the longest single saying, 1.36x
-        ("Traynta pesos ang usa.", 1.72, False),  # among the shortest, 0.86x
+        ("Pwede ko moapil kadiyot?", 7.29, True, True),  # heard: said several times, 3.34x
+        ("Mouban ko ugma.", 3.87, True, True),  # heard: said several times, 2.84x
+        ("Moadto ta sa baybayon?", 4.36, True, False),  # the longest single saying of 51, 2.18x
+        ("Sige. Maglakaw una ta sa baybayon.", 6.18, True, False),  # the next longest, 2.00x
+        ("Nindot! Init kaayo karon.", 2.71, True, False),  # the shortest, 1.19x
+        ("Oo, Nong. Nalipay kaayo mi.", 5.84, False, True),  # heard 2026-10-13: said twice, 2.38x
+        ("Oo. Tan-awa, naay iro.", 2.71, False, False),  # the longest single saying, 1.36x
+        ("Traynta pesos ang usa.", 1.72, False, False),  # among the shortest, 0.86x
     ],
 )
-def test_the_limit_separates_the_measured_repeats_from_the_measured_lines(text, spoken, is_repeat):
-    assert (spoken > repeat_limit_seconds(text, 1.0)) is is_repeat
+def test_the_limit_separates_the_measured_repeats_from_the_measured_lines(text, spoken, enunciated, is_repeat):
+    assert (spoken > repeat_limit_seconds(text, 1.0, enunciated=enunciated)) is is_repeat
+
+
+def test_an_enunciated_line_is_allowed_to_speak_for_longer_than_a_natural_one():
+    """The wording that stops after every word also slows the words: its ordinary
+    lines reach 2.18 times their text's length, past the natural limit of 1.8."""
+    assert repeat_limit_seconds(_LINE, 1.0, enunciated=True) == pytest.approx(_LIMIT)
+    assert repeat_limit_seconds(_LINE, 1.0) == pytest.approx(_NATURAL_LIMIT)
+    assert _LIMIT > _NATURAL_LIMIT
 
 
 def test_the_limit_is_wrong_for_a_breakdown_piece_which_is_why_pieces_are_not_measured():
@@ -1704,9 +1869,9 @@ def test_the_limit_is_wrong_for_a_breakdown_piece_which_is_why_pieces_are_not_me
 
 
 def test_the_repeat_limit_was_measured_on_the_wording_in_force():
-    """The wording sets how long a line speaks for (wording 1 ran a median 1.51x
-    its text's length, wording 2 runs 1.08x), so the factor is a measurement OF a
-    wording. Whoever rewords the instruction bumps ENUNCIATION_VERSION and lands
+    """The wording sets how long a line speaks for (the one that stops after every
+    word runs a median 1.51x its text's length, the one before it ran 1.08x), so
+    the Enunciated factor is a measurement OF a wording. Whoever rewords the instruction bumps ENUNCIATION_VERSION and lands
     here: re-measure the cached clips before moving this number."""
     assert gemini_tts.REPEAT_FACTOR_MEASURED_ON_VERSION == gemini_tts.ENUNCIATION_VERSION
 
