@@ -345,11 +345,13 @@ class LanguageConfig:
     # said "kumusta". False keeps the wrapper, which is right where the locale's
     # front end honours IPA (nb-NO). See ``get_ipa_read_in_voice_locale``.
     ipa_read_in_voice_locale: bool = False
-    # True when a MULTI-word key phrase (a drill step) should reach its voice as
-    # a per-word IPA map rather than as plain text. Measured by the user's ear on
-    # 2026-09-25: plain Gemini said "ilubong ugma" as "ilubong uglak", and in a
-    # blind A/B of that phrase "ugma" was wrong 2 of 3 times plain and 2 of 2
-    # right once the reading was supplied.
+    # True when a drill step with no word behind it (a key phrase, a drilled
+    # form: one word or several) should reach its voice as a per-word IPA map
+    # rather than as plain text. Measured by the user's ear on 2026-09-25: plain
+    # Gemini said "ilubong ugma" as "ilubong uglak", and in a blind A/B of that
+    # phrase "ugma" was wrong 2 of 3 times plain and 2 of 2 right once the
+    # reading was supplied. One word is no safer: "miadpo" for miadto, and plain
+    # wrong 3 of 9 against 1 of 9 with the reading (2026-10-13).
     #
     # Per-language, because the CHANNEL is the adapter's: Azure honours
     # ``<phoneme>`` per token, so a per-word map there would re-speak every word
@@ -618,7 +620,7 @@ def get_ipa_read_in_voice_locale(code: str) -> bool:
 
 
 def get_ipa_for_drill_phrases(code: str) -> bool:
-    """Do *code*'s multi-word key phrases reach the voice as a per-word IPA map?
+    """Do *code*'s drill steps (key phrases, drilled forms) reach the voice as a per-word IPA map?
 
     ``False`` for an unknown code: plain synthesis is what every language does
     today, and the flag is an opt-in per plugin. Read it through this rather

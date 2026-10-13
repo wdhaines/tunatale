@@ -48,9 +48,9 @@ from app.models.lesson import Phrase, Section, SectionType
 # the last three is an attribute of the text, and each changes the audio.
 MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None, bool]
 
-# The sections whose multi-word steps are build-up steps, read word by word
-# (``_drill_phrase_phonemes``); every other section is dialogue, whose lines are
-# read as lines or not at all.
+# The sections whose steps are drill steps, read word by word whether a step is
+# one word or several (``_drill_phrase_phonemes``); every other section is
+# dialogue, whose lines are read as lines or not at all.
 _PHRASE_IPA_SECTIONS = frozenset({SectionType.KEY_PHRASES, SectionType.AFFIX_DRILL})
 
 # The sections that say a target-language line whole, at natural speed: the
@@ -193,7 +193,7 @@ def plan_section(
         return {_bare_word(phrase.text): result}
 
     def _drill_phrase_phonemes(phrase: Phrase) -> Mapping[str, str] | None:
-        """Per-word IPA for a whole multi-word DRILL step, or ``None``.
+        """Per-word IPA for a whole DRILL step, of one word or several, or ``None``.
 
         The path above plans a chunk of a word, and a key phrase is not one:
         it arrives with no ``source_word`` and no ``syllable_span``, so the
@@ -202,7 +202,18 @@ def plan_section(
         than "ilubong ugma" (the user's blind A/B, 2026-09-25: "ugma" wrong
         2 of 3 plain, 2 of 2 right once the reading was given).
 
-        Four conditions, each a refusal rather than a guess:
+        A step of ONE word is the same case and was left out of it for a
+        while: a root's name, an answer and the whole-word bookends of a
+        one-word build-up have no provenance either, and a two-word floor
+        here sent them out as plain text, which made the forms an affix drill
+        teaches the only steps of it the voice was not told how to say. The
+        owner heard "miadpo" for miadto; on fresh takes of adto, moadto and
+        miadto plain text was wrong 3 of 9 and the reading 1 of 9 (blind,
+        2026-10-13, tunatale-ve4p.21). A reading lowers that rate and does
+        not end it. The map then has one entry, which is the shape the
+        adapter speaks with its single-word instruction.
+
+        Three conditions, each a refusal rather than a guess:
 
         * a KEY_PHRASES or AFFIX_DRILL section — a dialogue line is not a
           drill step: where it is read at all it is read as a LINE, by the
@@ -213,10 +224,7 @@ def plan_section(
           would wrap every word of the step in ``<phoneme>``;
         * a planner that can read a WHOLE word (``plan_word``) — a
           lexicon-backed planner has no such method, and is never asked for
-          one, only skipped;
-        * at least two words — a lone word is the other path's business, and
-          the adapter's own instruction for a single word names a "syllable
-          or word", which a phrase must not be asked to say about itself.
+          one, only skipped.
 
         One word the planner cannot read refuses the WHOLE map rather than
         leaving a gap: a half-read phrase is a phrase whose words were
@@ -231,7 +239,7 @@ def plan_section(
         if plan_word is None:
             return None
         words = phrase.text.strip(_SENTENCE_PUNCTUATION).split()
-        if len(words) < 2:
+        if not words:
             return None
         planned = [(word, plan_word(word)) for word in words]
         if any(ipa is None for _, ipa in planned):

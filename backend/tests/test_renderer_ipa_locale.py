@@ -17,10 +17,14 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+from app.audio.gemini_tts import resolve_ipa
 from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.renderer import LessonRenderer
+from app.generation.affix_drill import build_affix_drill
+from app.generation.section_builder import build_affix_drill_section
 from app.languages import (
+    get_a1_morphology,
     get_ipa_for_drill_phrases,
     get_ipa_for_enunciated_lines,
     get_ipa_for_natural_lines,
@@ -56,7 +60,9 @@ async def _render(tmp_path, lesson: Lesson, planner, locale: str, section_idx: i
     async def fake_synthesize(
         text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
     ):
-        calls.append({"text": text, "phonemes": phonemes, "speak_locale": speak_locale, "line": line})
+        calls.append(
+            {"text": text, "voice_id": voice_id, "phonemes": phonemes, "speak_locale": speak_locale, "line": line}
+        )
         output_path.write_bytes(fake_audio)
 
     tts = AsyncMock()
@@ -116,8 +122,9 @@ async def test_a_cebuano_drill_fragment_reaches_the_voice_as_ipa(tmp_path):
     # distinct memo keys, so the positions are what tells them apart. "mao"
     # reads "maʔo" because the splitter cuts the hiatus and the second piece
     # then opens on a glottal stop — the class's own rule, applied to the whole
-    # word exactly as it is to each chunk of one.
-    assert calls[0]["phonemes"] is None
+    # word exactly as it is to each chunk of one. The whole word on its own is
+    # read too (tunatale-ve4p.21): see the lone-word test below.
+    assert calls[0]["phonemes"] == {"inyong": "ʔinjoŋ"}
     assert calls[1]["phonemes"] == {"yong": "ˈjoŋ"}
     assert calls[2]["phonemes"] == {"yong": "ˈjoŋ", "mao": "maʔo"}
     assert calls[3]["phonemes"] is None
@@ -179,6 +186,91 @@ async def test_a_multi_word_affix_drill_step_is_spoken_from_the_ipa_of_its_words
     tl_drill = _lesson("tl", [_tl(_PHRASE)], section_type=SectionType.AFFIX_DRILL)
     [tl_step] = await _render(tmp_path, tl_drill, get_phoneme_planner("tl"), "fil-PH")
     assert tl_step["phonemes"] is None
+
+
+async def test_a_lone_drill_word_is_spoken_from_its_ipa(tmp_path):
+    """A one-word step of a drill section is told its reading (tunatale-ve4p.21).
+
+    The forms an affix drill teaches and asks for are single words with no
+    source word behind them: a root's name, an answer, the whole-word bookends
+    of a build-up. They fell between the two paths, one wanting provenance and
+    the other two words, and went to Gemini as bare text: the only steps of the
+    drill that did. The owner heard "miadpo" for miadto in the lesson, and on
+    fresh takes of adto, moadto and miadto bare text was wrong 3 of 9 and the
+    reading 1 of 9 (2026-10-13, blind).
+
+    The reading goes out as a ONE-entry map keyed by the bare word, which is
+    the shape the adapter speaks with its single-word instruction, not the
+    phrase one.
+    """
+    planner = get_phoneme_planner("ceb")
+
+    for section_type in (SectionType.AFFIX_DRILL, SectionType.KEY_PHRASES):
+        [step] = await _render(tmp_path, _lesson("ceb", [_ceb("miadto")], section_type=section_type), planner, "ceb-PH")
+        assert (step["phonemes"], step["line"]) == ({"miadto": "miʔadto"}, False)
+        assert resolve_ipa(step["text"], step["phonemes"]) == ("miʔadto", False)
+
+    # The sentence's own mark stays on the text and off the key.
+    [marked] = await _render(
+        tmp_path, _lesson("ceb", [_ceb("Oo.")], section_type=SectionType.AFFIX_DRILL), planner, "ceb-PH"
+    )
+    assert (marked["text"], marked["phonemes"]) == ("Oo.", {"oo": "ʔoʔo"})
+
+
+async def test_a_lone_word_outside_a_cebuano_drill_stays_plain(tmp_path):
+    """The four refusals a phrase has, held for one word too.
+
+    A lone word of a DIALOGUE section is not a line and not a drill step, and is
+    the clip the Enunciated section plays for it; another language's drill runs
+    on a voice nobody has heard read this way; a planner with no ``plan_word``
+    is never asked; a word the planner declines stays plain; and so does a step
+    that is punctuation and nothing else.
+    """
+    planner = get_phoneme_planner("ceb")
+
+    [spoken] = await _render(
+        tmp_path, _lesson("ceb", [_ceb("Oo.")], section_type=SectionType.NATURAL_SPEED), planner, "ceb-PH"
+    )
+    assert spoken["phonemes"] is None
+
+    for section_type in (SectionType.AFFIX_DRILL, SectionType.KEY_PHRASES):
+        [tl_step] = await _render(
+            tmp_path, _lesson("tl", [_tl("salamat")], section_type=section_type), get_phoneme_planner("tl"), "fil-PH"
+        )
+        assert tl_step["phonemes"] is None
+
+    drill = _lesson("ceb", [_ceb("miadto")], section_type=SectionType.AFFIX_DRILL)
+    [unasked] = await _render(tmp_path, drill, _Planner(), "ceb-PH")
+    assert unasked["phonemes"] is None
+    [declined] = await _render(tmp_path, drill, _WholeWordPlanner("miadto"), "ceb-PH")
+    assert declined["phonemes"] is None
+
+    # A step with no word in it has no reading, and no empty map standing in for one.
+    [mark] = await _render(
+        tmp_path, _lesson("ceb", [_ceb("...")], section_type=SectionType.AFFIX_DRILL), planner, "ceb-PH"
+    )
+    assert mark["phonemes"] is None
+
+
+async def test_every_form_of_a_real_affix_drill_reaches_the_voice_with_a_reading(tmp_path):
+    """The drill as the grammar lesson builds it, through the renderer.
+
+    Before tunatale-ve4p.21 every root's name and every whole form of this
+    drill was bare text, fifteen of them: the words the drill exists to teach.
+    Nothing here names a form, so a root added to the pattern is covered.
+    """
+    pattern = next(p for p in get_a1_morphology("ceb").patterns if p.key == "mo-mi")
+    drill = build_affix_drill("ceb", pattern, roots=["uban", "inom", "adto"], new_roots=["anhi", "lakaw"], again=True)
+    assert drill.dropped == []
+    section = build_affix_drill_section(drill, narrator_voice=_NARRATOR, l2_voice=_CEB_VOICE)
+    lesson = Lesson(title="Affix drill", language_code="ceb", sections=[section])
+
+    calls = await _render(tmp_path, lesson, get_phoneme_planner("ceb"), "ceb-PH")
+
+    cebuano = [call for call in calls if call["voice_id"] == _CEB_VOICE]
+    assert {"adto", "moadto", "miadto"} <= {call["text"] for call in cebuano}
+    assert sorted({call["text"] for call in cebuano if call["phonemes"] is None}) == []
+    assert all(call["phonemes"] is None for call in calls if call["voice_id"] == _NARRATOR)
 
 
 async def test_a_punctuated_chunk_keys_its_ipa_by_the_bare_word(tmp_path):
