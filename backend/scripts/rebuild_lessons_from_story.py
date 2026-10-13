@@ -83,10 +83,11 @@ from app.languages import (  # noqa: E402
     resolve_db_path,
 )
 from app.models.lesson import Lesson, Section  # noqa: E402
+from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 
-def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, language) -> Lesson | None:
+def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, language, *, srs_db) -> Lesson | None:
     """Rebuild *lesson* from its stored Story JSON, or ``None`` if it has none.
 
     ``review_words`` comes from the curriculum's recorded request for that day —
@@ -102,8 +103,10 @@ def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, l
     rebuilt = build_lesson_from_story(story, language=language, review_words=review_words)
     # The closing affix drill is not in the Story JSON: it is added when a
     # lesson is published into its day, so a rebuild has to add it too or the
-    # rebuilt lesson would lose the drill the stored one ends on.
-    add_day_drill(rebuilt, language, curriculum, day)
+    # rebuilt lesson would lose the drill the stored one ends on. Its whole
+    # lines are chosen against the learner's deck AS IT IS NOW (*srs_db*), so a
+    # rebuild can end on lines the first build held back.
+    add_day_drill(rebuilt, language, curriculum, day, srs_db=srs_db, lemmatizer=None)
     return rebuilt
 
 
@@ -213,6 +216,8 @@ async def main() -> int:
     language = get_language(code)
 
     store = ContentStore(db_path)
+    # The same file: the learner's deck lives beside their lessons.
+    srs_db = SRSDatabase(db_path, pre_migration_backup_dir=settings.migration_backup_dir)
     tts = get_tts_service(cache_dir=settings.tts_cache_dir)
     renderer = build_lesson_renderer(tts, [code], settings)
 
@@ -223,7 +228,7 @@ async def main() -> int:
         if args.day and day not in args.day:
             continue
         label = f"day {day:>2}  {lesson_id[:44]:46}"
-        fresh = rebuild(store, stored, day, curriculum_id, language)
+        fresh = rebuild(store, stored, day, curriculum_id, language, srs_db=srs_db)
         if fresh is None:
             print(f"  --  {label} NO stored Story JSON; skipped (never reconstructed)")
             skipped += 1

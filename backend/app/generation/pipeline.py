@@ -481,7 +481,14 @@ class LessonPipeline:
             fail(f"Unknown affix pattern {curriculum_day.pattern!r} for {language_code}")
             return
         try:
-            plan = plan_grammar_lesson(language_code, pattern, srs_db=srs_db, store=store, curriculum_id=curriculum_id)
+            plan = plan_grammar_lesson(
+                language_code,
+                pattern,
+                srs_db=srs_db,
+                store=store,
+                curriculum_id=curriculum_id,
+                lemmatizer=self._lemmatizer,
+            )
         except ValueError as e:
             fail(str(e))
             return

@@ -20,7 +20,8 @@ rarely what is said; the affixed form is.
   lessons never used in this pattern is the cleanest test there is, because
   getting it right can only be the affix.
 * The drill ends on up to :data:`MAX_LINES` whole lines from the lessons that
-  use a drilled form, shortest first.
+  use a drilled form, shortest first — and only lines the learner has every
+  other word of (``drill_lines.admitted_lines``), none when none qualify.
 
 Nothing here writes anything. :func:`plan_grammar_lesson` reads,
 :func:`build_grammar_lesson` builds a ``Lesson`` in memory, and the caller
@@ -34,21 +35,24 @@ from dataclasses import dataclass
 
 from app.common.guid import compute_guid
 from app.generation.affix_drill import MIN_ROOTS, DrillRoot, build_affix_drill, drill_root
+from app.generation.drill_lines import UNDERSTOOD, admitted_lines
+from app.generation.drill_lines import fold as _fold
 from app.generation.section_builder import build_affix_drill_section
 from app.languages import get_a1_morphology
 from app.models.curriculum import CurriculumDay
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType, extract_sentence_translations_from_translated
-from app.models.srs_item import Direction, SRSState
+from app.models.srs_item import Direction
 from app.srs.a1_morphology import AffixPattern
 from app.srs.contrast_card import ContrastCard, card_for, pair_key
 from app.srs.function_words import make_cloze_text
+from app.srs.lemmatizer import Lemmatizer
 from app.storage.store import ContentStore
 
 MODELLED = 3
 MAX_LINES = 3
 
-_UNDERSTOOD = (SRSState.REVIEW, SRSState.KNOWN)
+_UNDERSTOOD = UNDERSTOOD
 _NO_PATTERNS = "the language registers no affix patterns"
 _WORD = re.compile(r"[\w'-]+")
 # A sentence end with more text after it: the line is two sentences.
@@ -64,10 +68,6 @@ class GrammarPlan:
     new_roots: tuple[str, ...]
     lines: tuple[tuple[str, str], ...]
     forms: tuple[str, ...]  # every form drilled, modelled roots first
-
-
-def _fold(word: str) -> str:
-    return word.casefold().replace("-", "")
 
 
 def pattern_title(pattern: AffixPattern) -> str:
@@ -146,16 +146,16 @@ def lesson_lines(lesson: Lesson) -> list[tuple[str, str]]:
     ]
 
 
-def _story_lines(store: ContentStore, curriculum_id: str) -> list[tuple[str, str]]:
-    """Every ``(line, its English)`` the curriculum's stories tell, in lesson order.
+def _stories(store: ContentStore, curriculum_id: str) -> list[Lesson]:
+    """The curriculum's lessons in day order: the latest lesson of each day only."""
+    return [
+        store.get_latest_lesson_by_day(curriculum_id, entry["day"])[1] for entry in store.get_lesson_days(curriculum_id)
+    ]
 
-    The latest lesson of each day only.
-    """
-    lines: list[tuple[str, str]] = []
-    for entry in store.get_lesson_days(curriculum_id):
-        _, lesson = store.get_latest_lesson_by_day(curriculum_id, entry["day"])
-        lines += lesson_lines(lesson)
-    return lines
+
+def _story_lines(store: ContentStore, curriculum_id: str) -> list[tuple[str, str]]:
+    """Every ``(line, its English)`` the curriculum's stories tell, in lesson order."""
+    return [line for lesson in _stories(store, curriculum_id) for line in lesson_lines(lesson)]
 
 
 def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id: str) -> list[ContrastCard]:
@@ -211,9 +211,20 @@ def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id
 
 
 def plan_grammar_lesson(
-    language_code: str, pattern: AffixPattern, *, srs_db, store: ContentStore, curriculum_id: str
+    language_code: str,
+    pattern: AffixPattern,
+    *,
+    srs_db,
+    store: ContentStore,
+    curriculum_id: str,
+    lemmatizer: Lemmatizer | None,
 ) -> GrammarPlan:
     """Choose the roots and lines of a *pattern* lesson for this learner.
+
+    A line is one the learner has every word of (``drill_lines.admitted_lines``),
+    the drilled forms aside: the lesson teaches those. A story's key phrases do
+    not count here as they do for its own closing drill, because this lesson
+    does not teach them. *lemmatizer* of ``None`` is the language's own.
 
     Raises ``ValueError`` when fewer than ``MIN_ROOTS`` understood roots take
     the pattern: a drill on one root teaches a word, not an affix.
@@ -226,7 +237,8 @@ def plan_grammar_lesson(
             f"and {pattern.key} has {len(understood)}: {', '.join(understood) or 'none'}"
         )
 
-    story = _story_lines(store, curriculum_id)
+    stories = _stories(store, curriculum_id)
+    story = [line for lesson in stories for line in lesson_lines(lesson)]
     heard = {_fold(word) for text, _ in story for word in _WORD.findall(text)}
     met = {root: sum(_fold(form) in heard for form, _ in found[root].cells) for root in understood}
 
@@ -237,12 +249,16 @@ def plan_grammar_lesson(
 
     forms = tuple(form for root in (*roots, *new_roots) for form, _ in found[root].cells)
     drilled = {_fold(form) for form in forms}
+    admitted: set[str] = set()
+    for lesson in stories:
+        admitted |= admitted_lines(lesson, srs_db=srs_db, lemmatizer=lemmatizer, taught=drilled)
     usable = [
         (text, english)
         for text, english in dict.fromkeys(story)
         if english
         and not _SECOND_SENTENCE.search(text.strip())
         and any(_fold(word) in drilled for word in _WORD.findall(text))
+        and text in admitted
     ]
     lines = tuple(sorted(usable, key=lambda line: len(line[0].split()))[:MAX_LINES])
     return GrammarPlan(pattern=pattern, roots=roots, new_roots=new_roots, lines=lines, forms=forms)

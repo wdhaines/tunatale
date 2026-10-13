@@ -25,6 +25,7 @@ from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.storage.store import ContentStore
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
+from tests._helpers.lemmatizer import StubLemmatizer
 from tests.test_pipeline import FakeRenderer, FakeStoryGenerator, wait_for_job
 
 _CID = "funeral"
@@ -107,8 +108,12 @@ def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CEB)
 
 
-async def test_creating_a_grammar_lesson_appends_a_day_and_the_pipeline_builds_the_drill(deck):
+async def test_creating_a_grammar_lesson_appends_a_day_and_the_pipeline_builds_the_drill(deck, srs_db):
     store, pipeline, generator = deck
+    # The other words of the story's line: without them it is not asked for
+    # (the test below).
+    for word in ("ko", "ugma"):
+        _understand(srs_db, word)
     pipeline.start()
 
     async with _client() as client:
@@ -133,6 +138,61 @@ async def test_creating_a_grammar_lesson_appends_a_day_and_the_pipeline_builds_t
     assert lesson.kind == "grammar"
     assert [s.section_type for s in lesson.sections] == [SectionType.AFFIX_DRILL]
     assert generator.calls == []
+    # The pipeline plans again when it builds, against the same deck: the line
+    # the route promised is the line the lesson asks for.
+    assert "Mouban ko ugma." in [p.text for p in lesson.sections[0].phrases if p.role == "answer"]
+
+
+async def test_the_route_and_the_pipeline_each_read_the_line_with_their_own_lemmatizer(deck, srs_db, tmp_path):
+    """Two plans are made: the route's, which answers the request, and the
+    pipeline's, which builds the lesson. Each has a lemmatizer handed to it, and
+    each must use it: here only a lemmatizer that knows `ko` is `ako` finds the
+    card, so a side that dropped its own would leave the line out."""
+    store, _, generator = deck
+    for word in ("ako", "ugma"):
+        _understand(srs_db, word)
+    stub = StubLemmatizer()
+    stub.set_lemma("ko", "ako")
+    pipeline = LessonPipeline(
+        story_generator=generator,
+        renderer=FakeRenderer(),
+        audio_dir=tmp_path,
+        content_stores={"ceb": store},
+        languages={"ceb": get_language("ceb")},
+        srs_dbs={"ceb": srs_db},
+        activity_log=ActivityLog(maxlen=100),
+        llm_client=None,
+        lemmatizer=stub,
+        model_version="stub-1",
+    )
+    app.state.pipeline = pipeline
+    app.state.lemmatizer = stub
+    pipeline.start()
+
+    async with _client() as client:
+        response = await client.post(f"/api/curriculum/{_CID}/grammar-lessons", json={"pattern": "mo-mi"})
+
+    assert response.status_code == 201
+    assert [line["text"] for line in response.json()["lines"]] == ["Mouban ko ugma."]
+    await wait_for_job(pipeline, "ceb", _CID, 2, "ready")
+    _, lesson = store.get_latest_lesson_by_day(_CID, 2)
+    assert "Mouban ko ugma." in [p.text for p in lesson.sections[0].phrases if p.role == "answer"]
+
+
+async def test_a_grammar_lesson_does_not_end_on_a_line_with_an_unmet_word(deck):
+    """The route and the pipeline both ask the request's deck (tunatale-ve4p.20):
+    `ko` and `ugma` have no card here, so the story's only line is left out."""
+    store, pipeline, _ = deck
+    pipeline.start()
+
+    async with _client() as client:
+        response = await client.post(f"/api/curriculum/{_CID}/grammar-lessons", json={"pattern": "mo-mi"})
+
+    assert response.status_code == 201
+    assert response.json()["lines"] == []
+    await wait_for_job(pipeline, "ceb", _CID, 2, "ready")
+    _, lesson = store.get_latest_lesson_by_day(_CID, 2)
+    assert "Mouban ko ugma." not in [p.text for p in lesson.sections[0].phrases]
     await pipeline.shutdown()
 
 

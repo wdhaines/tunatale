@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from app.models.lesson import SectionType
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
-from tests.test_api_grammar_lesson import _CID, _client, deck  # noqa: F401
+from tests.test_api_grammar_lesson import _CID, _client, _understand, deck  # noqa: F401
 from tests.test_grammar_lesson import _BURIAL, _WAKE, _story_lesson
 from tests.test_pipeline import wait_for_job
 
@@ -94,3 +94,36 @@ async def test_a_story_that_barely_uses_the_pattern_is_stored_without_a_drill(de
     _, lesson = store.get_latest_lesson_by_day(_CID, 1)
     assert "affix_drill" not in lesson.generation_metadata
     assert SectionType.AFFIX_DRILL not in [s.section_type for s in lesson.sections]
+
+
+# --- which whole lines the drill ends on (tunatale-ve4p.20) -----------------------
+#
+# The rule is pinned in test_drill_lines.py and what a closing drill hands it in
+# test_story_pattern.py. These pin that the publish seam carries the request's
+# own deck all the way there: the first version of this drill never saw one.
+
+
+async def _imported_drill_answers(store) -> list[str]:
+    async with _client() as client:
+        response = await client.post(
+            "/api/story/import", json={"curriculum_id": _CID, "day": 1, "story": _story(_WAKE)}
+        )
+    assert response.status_code == 201, response.text
+    _, lesson = store.get_latest_lesson_by_day(_CID, 1)
+    assert lesson.sections[-1].section_type is SectionType.AFFIX_DRILL
+    return [p.text for p in lesson.sections[-1].phrases if p.role == "answer"]
+
+
+async def test_an_imported_story_ends_on_a_line_the_learner_has_every_word_of(deck, srs_db):  # noqa: F811
+    store, _, _ = deck
+    for word in ("ko", "ugma"):
+        _understand(srs_db, word)
+
+    assert (await _imported_drill_answers(store))[-1] == "Mouban ko ugma."
+
+
+async def test_an_imported_story_does_not_end_on_a_line_with_an_unmet_word(deck):  # noqa: F811
+    """The deck fixture understands three roots and nothing else: `ko` and `ugma` have no card."""
+    store, _, _ = deck
+
+    assert "Mouban ko ugma." not in await _imported_drill_answers(store)

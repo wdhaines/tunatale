@@ -25,6 +25,7 @@ import asyncio
 import json
 import sys
 from dataclasses import replace
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,9 @@ from app.generation.story import build_lesson_from_story
 from app.languages import get_language, get_tts_locale
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.language import Language
+from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.syntactic_unit import SyntacticUnit
+from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -366,13 +370,13 @@ class TestRebuildAndDescribe:
         lesson = store.get_lesson("lesson-day-1")
         lesson.generation_metadata.pop("story")
 
-        assert rebuild_mod.rebuild(store, lesson, 1, "cur-1", get_language(_LANG)) is None
+        assert rebuild_mod.rebuild(store, lesson, 1, "cur-1", get_language(_LANG), srs_db=None) is None
 
     def test_rebuild_resolves_todays_voice_map(self, tmp_path):
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
 
-        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG))
+        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None)
 
         roles = {p.role: p.voice_id for s in fresh.sections for p in s.phrases if p.role}
         assert roles["male-2"] == get_language(_LANG).tts_voice_map["male-2"]
@@ -383,12 +387,12 @@ class TestRebuildAndDescribe:
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
 
-        assert rebuild_mod.rebuild(store, stored, 1, "no-such-curriculum", get_language(_LANG)) is not None
+        assert rebuild_mod.rebuild(store, stored, 1, "no-such-curriculum", get_language(_LANG), srs_db=None) is not None
 
     def test_describe_counts_voice_and_text_changes(self, tmp_path):
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
-        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG))
+        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None)
 
         summary = rebuild_mod.describe(stored, fresh)
 
@@ -401,7 +405,7 @@ class TestRebuildAndDescribe:
         whose shape moved is not a voice swap and wants human eyes."""
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
-        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG))
+        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None)
         fresh.sections[0].phrases.pop()
 
         assert "STRUCTURE DIFFERS" in rebuild_mod.describe(stored, fresh)
@@ -632,7 +636,7 @@ class TestTheClosingDrill:
         store, language = self._store_with(
             self._wake([("Moadto ko sa haya.", "I am going to the wake."), ("Mouban ko ugma.", "I will come along.")])
         )
-        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language)
+        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None)
         assert rebuilt.generation_metadata["affix_drill"] == {
             "pattern": "mo-mi",
             "roots": ["adto", "uban"],
@@ -640,7 +644,90 @@ class TestTheClosingDrill:
         }
         assert rebuilt.sections[-1].section_type.value == "affix_drill"
 
+    def test_the_rebuilt_drill_ends_on_the_lines_the_learner_has_now(self):
+        """The whole lines are chosen against the deck as it is at the rebuild
+        (tunatale-ve4p.20), so the script has to be handed one."""
+        store, language = self._store_with(
+            self._wake([("Moadto ko sa haya.", "I am going to the wake."), ("Mouban ko ugma.", "I will come along.")])
+        )
+        srs_db = SRSDatabase(":memory:")
+        for word in ("ko", "ugma"):
+            srs_db.add_collocation(
+                SyntacticUnit(text=word, translation=word, word_count=1, difficulty=1, source="test"),
+                language_code="ceb",
+            )
+            srs_db.update_direction(
+                srs_db.get_collocation(word).guid,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                    stability=5.0,
+                    difficulty=4.0,
+                    reps=5,
+                    state=SRSState.REVIEW,
+                ),
+            )
+
+        def answers(deck) -> list[str]:
+            rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=deck)
+            return [p.text for p in rebuilt.sections[-1].phrases if p.role == "answer"]
+
+        with_deck = answers(srs_db)
+        assert with_deck[-1] == "Mouban ko ugma."
+        assert "Moadto ko sa haya." not in with_deck  # `sa` and `haya` are unmet
+        assert "Mouban ko ugma." not in answers(None)
+
+    def test_the_script_opens_the_deck_that_lives_beside_the_lessons(self, tmp_path, monkeypatch, capsys):
+        """One file holds the lessons and the deck. A stored lesson whose drill
+        ends on no line is current until the deck learns the line's words; then
+        the script, run the same way, has a rebuild to make."""
+        path = str(tmp_path / "content.sqlite")
+        language = get_language("ceb")
+        store = ContentStore(path)
+        day = CurriculumDay(day=1, title="A wake", focus="f", collocations=["haya"], learning_objective="o")
+        store.save_curriculum(
+            "funeral", Curriculum(id="funeral", topic="A funeral", language_code="ceb", cefr_level="A1", days=[day])
+        )
+        built = build_lesson_from_story(
+            self._wake([("Moadto ko.", "I am going."), ("Mouban ko ugma.", "I will come along.")]), language=language
+        )
+        store.save_lesson(
+            "wake-1", "funeral", 1, rebuild_mod.rebuild(store, built, 1, "funeral", language, srs_db=None)
+        )
+
+        def dry_run() -> str:
+            _stub_renderer(monkeypatch, None)
+            monkeypatch.setattr(
+                sys, "argv", ["rebuild_lessons_from_story", "--db", path, "--language", "ceb", "--dry-run"]
+            )
+            assert asyncio.run(rebuild_mod.main()) == 0
+            return capsys.readouterr().out
+
+        assert "already current" in dry_run()
+
+        srs_db = SRSDatabase(path)
+        for word in ("ko", "ugma"):
+            srs_db.add_collocation(
+                SyntacticUnit(text=word, translation=word, word_count=1, difficulty=1, source="test"),
+                language_code="ceb",
+            )
+            srs_db.update_direction(
+                srs_db.get_collocation(word).guid,
+                Direction.RECOGNITION,
+                DirectionState(
+                    direction=Direction.RECOGNITION,
+                    due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+                    stability=5.0,
+                    difficulty=4.0,
+                    reps=5,
+                    state=SRSState.REVIEW,
+                ),
+            )
+
+        assert "would rebuild=1" in dry_run()
+
     def test_a_story_that_does_not_is_rebuilt_without_one(self):
         store, language = self._store_with(self._wake([("Maayong gabii.", "Good evening.")]))
-        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language)
+        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None)
         assert "affix_drill" not in rebuilt.generation_metadata
