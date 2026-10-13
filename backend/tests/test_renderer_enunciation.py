@@ -45,6 +45,11 @@ _ISELIN = "nb-NO-IselinNeural"
 _ORUS = "ceb-PH-OrusGemini"
 
 
+def _not_rewritten(audio: bytes, words: int) -> bytes:
+    """Stands in for the pause rewrite, which is ffmpeg as well: the take as it came."""
+    return audio
+
+
 def _not_measured(audio: bytes) -> float:
     """The Gemini adapter's repeat guard measures each Enunciated take with
     ffmpeg. These tests are about the REQUEST a line reaches the provider as, and
@@ -295,7 +300,7 @@ _CEB_HEARD = {
     "text": "Buntag sa Jimenez. Naglakaw si Paul.",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Say each word whole, at a natural conversational pace, with only a very short pause between words. "
+        "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
         "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
     ),
 }
@@ -365,7 +370,9 @@ async def test_a_cebuano_line_reaches_gemini_as_the_request_the_user_chose(tmp_p
     async def _token() -> str:
         return "test-access-token"
 
-    gemini = GeminiTTSService(min_delay=0, token_provider=_token, speech_seconds=_not_measured)
+    gemini = GeminiTTSService(
+        min_delay=0, token_provider=_token, speech_seconds=_not_measured, rewrite_gaps=_not_rewritten
+    )
 
     await _render_real(tmp_path, gemini, "ceb", stored, _ORUS)
 
@@ -399,7 +406,9 @@ async def _gemini_inputs(tmp_path, text: str, section_type: SectionType) -> list
     async def _token() -> str:
         return "test-access-token"
 
-    gemini = GeminiTTSService(min_delay=0, token_provider=_token, speech_seconds=_not_measured)
+    gemini = GeminiTTSService(
+        min_delay=0, token_provider=_token, speech_seconds=_not_measured, rewrite_gaps=_not_rewritten
+    )
     await _render_real(tmp_path, gemini, "ceb", text, _ORUS, section_type)
     return inputs
 
