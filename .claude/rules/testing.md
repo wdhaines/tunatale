@@ -141,8 +141,18 @@ Three smaller divergences are deliberate, not bugs:
   covered pytest run; CI's `backend` job omits it and the `anki-gates` job runs
   those tests `--no-cov`. Both reach 100%, so CI's is the stricter claim (100%
   without oracle tests contributing).
-- **ffmpeg** is installed on `backend`, the hostile jobs and `e2e`, but not on
-  `anki-gates`, which never touches the audio pipeline.
+- **ffmpeg** is installed on `backend` and `e2e` only. `anki-gates` never touches
+  the audio pipeline, and the two hostile jobs run `pytest -m "not ffmpeg"` on
+  runners without the binary (`ci.yml` says why at the step that used to
+  install it). So **a test that reaches ffmpeg must carry the marker**
+  (`pytestmark = pytest.mark.ffmpeg`, as `test_renderer.py` does), and the local
+  gate cannot tell you when one does not: ffmpeg is always on your machine, so
+  the test passes here and fails only in those two jobs, with
+  `FileNotFoundError: 'ffmpeg'` (PR #311, 2026-10-13). When app code that an
+  unmarked test already runs starts calling ffmpeg, give that test a stand-in at
+  the seam instead of marking its whole module. To check before pushing, put a
+  failing `ffmpeg` shim first on `PATH` and run the touched modules with
+  `-m "not ffmpeg"`.
 
 ## Test Tiers
 
