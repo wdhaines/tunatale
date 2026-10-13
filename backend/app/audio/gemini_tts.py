@@ -39,6 +39,7 @@ import google.oauth2.service_account
 import httpx
 
 from app.audio.ports import Enunciation, TTSExhausted
+from app.audio.speech_length import speech_seconds as measure_speech_seconds
 from app.generation.section_builder import _SENTENCE_PUNCTUATION
 from app.languages import language_name_for_tts_locale
 
@@ -81,6 +82,47 @@ PROMPT_VERSION = 1
 # that rewording one instruction never throws away the clips the other made —
 # an enunciated key carries both, a drill key only the one above.
 ENUNCIATION_VERSION = 2
+
+# How fast this provider's voices speak: characters of text per second of audio
+# at speakingRate 1.0, measured on real Cebuano renders. Two readers: the cost
+# estimate (``render_cost``, which bills by audio length) and the repeat guard
+# below. A different language's pace would move both.
+CHARS_PER_SECOND = 11.0
+
+# ── The repeat guard on an Enunciated line (bd tunatale-u8nz.28) ─────────────
+#
+# The provider sometimes says an Enunciated line two or more times over. It is
+# random from take to take (about 1.5% of cached clips), no request field
+# prevents it, and the clip is cached, so every later render plays it. A fresh
+# Enunciated take is therefore measured before it is kept: how long it SPEAKS
+# for (``speech_length.speech_seconds`` — the pauses are asked for and are not
+# evidence), against the length its text should take at CHARS_PER_SECOND.
+#
+# The factor is a measurement of the wording in ``_ENUNCIATION_INSTRUCTION``,
+# taken 2026-10-13 over the live Cebuano cache with the shipping function.
+# Speech-only seconds over (characters / CHARS_PER_SECOND):
+#
+#     wording 2 (in force), 51 clips: median 1.08; 49 at or under 1.31; one at
+#       1.51; and one at 2.36 — "Pila man ni?", said twice (three words, 1.11 s
+#       of silence, the same three segment lengths again).
+#     wording 1, 138 clips: median 1.51; the two repeats the user heard on
+#       2026-10-09 at 3.34 and 2.84.
+#
+# 1.8 sits in the empty stretch between wording 2's longest single saying
+# (1.51) and a median clip said twice (2.16), and catches all three repeats. It
+# is NOT right for wording 1, whose ordinary lines reach 1.97: a reworded
+# instruction needs the table measured again, which is what
+# REPEAT_FACTOR_MEASURED_ON_VERSION is for (a test holds it to
+# ENUNCIATION_VERSION).
+REPEAT_SPEECH_FACTOR = 1.8
+REPEAT_FACTOR_MEASURED_ON_VERSION = 2
+# One take plus two more. A repeat is rare and independent per take, so three in
+# a row is about four in a million: a line that fails all three is far likelier
+# a line the limit is wrong for than one that repeated three times, which is why
+# the error carries every measurement. Each extra take is billed like the first
+# (about a tenth of a cent for a line); at the measured rate that is two or
+# three re-rolls in a 140-line lesson.
+MAX_ENUNCIATED_TAKES = 3
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
 # service account's own role, and a wrong scope is a 403 at synthesis time.
@@ -267,6 +309,27 @@ def _enunciated_prompt(name: str, ipa: str | None) -> str:
     return said if ipa is None else f"{said} Pronounce it exactly as the IPA /{ipa}/."
 
 
+class RepeatedLineError(RuntimeError):
+    """Every take of an Enunciated line spoke for longer than its text allows.
+
+    A ``RuntimeError`` and deliberately NOT a ``TTSExhausted``: the render-level
+    retry loop re-runs that one because throttling passes, and here the takes
+    have already been spent. Nothing is cached and no clip is written, so the
+    render fails where a repeated line would otherwise have been kept for good.
+    """
+
+
+def repeat_limit_seconds(text: str, speaking_rate: float) -> float:
+    """The most an Enunciated take of *text* may SPEAK for before it is a repeat.
+
+    ``REPEAT_SPEECH_FACTOR`` times the text's own length at this provider's
+    pace, stretched by the speaking rate the request asked for. Characters as
+    sent, punctuation and spaces included: that is the count the factor was
+    measured against.
+    """
+    return REPEAT_SPEECH_FACTOR * len(text) / CHARS_PER_SECOND / speaking_rate
+
+
 def enunciates(enunciation: Enunciation | None) -> bool:
     """Is there a gap in *enunciation* for this provider to pause in?
 
@@ -376,6 +439,7 @@ class GeminiTTSService:
         timeout: float = 60.0,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         now: Callable[[], float] | None = None,
+        speech_seconds: Callable[[bytes], float] | None = None,
     ) -> None:
         if model is None or min_delay is None:
             from app.config import settings
@@ -398,6 +462,10 @@ class GeminiTTSService:
         # time.time: a wall-clock step backwards must not shorten a wait the
         # provider has already told us to sit out.
         self._now = now if now is not None else time.monotonic
+        # Injected like the two clocks above, and for the same reason: the
+        # repeat guard is a real code path, and a test pins it by handing it a
+        # measurement rather than by patching ffmpeg out of the process.
+        self._speech_seconds = speech_seconds if speech_seconds is not None else measure_speech_seconds
         # The per-minute quota is exhausted for a WINDOW, not for a request, so
         # the refusal is remembered here rather than in the caller that hit it.
         # 0.0 means "no cooldown outstanding" and reads as such against any
@@ -474,7 +542,10 @@ class GeminiTTSService:
                 logger.debug("Gemini TTS cache hit for %r", text[:40])
                 return
 
-        audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
+        if enunciated:
+            audio = await self._enunciated_take(text, language_code, name, speaking_rate, ipa, phrase)
+        else:
+            audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
@@ -577,6 +648,46 @@ class GeminiTTSService:
             "voice": {"languageCode": language_code, "name": name, "model_name": self._model},
             "audioConfig": {"audioEncoding": _AUDIO_ENCODING, "speakingRate": speaking_rate},
         }
+
+    async def _enunciated_take(
+        self,
+        text: str,
+        language_code: str,
+        name: str,
+        speaking_rate: float,
+        ipa: str | None,
+        phrase: bool,
+    ) -> bytes:
+        """A take of an Enunciated line that says it once, or ``RepeatedLineError``.
+
+        Each fresh take is measured before the caller writes or caches it; one
+        that speaks for longer than ``repeat_limit_seconds`` is dropped and the
+        line is asked for again, up to ``MAX_ENUNCIATED_TAKES``. The measuring
+        is a subprocess, so it runs off the event loop: a render shares its loop
+        with the API.
+        """
+        limit = repeat_limit_seconds(text, speaking_rate)
+        spoken: list[float] = []
+        for take in range(1, MAX_ENUNCIATED_TAKES + 1):
+            audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, True)
+            seconds = await asyncio.to_thread(self._speech_seconds, audio)
+            if seconds <= limit:
+                return audio
+            spoken.append(seconds)
+            logger.info(
+                "Gemini TTS take %d of %r spoke for %.2f s against a limit of %.2f s; taking it again",
+                take,
+                text[:40],
+                seconds,
+                limit,
+            )
+        measured = ", ".join(f"{seconds:.2f}" for seconds in spoken)
+        raise RepeatedLineError(
+            f"Gemini TTS said the Enunciated line {text!r} for too long on all {MAX_ENUNCIATED_TAKES} takes: "
+            f"it spoke for {measured} s against a limit of {limit:.2f} s. Nothing was cached. Takes of very "
+            "different lengths mean the line was repeated; takes of about the same length mean the limit is "
+            "wrong for this line (see REPEAT_SPEECH_FACTOR)."
+        )
 
     async def _synthesize_with_retry(
         self,

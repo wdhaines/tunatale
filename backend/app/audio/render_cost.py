@@ -44,9 +44,10 @@ _MONTHLY_ALLOWANCE = 500_000
 # a language. It is the only measured number here and the only one worth
 # re-measuring: it moves the whole estimate proportionally, and the pace it was
 # measured at is Cebuano, so a different language's rate estimate is as wrong as
-# this one is for a different voice.
+# this one is for a different voice. It lives with the adapter
+# (``gemini_tts.CHARS_PER_SECOND``), whose repeat guard reads the same number.
 # ---------------------------------------------------------------------------
-_GEMINI_CHARS_PER_SECOND = 11.0
+_GEMINI_CHARS_PER_SECOND = gemini_tts.CHARS_PER_SECOND
 _GEMINI_AUDIO_TOKENS_PER_SECOND = 25.0
 _GEMINI_USD_PER_MILLION_AUDIO_TOKENS = 10.0  # gemini-2.5-flash-tts on Cloud TTS
 # An Enunciated line is asked to stop after each word, and the audio is what

@@ -44,6 +44,16 @@ _ANGELO = "fil-PH-AngeloNeural"
 _ISELIN = "nb-NO-IselinNeural"
 _ORUS = "ceb-PH-OrusGemini"
 
+
+def _not_measured(audio: bytes) -> float:
+    """The Gemini adapter's repeat guard measures each Enunciated take with
+    ffmpeg. These tests are about the REQUEST a line reaches the provider as, and
+    this module runs in the CI jobs that have no ffmpeg, so the measurement is
+    stood in for: zero seconds is under any limit. The guard has its own tests
+    (test_gemini_tts.py) and the measurement its own (test_speech_length.py)."""
+    return 0.0
+
+
 _SLOW = (SectionType.SLOW_SPEED, SectionType.SLOW_TRANSLATED, SectionType.SLOW_EN_TRANSLATED)
 
 
@@ -355,7 +365,7 @@ async def test_a_cebuano_line_reaches_gemini_as_the_request_the_user_chose(tmp_p
     async def _token() -> str:
         return "test-access-token"
 
-    gemini = GeminiTTSService(min_delay=0, token_provider=_token)
+    gemini = GeminiTTSService(min_delay=0, token_provider=_token, speech_seconds=_not_measured)
 
     await _render_real(tmp_path, gemini, "ceb", stored, _ORUS)
 
@@ -389,7 +399,7 @@ async def _gemini_inputs(tmp_path, text: str, section_type: SectionType) -> list
     async def _token() -> str:
         return "test-access-token"
 
-    gemini = GeminiTTSService(min_delay=0, token_provider=_token)
+    gemini = GeminiTTSService(min_delay=0, token_provider=_token, speech_seconds=_not_measured)
     await _render_real(tmp_path, gemini, "ceb", text, _ORUS, section_type)
     return inputs
 
