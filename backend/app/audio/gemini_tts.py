@@ -89,13 +89,15 @@ ENUNCIATION_VERSION = 2
 # below. A different language's pace would move both.
 CHARS_PER_SECOND = 11.0
 
-# ── The repeat guard on an Enunciated line (bd tunatale-u8nz.28) ─────────────
+# ── The repeat guard on a prompted line (bd tunatale-u8nz.28, u8nz.31) ───────
 #
-# The provider sometimes says an Enunciated line two or more times over. It is
-# random from take to take (about 1.5% of cached clips), no request field
-# prevents it, and the clip is cached, so every later render plays it. A fresh
-# Enunciated take is therefore measured before it is kept: how long it SPEAKS
-# for (``speech_length.speech_seconds`` — the pauses are asked for and are not
+# The provider sometimes says a line two or more times over. It is random from
+# take to take (about 1.5-2% of cached clips), no request field prevents it, and
+# the clip is cached, so every later render plays it. It has been heard on both
+# kinds of line that are sent with an instruction: an Enunciated line, and a
+# natural-speed line told its reading. A fresh take of either is therefore
+# measured before it is kept: how long it SPEAKS for
+# (``speech_length.speech_seconds`` — the pauses are asked for and are not
 # evidence), against the length its text should take at CHARS_PER_SECOND.
 #
 # The factor is a measurement of the wording in ``_ENUNCIATION_INSTRUCTION``,
@@ -114,15 +116,31 @@ CHARS_PER_SECOND = 11.0
 # instruction needs the table measured again, which is what
 # REPEAT_FACTOR_MEASURED_ON_VERSION is for (a test holds it to
 # ENUNCIATION_VERSION).
+#
+# The same table for a natural-speed line told its reading, measured the same
+# day on the one lesson that has such clips:
+#
+#     51 clips: median 1.03; 50 at or under 1.36; and one at 2.38 — "Oo, Nong.
+#       Nalipay kaayo mi.", which the user heard said twice.
+#
+# So one factor serves both: 1.8 is above the longest single saying (1.36) and
+# below a median line said twice (2.06). That table belongs to the reading
+# instruction (``_phrase_ipa_prompt``), hence the second constant, held to
+# PROMPT_VERSION.
+#
+# NOT covered: a key phrase's pieces, which are told their reading too. Said
+# once, 52 of them ran a median 1.31 and up to 1.85 ("ko sa haya"), so this
+# factor would throw good takes away. Pieces need a table of their own first.
 REPEAT_SPEECH_FACTOR = 1.8
 REPEAT_FACTOR_MEASURED_ON_VERSION = 2
+REPEAT_FACTOR_MEASURED_ON_PROMPT_VERSION = 1
 # One take plus two more. A repeat is rare and independent per take, so three in
 # a row is about four in a million: a line that fails all three is far likelier
 # a line the limit is wrong for than one that repeated three times, which is why
 # the error carries every measurement. Each extra take is billed like the first
 # (about a tenth of a cent for a line); at the measured rate that is two or
 # three re-rolls in a 140-line lesson.
-MAX_ENUNCIATED_TAKES = 3
+MAX_LINE_TAKES = 3
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
 # service account's own role, and a wrong scope is a 403 at synthesis time.
@@ -310,7 +328,7 @@ def _enunciated_prompt(name: str, ipa: str | None) -> str:
 
 
 class RepeatedLineError(RuntimeError):
-    """Every take of an Enunciated line spoke for longer than its text allows.
+    """Every take of a line spoke for longer than its text allows.
 
     A ``RuntimeError`` and deliberately NOT a ``TTSExhausted``: the render-level
     retry loop re-runs that one because throttling passes, and here the takes
@@ -320,7 +338,7 @@ class RepeatedLineError(RuntimeError):
 
 
 def repeat_limit_seconds(text: str, speaking_rate: float) -> float:
-    """The most an Enunciated take of *text* may SPEAK for before it is a repeat.
+    """The most a take of the line *text* may SPEAK for before it is a repeat.
 
     ``REPEAT_SPEECH_FACTOR`` times the text's own length at this provider's
     pace, stretched by the speaking rate the request asked for. Characters as
@@ -542,8 +560,10 @@ class GeminiTTSService:
                 logger.debug("Gemini TTS cache hit for %r", text[:40])
                 return
 
-        if enunciated:
-            audio = await self._enunciated_take(text, language_code, name, speaking_rate, ipa, phrase)
+        # A line sent with an instruction: Enunciated, or told its reading. A
+        # line whose reading has a gap is sent plain, and is not measured.
+        if enunciated or (line and ipa is not None):
+            audio = await self._line_take(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
         else:
             audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
 
@@ -649,7 +669,7 @@ class GeminiTTSService:
             "audioConfig": {"audioEncoding": _AUDIO_ENCODING, "speakingRate": speaking_rate},
         }
 
-    async def _enunciated_take(
+    async def _line_take(
         self,
         text: str,
         language_code: str,
@@ -657,19 +677,20 @@ class GeminiTTSService:
         speaking_rate: float,
         ipa: str | None,
         phrase: bool,
+        enunciated: bool,
     ) -> bytes:
-        """A take of an Enunciated line that says it once, or ``RepeatedLineError``.
+        """A take of a prompted line that says it once, or ``RepeatedLineError``.
 
         Each fresh take is measured before the caller writes or caches it; one
         that speaks for longer than ``repeat_limit_seconds`` is dropped and the
-        line is asked for again, up to ``MAX_ENUNCIATED_TAKES``. The measuring
-        is a subprocess, so it runs off the event loop: a render shares its loop
+        line is asked for again, up to ``MAX_LINE_TAKES``. The measuring is a
+        subprocess, so it runs off the event loop: a render shares its loop
         with the API.
         """
         limit = repeat_limit_seconds(text, speaking_rate)
         spoken: list[float] = []
-        for take in range(1, MAX_ENUNCIATED_TAKES + 1):
-            audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, True)
+        for take in range(1, MAX_LINE_TAKES + 1):
+            audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
             seconds = await asyncio.to_thread(self._speech_seconds, audio)
             if seconds <= limit:
                 return audio
@@ -682,8 +703,9 @@ class GeminiTTSService:
                 limit,
             )
         measured = ", ".join(f"{seconds:.2f}" for seconds in spoken)
+        kind = "Enunciated" if enunciated else "natural-speed"
         raise RepeatedLineError(
-            f"Gemini TTS said the Enunciated line {text!r} for too long on all {MAX_ENUNCIATED_TAKES} takes: "
+            f"Gemini TTS said the {kind} line {text!r} for too long on all {MAX_LINE_TAKES} takes: "
             f"it spoke for {measured} s against a limit of {limit:.2f} s. Nothing was cached. Takes of very "
             "different lengths mean the line was repeated; takes of about the same length mean the limit is "
             "wrong for this line (see REPEAT_SPEECH_FACTOR)."

@@ -1475,10 +1475,11 @@ def test_punctuation_standing_alone_passes_through_the_reading():
     assert resolve_ipa("Ja – takk", {"ja": "ja", "takk": "tak"}, (("Ja –",), ("takk",))) == ("ja – tak", True)
 
 
-# ── The repeat guard on an Enunciated line (bd tunatale-u8nz.28) ─────────────
+# ── The repeat guard on a prompted line (bd tunatale-u8nz.28, u8nz.31) ───────
 #
-# The provider sometimes says an Enunciated line two or more times over. It is
-# random per take, the clip is cached, and every later render plays it. The
+# The provider sometimes says a line it was given an instruction for two or more
+# times over: an Enunciated line, or a natural-speed line told its reading. It
+# is random per take, the clip is cached, and every later render plays it. The
 # adapter measures how long each fresh take SPEAKS for and takes another when
 # that is too long for the text.
 
@@ -1526,7 +1527,7 @@ async def test_a_repeated_take_is_thrown_away_and_only_the_good_one_is_kept(tmp_
 async def test_a_line_repeated_on_every_take_raises_and_caches_nothing(tmp_path):
     """Loud, not a warning: no clip is written, none is cached, and the error says why."""
     takes = [b"a", b"b", b"c"]
-    assert len(takes) == gemini_tts.MAX_ENUNCIATED_TAKES
+    assert len(takes) == gemini_tts.MAX_LINE_TAKES
     route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(*takes))
     measure = _measured({b"a": _LIMIT * 2, b"b": _LIMIT * 1.5, b"c": _LIMIT * 3})
     cache = tmp_path / "cache"
@@ -1535,11 +1536,12 @@ async def test_a_line_repeated_on_every_take_raises_and_caches_nothing(tmp_path)
     with pytest.raises(RepeatedLineError) as raised:
         await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, enunciation=_LINE_WORDS)
 
-    assert route.call_count == gemini_tts.MAX_ENUNCIATED_TAKES
+    assert route.call_count == gemini_tts.MAX_LINE_TAKES
     assert not (tmp_path / "out.mp3").exists()
     assert not cache.exists() or list(cache.iterdir()) == []
     message = str(raised.value)
     assert _LINE in message
+    assert "Enunciated line" in message
     # Every take's measurement and the limit: with them a reader can tell a line
     # that repeats (lengths all over the place) from a limit that is wrong for
     # this line (lengths all alike), without re-rendering anything.
@@ -1575,9 +1577,52 @@ async def test_a_take_just_over_the_limit_is_taken_again(tmp_path):
 
 
 @respx.mock
-async def test_a_line_that_is_not_enunciated_is_never_measured(tmp_path):
-    """Natural-speed lines, drill phrases and single words are not what repeats,
-    and a one-word Enunciated line is the natural clip (``enunciates``)."""
+async def test_a_repeated_natural_speed_take_is_thrown_away_and_only_the_good_one_is_kept(tmp_path):
+    """A natural-speed line told its reading repeats too: "Oo, Nong. Nalipay kaayo
+    mi." was cached said twice, and the owner heard it on 2026-10-13."""
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"said-twice", b"said-once"))
+    measure = _measured({b"said-twice": _LIMIT * 1.3, b"said-once": _LIMIT * 0.6})
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, speech_seconds=measure)
+
+    await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, line=True)
+
+    assert route.call_count == 2
+    assert (tmp_path / "out.mp3").read_bytes() == b"said-once"
+    assert [f.read_bytes() for f in cache.iterdir()] == [b"said-once"]
+    assert measure.calls == [b"said-twice", b"said-once"]
+    # Each take is the natural-speed request: its reading, and no pause asked for.
+    assert [json.loads(call.request.content)["input"] for call in route.calls] == [_NATURAL_LINE_INPUT] * 2
+
+
+@respx.mock
+async def test_a_natural_speed_line_repeated_on_every_take_raises_and_names_its_kind(tmp_path):
+    """The same loud failure, and the message says which section's clip it was:
+    the two are different cache files and different instructions."""
+    takes = [b"a", b"b", b"c"]
+    assert len(takes) == gemini_tts.MAX_LINE_TAKES
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(*takes))
+    cache = tmp_path / "cache"
+    svc = _svc(cache_dir=cache, speech_seconds=_measured(dict.fromkeys(takes, _LIMIT * 2)))
+
+    with pytest.raises(RepeatedLineError) as raised:
+        await svc.synthesize(_LINE, VOICE, tmp_path / "out.mp3", phonemes=_LINE_IPAS, line=True)
+
+    assert route.call_count == gemini_tts.MAX_LINE_TAKES
+    assert not (tmp_path / "out.mp3").exists()
+    assert not cache.exists() or list(cache.iterdir()) == []
+    message = str(raised.value)
+    assert "natural-speed line" in message
+    assert "Enunciated" not in message
+    assert f"{_LIMIT:.2f}" in message
+
+
+@respx.mock
+async def test_a_clip_the_guard_does_not_cover_is_never_measured(tmp_path, caplog):
+    """Only a line sent with an instruction is measured. A line said plainly has
+    no instruction to repeat under; a drill phrase and a single word are told
+    their reading but are too short for this limit (see the piece below); and a
+    one-word Enunciated line is the natural clip (``enunciates``)."""
 
     def never(audio: bytes) -> float:
         raise AssertionError("measured a clip the guard does not cover")
@@ -1586,10 +1631,17 @@ async def test_a_line_that_is_not_enunciated_is_never_measured(tmp_path):
     svc = _svc(speech_seconds=never)
 
     await svc.synthesize(_LINE, VOICE, tmp_path / "plain.mp3")
-    await svc.synthesize(_LINE, VOICE, tmp_path / "line.mp3", phonemes=_LINE_IPAS, line=True)
+    await svc.synthesize(_LINE, VOICE, tmp_path / "unread-line.mp3", line=True)
+    with caplog.at_level(logging.WARNING):
+        # A reading with a word missing is not sent, so this is the plain request.
+        await svc.synthesize(_LINE, VOICE, tmp_path / "gap.mp3", phonemes={"buntag": "buntaɡ"}, line=True)
+    await svc.synthesize("ko sa haya", VOICE, tmp_path / "piece.mp3", phonemes={"ko": "ko", "sa": "sa", "haya": "haja"})
+    await svc.synthesize("haya", VOICE, tmp_path / "word.mp3", phonemes={"haya": "haja"})
     await svc.synthesize("Oo.", VOICE, tmp_path / "one-word.mp3", enunciation=(("Oo.",),))
 
-    assert route.call_count == 3
+    assert route.call_count == 6
+    inputs = [json.loads(call.request.content)["input"] for call in route.calls]
+    assert ["prompt" in sent for sent in inputs] == [False, False, False, True, True, False]
 
 
 @respx.mock
@@ -1632,10 +1684,23 @@ async def test_a_slowed_line_is_allowed_proportionally_longer(tmp_path):
         ("Asa mo gikan?", 1.79, False),  # wording 2's longest single saying, 1.51x
         ("Moadto ta sa baybayon?", 2.62, False),  # wording 2's next longest, 1.31x
         ("Nong, pila man?", 1.22, False),  # wording 2's shortest, 0.90x
+        # Natural-speed lines told their reading (51 clips, one lesson):
+        ("Oo, Nong. Nalipay kaayo mi.", 5.84, True),  # heard 2026-10-13: said twice, 2.38x
+        ("Oo. Tan-awa, naay iro.", 2.71, False),  # the longest single saying, 1.36x
+        ("Traynta pesos ang usa.", 1.72, False),  # among the shortest, 0.86x
     ],
 )
 def test_the_limit_separates_the_measured_repeats_from_the_measured_lines(text, spoken, is_repeat):
     assert (spoken > repeat_limit_seconds(text, 1.0)) is is_repeat
+
+
+def test_the_limit_is_wrong_for_a_breakdown_piece_which_is_why_pieces_are_not_measured():
+    """A key phrase's pieces are told their reading as well, and nothing here
+    says they never repeat. But a short piece said ONCE already runs past the
+    limit ("ko sa haya": 1.68 s of speech, 1.85x its ten characters, measured
+    2026-10-13), so measuring pieces with this factor would throw good takes
+    away. A guard for pieces needs its own table."""
+    assert repeat_limit_seconds("ko sa haya", 1.0) < 1.68
 
 
 def test_the_repeat_limit_was_measured_on_the_wording_in_force():
@@ -1644,6 +1709,13 @@ def test_the_repeat_limit_was_measured_on_the_wording_in_force():
     wording. Whoever rewords the instruction bumps ENUNCIATION_VERSION and lands
     here: re-measure the cached clips before moving this number."""
     assert gemini_tts.REPEAT_FACTOR_MEASURED_ON_VERSION == gemini_tts.ENUNCIATION_VERSION
+
+
+def test_the_repeat_limit_was_measured_on_the_reading_instruction_in_force():
+    """The natural-speed line's half of the same rule. Its instruction is the
+    reading sentence, versioned by PROMPT_VERSION: a rewording that changes how
+    long a line speaks for lands here."""
+    assert gemini_tts.REPEAT_FACTOR_MEASURED_ON_PROMPT_VERSION == gemini_tts.PROMPT_VERSION
 
 
 def test_the_adapter_measures_with_ffmpeg_unless_told_otherwise():
