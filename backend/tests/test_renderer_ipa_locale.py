@@ -120,18 +120,18 @@ async def test_a_cebuano_drill_fragment_reaches_the_voice_as_ipa(tmp_path):
 
     # Calls come back in phrase order, and the two "yong mao" phrases are
     # distinct memo keys, so the positions are what tells them apart. "mao"
-    # reads "maʔo" because the splitter cuts the hiatus and the second piece
+    # reads "ma.ʔo" because the splitter cuts the hiatus and the second piece
     # then opens on a glottal stop — the class's own rule, applied to the whole
     # word exactly as it is to each chunk of one. The whole word on its own is
     # read too (tunatale-ve4p.21): see the lone-word test below.
-    assert calls[0]["phonemes"] == {"inyong": "ʔinjoŋ"}
+    assert calls[0]["phonemes"] == {"inyong": "ʔin.joŋ"}
     assert calls[1]["phonemes"] == {"yong": "ˈjoŋ"}
-    assert calls[2]["phonemes"] == {"yong": "ˈjoŋ", "mao": "maʔo"}
+    assert calls[2]["phonemes"] == {"yong": "ˈjoŋ", "mao": "ma.ʔo"}
     assert calls[3]["phonemes"] is None
 
 
 _PHRASE = "ilubong ugma"
-_PHRASE_IPAS = {"ilubong": "ʔiluboŋ", "ugma": "ʔuɡma"}
+_PHRASE_IPAS = {"ilubong": "ʔi.lu.boŋ", "ugma": "ʔuɡ.ma"}
 
 
 async def test_a_multi_word_drill_step_is_spoken_from_the_ipa_of_its_words(tmp_path):
@@ -156,12 +156,12 @@ async def test_a_multi_word_drill_step_is_spoken_from_the_ipa_of_its_words(tmp_p
     dialogue = _lesson("ceb", [_ceb("Ilubong ugma. Alas dyis sa buntag.")], section_type=SectionType.NATURAL_SPEED)
     [line] = await _render(tmp_path, dialogue, get_phoneme_planner("ceb"), "ceb-PH")
     assert line["phonemes"] == {
-        "ilubong": "ʔiluboŋ",
-        "ugma": "ʔuɡma",
-        "alas": "ʔalas",
+        "ilubong": "ʔi.lu.boŋ",
+        "ugma": "ʔuɡ.ma",
+        "alas": "ʔa.las",
         "dyis": "djis",
         "sa": "sa",
-        "buntag": "buntaɡ",
+        "buntag": "bun.taɡ",
     }
     assert line["line"] is True
 
@@ -207,14 +207,14 @@ async def test_a_lone_drill_word_is_spoken_from_its_ipa(tmp_path):
 
     for section_type in (SectionType.AFFIX_DRILL, SectionType.KEY_PHRASES):
         [step] = await _render(tmp_path, _lesson("ceb", [_ceb("miadto")], section_type=section_type), planner, "ceb-PH")
-        assert (step["phonemes"], step["line"]) == ({"miadto": "miʔadto"}, False)
-        assert resolve_ipa(step["text"], step["phonemes"]) == ("miʔadto", False)
+        assert (step["phonemes"], step["line"]) == ({"miadto": "mi.ʔad.to"}, False)
+        assert resolve_ipa(step["text"], step["phonemes"]) == ("mi.ʔad.to", False)
 
     # The sentence's own mark stays on the text and off the key.
     [marked] = await _render(
         tmp_path, _lesson("ceb", [_ceb("Oo.")], section_type=SectionType.AFFIX_DRILL), planner, "ceb-PH"
     )
-    assert (marked["text"], marked["phonemes"]) == ("Oo.", {"oo": "ʔoʔo"})
+    assert (marked["text"], marked["phonemes"]) == ("Oo.", {"oo": "ʔo.ʔo"})
 
 
 async def test_a_lone_word_outside_a_cebuano_drill_stays_plain(tmp_path):

@@ -53,6 +53,7 @@ class SpelledPhonemePlanner:
         onset_vowels: str = "aeiou",
         whole_word_ipa: Mapping[str, str] | None = None,
         line_word_ipa: Mapping[str, str] | None = None,
+        syllable_break: str = "",
     ) -> None:
         """
         Args:
@@ -71,6 +72,10 @@ class SpelledPhonemePlanner:
             line_word_ipa: lowercase whole words whose reading INSIDE A LINE
                 the spelling gets wrong — borrowed names, mostly. Used only by
                 :meth:`plan_line_word`; a chunk of the same word is unaffected.
+            syllable_break: written between the syllables of a reading of two
+                or more, ``"."`` for a language that wants them shown. Empty
+                runs them together. Neither override table is touched by it: a
+                reading written by hand is returned as written.
         """
         self._letter_ipa = letter_ipa
         self._digraph_ipa = digraph_ipa
@@ -78,6 +83,7 @@ class SpelledPhonemePlanner:
         self._onset_vowels = onset_vowels
         self._whole_word_ipa = dict(whole_word_ipa or {})
         self._line_word_ipa = dict(line_word_ipa or {})
+        self._syllable_break = syllable_break
 
     def _spell(self, syllable: str) -> str:
         """The IPA of one syllable, written out. Never called on an empty piece
@@ -120,7 +126,7 @@ class SpelledPhonemePlanner:
             return None
         if (start, stop) == (0, len(pieces)) and (override := self._whole_word_ipa.get("".join(pieces))) is not None:
             return override
-        spelled = "".join(self._spell(p) for p in pieces[start:stop])
+        spelled = self._syllable_break.join(self._spell(p) for p in pieces[start:stop])
         return "ˈ" + spelled if stop - start == 1 else spelled
 
     def plan_word(self, word: str) -> str | None:

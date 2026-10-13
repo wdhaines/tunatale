@@ -224,9 +224,9 @@ async def test_a_cebuano_line_carries_the_reading_of_every_word(tmp_path):
     assert calls[0]["enunciation"] == (("Liza!",), ("Maayong",), ("buntag.",), ("Kumusta",), ("ka?",))
     assert calls[0]["phonemes"] == {
         "liza": "lisa",
-        "maayong": "maʔajoŋ",
-        "buntag": "buntaɡ",
-        "kumusta": "kumusta",
+        "maayong": "ma.ʔa.joŋ",
+        "buntag": "bun.taɡ",
+        "kumusta": "ku.mus.ta",
         "ka": "ka",
     }
 
@@ -249,7 +249,7 @@ async def test_a_natural_cebuano_line_carries_its_reading_and_is_not_enunciated(
 
     calls = await _calls(tmp_path, "ceb", [natural, slow], planner=get_phoneme_planner("ceb"))
 
-    reading = {"liza": "lisa", "maayong": "maʔajoŋ", "buntag": "buntaɡ"}
+    reading = {"liza": "lisa", "maayong": "ma.ʔa.joŋ", "buntag": "bun.taɡ"}
     assert (calls[0]["phonemes"], calls[0]["enunciation"], calls[0]["line"]) == (reading, None, True)
     # The Enunciated section's copy is a second request, not a reuse of this one.
     assert (calls[1]["phonemes"], calls[1]["line"]) == (reading, False)
@@ -301,7 +301,7 @@ _CEB_HEARD = {
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
         "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
-        "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
+        "Pronounce it exactly as the IPA /bun.taɡ sa himɛnɛs. naɡ.la.kaw si pol./."
     ),
 }
 
@@ -388,7 +388,7 @@ _CEB_NATURAL_HEARD = {
     "text": "Buntag sa Jimenez. Naglakaw si Paul.",
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
-        "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
+        "Pronounce it exactly as the IPA /bun.taɡ sa himɛnɛs. naɡ.la.kaw si pol./."
     ),
 }
 

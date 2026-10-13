@@ -40,13 +40,16 @@ _LETTER = {
 _DIGRAPH = {"ng": "ŋ", "ts": "tʃ"}
 
 
-def _planner(*pieces: str, letter_ipa=None, digraph_ipa=None, onset_vowels: str = "aeiou") -> SpelledPhonemePlanner:
+def _planner(
+    *pieces: str, letter_ipa=None, digraph_ipa=None, onset_vowels: str = "aeiou", syllable_break: str = ""
+) -> SpelledPhonemePlanner:
     """A planner whose syllabifier always cuts *word* into exactly *pieces*."""
     return SpelledPhonemePlanner(
         letter_ipa=_LETTER if letter_ipa is None else letter_ipa,
         digraph_ipa=_DIGRAPH if digraph_ipa is None else digraph_ipa,
         syllabify=lambda word: list(pieces),
         onset_vowels=onset_vowels,
+        syllable_break=syllable_break,
     )
 
 
@@ -85,6 +88,37 @@ def test_exactly_one_syllable_is_stressed_and_more_than_one_is_not():
     assert planner.plan_chunk("ako", (0, 1)) == "ˈʔa"
     assert planner.plan_chunk("ako", (1, 2)) == "ˈko"
     assert planner.plan_chunk("ako", (0, 2)) == "ʔako"
+
+
+def test_a_syllable_break_is_written_between_syllables_when_the_plugin_asks():
+    """A reading of two syllables or more shows where they part, for a plugin that asks.
+
+    The mark goes BETWEEN syllables and nowhere else: a lone syllable has none
+    to part and keeps its stress mark as it was, and a planner that does not
+    ask writes the reading run together, as every reading was before.
+    """
+    dotted = _planner("mo", "a", "ko", syllable_break=".")
+    assert dotted.plan_chunk("moako", (0, 3)) == "mo.ʔa.ko"
+    assert dotted.plan_chunk("moako", (1, 3)) == "ʔa.ko"
+    assert dotted.plan_chunk("moako", (1, 2)) == "ˈʔa"
+    assert dotted.plan_word("moako") == "mo.ʔa.ko"
+    assert dotted.plan_line_word("moako") == "mo.ʔa.ko"
+
+    assert _planner("mo", "a", "ko").plan_word("moako") == "moʔako"
+
+
+def test_a_whole_word_override_is_not_broken_into_syllables():
+    """An override is a reading somebody wrote by hand; it is returned as written."""
+    planner = SpelledPhonemePlanner(
+        letter_ipa=_LETTER,
+        digraph_ipa=_DIGRAPH,
+        syllabify=lambda word: ["mo", "a"],
+        whole_word_ipa={"moa": "mowa"},
+        line_word_ipa={"moa": "muwa"},
+        syllable_break=".",
+    )
+    assert planner.plan_word("moa") == "mowa"
+    assert planner.plan_line_word("moa") == "muwa"
 
 
 def test_the_onset_vowels_are_the_plugins_to_choose():

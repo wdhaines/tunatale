@@ -37,20 +37,20 @@ def planner() -> SpelledPhonemePlanner:
 @pytest.mark.parametrize(
     ("word", "span", "expected"),
     [
-        ("inyong", (0, 2), "ʔinjoŋ"),
+        ("inyong", (0, 2), "ʔin.joŋ"),
         ("inyong", (0, 1), "ˈʔin"),
         ("inyong", (1, 2), "ˈjoŋ"),
         ("akong", (0, 1), "ˈʔa"),
         ("akong", (1, 2), "ˈkoŋ"),
-        ("pamilya", (0, 3), "pamilja"),
+        ("pamilya", (0, 3), "pa.mil.ja"),
         ("pamilya", (1, 2), "ˈmil"),
-        ("pamilya", (1, 3), "milja"),
-        ("pahasubo", (2, 4), "subo"),
+        ("pamilya", (1, 3), "mil.ja"),
+        ("pahasubo", (2, 4), "su.bo"),
         ("sa", (0, 1), "ˈsa"),
         # The hyphen rows are what the Cebuano ``"-"`` entry buys: without it
         # ``kanus-a`` would come out ``kanusa``, and the final syllable would
         # open on a glottal stop the spelling never mentions.
-        ("kanus-a", (0, 3), "kanusʔa"),
+        ("kanus-a", (0, 3), "ka.nus.ʔa"),
         ("kanus-a", (2, 3), "ˈʔa"),
         # The source word carries the question mark the lesson wrote; the
         # stripping takes it off, and the pieces come back the same as for the
@@ -76,13 +76,13 @@ def test_a_caption_naming_other_letters_gets_no_ipa(planner):
 
 def test_a_caption_naming_the_right_letters_is_accepted(planner):
     assert planner.plan_chunk("inyong", (0, 1), chunk_text="in") == "ˈʔin"
-    assert planner.plan_chunk("inyong", (0, 2), chunk_text="inyong") == "ʔinjoŋ"
+    assert planner.plan_chunk("inyong", (0, 2), chunk_text="inyong") == "ʔin.joŋ"
     assert planner.plan_chunk("inyong", (1, 2), chunk_text="Yong") == "ˈjoŋ"
 
 
 def test_the_apostrophe_is_a_silent_contraction_mark(planner):
     # napulo'g: three syllables, and the mark is not a sound between them.
-    assert planner.plan_chunk("napulo'g", (0, 3)) == "napuloɡ"
+    assert planner.plan_chunk("napulo'g", (0, 3)) == "na.pu.loɡ"
 
 
 def test_a_punctuation_marked_source_word_still_splits_the_same_way(planner):
@@ -113,6 +113,25 @@ def test_the_planner_cuts_words_the_way_the_breakdown_does(planner):
             assert planner.plan_chunk(word, chunk.span, chunk_text=chunk.text) is not None, (word, chunk)
 
 
+def test_a_reading_shows_where_its_syllables_part(planner):
+    """Every Cebuano reading of two syllables or more has a dot at each break (tunatale-ve4p.24).
+
+    Run together, the stop between two like vowels was lost on the voice these
+    readings go to: miinom as /miʔinom/ ran its i's into one in 9 takes of 9,
+    and as /mi.ʔi.nom/ kept the stop in 6 of 8 (2026-10-13; plain text 7 of 7).
+    The owner's call was to write the break everywhere, so a drilled form, a
+    piece of two syllables and a word of a line all carry it. A lone syllable
+    has no break to show, and a reading written by hand is left as written.
+    """
+    assert planner.plan_word("miinom") == "mi.ʔi.nom"
+    assert planner.plan_word("miadto") == "mi.ʔad.to"
+    assert planner.plan_chunk("moadto", (1, 3), chunk_text="adto") == "ʔad.to"
+    assert planner.plan_line_word("Oo,") == "ʔo.ʔo"
+    assert planner.plan_chunk("moadto", (0, 1)) == "ˈmo"
+    assert planner.plan_word("mga") == "maˈŋa"
+    assert planner.plan_line_word("Jimenez") == "himɛnɛs"
+
+
 def test_mga_is_said_manga_not_as_spelled(planner):
     """The plural marker is spelled "mga" and said "manga": the spelling does
     not write the vowel or the velar nasal, so no letter rule can produce it.
@@ -139,13 +158,13 @@ def test_a_word_without_an_override_is_still_spelled(planner):
         # "ilubong ugma", the phrase the user heard as "ilubong uglak" — the row
         # this method exists for. A vowel-initial first syllable opens on a
         # glottal stop; more than one syllable carries no stress mark.
-        ("ilubong", "ʔiluboŋ"),
-        ("ugma", "ʔuɡma"),
+        ("ilubong", "ʔi.lu.boŋ"),
+        ("ugma", "ʔuɡ.ma"),
         # One syllable: the lone-syllable stress mark, and the glottal onset.
         ("ang", "ˈʔaŋ"),
         # The lesson's punctuation is stripped, and a consonant-initial word has
         # no glottal onset to write.
-        ("lubong?", "luboŋ"),
+        ("lubong?", "lu.boŋ"),
         # The override still applies: it is keyed on a span covering the whole
         # word, which is exactly what this is.
         ("mga", "maˈŋa"),
@@ -179,11 +198,11 @@ def test_a_word_with_nothing_to_read_gets_no_ipa(planner, word):
         ("ka", "ka"),
         ("ang", "ʔaŋ"),
         # Longer words read as they always did.
-        ("Buntag", "buntaɡ"),
-        ("Naglakaw", "naɡlakaw"),
-        ("Maayong", "maʔajoŋ"),
-        ("Kumusta", "kumusta"),
-        ("kanus-a", "kanusʔa"),
+        ("Buntag", "bun.taɡ"),
+        ("Naglakaw", "naɡ.la.kaw"),
+        ("Maayong", "ma.ʔa.joŋ"),
+        ("Kumusta", "ku.mus.ta"),
+        ("kanus-a", "ka.nus.ʔa"),
         # The override keeps its own mark: that one is inside the word.
         ("mga", "maˈŋa"),
     ],
@@ -195,9 +214,9 @@ def test_a_word_in_a_line_is_read_without_the_lone_syllable_mark(planner, word, 
 @pytest.mark.parametrize(
     ("name", "expected", "spelled"),
     [
-        ("Jimenez", "himɛnɛs", "dʒimɛnɛz"),
-        ("Paul", "pol", "paʔul"),
-        ("Liza", "lisa", "liza"),
+        ("Jimenez", "himɛnɛs", "dʒi.mɛ.nɛz"),
+        ("Paul", "pol", "pa.ʔul"),
+        ("Liza", "lisa", "li.za"),
     ],
 )
 def test_a_name_the_spelling_misreads_has_its_line_reading(planner, name, expected, spelled):
