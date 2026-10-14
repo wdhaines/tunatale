@@ -91,33 +91,47 @@ def _two_call_client(story: dict, gloss_reply: str = _GLOSS_REPLY) -> MagicMock:
 
 
 class TestDialogueLinesFromStory:
-    def test_collects_l2_lines_in_order(self):
-        assert dialogue_lines_from_story(_story()) == ["Dober dan!", "Prosim kavo."]
+    def test_collects_l2_lines_with_their_translations_in_order(self):
+        assert dialogue_lines_from_story(_story()) == [
+            ("Dober dan!", "Good day!"),
+            ("Prosim kavo.", "A coffee please."),
+        ]
+
+    def test_a_line_without_a_translation_keeps_an_empty_one(self):
+        story = _story()
+        story["scenes"][0]["lines"].append({"speaker": "male-1", "text": "Hvala."})
+        assert dialogue_lines_from_story(story)[-1] == ("Hvala.", "")
 
     def test_empty_when_no_scenes(self):
         assert dialogue_lines_from_story({"title": "x"}) == []
 
     def test_skips_blank_text(self):
         story = _story()
-        story["scenes"][0]["lines"].append({"speaker": "male-1", "text": "   "})
-        assert dialogue_lines_from_story(story) == ["Dober dan!", "Prosim kavo."]
+        story["scenes"][0]["lines"].append({"speaker": "male-1", "text": "   ", "translation": "nothing"})
+        assert [t for t, _ in dialogue_lines_from_story(story)] == ["Dober dan!", "Prosim kavo."]
 
     def test_survives_a_non_dict_scene(self):
         """Reachable, not defensive decoration: on the import paths this runs BEFORE
         ``validate_story``, so a hand-pasted story's junk arrives here first."""
         story = _story()
         story["scenes"].insert(0, "not a scene")
-        assert dialogue_lines_from_story(story) == ["Dober dan!", "Prosim kavo."]
+        assert [t for t, _ in dialogue_lines_from_story(story)] == ["Dober dan!", "Prosim kavo."]
 
     def test_survives_a_non_dict_line(self):
         story = _story()
         story["scenes"][0]["lines"].insert(0, "not a line")
-        assert dialogue_lines_from_story(story) == ["Dober dan!", "Prosim kavo."]
+        assert [t for t, _ in dialogue_lines_from_story(story)] == ["Dober dan!", "Prosim kavo."]
+
+    def test_a_non_string_translation_reads_as_none(self):
+        """Pasted stories reach here unvalidated (see above)."""
+        story = _story()
+        story["scenes"][0]["lines"][0]["translation"] = None
+        assert dialogue_lines_from_story(story)[0] == ("Dober dan!", "")
 
 
 class TestGlossPrompt:
     def test_carries_the_dialogue(self):
-        prompt = build_gloss_prompt(["Dober dan!"], "Slovene")
+        prompt = build_gloss_prompt([("Dober dan!", "Good day!")], "Slovene")
         assert "Dober dan!" in prompt
         assert "Slovene" in prompt
 
@@ -127,7 +141,7 @@ class TestGlossPrompt:
         A gloss prompt that omits it would build lessons whose verb cards have no
         infinitive front — silently, since the key is optional everywhere.
         """
-        prompt = build_gloss_prompt(["Dober dan!"], "Slovene")
+        prompt = build_gloss_prompt([("Dober dan!", "Good day!")], "Slovene")
         assert "base" in prompt
         assert "VERBS ONLY" in prompt
 
@@ -141,8 +155,66 @@ class TestGlossPrompt:
         dropping the instruction is silent, and shows up only as glosses that
         quietly went missing a day later.
         """
-        prompt = build_gloss_prompt(["Dober dan!"], "Slovene")
+        prompt = build_gloss_prompt([("Dober dan!", "Good day!")], "Slovene")
         assert "SINGLE word" in prompt
+
+
+class TestGlossPromptCarriesLineTranslations:
+    """tunatale-qrzr — the pass glossed from the L2 alone and guessed the sense.
+
+    Seen live 2026-09-30 in the Cebuano lesson an-evening-wake-in-jimenez:
+    "Moadto ko sa haya." | "I'm going to the wake." glossed ``haya`` as "garden".
+    Re-measured 2026-10-14 against Groq on a 13-line wake dialogue under the old
+    prompt: "home", then "garden". The answer was in the line's own translation,
+    which the story already carries and the pass never sent.
+    """
+
+    _LINES = [("Moadto ko sa haya.", "I'm going to the wake."), ("Bulak ug kandila.", "Flowers and candles.")]
+
+    def test_each_line_is_sent_beside_its_own_translation(self):
+        prompt = build_gloss_prompt(self._LINES, "Cebuano")
+        assert "Moadto ko sa haya. => I'm going to the wake." in prompt.splitlines()
+        assert "Bulak ug kandila. => Flowers and candles." in prompt.splitlines()
+
+    def test_a_line_with_no_translation_is_sent_bare(self):
+        prompt = build_gloss_prompt([("Moadto ko sa haya.", "")], "Cebuano")
+        assert "Moadto ko sa haya." in prompt.splitlines()
+        assert "=>" not in prompt.split("Dialogue:")[1]
+
+    def test_the_model_is_told_to_take_the_translations_sense(self):
+        prompt = build_gloss_prompt(self._LINES, "Cebuano")
+        assert "sense" in prompt
+        assert "never the English" in prompt
+
+    def test_the_topup_carries_the_translation_of_each_context_line(self):
+        prompt = build_gloss_topup_prompt(["haya"], self._LINES, "Cebuano")
+        assert "Moadto ko sa haya. => I'm going to the wake." in prompt.splitlines()
+        assert "Bulak ug kandila." not in prompt
+        assert "never the English" in prompt
+
+    def test_the_topup_never_matches_a_word_in_the_english(self):
+        """Context lines are chosen by the L2 tokens only: "wake" is not in the L2."""
+        lines = [("Moadto ko sa haya.", "I'm going to the wake."), ("Bulak ug kandila.", "Flowers and candles.")]
+        prompt = build_gloss_topup_prompt(["candles"], lines, "Cebuano")
+        assert "Flowers and candles." not in prompt
+
+    async def test_the_pass_sends_what_the_story_carries(self, language):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(return_value=_GLOSS_REPLY)
+        await ensure_dialogue_glosses(story, client, language)
+        sent = client.complete.await_args_list[0].args[0].splitlines()
+        assert "Dober dan! => Good day!" in sent
+        assert "Prosim kavo. => A coffee please." in sent
+
+    async def test_the_topup_sends_what_the_story_carries(self, language):
+        story = _story()
+        client = MagicMock()
+        client.complete = AsyncMock(
+            side_effect=[_FIRST_PARTIAL, json.dumps([{"word": "kavo", "translation": "coffee"}])]
+        )
+        await ensure_dialogue_glosses(story, client, language)
+        assert "Prosim kavo. => A coffee please." in client.complete.await_args_list[1].args[0].splitlines()
 
 
 class TestGlossMaxTokensIsSizedFromTheWork:
@@ -155,8 +227,8 @@ class TestGlossMaxTokensIsSizedFromTheWork:
     twice on 2026-09-08 while they were going.
     """
 
-    def _lines(self, unique_words: int) -> list[str]:
-        return [" ".join(f"ord{i}" for i in range(unique_words))]
+    def _lines(self, unique_words: int) -> list[tuple[str, str]]:
+        return [(" ".join(f"ord{i}" for i in range(unique_words)), "")]
 
     def test_reserves_far_less_than_the_whole_bucket(self):
         """A realistic dialogue must leave room for the pipeline beside it.
@@ -178,13 +250,28 @@ class TestGlossMaxTokensIsSizedFromTheWork:
         """The old ceiling still binds: a dialogue big enough that the work-based
         estimate would exceed the remaining budget is clamped, not allowed through
         to a 413."""
-        lines = ["Dober dan, kako ste danes?"] * 400
+        lines = [("Dober dan, kako ste danes?", "Good day, how are you today?")] * 400
         prompt_tokens = len(build_gloss_prompt(lines, "Slovene")) // 4
         assert prompt_tokens + gloss_max_tokens(lines) < 8000
 
+    def test_a_short_dialogue_leaves_room_for_reasoning(self):
+        """Measured 2026-10-14 against Groq (gpt-oss-120b): a 57-word Cebuano
+        dialogue got a cap of 57 * 24 = 1,368 and came back truncated in 2 of 3
+        calls (15 and 9 entries kept), and a 3-line one (cap 288) in 3 of 3 with
+        no entries at all. The model spends completion tokens reasoning before
+        the JSON; the top-up already allows for that (_TOPUP_REASONING_TOKENS),
+        and the main pass did not."""
+        assert gloss_max_tokens(self._lines(57)) >= 1500 + 57 * 12
+        assert gloss_max_tokens(self._lines(3)) >= 1500
+
+    def test_the_english_is_not_counted_as_words_to_gloss(self):
+        assert gloss_max_tokens([("ena dva", "one two three four five six seven")]) == gloss_max_tokens(
+            [("ena dva", "")]
+        )
+
     def test_a_tiny_dialogue_still_gets_a_floor(self):
         """One line must not produce a cap so small the array cannot finish."""
-        assert gloss_max_tokens(["Hei!"]) >= 256
+        assert gloss_max_tokens([("Hei!", "Hi!")]) >= 256
 
 
 class TestGlossMaxTokens:
@@ -202,11 +289,11 @@ class TestGlossMaxTokens:
         WORD, so the old input now correctly asks for a small cap. Two hundred
         distinct words is what a 200-entry array actually looks like.
         """
-        assert gloss_max_tokens([" ".join(f"ord{i}" for i in range(200))]) > 3213
+        assert gloss_max_tokens([(" ".join(f"ord{i}" for i in range(200)), "")]) > 3213
 
     def test_leaves_room_for_the_prompt(self):
         """prompt + completion must stay under Groq's 8000/request reservation."""
-        lines = ["Dober dan, kako ste danes?"] * 400
+        lines = [("Dober dan, kako ste danes?", "Good day, how are you today?")] * 400
         prompt_tokens = len(build_gloss_prompt(lines, "Slovene")) // 4
         assert prompt_tokens + gloss_max_tokens(lines) < 8000
 
@@ -485,7 +572,7 @@ class TestGlossTopUp:
 
     def test_topup_budget_never_exceeds_the_request_reservation(self):
         words = [f"w{i}" for i in range(400)]
-        lines = [" ".join(words)]
+        lines = [(" ".join(words), " ".join(f"english{i}" for i in range(400)))]
         prompt = build_gloss_topup_prompt(words, lines, "X" * 16)
         cap = gloss_topup_max_tokens(words, lines)
         assert cap + len(prompt) // 3 + 128 <= 8000
