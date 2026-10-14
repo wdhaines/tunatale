@@ -148,13 +148,19 @@ def pattern_glosses(root: str, pattern: AffixPattern) -> tuple[str, tuple[str, .
 def pattern_lines(root: str, pattern: AffixPattern) -> tuple[tuple[str, str], ...]:
     """The whole lines that show *root*'s unreal form after wala and as a habit, or none.
 
-    None unless the unreal form is worded as "will" plus the root's own English:
-    only then does the root's English stand in an English sentence as a verb
-    meaning what the form means. ``mouban`` is "will go along" and ``uban`` is
-    "accompany", so "I didn't accompany" would be a line about something else.
+    None unless the unreal form is worded as "will" plus the root's own English,
+    or for a durative "will be" and its -ing form: only then does the root's
+    English stand in an English sentence as a verb meaning what the form means.
+    ``mouban`` is "will go along" and ``uban`` is "accompany", so "I didn't
+    accompany" would be a line about something else. An -ing that is not the
+    verb plus "ing" (coming, sitting) loses the lines rather than gaining a
+    wrong one.
     """
     forms, glosses = pattern_forms(root, pattern), pattern_glosses(root, pattern)
-    if forms is None or glosses is None or glosses[1][0] != f"will {glosses[0]}":
+    if forms is None or glosses is None:
+        return ()
+    verb = glosses[0]
+    if glosses[1][0] not in (f"will {verb}", f"will be {verb}ing"):
         return ()
     form = forms[0]
     return tuple(

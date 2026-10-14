@@ -45,17 +45,17 @@
 #
 # Every row must also be a pair native news uses (tests/test_ceb_affix_patterns.py enforces it).
 lakaw	mo-mi	walk	will walk	walked
-lakaw	mag-nag	walk	will walk	is walking
-ampo	mag-nag	pray	will pray	is praying
-dala	mag-nag	bring	will bring	is bringing
+lakaw	mag-nag	walk	will be walking	is walking
+ampo	mag-nag	pray	will be praying	is praying
+dala	mag-nag	bring	will be bringing	is bringing
 inom	mo-mi	drink	will drink	drank
 adto	mo-mi	go	will go	went
 anhi	mo-mi	come	will come	came
 kita	mag-nag	see	will meet	met
 tulog	ma-na	sleep	will sleep	is asleep
 lipay	ma-na	happy	will be happy	is happy
-luto	mag-nag	cook	will cook	is cooking
-hulat	mag-nag	wait	will wait	is waiting
+luto	mag-nag	cook	will be cooking	is cooking
+hulat	mag-nag	wait	will be waiting	is waiting
 balik	mo-mi	return	will return	returned
 sulod	mo-mi	inside	will enter	entered
 tan-aw	mo-mi	watch	will watch	watched

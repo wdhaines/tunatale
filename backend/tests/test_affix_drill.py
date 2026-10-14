@@ -23,7 +23,7 @@ _FIRST_ROUND = ["mouban", "moadto", "moinom", "miadto", "miuban", "miinom"]
 
 def test_a_root_is_paired_with_its_forms_and_their_english():
     assert drill_root("ceb", "lakaw", _MAG_NAG) == DrillRoot(
-        "lakaw", "walk", (("maglakaw", "will walk"), ("naglakaw", "is walking"))
+        "lakaw", "walk", (("maglakaw", "will be walking"), ("naglakaw", "is walking"))
     )
     assert drill_root("ceb", "tulog", _PATTERNS["ma-na"]) == DrillRoot(
         "tulog", "sleep", (("matulog", "will sleep"), ("natulog", "is asleep"))
@@ -85,9 +85,9 @@ def test_a_new_form_is_built_up_the_way_key_phrases_builds_a_phrase():
     Pinned as a literal once, so the shape is visible without the builder."""
     drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
 
-    start = drill.steps.index(DrillStep("model", "will walk", "en"))
+    start = drill.steps.index(DrillStep("model", "will be walking", "en"))
     assert drill.steps[start : start + 7] == [
-        DrillStep("model", "will walk", "en"),
+        DrillStep("model", "will be walking", "en"),
         DrillStep("model", "maglakaw", "ceb"),
         DrillStep("model", "kaw", "ceb", "maglakaw", (2, 3)),
         DrillStep("model", "la", "ceb", "maglakaw", (1, 2)),
@@ -194,7 +194,7 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_
         DrillStep("model", "Listen and repeat.", "en"),
         DrillStep("model", "walk", "en"),
         DrillStep("model", "lakaw", "ceb"),
-        DrillStep("model", "will walk", "en"),
+        DrillStep("model", "will be walking", "en"),
         *_built("maglakaw"),
         DrillStep("model", "is walking", "en"),
         DrillStep("model", "naglakaw", "ceb"),
@@ -202,7 +202,7 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_
         DrillStep("model", "naglakaw", "ceb"),
         DrillStep("model", "pray", "en"),
         DrillStep("model", "ampo", "ceb"),
-        DrillStep("model", "will pray", "en"),
+        DrillStep("model", "will be praying", "en"),
         *_built("mag-ampo"),
         DrillStep("model", "is praying", "en"),
         DrillStep("model", "nag-ampo", "ceb"),
@@ -366,16 +366,16 @@ def test_only_the_first_prompt_of_a_round_carries_the_question():
     assert asked == [0, 4, 8, 16]
     bare = [text for i, text in enumerate(prompts) if i not in asked]
     assert set(bare[:-1]) <= {
-        f"{tense}."
-        for tense in (
+        f"{english}."
+        for english in (
             "is walking",
-            "will walk",
+            "will be walking",
             "is praying",
-            "will pray",
+            "will be praying",
             "is cooking",
-            "will cook",
+            "will be cooking",
             "is bringing",
-            "will bring",
+            "will be bringing",
         )
     }
     assert prompts[-2:] == ['How do you say "Paul walked on the road"?', "Are you happy, Paul?"]

@@ -210,6 +210,30 @@ def test_a_nag_form_is_worded_as_going_on_not_as_a_past():
     assert {table[(root, "mag-nag")][1][1] for root in _MUTUAL} == {"met", "went together"}
 
 
+def test_a_mag_form_is_worded_as_something_that_will_go_on():
+    """mo- and mag- are both unreal, so both are "will". What tells them apart
+    in English is the durative: Wolff's mag- is an action that lasts. The owner
+    approved "will be walking" on 2026-10-14, when maglakaw and molakaw were
+    both "will walk" and a card could not say which it wanted."""
+    table = load_affix_glosses(GLOSSES_PATH)
+    unreal = {root: forms[0] for (root, key), (_, forms) in table.items() if key == "mag-nag" and root not in _MUTUAL}
+
+    assert len(unreal) >= 5
+    assert [(root, english) for root, english in unreal.items() if not english.startswith("will be ")] == []
+    assert unreal["lakaw"] == "will be walking"
+
+
+def test_no_root_words_two_of_its_forms_the_same():
+    """A contrast card asks for a form by its English. lakaw in mo- / mi- and
+    in mag- / nag- is four forms, and each needs English of its own."""
+    table = load_affix_glosses(GLOSSES_PATH)
+    worded: dict[str, list[str]] = {}
+    for (root, _), (_, forms) in table.items():
+        worded.setdefault(root, []).extend(forms)
+
+    assert [(root, forms) for root, forms in worded.items() if len(set(forms)) < len(forms)] == []
+
+
 def test_a_na_form_is_worded_as_the_state_it_names():
     """Wolff: "Natulug na ba siya? Is he asleep yet?"; "Nalipay ku nga nia ka, I am glad that you're here"."""
     table = load_affix_glosses(GLOSSES_PATH)
@@ -265,6 +289,11 @@ def test_a_root_gets_a_line_for_what_did_not_happen_and_one_for_what_usually_doe
     assert pattern_lines("Ampo", _BY_KEY["mag-nag"]) == (
         ("Wala ko mag-ampo.", "I didn't pray."),
         ("Mag-ampo ko kada adlaw.", "I pray every day."),
+    )
+    # "will be walking" is still the root's own English, gone on for a while.
+    assert pattern_lines("lakaw", _BY_KEY["mag-nag"]) == (
+        ("Wala ko maglakaw.", "I didn't walk."),
+        ("Maglakaw ko kada adlaw.", "I walk every day."),
     )
 
 
