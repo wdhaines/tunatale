@@ -39,8 +39,8 @@ _VOWELS = "aeiou"
 _CELLS = ("not begun", "begun")
 
 # In teaching order, which the owner approved on 2026-10-14 (tunatale-ve4p.26):
-# the volitional, then the durative, then the states as review. Later stages
-# (maka- / naka-, the passives) join the end as their rows are checked.
+# the volitional, then the durative, then the states as review, then the
+# potential. Later stages (the passives) join the end as their rows are checked.
 PATTERNS: tuple[AffixPattern, ...] = (
     AffixPattern(
         "mo-mi",
@@ -71,19 +71,47 @@ PATTERNS: tuple[AffixPattern, ...] = (
         # Already the owner's from Tagalog: reviewed, not taught (tunatale-ve4p.26).
         review_only=True,
     ),
+    # The potential (Wolff, maka-: "can", and "had the chance or managed to").
+    # Drilled as a pattern only: not an A1 affix, so a lesson's makakita gets
+    # no grammar hint (``a1_morphology``; tunatale-ve4p.31).
+    AffixPattern(
+        "maka-naka",
+        ("verb:maka", "verb:naka"),
+        labels=_CELLS,
+        notes=(
+            "The first is for something you can do, or will get the chance to do.",
+            "The second is for something you managed to do, or got the chance to do.",
+        ),
+    ),
 )
 
-# Whole lines for the two jobs of the unreal form that an English tense gets
+# Whole lines for the jobs of the unreal form that an English tense gets
 # wrong, each ``(line, its English)`` with ``{form}`` the unreal form and
 # ``{root}`` the root's English. Wolff's dictionary, under mu- and mag-:
 # "Wala ku muadtu didtu, I did not go there"; "Mumata mi sa alas singku kada
 # buntag, We wake up every morning at five"; "Waq mi maglisud, We did not have
-# a hard time" (the course, lesson 4). None for ma- / na-: the roots there are
-# states, and "I didn't happy" is what the English frame would make of lipay.
+# a hard time" (the course, lesson 4); and after a verb of wanting the form is
+# the unreal one too (stage 4 of the curriculum, tunatale-ve4p.31). Under
+# maka-: "Wà ku makasakay dáyun, I couldn't find transportation right away";
+# "Dì ku makaalsa niánà, I cannot lift that". None for ma- / na-: the roots
+# there are states, and "I didn't happy" is what the English frame would make
+# of lipay.
 _LINES: dict[str, tuple[tuple[str, str], ...]] = {
-    key: (("Wala ko {form}.", "I didn't {root}."), ("{Form} ko kada adlaw.", "I {root} every day."))
-    for key in ("mo-mi", "mag-nag")
+    **{
+        key: (
+            ("Wala ko {form}.", "I didn't {root}."),
+            ("{Form} ko kada adlaw.", "I {root} every day."),
+            ("Gusto ko {form}.", "I want to {root}."),
+        )
+        for key in ("mo-mi", "mag-nag")
+    },
+    "maka-naka": (("Wala ko {form}.", "I couldn't {root}."), ("Dili ko {form}.", "I can't {root}.")),
 }
+# How a pattern's unreal form has to be worded for the root's own English to
+# stand in its lines, ``{verb}`` the root's English. An aspect pair's is "will"
+# or, for a durative, "will be" and its -ing.
+_UNREAL_ENGLISH: dict[str, tuple[str, ...]] = {"maka-naka": ("can {verb}",)}
+_ASPECT_ENGLISH = ("will {verb}", "will be {verb}ing")
 PATTERN_AFFIXES: tuple[str, ...] = tuple(f.removeprefix("verb:") for p in PATTERNS for f in p.features)
 
 
@@ -149,7 +177,8 @@ def pattern_lines(root: str, pattern: AffixPattern) -> tuple[tuple[str, str], ..
     """The whole lines that show *root*'s unreal form after wala and as a habit, or none.
 
     None unless the unreal form is worded as "will" plus the root's own English,
-    or for a durative "will be" and its -ing form: only then does the root's
+    for a durative "will be" and its -ing form, and for the potential "can"
+    (``_UNREAL_ENGLISH``): only then does the root's
     English stand in an English sentence as a verb meaning what the form means.
     ``mouban`` is "will go along" and ``uban`` is "accompany", so "I didn't
     accompany" would be a line about something else. An -ing that is not the
@@ -159,8 +188,8 @@ def pattern_lines(root: str, pattern: AffixPattern) -> tuple[tuple[str, str], ..
     forms, glosses = pattern_forms(root, pattern), pattern_glosses(root, pattern)
     if forms is None or glosses is None:
         return ()
-    verb = glosses[0]
-    if glosses[1][0] not in (f"will {verb}", f"will be {verb}ing"):
+    wordings = _UNREAL_ENGLISH.get(pattern.key, _ASPECT_ENGLISH)
+    if glosses[1][0] not in [wording.format(verb=glosses[0]) for wording in wordings]:
         return ()
     form = forms[0]
     return tuple(

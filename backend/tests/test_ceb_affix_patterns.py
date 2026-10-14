@@ -36,13 +36,17 @@ from app.plugins.languages.ceb.affix_patterns import (
 _BY_KEY = {p.key: p for p in PATTERNS}
 
 
-def test_the_patterns_are_the_three_aspect_pairs():
-    assert {p.key: p.features for p in PATTERNS} == {
-        "mo-mi": ("verb:mo", "verb:mi"),
-        "mag-nag": ("verb:mag", "verb:nag"),
-        "ma-na": ("verb:ma", "verb:na"),
-    }
-    assert PATTERN_AFFIXES == ("mo", "mi", "mag", "nag", "ma", "na")
+def test_the_patterns_are_the_teaching_order():
+    """The owner's order (2026-10-14, tunatale-ve4p.26): volitional, durative,
+    the states as review, then the potential (stage 5, ve4p.31)."""
+    assert [(p.key, p.features) for p in PATTERNS] == [
+        ("mo-mi", ("verb:mo", "verb:mi")),
+        ("mag-nag", ("verb:mag", "verb:nag")),
+        ("ma-na", ("verb:ma", "verb:na")),
+        ("maka-naka", ("verb:maka", "verb:naka")),
+    ]
+    assert PATTERN_AFFIXES == ("mo", "mi", "mag", "nag", "ma", "na", "maka", "naka")
+    assert [p.key for p in PATTERNS if p.review_only] == ["ma-na"]
 
 
 # ── spell: how an affix attaches ─────────────────────────────────────────────
@@ -92,6 +96,14 @@ def test_every_spelled_form_is_recognised_back_as_its_own_affix(root, affix):
         ("lipay", "ma-na", ("malipay", "nalipay")),  # 204 / 542
         ("tan-aw", "mo-mi", ("motan-aw", "mitan-aw")),  # 169 / 43
         ("Lakaw", "mo-mi", ("molakaw", "milakaw")),  # the root's case is spelling
+        # maka- / naka-, measured 2026-10-14 on the same shard.
+        ("kita", "maka-naka", ("makakita", "nakakita")),  # 457 / 783
+        ("sulod", "maka-naka", ("makasulod", "nakasulod")),  # 581 / 246
+        ("gawas", "maka-naka", ("makagawas", "nakagawas")),  # 345 / 381
+        ("inom", "maka-naka", ("makainom", "nakainom")),  # 32 / 134
+        ("adto", "maka-naka", ("makaadto", "nakaadto")),  # 44 / 23
+        ("dala", "maka-naka", ("makadala", "nakadala")),  # 49 / 23
+        ("bayad", "maka-naka", ("makabayad", "nakabayad")),  # 123 / 60
     ],
 )
 def test_a_pair_native_news_uses_is_vouched_for(root, pattern, forms):
@@ -107,6 +119,8 @@ def test_a_pair_native_news_uses_is_vouched_for(root, pattern, forms):
         ("hulat", "ma-na"),  # 0 / 2
         ("ampo", "mo-mi"),  # 11 / 10: attested, under the floor
         ("hilom", "mo-mi"),  # the lesson's mihilom: 3 occurrences
+        ("lakaw", "maka-naka"),  # 40 / 10
+        ("anhi", "maka-naka"),  # 7 / 5
         ("zzzzz", "mo-mi"),  # not a root at all
     ],
 )
@@ -125,13 +139,29 @@ def test_one_strong_cell_does_not_carry_a_weak_one():
 # ── the committed table ──────────────────────────────────────────────────────
 
 
+# maka- / naka- is drilled as a pattern but is not an A1 affix: a lesson's
+# makakita gets no grammar hint and no Inflect card (the owner, 2026-09-27).
+_POTENTIAL = {"maka", "naka"}
+
+
 def test_every_committed_row_round_trips_through_affix_of():
-    """The whole table, not a sample: every (root, affix) it holds must spell a
-    form ``affix_of`` reads back as that affix on that root."""
+    """The whole table, not a sample: every (root, affix) it holds of an A1
+    affix must spell a form ``affix_of`` reads back as that affix on that root."""
     table = load_affix_counts(COUNTS_PATH)
     assert len(table) > 1000
-    wrong = [(root, affix) for root, affix in table if affix_of(spell(root, affix), root) != affix]
+    wrong = [
+        (root, affix)
+        for root, affix in table
+        if affix not in _POTENTIAL and affix_of(spell(root, affix), root) != affix
+    ]
     assert wrong == []
+
+
+def test_a_potential_form_is_drilled_but_not_read_as_an_a1_affix():
+    table = load_affix_counts(COUNTS_PATH)
+    potential = [(root, affix) for root, affix in table if affix in _POTENTIAL]
+    assert len(potential) > 100
+    assert [(root, affix) for root, affix in potential if affix_of(spell(root, affix), root) is not None] == []
 
 
 def test_the_committed_table_only_holds_pattern_affixes_and_counted_rows():
@@ -234,6 +264,25 @@ def test_no_root_words_two_of_its_forms_the_same():
     assert [(root, forms) for root, forms in worded.items() if len(set(forms)) < len(forms)] == []
 
 
+def test_a_maka_form_is_can_and_a_naka_form_is_managed_to():
+    """Wolff, maka-: {1} what one can do, {2} what one had the chance or
+    managed to do ("Nakapalit mig barátung kutsi, We managed to buy a car
+    cheap"). kità takes only the potential in the active (class A123S), so
+    nakakita is the plain "saw". Approved by the owner, 2026-10-14."""
+    table = load_affix_glosses(GLOSSES_PATH)
+    worded = {root: (english, forms) for (root, key), (english, forms) in table.items() if key == "maka-naka"}
+
+    assert worded == {
+        "kita": ("see", ("can see", "saw")),
+        "sulod": ("inside", ("can get in", "managed to get in")),
+        "gawas": ("go out", ("can get out", "managed to get out")),
+        "inom": ("drink", ("can drink", "managed to drink")),
+        "adto": ("go", ("can go", "managed to go")),
+        "dala": ("bring", ("can bring", "managed to bring")),
+        "bayad": ("pay", ("can pay", "managed to pay")),
+    }
+
+
 def test_a_na_form_is_worded_as_the_state_it_names():
     """Wolff: "Natulug na ba siya? Is he asleep yet?"; "Nalipay ku nga nia ka, I am glad that you're here"."""
     table = load_affix_glosses(GLOSSES_PATH)
@@ -244,12 +293,13 @@ def test_a_na_form_is_worded_as_the_state_it_names():
 
 def test_a_mi_form_stays_the_done_act_and_every_unreal_form_stays_will():
     """mi- is the punctual real form, an act seen whole: Wolff, "Miadtu ku didtu
-    gahapun, I went there yesterday". And the unreal form of every pair is asked
-    for as what has not begun."""
+    gahapun, I went there yesterday". And the unreal form of every aspect pair
+    is asked for as what has not begun; the potential's is what one can do."""
     table = load_affix_glosses(GLOSSES_PATH)
 
     assert table[("adto", "mo-mi")][1] == ("will go", "went")
-    assert [key for key, (_, forms) in table.items() if not forms[0].startswith("will ")] == []
+    unreal = {"maka-naka": "can "}
+    assert [key for key, (_, forms) in table.items() if not forms[0].startswith(unreal.get(key[1], "will "))] == []
 
 
 def test_every_pattern_names_its_two_cells_by_whether_the_thing_has_begun():
@@ -258,6 +308,7 @@ def test_every_pattern_names_its_two_cells_by_whether_the_thing_has_begun():
         "mo-mi": ("not begun", "begun"),
         "mag-nag": ("not begun", "begun"),
         "ma-na": ("not begun", "begun"),
+        "maka-naka": ("not begun", "begun"),
     }
 
 
@@ -285,15 +336,28 @@ def test_a_root_gets_a_line_for_what_did_not_happen_and_one_for_what_usually_doe
     assert pattern_lines("adto", _BY_KEY["mo-mi"]) == (
         ("Wala ko moadto.", "I didn't go."),
         ("Moadto ko kada adlaw.", "I go every day."),
+        ("Gusto ko moadto.", "I want to go."),
     )
     assert pattern_lines("Ampo", _BY_KEY["mag-nag"]) == (
         ("Wala ko mag-ampo.", "I didn't pray."),
         ("Mag-ampo ko kada adlaw.", "I pray every day."),
+        ("Gusto ko mag-ampo.", "I want to pray."),
     )
     # "will be walking" is still the root's own English, gone on for a while.
     assert pattern_lines("lakaw", _BY_KEY["mag-nag"]) == (
         ("Wala ko maglakaw.", "I didn't walk."),
         ("Maglakaw ko kada adlaw.", "I walk every day."),
+        ("Gusto ko maglakaw.", "I want to walk."),
+    )
+
+
+def test_a_potential_root_gets_a_line_for_what_could_not_happen_and_what_cannot():
+    """After wala the potential is the unreal form: Wolff, "Wà ku makasakay
+    dáyun, I couldn't find transportation right away"; and after dili, "Dì ku
+    makaalsa niánà, I cannot lift that". Neither is a habit, so no kada line."""
+    assert pattern_lines("adto", _BY_KEY["maka-naka"]) == (
+        ("Wala ko makaadto.", "I couldn't go."),
+        ("Dili ko makaadto.", "I can't go."),
     )
 
 
@@ -303,6 +367,7 @@ def test_a_root_gets_a_line_for_what_did_not_happen_and_one_for_what_usually_doe
         ("uban", "mo-mi", "mouban is 'will go along': 'I didn't accompany' is not what the line says"),
         ("kita", "mag-nag", "magkita is 'will meet', not 'will see'"),
         ("lipay", "ma-na", "a state: 'I didn't happy'"),
+        ("sulod", "maka-naka", "sulod is 'inside': 'I couldn't inside'"),
         ("tulog", "ma-na", "no ma- / na- line is written down"),
         ("andam", "mag-nag", "nobody has worded the root"),
         ("tulog", "mo-mi", "the root does not take the pair"),

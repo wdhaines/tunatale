@@ -258,6 +258,10 @@ def test_a_review_only_pattern_needs_one_drill_and_no_cards(srs_db, store):
 
     _heard(srs_db, store, "ma-na", _at(19))
     assert progress(_PATTERNS["ma-na"], srs_db=srs_db, store=store).met
+    assert _key(srs_db, store) == "maka-naka"
+
+
+_MAKA_NAKA_FOUR = [("kita", 1), ("sulod", 0), ("gawas", 1), ("inom", 0)]
 
 
 def test_with_every_pattern_passed_the_one_heard_longest_ago_comes_round(srs_db, store):
@@ -266,9 +270,11 @@ def test_with_every_pattern_passed_the_one_heard_longest_ago_comes_round(srs_db,
     _passed_first_review(srs_db, "mo-mi", _MO_MI_FOUR)
     _heard(srs_db, store, "mag-nag", _at(15), _at(17))
     _passed_first_review(srs_db, "mag-nag", _MAG_NAG_FOUR)
+    _heard(srs_db, store, "maka-naka", _at(19), _at(21))
+    _passed_first_review(srs_db, "maka-naka", _MAKA_NAKA_FOUR)
     assert _key(srs_db, store) == "ma-na"
 
-    _heard(srs_db, store, "ma-na", _at(19))
+    _heard(srs_db, store, "ma-na", _at(23))
     assert _key(srs_db, store) == "mo-mi"
 
 
