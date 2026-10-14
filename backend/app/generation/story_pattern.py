@@ -20,10 +20,13 @@ way a grammar lesson does, in ``generation_metadata["affix_drill"]``, so Mark
 as Listened adds contrast cards for a story lesson with no code of its own.
 
 Which pattern a day gets is :func:`pattern_for_day`: its own if it names one,
-otherwise the language's patterns in rotation over the curriculum's thematic
-days. The rotation reads nothing but the curriculum, so the prompt that asked
-for a pattern and the import that later builds the drill agree without either
-storing the choice.
+the one its lesson already drills if it has one, otherwise the pattern the
+learner is on (``app.generation.pattern_gate``, tunatale-ve4p.26). The prompt
+that asks for a pattern and the publish that builds the drill read the same
+listens and cards minutes apart, so they agree unless the learner passes the
+pattern in between; then the drill is built on whatever roots of the new
+pattern the story happened to use, or not at all. Once the lesson is stored
+it records its pattern, and every rebuild keeps it.
 """
 
 from __future__ import annotations
@@ -37,10 +40,12 @@ from app.generation.grammar_lesson import (
     _WORD,
     _fold,
     _understood,
+    find_pattern,
     lesson_lines,
     pattern_title,
     understood_roots,
 )
+from app.generation.pattern_gate import next_pattern
 from app.generation.section_builder import build_affix_drill_section
 from app.languages import get_a1_morphology
 from app.models.curriculum import Curriculum, CurriculumDay
@@ -64,13 +69,20 @@ def named_pattern(language_code: str, day: CurriculumDay) -> AffixPattern | None
     return next((p for p in bundle.patterns if p.key == day.pattern), None)
 
 
-def pattern_for_day(curriculum: Curriculum, day: CurriculumDay) -> AffixPattern | None:
+def pattern_for_day(
+    curriculum: Curriculum, day: CurriculumDay, *, srs_db=None, store: ContentStore | None = None
+) -> AffixPattern | None:
     """The affix pattern *day*'s story is planned around, or ``None``.
 
     ``None`` for a language that registers no patterns and for a grammar day,
     which is a drill on a pattern of its own and is planned elsewhere. A day
-    that names a pattern the language has keeps it. Any other thematic day
-    takes the patterns in turn, by how many thematic days come before it.
+    that names a pattern the language has keeps it. So does a day whose lesson
+    in *store* already drills one: a lesson made again, or rebuilt from its
+    story, drills what it drilled, though the learner has moved on since.
+
+    Any other thematic day takes the pattern the learner is on
+    (``pattern_gate.next_pattern``). With no *srs_db* there are no listens or
+    cards to read, so nothing has passed and that is the language's first.
     """
     bundle = get_a1_morphology(curriculum.language_code)
     if bundle is None or not bundle.patterns or day.kind != "thematic":
@@ -78,8 +90,14 @@ def pattern_for_day(curriculum: Curriculum, day: CurriculumDay) -> AffixPattern 
     named = named_pattern(curriculum.language_code, day)
     if named is not None:
         return named
-    turn = sum(1 for other in curriculum.days if other.kind == "thematic" and other.day < day.day)
-    return bundle.patterns[turn % len(bundle.patterns)]
+    held = store.get_latest_lesson_by_day(curriculum.id, day.day) if store is not None else None
+    recorded = (held[1].generation_metadata or {}).get("affix_drill") if held is not None else None
+    drilled = find_pattern(curriculum.language_code, recorded["pattern"]) if recorded else None
+    if drilled is not None:
+        return drilled
+    if srs_db is None or store is None:
+        return bundle.patterns[0]
+    return next_pattern(curriculum.language_code, srs_db=srs_db, store=store)
 
 
 def _worded(language_code: str, pattern: AffixPattern) -> list[DrillRoot]:
@@ -239,7 +257,7 @@ def add_day_drill(
     tells them; with no store nothing says so.
     """
     planned = next((d for d in curriculum.days if d.day == day), None) if curriculum is not None else None
-    pattern = pattern_for_day(curriculum, planned) if planned is not None else None
+    pattern = pattern_for_day(curriculum, planned, srs_db=srs_db, store=store) if planned is not None else None
     if pattern is not None:
         told = store is not None and _noted(store, curriculum.id, pattern, day)
         add_closing_drill(lesson, language, pattern, srs_db=srs_db, lemmatizer=lemmatizer, introduce=not told)

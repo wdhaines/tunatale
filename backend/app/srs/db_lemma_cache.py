@@ -90,6 +90,14 @@ class DbLemmaCacheMixin:
             ).fetchall()
             return [(row["id"], self._row_to_item(conn, row)) for row in rows]
 
+    def get_collocation_ids_by_disambig_key(self, disambig_key: str) -> list[int]:
+        """The ids of every row keyed *disambig_key*, lowest first: one contrast-card cell across roots."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id FROM collocations WHERE disambig_key = ? ORDER BY id", (disambig_key,)
+            ).fetchall()
+        return [row["id"] for row in rows]
+
     def get_collocations_with_lemma_key(
         self,
         language_code: str,

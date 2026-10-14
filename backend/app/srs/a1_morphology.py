@@ -32,12 +32,18 @@ class AffixPattern:
     what the forms are for; they speak of "the first" and "the second" form, in
     ``features`` order. Both are the language's to word, and both are empty for
     a pattern that has neither.
+
+    ``review_only`` marks a pattern the curriculum reviews rather than teaches,
+    because the learner brings it with them (Cebuano ma- / na-, which a
+    Tagalog speaker already has). It passes the pace gate on a drill alone
+    (``app.generation.pattern_gate``).
     """
 
     key: str
     features: tuple[str, ...]
     labels: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    review_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,8 +57,9 @@ class A1Morphology:
     ``(lemma, feature)`` as human hint text (e.g. ``"biti, 1st person
     singular"``).
 
-    ``patterns`` are the affix contrasts the language can drill, and
-    ``pattern_forms(root, pattern)`` spells one root across a pattern's
+    ``patterns`` are the affix contrasts the language can drill, in the order
+    they are taught: a learner meets the next once the one before passes the
+    pace gate (``app.generation.pattern_gate``). ``pattern_forms(root, pattern)`` spells one root across a pattern's
     features, or returns ``None`` when the language cannot vouch for every
     form. ``pattern_glosses(root, pattern)`` gives the root's English and the
     English of each form, or ``None`` when nobody has written it down: an affix

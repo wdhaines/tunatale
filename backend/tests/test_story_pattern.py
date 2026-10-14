@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from datetime import UTC, datetime
 
 import pytest
 
@@ -31,8 +32,9 @@ from app.generation.story_pattern import add_closing_drill, add_day_drill, named
 from app.languages import get_a1_morphology, get_language
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import KeyPhraseInfo, SectionType
-from app.models.srs_item import SRSState
+from app.models.srs_item import Direction, RevlogRow, SRSState
 from app.models.strategy import ContentStrategy
+from app.srs.contrast_card import contrast_card
 from app.storage.store import ContentStore
 from tests._helpers.lemmatizer import StubLemmatizer
 from tests.test_grammar_lesson import _BURIAL, _WAKE, _bury, _card, _story_lesson, owner  # noqa: F401
@@ -57,42 +59,102 @@ def _curriculum(days: list[CurriculumDay], language_code: str = "ceb") -> Curric
     return Curriculum(id="funeral", topic="A funeral", language_code=language_code, cefr_level="A1", days=days)
 
 
-def _key(curriculum: Curriculum, day: CurriculumDay) -> str | None:
-    pattern = pattern_for_day(curriculum, day)
+def _key(curriculum: Curriculum, day: CurriculumDay, **learner) -> str | None:
+    pattern = pattern_for_day(curriculum, day, **learner)
     return pattern.key if pattern is not None else None
 
 
 # --- which pattern -----------------------------------------------------------
+#
+# The rotation is gone (tunatale-ve4p.26): which pattern a day gets is the
+# gate's call (``app.generation.pattern_gate``), tested there. What is tested
+# here is what the day itself contributes.
 
 
-def test_thematic_days_take_the_languages_patterns_in_turn():
+def test_with_no_deck_to_read_every_thematic_day_is_asked_for_the_first_pattern():
     days = [_day(n) for n in (1, 2, 3, 4)]
     curriculum = _curriculum(days)
-    assert [_key(curriculum, day) for day in days] == ["mo-mi", "mag-nag", "ma-na", "mo-mi"]
+    assert [_key(curriculum, day) for day in days] == ["mo-mi"] * 4
 
 
-def test_a_grammar_day_is_not_a_turn_and_is_not_planned_here():
-    # Day 2 is a drill lesson with its own pattern; the story after it carries on the rotation.
+def test_a_grammar_day_is_not_planned_here():
     days = [_day(1), _day(2, kind="grammar", pattern="mo-mi"), _day(3)]
     curriculum = _curriculum(days)
-    assert [_key(curriculum, day) for day in days] == ["mo-mi", None, "mag-nag"]
+    assert [_key(curriculum, day) for day in days] == ["mo-mi", None, "mo-mi"]
 
 
 def test_a_day_that_names_its_pattern_keeps_it():
     days = [_day(1, pattern="ma-na"), _day(2)]
-    curriculum = _curriculum(days)
-    # ...and still counts as a turn for the days after it.
-    assert [_key(curriculum, day) for day in days] == ["ma-na", "mag-nag"]
+    assert [_key(_curriculum(days), day) for day in days] == ["ma-na", "mo-mi"]
 
 
-def test_a_name_the_language_does_not_have_falls_back_to_the_rotation():
+def test_a_name_the_language_does_not_have_falls_back_to_the_gate():
     days = [_day(1), _day(2, pattern="um-in")]
-    assert _key(_curriculum(days), days[1]) == "mag-nag"
+    assert _key(_curriculum(days), days[1]) == "mo-mi"
 
 
 def test_a_language_with_no_patterns_plans_none():
     days = [_day(1), _day(2)]
     assert [_key(_curriculum(days, "no"), day) for day in days] == [None, None]
+
+
+def _mo_mi_passed(srs_db, store) -> None:
+    """mo- / mi- heard on two days, four of its cards past a first review."""
+    passed = _story_lesson("Affix drill", [])
+    passed.generation_metadata["affix_drill"] = {"pattern": "mo-mi", "roots": [], "new_roots": []}
+    store.save_lesson("drill-mo-mi", "elsewhere", 1, passed)
+    srs_db.record_listen("drill-mo-mi", at=datetime(2026, 10, 9, 12, tzinfo=UTC))
+    srs_db.record_listen("drill-mo-mi", at=datetime(2026, 10, 13, 12, tzinfo=UTC))
+    for n, (root, blank) in enumerate((("uban", 1), ("inom", 0), ("adto", 1), ("anhi", 0))):
+        unit = contrast_card("ceb", _PATTERNS["mo-mi"], root, blank).unit()
+        srs_db.add_collocation(unit, language_code="ceb")
+        srs_db.append_revlog(
+            RevlogRow(
+                id=1_791_600_000_000 + n * 60_000,
+                collocation_id=srs_db.get_collocation_id_by_guid(srs_db.get_collocation(unit.text).guid),
+                direction=Direction.PRODUCTION,
+                button_chosen=3,
+                interval=5,
+                last_interval=1,
+                factor=2500,
+                taken_millis=5000,
+                review_kind=1,
+            )
+        )
+
+
+def test_a_day_with_a_deck_takes_the_gates_pattern(srs_db):
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1), _day(2)])
+    store.save_curriculum(curriculum.id, curriculum)
+    assert _key(curriculum, curriculum.days[1], srs_db=srs_db, store=store) == "mo-mi"
+
+    _mo_mi_passed(srs_db, store)
+    assert _key(curriculum, curriculum.days[1], srs_db=srs_db, store=store) == "mag-nag"
+
+
+def test_a_day_that_already_holds_a_drilled_lesson_keeps_its_pattern(srs_db):
+    """A lesson made again, or rebuilt from its story, drills what it drilled,
+    though the learner has passed that pattern since."""
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1), _day(2)])
+    store.save_curriculum(curriculum.id, curriculum)
+    made = _story_lesson("An Evening Wake", _WAKE)
+    made.generation_metadata["affix_drill"] = {"pattern": "mo-mi", "roots": [], "new_roots": []}
+    store.save_lesson("wake", curriculum.id, 2, made)
+    _mo_mi_passed(srs_db, store)
+
+    assert _key(curriculum, curriculum.days[1], srs_db=srs_db, store=store) == "mo-mi"
+    assert _key(curriculum, curriculum.days[0], srs_db=srs_db, store=store) == "mag-nag"
+
+
+def test_a_day_whose_lesson_has_no_drill_takes_the_gates_pattern(srs_db):
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1)])
+    store.save_curriculum(curriculum.id, curriculum)
+    store.save_lesson("wake", curriculum.id, 1, _story_lesson("An Evening Wake", _WAKE))
+    _mo_mi_passed(srs_db, store)
+    assert _key(curriculum, curriculum.days[0], srs_db=srs_db, store=store) == "mag-nag"
 
 
 # --- what the story is asked for ---------------------------------------------
@@ -156,14 +218,14 @@ def test_a_language_with_no_patterns_is_unmoved_even_inside_a_curriculum(owner):
 def test_a_story_in_a_curriculum_is_asked_for_its_days_pattern(owner, strategy):  # noqa: F811
     srs_db, store = owner
     language = get_language("ceb")
-    day = store.get_curriculum("funeral").days[1]  # the second thematic day: mag-nag
+    day = store.get_curriculum("funeral").days[1]  # with no deck to read, nothing has passed: mo-mi
 
     plain = build_story_prompts(day, language, ContentStrategy[strategy], "A1")
     planned = build_story_prompts(
         day, language, ContentStrategy[strategy], "A1", srs_db=None, content_store=store, curriculum_id="funeral"
     )
 
-    block = pattern_block("ceb", _PATTERNS["mag-nag"])
+    block = pattern_block("ceb", _PATTERNS["mo-mi"])
     rules = f"**{strategy} STRATEGY RULES**"
     assert planned.system_prompt == plain.system_prompt
     assert f"{block}{rules}" in planned.user_prompt
@@ -172,6 +234,40 @@ def test_a_story_in_a_curriculum_is_asked_for_its_days_pattern(owner, strategy):
     if strategy == "WIDER":
         assert planned.user_prompt.replace(block, "") == plain.user_prompt
     assert (len(planned.system_prompt) + len(planned.user_prompt)) // 4 <= PROMPT_TOKEN_BUDGET
+
+
+def test_a_story_with_a_deck_is_asked_for_the_gates_pattern(owner):  # noqa: F811
+    srs_db, store = owner
+    _mo_mi_passed(srs_db, store)
+    day = store.get_curriculum("funeral").days[1]
+    prompts = build_story_prompts(
+        day,
+        get_language("ceb"),
+        ContentStrategy.WIDER,
+        "A1",
+        srs_db=srs_db,
+        content_store=store,
+        curriculum_id="funeral",
+    )
+    assert pattern_block("ceb", _PATTERNS["mag-nag"], srs_db=srs_db) in prompts.user_prompt
+
+
+_MARKET = [
+    ("Naglakaw mi sa merkado.", "We walked to the market."),
+    ("Nagdala ko og bugas.", "I brought rice."),
+    ("Magluto ko karon.", "I will cook now."),
+]
+
+
+def test_a_new_days_closing_drill_follows_the_gate(srs_db):
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1)])
+    store.save_curriculum(curriculum.id, curriculum)
+    _mo_mi_passed(srs_db, store)
+
+    lesson = _story_lesson("At the Market", _MARKET)
+    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=srs_db, lemmatizer=None, store=store)
+    assert lesson.generation_metadata["affix_drill"]["pattern"] == "mag-nag"
 
 
 def test_a_day_that_names_its_pattern_is_asked_for_it_with_no_curriculum_to_read():

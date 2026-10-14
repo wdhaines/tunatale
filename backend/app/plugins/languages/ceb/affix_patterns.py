@@ -38,6 +38,9 @@ _VOWELS = "aeiou"
 # the notes are said by the narrator the first time a learner meets the pair.
 _CELLS = ("not begun", "begun")
 
+# In teaching order, which the owner approved on 2026-10-14 (tunatale-ve4p.26):
+# the volitional, then the durative, then the states as review. Later stages
+# (maka- / naka-, the passives) join the end as their rows are checked.
 PATTERNS: tuple[AffixPattern, ...] = (
     AffixPattern(
         "mo-mi",
@@ -65,6 +68,8 @@ PATTERNS: tuple[AffixPattern, ...] = (
             "The first is for a state that has not come about yet.",
             "The second is for a state that has come about.",
         ),
+        # Already the owner's from Tagalog: reviewed, not taught (tunatale-ve4p.26).
+        review_only=True,
     ),
 )
 
