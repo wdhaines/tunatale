@@ -1,4 +1,4 @@
-"""The affix drill script: model, your turn, new on this root, whole line (tunatale-ve4p.4).
+"""The affix drill script: model, your turn, new roots, everything mixed, whole line (tunatale-ve4p.4).
 
 The script is built with no model call. Forms come from the language's
 ``pattern_forms`` (native news must use every form) and their English from
@@ -17,6 +17,8 @@ from app.languages import get_a1_morphology
 
 _PATTERNS = {p.key: p for p in get_a1_morphology("ceb").patterns}
 _MAG_NAG = _PATTERNS["mag-nag"]
+# What one drill asks first, as it came out the first time it was built.
+_FIRST_ROUND = ["mouban", "moadto", "moinom", "miadto", "miuban", "miinom"]
 
 
 def test_a_root_is_paired_with_its_forms_and_their_english():
@@ -53,6 +55,22 @@ def test_a_language_without_patterns_cannot_drill():
     assert drill_root("no", "gå", _MAG_NAG) == "the language registers no affix patterns"
 
 
+def _rounds(drill) -> list[list[str]]:
+    """The answers of each asking round, in the order asked. A round opens on the question."""
+    rounds: list[list[str]] = []
+    for step in drill.steps:
+        if step.kind == "prompt" and step.text.startswith("How do you say"):
+            rounds.append([])
+        if step.kind == "answer":
+            rounds[-1].append(step.text)
+    return rounds
+
+
+def _forms(pattern, *roots: str) -> dict[str, str]:
+    """Every form of *roots* in *pattern*, each with the root it is a form of."""
+    return {form: root for root in roots for form, _ in drill_root("ceb", root, pattern).cells}
+
+
 def _built(text: str) -> list[DrillStep]:
     """*text* the way Key Phrases builds it up: whole, the pieces from the end, whole again."""
     return [DrillStep("model", c.text, "ceb", c.source_word, c.span) for c in build_word_breakdown_spans(text, "ceb")]
@@ -79,18 +97,15 @@ def test_a_new_form_is_built_up_the_way_key_phrases_builds_a_phrase():
     ]
 
 
-def test_the_script_is_model_then_your_turn_then_new_roots_then_the_lines():
-    drill = build_affix_drill(
-        "ceb",
-        _MAG_NAG,
-        roots=["lakaw", "ampo"],
-        new_roots=["luto"],
-        lines=[("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Mag-ampo ta.", "Let's pray.")],
-    )
+def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_the_lines():
+    lines = [("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Mag-ampo ta.", "Let's pray.")]
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], new_roots=["luto", "dala"], lines=lines)
     assert drill.dropped == []
-    assert drill.steps == [
-        # Meet the pair: the round is announced, then the root, then each form
-        # after its English, built up.
+
+    # Meet the pair: the round is announced, then the root, then each form
+    # after its English, built up.
+    first_ask = next(i for i, step in enumerate(drill.steps) if step.kind == "prompt")
+    assert drill.steps[:first_ask] == [
         DrillStep("model", "Listen and repeat.", "en"),
         DrillStep("model", "walk", "en"),
         DrillStep("model", "lakaw", "ceb"),
@@ -104,25 +119,29 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_lines():
         *_built("mag-ampo"),
         DrillStep("model", "prayed", "en"),
         *_built("nag-ampo"),
-        # Your turn: asked done-first, so it is not an echo of the model order.
-        # The narrator asks the question once, then gives the English alone.
-        DrillStep("prompt", 'How do you say "walked"?', "en"),
-        DrillStep("answer", "naglakaw", "ceb"),
-        DrillStep("prompt", "will walk.", "en"),
-        DrillStep("answer", "maglakaw", "ceb"),
-        DrillStep("prompt", "prayed.", "en"),
-        DrillStep("answer", "nag-ampo", "ceb"),
-        DrillStep("prompt", "will pray.", "en"),
-        DrillStep("answer", "mag-ampo", "ceb"),
-        # New on this root: the root is named, the forms are NOT modelled.
+    ]
+
+    modelled, new = _forms(_MAG_NAG, "lakaw", "ampo"), _forms(_MAG_NAG, "luto", "dala")
+    yours, unmodelled, everything, whole = _rounds(drill)
+    # Your turn: every modelled form, once.
+    assert sorted(yours) == sorted(modelled)
+    # New roots: each is named, none of its forms is modelled, and every root
+    # is named before any is asked for.
+    named = drill.steps[drill.steps.index(DrillStep("answer", yours[-1], "ceb")) + 1 :][:4]
+    assert named == [
         DrillStep("model", "cook", "en"),
         DrillStep("model", "luto", "ceb"),
-        DrillStep("prompt", 'How do you say "cooked"?', "en"),
-        DrillStep("answer", "nagluto", "ceb"),
-        DrillStep("prompt", "will cook.", "en"),
-        DrillStep("answer", "magluto", "ceb"),
-        # Whole lines: every one taught first, the Key Phrases way, and only
-        # then asked for (tunatale-ve4p.20, 'Or both. A la key phrases.').
+        DrillStep("model", "bring", "en"),
+        DrillStep("model", "dala", "ceb"),
+    ]
+    assert sorted(unmodelled) == sorted(new)
+    assert not [step for step in drill.steps if step.kind == "model" and step.text in new]
+    # Everything, once more: the forms of the new roots among the modelled ones.
+    assert sorted(everything) == sorted([*modelled, *new])
+    # Whole lines: every one taught first, the Key Phrases way, and only then
+    # asked for (tunatale-ve4p.20, 'Or both. A la key phrases.').
+    taught = len(drill.steps) - 1 - drill.steps[::-1].index(DrillStep("model", "Listen and repeat.", "en"))
+    assert drill.steps[taught:] == [
         DrillStep("model", "Listen and repeat.", "en"),
         DrillStep("model", "Paul walked on the road.", "en"),
         *_built("Naglakaw si Paul sa dalan."),
@@ -133,6 +152,85 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_the_lines():
         DrillStep("prompt", "Let's pray.", "en"),
         DrillStep("answer", "Mag-ampo ta.", "ceb"),
     ]
+    assert whole == [text for text, _ in lines]
+
+
+# --- the order a round asks in (tunatale-ve4p.19) -------------------------------
+#
+# The owner, 2026-10-09: "Mixing up the order of the answers is good for
+# learning"; asked on 2026-10-13 which reading was meant: "Mix from the first
+# asking." Before, the first round went root by root, so the second prompt of a
+# root was half given away by the first, and the one mixed round was a fixed
+# rotation.
+
+_MO_MI = _PATTERNS["mo-mi"]
+_DRILLS = [
+    (_MAG_NAG, ["lakaw", "ampo"], []),
+    (_MAG_NAG, ["lakaw", "ampo", "kita"], ["luto", "dala"]),
+    (_MO_MI, ["uban", "inom", "adto"], ["anhi", "lakaw"]),
+    (_MO_MI, ["uban", "inom", "adto", "balik", "kaon"], ["anhi", "lakaw", "sulti"]),
+]
+
+
+@pytest.mark.parametrize(("pattern", "roots", "new_roots"), _DRILLS)
+def test_no_round_asks_for_the_same_root_twice_running(pattern, roots, new_roots):
+    """From the first asking, and in every round after it."""
+    root_of = _forms(pattern, *roots, *new_roots)
+    drill = build_affix_drill("ceb", pattern, roots=roots, new_roots=new_roots)
+
+    rounds = _rounds(drill)
+    assert len(rounds) == (3 if new_roots else 2)
+    for answers in rounds:
+        asked = [root_of[form] for form in answers]
+        assert all(a != b for a, b in zip(asked, asked[1:], strict=False)), answers
+
+
+def test_a_round_cannot_be_answered_from_its_position():
+    """Neither which root comes next nor which tense is the same from one lesson
+    to the next. What tells two drills of one pattern apart is their lines, so
+    twelve stories are twelve drills of the same three roots."""
+    tense = {form: i for root in ("uban", "inom", "adto") for i, (form, _) in enumerate(_drilled(root).cells)}
+    root_of = _forms(_MO_MI, "uban", "inom", "adto")
+    firsts = [
+        _rounds(build_affix_drill("ceb", _MO_MI, roots=["uban", "inom", "adto"], lines=[(f"Moadto ko {n}.", "x")]))[0]
+        for n in range(12)
+    ]
+
+    assert len({tuple(root_of[form] for form in answers) for answers in firsts}) > 1
+    assert len({tuple(tense[form] for form in answers) for answers in firsts}) > 1
+    # The tense does not simply alternate either: that is a position too.
+    assert any(tense[a] == tense[b] for answers in firsts for a, b in zip(answers, answers[1:], strict=False))
+
+
+def test_the_same_drill_is_the_same_script_every_time():
+    """The order is drawn from what the drill is made of, not from the clock: a
+    lesson rebuilt from its story asks in the order it asked before, and the
+    clips it rendered are the ones it asks for again."""
+    made = [
+        build_affix_drill(
+            "ceb", _MO_MI, roots=["uban", "inom", "adto"], new_roots=["anhi"], lines=[("Oo, moadto ko.", "Yes.")]
+        )
+        for _ in range(2)
+    ]
+    assert made[0].steps == made[1].steps
+    # Pinned as a literal, because 'the same in this process' is not 'the same
+    # on the next run': a seed that read the interpreter's hash salt would pass
+    # the line above and fail here one run in several.
+    assert _rounds(made[0])[0] == _FIRST_ROUND
+
+
+def test_a_single_new_root_is_named_and_asked_for_both_forms():
+    """One root cannot be kept apart from itself; the round after it does that."""
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], new_roots=["luto"])
+
+    _, unmodelled, everything = _rounds(drill)
+    assert sorted(unmodelled) == ["magluto", "nagluto"]
+    luto = [i for i, form in enumerate(everything) if form in unmodelled]
+    assert luto[1] - luto[0] > 1
+
+
+def _drilled(root: str) -> DrillRoot:
+    return drill_root("ceb", root, _MO_MI)
 
 
 @pytest.mark.parametrize(
@@ -157,35 +255,27 @@ def test_only_the_first_prompt_of_a_round_carries_the_question():
     """'Question then bare English' (the owner, 2026-10-12): once the narrator
     has asked, every later prompt of that round is the English alone, with its
     own punctuation. Each round opens with the question again: the modelled
-    roots, each new root after it is named, the mixed round, and the lines."""
+    roots, the new roots once they are named, everything mixed, and the lines."""
     drill = build_affix_drill(
         "ceb",
         _MAG_NAG,
         roots=["lakaw", "ampo"],
-        new_roots=["luto"],
+        new_roots=["luto", "dala"],
         lines=[
             ("Naglakaw si Paul sa dalan.", "Paul walked on the road."),
             ("Malipayon ka, Paul?", "Are you happy, Paul?"),
         ],
-        again=True,
     )
 
-    assert [step.text for step in drill.steps if step.kind == "prompt"] == [
-        'How do you say "walked"?',
-        "will walk.",
-        "prayed.",
-        "will pray.",
-        'How do you say "cooked"?',
-        "will cook.",
-        'How do you say "will walk"?',
-        "prayed.",
-        "will cook.",
-        "walked.",
-        "will pray.",
-        "cooked.",
-        'How do you say "Paul walked on the road"?',
-        "Are you happy, Paul?",
-    ]
+    prompts = [step.text for step in drill.steps if step.kind == "prompt"]
+    asked = [i for i, text in enumerate(prompts) if text.startswith("How do you say")]
+    assert asked == [0, 4, 8, 16]
+    bare = [text for i, text in enumerate(prompts) if i not in asked]
+    assert set(bare[:-1]) <= {
+        f"{tense}."
+        for tense in ("walked", "will walk", "prayed", "will pray", "cooked", "will cook", "brought", "will bring")
+    }
+    assert prompts[-2:] == ['How do you say "Paul walked on the road"?', "Are you happy, Paul?"]
 
 
 def test_a_line_is_never_asked_before_every_line_has_been_taught():
@@ -202,38 +292,17 @@ def test_a_drill_with_no_lines_says_nothing_about_them():
     drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
 
     assert [s.text for s in drill.steps].count("Listen and repeat.") == 1
-    assert drill.steps[-1] == DrillStep("answer", "mag-ampo", "ceb")
+    assert drill.steps[-1].kind == "answer"
+    assert drill.steps[-1].text in _forms(_MAG_NAG, "lakaw", "ampo")
 
 
-def test_the_mixed_round_asks_every_form_once_more_and_never_root_by_root():
-    """After the new roots and before the lines. The earlier rounds ask a root's
-    two forms back to back, so the second is half given away by the first; here
-    neighbours are different roots, and the cell alternates."""
-    drill = build_affix_drill(
-        "ceb",
-        _MAG_NAG,
-        roots=["lakaw", "ampo"],
-        new_roots=["luto"],
-        lines=[("Mag-ampo ta.", "Let's pray.")],
-        again=True,
-    )
-    answers = [s.text for s in drill.steps if s.kind == "answer"]
-
-    assert answers[:6] == ["naglakaw", "maglakaw", "nag-ampo", "mag-ampo", "nagluto", "magluto"]
-    assert answers[6:12] == ["maglakaw", "nag-ampo", "magluto", "naglakaw", "mag-ampo", "nagluto"]
-    assert answers[12:] == ["Mag-ampo ta."]
-    mixed = drill.steps[drill.steps.index(DrillStep("answer", "magluto", "ceb")) + 1 :]
-    assert mixed[:4] == [
-        DrillStep("prompt", 'How do you say "will walk"?', "en"),
-        DrillStep("answer", "maglakaw", "ceb"),
-        DrillStep("prompt", "prayed.", "en"),
-        DrillStep("answer", "nag-ampo", "ceb"),
-    ]
-
-
-def test_there_is_no_mixed_round_unless_asked_for():
+def test_every_form_is_asked_twice_when_there_are_no_new_roots():
+    """Your turn, then everything once more: with no new roots that is the same
+    forms again, a second time through in another order."""
     drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
-    assert len([s for s in drill.steps if s.kind == "answer"]) == 4
+
+    yours, everything = _rounds(drill)
+    assert sorted(yours) == sorted(everything) == sorted(_forms(_MAG_NAG, "lakaw", "ampo"))
 
 
 def test_roots_that_cannot_be_drilled_are_dropped_and_named():
@@ -242,7 +311,7 @@ def test_roots_that_cannot_be_drilled_are_dropped_and_named():
         ("andam", "no checked English for this root in this pattern"),
         ("tulog", "native news does not use every form"),
     ]
-    assert [s.text for s in drill.steps if s.kind == "answer"] == ["naglakaw", "maglakaw", "nag-ampo", "mag-ampo"]
+    assert {s.text for s in drill.steps if s.kind == "answer"} == {"naglakaw", "maglakaw", "nag-ampo", "mag-ampo"}
 
 
 def test_a_dropped_new_root_is_named_too():

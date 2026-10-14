@@ -321,7 +321,7 @@ def test_the_lesson_is_one_drill_section_and_says_what_it_is(owner):
         "new_roots": ["anhi", "lakaw"],
     }
     drill = build_affix_drill(
-        "ceb", _MO_MI, roots=list(plan.roots), new_roots=list(plan.new_roots), lines=list(plan.lines), again=True
+        "ceb", _MO_MI, roots=list(plan.roots), new_roots=list(plan.new_roots), lines=list(plan.lines)
     )
     assert [p.text for p in lesson.sections[0].phrases[1:]] == [step.text for step in drill.steps]
     # Each of the ten forms is asked twice, then the two lines the owner has every word of.

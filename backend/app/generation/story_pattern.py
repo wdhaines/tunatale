@@ -10,11 +10,14 @@ words and not a pattern; the target is three roots in both cells
 (``scripts/report_affix_exposure.py``). The roots come from the language's own
 worded table, so every form asked for is one the language vouches for.
 
-**After the story exists**, a short affix drill on the roots the story actually
+**After the story exists**, an affix drill on the roots the story actually
 used is appended as the lesson's last section (:func:`add_closing_drill`). It
-records itself the way a grammar lesson does, in
-``generation_metadata["affix_drill"]``, so Mark as Listened adds contrast cards
-for a story lesson with no code of its own.
+also asks for up to :data:`NEW` roots the story did NOT use, which it names and
+does not model: the owner chose closing drills over standalone grammar lessons
+(2026-10-13), and a root nobody modelled is the part of the grammar lesson
+that tests the affix and not a remembered word. The drill records itself the
+way a grammar lesson does, in ``generation_metadata["affix_drill"]``, so Mark
+as Listened adds contrast cards for a story lesson with no code of its own.
 
 Which pattern a day gets is :func:`pattern_for_day`: its own if it names one,
 otherwise the language's patterns in rotation over the curriculum's thematic
@@ -25,12 +28,15 @@ storing the choice.
 
 from __future__ import annotations
 
+import random
+
 from app.generation.affix_drill import MIN_ROOTS, DrillRoot, build_affix_drill, drill_root
 from app.generation.drill_lines import admitted_lines
 from app.generation.grammar_lesson import (
     _SECOND_SENTENCE,
     _WORD,
     _fold,
+    _understood,
     lesson_lines,
     pattern_title,
     understood_roots,
@@ -44,7 +50,8 @@ from app.srs.a1_morphology import AffixPattern
 from app.srs.lemmatizer import Lemmatizer
 
 ASKED = 4  # roots the story is asked to use in both forms; the target is three
-DRILLED = 3  # roots in the closing drill: it ends a lesson, it is not one
+DRILLED = 3  # roots the closing drill models: it ends a lesson, it is not one
+NEW = 2  # roots it asks for without modelling them
 CLOSING_LINES = 2
 
 
@@ -110,6 +117,13 @@ def add_closing_drill(
     is a word and not a pattern, and the lesson is left as it was. So is a
     lesson that already has a drill, and a grammar lesson, which is one.
 
+    Up to :data:`NEW` more roots are asked for and not modelled. Each is one
+    the learner understands, whose forms mean what the root means
+    (``DrillRoot.transparent``), and which this story never said. Which of
+    them is drawn from the lesson's title, so a lesson rebuilt from its story
+    asks for the same ones and the next lesson for others. None with no
+    *srs_db*: there is no deck to say what is understood.
+
     The drill ends on whole lines of the story only where the learner has every
     word (``drill_lines.admitted_lines``). What this lesson teaches counts as
     had: the drilled forms, and the words of its key phrases. With no *srs_db*
@@ -130,6 +144,10 @@ def add_closing_drill(
     drilled = [root for *_, root in sorted(used, key=lambda entry: entry[:2])[:DRILLED]]
     if len(drilled) < MIN_ROOTS:
         return
+    said = {root.root for *_, root in used}
+    understood = _understood(language.code, pattern, srs_db) if srs_db is not None else {}
+    unsaid = [name for name, root in understood.items() if root.transparent and name not in said]
+    new_roots = random.Random(f"{lesson.title}:{pattern.key}").sample(unsaid, min(NEW, len(unsaid)))
 
     forms = {_fold(form) for root in drilled for form, _ in root.cells}
     taught = forms | {_fold(word) for key_phrase in lesson.key_phrases for word in _WORD.findall(key_phrase.phrase)}
@@ -147,6 +165,7 @@ def add_closing_drill(
         language.code,
         pattern,
         roots=roots,
+        new_roots=new_roots,
         lines=sorted(whole, key=lambda line: len(line[0].split()))[:CLOSING_LINES],
     )
     voices = language.tts_voice_map
@@ -155,7 +174,7 @@ def add_closing_drill(
             drill, narrator_voice=voices["narrator"], l2_voice=voices.get("key-phrases") or voices["female-1"]
         )
     )
-    lesson.generation_metadata["affix_drill"] = {"pattern": pattern.key, "roots": roots, "new_roots": []}
+    lesson.generation_metadata["affix_drill"] = {"pattern": pattern.key, "roots": roots, "new_roots": new_roots}
 
 
 def add_day_drill(

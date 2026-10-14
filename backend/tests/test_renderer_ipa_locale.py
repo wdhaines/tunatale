@@ -260,7 +260,7 @@ async def test_every_form_of_a_real_affix_drill_reaches_the_voice_with_a_reading
     Nothing here names a form, so a root added to the pattern is covered.
     """
     pattern = next(p for p in get_a1_morphology("ceb").patterns if p.key == "mo-mi")
-    drill = build_affix_drill("ceb", pattern, roots=["uban", "inom", "adto"], new_roots=["anhi", "lakaw"], again=True)
+    drill = build_affix_drill("ceb", pattern, roots=["uban", "inom", "adto"], new_roots=["anhi", "lakaw"])
     assert drill.dropped == []
     section = build_affix_drill_section(drill, narrator_voice=_NARRATOR, l2_voice=_CEB_VOICE)
     lesson = Lesson(title="Affix drill", language_code="ceb", sections=[section])

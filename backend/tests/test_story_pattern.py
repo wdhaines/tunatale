@@ -211,18 +211,96 @@ def _closed(lines, srs_db, *, key_phrases=()):
     return lesson
 
 
-def test_a_closing_drill_is_short(srs_db):
+def test_a_closing_drill_asks_for_every_form_twice_and_ends_on_the_line(srs_db):
     for word in ("ko", "ugma"):
         _card(srs_db, word, recognition=SRSState.REVIEW)
     lesson = _closed(_WAKE, srs_db)
     # Three roots, each named once, each of its two forms built up once
-    # (tunatale-ve4p.16) and answered once; then the one whole line of the
-    # story that says a drilled form in a single sentence, taught and then
-    # asked. No second, mixed round: every answer is asked exactly once.
+    # (tunatale-ve4p.16). Then the six forms are asked for, and asked for once
+    # more in another order (the owner, 2026-10-13: closing drills only, so the
+    # closing drill is given what the grammar lesson had). Last, the one whole
+    # line of the story that says a drilled form in a single sentence.
     answers = _answers(lesson)
-    assert len(answers) == 3 * 2 + 1
-    assert len(set(answers)) == len(answers)
+    forms = answers[:-1]
+    assert len(forms) == 3 * 2 * 2
+    assert sorted(forms[:6]) == sorted(forms[6:]) == sorted(set(forms))
     assert answers[-1] == "Mouban ko ugma."
+
+
+# --- roots the story did not use (the owner, 2026-10-13: closing drills only) ---
+#
+# The grammar lesson asked for roots it never modelled, and getting those right
+# can only be the affix. With no new grammar lessons, the closing drill asks
+# for up to two: roots the learner understands, whose forms mean what the root
+# means, and which this story never said.
+
+
+def _understands(srs_db, *roots: str) -> None:
+    for root in roots:
+        _card(srs_db, root, recognition=SRSState.REVIEW)
+
+
+def _new_roots(lesson) -> list[str]:
+    return lesson.generation_metadata["affix_drill"]["new_roots"]
+
+
+def test_the_drill_asks_for_two_roots_the_story_did_not_use_without_modelling_them(srs_db):
+    _understands(srs_db, "lakaw", "balik", "kaon", "sulti")
+
+    lesson = _closed(_WAKE, srs_db)
+
+    assert lesson.generation_metadata["affix_drill"]["roots"] == ["adto", "anhi", "uban"]
+    new = _new_roots(lesson)
+    assert len(new) == 2
+    assert set(new) < {"lakaw", "balik", "kaon", "sulti"}
+    phrases = lesson.sections[-1].phrases
+    modelled = [p.text for p in phrases if p.role == "model"]
+    for root in new:
+        future, past = f"mo{root}", f"mi{root}"
+        # Named, so the learner knows which root is meant; its forms are theirs to build.
+        assert root in modelled
+        assert future not in modelled
+        assert past not in modelled
+        # Once among the new roots, once more among all of them.
+        assert _answers(lesson).count(future) == _answers(lesson).count(past) == 2
+
+
+def test_a_root_the_story_said_is_not_asked_for_as_new(srs_db):
+    """The wake says `miinom`. It is the fourth root, so it is not drilled; it
+    was heard a minute ago, so asking for it proves nothing either."""
+    _understands(srs_db, "inom", "lakaw")
+
+    assert _new_roots(_closed(_WAKE, srs_db)) == ["lakaw"]
+
+
+def test_a_root_whose_forms_have_to_be_shown_is_not_asked_for_as_new(srs_db):
+    """`sulod` is "inside" and `mosulod` is "will enter": nothing in the prompt leads there."""
+    _understands(srs_db, "sulod", "lakaw")
+
+    assert _new_roots(_closed(_WAKE, srs_db)) == ["lakaw"]
+
+
+def test_a_root_the_learner_does_not_understand_is_not_asked_for_as_new(srs_db):
+    _understands(srs_db, "lakaw")
+    _card(srs_db, "balik", recognition=SRSState.NEW)
+
+    assert _new_roots(_closed(_WAKE, srs_db)) == ["lakaw"]
+
+
+def test_one_lesson_always_asks_for_the_same_new_roots_and_another_lesson_for_others(srs_db):
+    """Drawn from the lesson, not from the clock: a lesson rebuilt from its
+    story is the lesson it was. And not the table's first two every time, or
+    after one lesson they would be remembered words and not built ones."""
+    _understands(srs_db, "lakaw", "balik", "kaon", "sulti", "tan-aw")
+
+    def new(title: str) -> tuple[str, ...]:
+        lesson = _story_lesson(title, _WAKE)
+        add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=srs_db, lemmatizer=None)
+        return tuple(_new_roots(lesson))
+
+    titles = [f"An Evening Wake, part {n}" for n in range(8)]
+    assert [new(title) for title in titles] == [new(title) for title in titles]
+    assert len({frozenset(new(title)) for title in titles}) > 1
 
 
 # --- which whole lines it may end on (tunatale-ve4p.20) -------------------------
@@ -239,7 +317,7 @@ def test_a_line_with_a_word_the_learner_has_not_met_is_not_asked_for(srs_db):
 
     answers = _answers(_closed(_WAKE, srs_db))
 
-    assert len(answers) == 3 * 2
+    assert len(answers) == 3 * 2 * 2
     assert "Mouban ko ugma." not in answers
 
 
@@ -266,7 +344,10 @@ def test_with_no_deck_to_ask_the_drill_ends_on_its_forms(srs_db):
     for word in ("ko", "ugma"):
         _card(srs_db, word, recognition=SRSState.REVIEW)
 
-    assert len(_answers(_closed(_WAKE, None))) == 3 * 2
+    lesson = _closed(_WAKE, None)
+
+    assert len(_answers(lesson)) == 3 * 2 * 2
+    assert _new_roots(lesson) == []
 
 
 def test_the_lemmatizer_handed_in_is_the_one_that_reads_the_line(srs_db):

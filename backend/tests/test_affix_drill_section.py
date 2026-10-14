@@ -85,8 +85,8 @@ def test_a_real_drill_keeps_every_step_in_order():
     section = _section(drill)
 
     assert [p.text for p in section.phrases[1:]] == [step.text for step in drill.steps]
-    assert [p.role for p in section.phrases].count("prompt") == 4
-    assert [p.role for p in section.phrases].count("answer") == 4
+    assert [p.role for p in section.phrases].count("prompt") == 8
+    assert [p.role for p in section.phrases].count("answer") == 8
 
 
 def test_a_drill_section_survives_the_stored_form():
