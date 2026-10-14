@@ -97,6 +97,91 @@ def test_a_new_form_is_built_up_the_way_key_phrases_builds_a_phrase():
     ]
 
 
+# --- a root is built up once (the owner, 2026-10-14) ---------------------------
+#
+# "The Pimsleur buildups are great, but they're too repetitive. We shouldn't
+# need to Pimsleur rebuild the root once the root is introduced." Day 5 said
+# `lod, su, sulod` for mosulod and again for misulod, and `to, ad, adto` three
+# times. The first form of a root is built up in full; after that a form adds
+# only its affix, and a word already built is said whole.
+
+
+def test_the_second_form_of_a_root_adds_only_its_affix():
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
+
+    start = drill.steps.index(DrillStep("model", "is walking", "en"))
+    assert drill.steps[start : start + 4] == [
+        DrillStep("model", "is walking", "en"),
+        DrillStep("model", "naglakaw", "ceb"),
+        DrillStep("model", "nag", "ceb", "naglakaw", (0, 1)),
+        DrillStep("model", "naglakaw", "ceb"),
+    ]
+
+
+def test_a_hyphenated_form_drops_its_roots_pieces_too():
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
+
+    start = drill.steps.index(DrillStep("model", "is praying", "en"))
+    assert drill.steps[start : start + 4] == [
+        DrillStep("model", "is praying", "en"),
+        DrillStep("model", "nag-ampo", "ceb"),
+        DrillStep("model", "nag", "ceb", "nag-ampo", (0, 1)),
+        DrillStep("model", "nag-ampo", "ceb"),
+    ]
+
+
+def test_a_form_already_built_is_said_whole_inside_a_line():
+    lines = [("Naglakaw si Paul sa dalan.", "Paul walked on the road.")]
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], lines=lines)
+
+    start = drill.steps.index(DrillStep("model", "Paul walked on the road.", "en"))
+    assert [step.text for step in drill.steps[start + 1 : start + 15]] == [
+        "Naglakaw si Paul sa dalan.",
+        "lan",
+        "da",
+        "dalan",
+        "sa",
+        "sa dalan.",
+        "ul",
+        "pa",
+        "paul",
+        "Paul sa dalan.",
+        "si",
+        "si Paul sa dalan.",
+        "naglakaw",
+        "Naglakaw si Paul sa dalan.",
+    ]
+
+
+def test_a_line_word_on_a_built_root_adds_only_its_affix():
+    """molakaw is no form of mag-/nag-, but its root was built by maglakaw."""
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], lines=[("Molakaw ko.", "I will walk.")])
+
+    start = drill.steps.index(DrillStep("model", "I will walk.", "en"))
+    assert drill.steps[start + 1 : start + 6] == [
+        DrillStep("model", "Molakaw ko.", "ceb"),
+        DrillStep("model", "ko", "ceb", "ko", (0, 1)),
+        DrillStep("model", "mo", "ceb", "Molakaw", (0, 1)),
+        DrillStep("model", "molakaw", "ceb", "Molakaw", (0, 3)),
+        DrillStep("model", "Molakaw ko.", "ceb"),
+    ]
+
+
+def test_a_word_built_in_one_line_is_said_whole_in_the_next():
+    lines = [("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Nag-ampo sa dalan.", "Prayed on the road.")]
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], lines=lines)
+
+    start = drill.steps.index(DrillStep("model", "Prayed on the road.", "en"))
+    assert [step.text for step in drill.steps[start + 1 : start + 7]] == [
+        "Nag-ampo sa dalan.",
+        "dalan",
+        "sa",
+        "sa dalan.",
+        "nag-ampo",
+        "Nag-ampo sa dalan.",
+    ]
+
+
 def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_the_lines():
     lines = [("Naglakaw si Paul sa dalan.", "Paul walked on the road."), ("Mag-ampo ta.", "Let's pray.")]
     drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], new_roots=["luto", "dala"], lines=lines)
@@ -112,13 +197,17 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_
         DrillStep("model", "will walk", "en"),
         *_built("maglakaw"),
         DrillStep("model", "is walking", "en"),
-        *_built("naglakaw"),
+        DrillStep("model", "naglakaw", "ceb"),
+        DrillStep("model", "nag", "ceb", "naglakaw", (0, 1)),
+        DrillStep("model", "naglakaw", "ceb"),
         DrillStep("model", "pray", "en"),
         DrillStep("model", "ampo", "ceb"),
         DrillStep("model", "will pray", "en"),
         *_built("mag-ampo"),
         DrillStep("model", "is praying", "en"),
-        *_built("nag-ampo"),
+        DrillStep("model", "nag-ampo", "ceb"),
+        DrillStep("model", "nag", "ceb", "nag-ampo", (0, 1)),
+        DrillStep("model", "nag-ampo", "ceb"),
     ]
 
     modelled, new = _forms(_MAG_NAG, "lakaw", "ampo"), _forms(_MAG_NAG, "luto", "dala")
@@ -144,9 +233,14 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_
     assert drill.steps[taught:] == [
         DrillStep("model", "Listen and repeat.", "en"),
         DrillStep("model", "Paul walked on the road.", "en"),
-        *_built("Naglakaw si Paul sa dalan."),
+        # naglakaw and mag-ampo were built as forms: each is said whole here.
+        *[
+            step
+            for step in _built("Naglakaw si Paul sa dalan.")
+            if step.source_word != "Naglakaw" or step.span == (0, 3)
+        ],
         DrillStep("model", "Let's pray.", "en"),
-        *_built("Mag-ampo ta."),
+        *[step for step in _built("Mag-ampo ta.") if step.source_word != "Mag-ampo" or step.span == (0, 3)],
         DrillStep("prompt", 'How do you say "Paul walked on the road"?', "en"),
         DrillStep("answer", "Naglakaw si Paul sa dalan.", "ceb"),
         DrillStep("prompt", "Let's pray.", "en"),
