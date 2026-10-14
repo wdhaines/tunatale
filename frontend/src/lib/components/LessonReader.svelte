@@ -155,6 +155,13 @@
 			<p class="muted">{t('lessonReader.noTranscript')}</p>
 		{/if}
 	</section>
+	{#if content.drill}
+		<!-- What the lesson's closing drill covers, under the story it closes
+		     (bd tunatale-ve4p.25). Read mode only: Listen has nothing to read. -->
+		<section class="card">
+			<DrillForms drill={content.drill} />
+		</section>
+	{/if}
 {/if}
 
 <style>

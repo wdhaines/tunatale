@@ -329,6 +329,48 @@ for (const [name, width, height] of [
     expect(await overflowX(page)).toBe(0);
   });
 
+  test(`a story lesson that ends on a drill, read on ${name}: the table under the story stays inside the screen`, async ({
+    page,
+    request,
+  }) => {
+    test.skip(!(await backendAvailable(request)), "Backend not available");
+    await page.setViewportSize({ width, height });
+    // The real story lesson, served with a drill beside its own sections.
+    await page.route("**/api/story/*", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const real = await (await route.fetch()).json();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ...real, drill: DRILL }),
+      });
+    });
+    await page.goto(`/c/${await curriculumId(request)}`);
+    await page.getByRole("button", { name: "Day 1" }).click();
+    await page.getByRole("button", { name: /^Read$/ }).click();
+
+    const rows = page.locator(".drill-root");
+    await expect(rows).toHaveCount(2, { timeout: 15000 });
+    // The story is still there above it: this is not the drill-only page.
+    await expect(page.locator(".transcript-wrapper")).toBeAttached();
+
+    const measured = await rows.evaluateAll((els) =>
+      els.map((el) =>
+        [...el.querySelectorAll(".root-cell, .form-cell")].map((cell) => {
+          const c = cell.getBoundingClientRect();
+          const w = cell.querySelector(".root, .form")!.getBoundingClientRect();
+          return { left: c.left, right: c.right, wordRight: w.right };
+        }),
+      ),
+    );
+    for (const cells of measured) {
+      expect(cells).toHaveLength(3);
+      expect(cells[2].right).toBeLessThanOrEqual(width);
+      for (const cell of cells) expect(cell.wordRight).toBeLessThanOrEqual(cell.right + 0.5);
+    }
+    expect(await overflowX(page)).toBe(0);
+  });
+
   test(`the listen preview's affix cards on ${name}: columns line up and every control is on the screen`, async ({
     page,
     request,
