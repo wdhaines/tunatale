@@ -15,7 +15,7 @@ from datetime import UTC, date, datetime, time
 
 import pytest
 
-from app.generation.drill_lines import admitted_lines, fold
+from app.generation.drill_lines import admitted_lines, fold, understood
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
@@ -185,3 +185,93 @@ def test_without_a_lemmatizer_the_languages_own_is_used(db):
         _card(db, word, SRSState.REVIEW)
 
     assert admitted_lines(_lesson(_LINE), srs_db=db, lemmatizer=None, taught=()) == {_LINE}
+
+
+# --- a card buried for the day (the owner's day 5, 2026-10-13) -------------------
+#
+# Grading one side of a card buries the other until the next rollover. The owner
+# reviews the deck daily, so on any day a lesson is made some understood words
+# are in that state, and reading it as "not understood" dropped their lines and,
+# on day 5, every root the drill could have asked for unmodelled (`anhi`, whose
+# recognition side was buried by that morning's review of its production side).
+# What a buried card is underneath is what the rollover sweep will turn it back
+# into (``db_queue.unbury_if_needed``): REVIEW once it has been reviewed.
+
+
+def _bury(db, text: str, *, reps: int, last_review: date | None = None) -> None:
+    """Put *text*'s recognition side where a sibling's grade puts it."""
+    due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+    db.update_direction(
+        db.get_collocation(text).guid,
+        Direction.RECOGNITION,
+        DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=due,
+            stability=5.0,
+            difficulty=4.0,
+            reps=reps,
+            last_review=last_review,
+            state=SRSState.BURIED,
+            bury_kind="sched",
+        ),
+    )
+
+
+def test_a_word_whose_card_is_buried_for_the_day_is_still_had(db):
+    for word in ("mouban", "ko", "ugma"):
+        _card(db, word, SRSState.REVIEW)
+    _bury(db, "ugma", reps=5)
+
+    assert _admitted(db, _LINE) == {_LINE}
+
+
+def test_a_word_buried_before_it_was_ever_reviewed_is_not_had(db):
+    """A NEW card is buried too, when its sibling is introduced. It comes back NEW."""
+    for word in ("mouban", "ko"):
+        _card(db, word, SRSState.REVIEW)
+    _card(db, "ugma", SRSState.NEW)
+    _bury(db, "ugma", reps=0)
+
+    assert _admitted(db, _LINE) == set()
+
+
+def test_a_word_inside_a_phrase_whose_card_is_buried_for_the_day_is_still_had(db):
+    _card(db, "maayong buntag", SRSState.REVIEW, words=2)
+    _bury(db, "maayong buntag", reps=5)
+
+    assert _admitted(db, "Maayong buntag.") == {"Maayong buntag."}
+
+
+@pytest.mark.parametrize(
+    ("state", "reps", "last_review", "expected"),
+    [
+        (SRSState.REVIEW, 5, None, True),
+        (SRSState.KNOWN, 0, None, True),
+        (SRSState.BURIED, 5, None, True),
+        # A seeded starter card has a schedule and no reps; last_review marks it.
+        (SRSState.BURIED, 0, date(2026, 10, 1), True),
+        (SRSState.BURIED, 0, None, False),
+        (SRSState.NEW, 0, None, False),
+        (SRSState.LEARNING, 1, None, False),
+        (SRSState.RELEARNING, 6, None, False),
+        (SRSState.SUSPENDED, 9, None, False),
+    ],
+)
+def test_understood_reads_a_buried_card_as_what_the_rollover_will_make_of_it(state, reps, last_review, expected):
+    due = datetime.combine(date.today(), time(4, 0), tzinfo=UTC)
+    direction = DirectionState(
+        direction=Direction.RECOGNITION,
+        due_at=due,
+        stability=5.0,
+        difficulty=4.0,
+        reps=reps,
+        last_review=last_review,
+        state=state,
+        bury_kind="sched" if state is SRSState.BURIED else None,
+    )
+
+    assert understood(direction) is expected
+
+
+def test_no_card_is_not_understood():
+    assert understood(None) is False

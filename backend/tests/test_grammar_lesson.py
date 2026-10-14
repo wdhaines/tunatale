@@ -303,6 +303,44 @@ def test_a_superseded_lesson_is_not_read(owner):
     assert "Moanhi siya." not in [text for text, _ in plan.lines]
 
 
+# --- a root whose card is buried for the day (the owner's day 5) --------------
+
+
+def _bury(srs_db, root: str, *, reps: int) -> None:
+    """Put *root*'s recognition side where a grade of its production side puts it."""
+    srs_db.update_direction(
+        srs_db.get_collocation(root).guid,
+        Direction.RECOGNITION,
+        DirectionState(
+            direction=Direction.RECOGNITION,
+            due_at=datetime.combine(date.today(), time(4, 0), tzinfo=UTC),
+            stability=5.0,
+            difficulty=4.0,
+            reps=reps,
+            state=SRSState.BURIED,
+            bury_kind="sched",
+        ),
+    )
+
+
+def test_a_root_buried_for_the_day_is_still_understood(owner):
+    """`anhi` on 2026-10-13: reviewed that morning, so its recognition side was
+    buried, and the drill made that evening could ask for no root unmodelled."""
+    srs_db, _ = owner
+    before = understood_roots("ceb", _MO_MI, srs_db)
+    _bury(srs_db, "anhi", reps=5)
+
+    assert "anhi" in before
+    assert understood_roots("ceb", _MO_MI, srs_db) == before
+
+
+def test_a_root_buried_while_it_was_still_new_is_not_understood(owner):
+    srs_db, _ = owner
+    _bury(srs_db, "balik", reps=0)
+
+    assert "balik" not in understood_roots("ceb", _MO_MI, srs_db)
+
+
 # --- the lesson ------------------------------------------------------------
 
 
