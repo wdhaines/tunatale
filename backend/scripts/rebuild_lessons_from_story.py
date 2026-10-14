@@ -76,6 +76,7 @@ from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
 from app.audio.renderer import build_lesson_renderer  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
 from app.config import settings  # noqa: E402
+from app.generation.known_buildups import trim_well_known_buildups  # noqa: E402
 from app.generation.story import build_lesson_from_story  # noqa: E402
 from app.generation.story_pattern import add_day_drill  # noqa: E402
 from app.languages import (  # noqa: E402
@@ -107,6 +108,9 @@ def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, l
     # lines are chosen against the learner's deck AS IT IS NOW (*srs_db*), so a
     # rebuild can end on lines the first build held back.
     add_day_drill(rebuilt, language, curriculum, day, srs_db=srs_db, lemmatizer=None, store=store)
+    # As publishing does: words the learner knows well are not taken apart.
+    if srs_db is not None:
+        trim_well_known_buildups(rebuilt, srs_db, None)
     return rebuilt
 
 

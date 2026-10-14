@@ -25,7 +25,7 @@ import asyncio
 import json
 import sys
 from dataclasses import replace
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
@@ -678,6 +678,34 @@ class TestTheClosingDrill:
         assert with_deck[-1] == "Mouban ko ugma."
         assert "Moadto ko sa haya." not in with_deck  # `sa` and `haya` are unmet
         assert "Mouban ko ugma." not in answers(None)
+
+    def test_a_word_the_learner_knows_well_is_not_taken_apart(self):
+        """As at publish (app.generation.known_buildups): the owner, 2026-10-14."""
+        store, language = self._store_with(self._wake([("Maayong gabii, Liza.", "Good evening, Liza.")]))
+        srs_db = SRSDatabase(":memory:")
+        srs_db.add_collocation(
+            SyntacticUnit(text="gabii", translation="evening", word_count=1, difficulty=1, source="test"),
+            language_code="ceb",
+        )
+        srs_db.update_direction(
+            srs_db.get_collocation("gabii").guid,
+            Direction.RECOGNITION,
+            DirectionState(
+                direction=Direction.RECOGNITION,
+                due_at=datetime.combine(date.today() + timedelta(days=365), time(4, 0), tzinfo=UTC),
+                stability=200.0,
+                difficulty=4.0,
+                reps=8,
+                state=SRSState.REVIEW,
+            ),
+        )
+
+        def pieces_of_gabii(deck) -> list[str]:
+            rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=deck)
+            return [p.text for p in rebuilt.sections[0].phrases if p.source_word == "gabii" and p.text != "gabii"]
+
+        assert pieces_of_gabii(None)
+        assert pieces_of_gabii(srs_db) == []
 
     def test_the_script_opens_the_deck_that_lives_beside_the_lessons(self, tmp_path, monkeypatch, capsys):
         """One file holds the lessons and the deck. A stored lesson whose drill
