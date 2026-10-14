@@ -133,7 +133,7 @@ describe("a story lesson that ends with a drill", () => {
     expect(container.querySelector(".mastery-placeholder")).toBeTruthy();
   });
 
-  it("is still read like any other lesson: toggle, transcript, no table", () => {
+  it("is still read like any other lesson, with what its drill covers under the story", () => {
     const { container, getByText, getByRole } = renderPage(
       storyWithDrill,
       transcript as TranscriptData,
@@ -143,8 +143,23 @@ describe("a story lesson that ends with a drill", () => {
     // what "no toggle" there means.
     expect(getByRole("button", { name: /^Read$/ })).toBeTruthy();
     expect(getByRole("button", { name: /^Listen$/ })).toBeTruthy();
-    expect(getByText("kavo prosim")).toBeTruthy();
-    expect(container.querySelector(".drill-root")).toBeNull();
     expect(container.querySelector(".player.compact")).toBeTruthy();
+    // The table of forms follows the story. No new grammar lessons are made
+    // (the owner, 2026-10-13), so this is the page where a learner can see what
+    // a drill covered, and where "not begun / begun" is read.
+    const story = getByText("kavo prosim");
+    const table = container.querySelector(".drill-root")!;
+    expect(table).toBeTruthy();
+    expect(story.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      [...container.querySelectorAll(".drill-labels .label")].map((e) => e.textContent),
+    ).toEqual(["not begun", "begun"]);
+  });
+
+  it("shows no table while it is being listened to: that page has nothing to read", () => {
+    lessonModePref.set("listen");
+    const { container } = renderPage(storyWithDrill, transcript as TranscriptData);
+
+    expect(container.querySelector(".drill-root")).toBeNull();
   });
 });
