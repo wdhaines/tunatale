@@ -1802,7 +1802,7 @@
         "type": "object"
       },
       "LessonDrill": {
-        "description": "LessonResponse.drill: the pattern a lesson drills and the roots it drills it on.\n\n``labels`` name the columns the forms are laid out in, one per form of a\nroot and in the same order; empty for a pattern whose language names none.",
+        "description": "LessonResponse.drill: the pattern a lesson drills and the roots it drills it on.\n\n``labels`` name the columns the forms are laid out in, one per form of a\nroot and in the same order; empty for a pattern whose language names none.\n``progress`` is present when the route had the learner's deck to read.",
         "properties": {
           "labels": {
             "default": [],
@@ -1815,6 +1815,16 @@
           "pattern": {
             "title": "Pattern",
             "type": "string"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LessonDrillProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "roots": {
             "items": {
@@ -1853,6 +1863,65 @@
           "english"
         ],
         "title": "LessonDrillForm",
+        "type": "object"
+      },
+      "LessonDrillProgress": {
+        "description": "LessonDrill.progress: how far the learner is with the pattern, beside what the pace gate needs.\n\n``pattern_gate.Progress.summary``. A review-only pattern needs drill days\nalone, so its card targets are 0. ``stuck`` is a pattern still short of\nthe gate after five drill days.",
+        "properties": {
+          "drill_days": {
+            "title": "Drill Days",
+            "type": "integer"
+          },
+          "drill_days_needed": {
+            "title": "Drill Days Needed",
+            "type": "integer"
+          },
+          "first_passes": {
+            "title": "First Passes",
+            "type": "integer"
+          },
+          "first_passes_needed": {
+            "title": "First Passes Needed",
+            "type": "integer"
+          },
+          "met": {
+            "title": "Met",
+            "type": "boolean"
+          },
+          "pass_rate_needed": {
+            "title": "Pass Rate Needed",
+            "type": "number"
+          },
+          "passes": {
+            "title": "Passes",
+            "type": "integer"
+          },
+          "review_only": {
+            "title": "Review Only",
+            "type": "boolean"
+          },
+          "reviews": {
+            "title": "Reviews",
+            "type": "integer"
+          },
+          "stuck": {
+            "title": "Stuck",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "review_only",
+          "drill_days",
+          "drill_days_needed",
+          "first_passes",
+          "first_passes_needed",
+          "reviews",
+          "passes",
+          "pass_rate_needed",
+          "met",
+          "stuck"
+        ],
+        "title": "LessonDrillProgress",
         "type": "object"
       },
       "LessonDrillRoot": {

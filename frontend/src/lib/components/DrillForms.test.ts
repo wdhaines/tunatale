@@ -115,3 +115,104 @@ describe("DrillForms", () => {
     expect(container.querySelectorAll("span.form")).toHaveLength(4);
   });
 });
+
+// How far the learner is with the drill's pattern, under the table (bd
+// tunatale-ve4p.30, option B of the mockup): the three parts of the pace gate
+// beside what each needs, amber with a Stuck chip after five drill days.
+describe("DrillForms progress", () => {
+  type Progress = NonNullable<LessonDrill["progress"]>;
+  const onTrack: Progress = {
+    review_only: false,
+    drill_days: 1,
+    drill_days_needed: 2,
+    first_passes: 0,
+    first_passes_needed: 4,
+    reviews: 0,
+    passes: 0,
+    pass_rate_needed: 0.8,
+    met: false,
+    stuck: false,
+  };
+
+  function meters(container: HTMLElement) {
+    return [...container.querySelectorAll(".meter")].map((m) => ({
+      label: m.querySelector(".meter-label")?.textContent,
+      value: m.querySelector(".meter-value")?.textContent,
+      width: (m.querySelector(".bar i") as HTMLElement | null)?.style.width,
+      short: m.querySelector(".bar i")?.classList.contains("short"),
+    }));
+  }
+
+  it("shows no meters when the lesson came without progress", () => {
+    const { container } = render(DrillForms, { props: { drill } });
+    expect(container.querySelector(".meters")).toBeNull();
+  });
+
+  it("puts each part of the gate beside what it needs", () => {
+    const { container, getByText } = render(DrillForms, {
+      props: { drill: { ...drill, progress: onTrack } },
+    });
+
+    expect(getByText("Before the next pattern")).toBeTruthy();
+    expect(meters(container)).toEqual([
+      { label: "Days you heard the drill", value: "1 / 2", width: "50%", short: false },
+      { label: "Cards past a first review", value: "0 / 4", width: "0%", short: false },
+      { label: "Reviews passed", value: "none yet", width: "0%", short: false },
+    ]);
+    expect(container.querySelector(".chip")).toBeNull();
+  });
+
+  it("measures the pass rate against the 80% it needs", () => {
+    const { container } = render(DrillForms, {
+      props: { drill: { ...drill, progress: { ...onTrack, reviews: 6, passes: 4 } } },
+    });
+    // 4 of 6 is 67%, which is 83% of the way to 80%.
+    expect(meters(container)[2]).toEqual({
+      label: "Reviews passed",
+      value: "67% / 80%",
+      width: "83%",
+      short: false,
+    });
+  });
+
+  it("goes amber with a Stuck chip, on the parts that are short, after five drill days", () => {
+    const stuck = {
+      ...onTrack,
+      drill_days: 5,
+      first_passes: 2,
+      reviews: 6,
+      passes: 4,
+      stuck: true,
+    };
+    const { container } = render(DrillForms, { props: { drill: { ...drill, progress: stuck } } });
+
+    expect(container.querySelector(".chip")?.textContent).toBe("Stuck");
+    expect(meters(container).map((m) => [m.value, m.width, m.short])).toEqual([
+      ["5 / 2", "100%", false],
+      ["2 / 4", "50%", true],
+      ["67% / 80%", "83%", true],
+    ]);
+  });
+
+  it("says Passed once the pattern has met the gate", () => {
+    const met = { ...onTrack, drill_days: 2, first_passes: 5, reviews: 5, passes: 5, met: true };
+    const { container } = render(DrillForms, { props: { drill: { ...drill, progress: met } } });
+    expect(container.querySelector(".chip")?.textContent).toBe("Passed");
+  });
+
+  it("shows a review-only pattern its drill days alone", () => {
+    const reviewOnly = {
+      ...onTrack,
+      review_only: true,
+      drill_days_needed: 1,
+      first_passes_needed: 0,
+      pass_rate_needed: 0,
+    };
+    const { container } = render(DrillForms, {
+      props: { drill: { ...drill, progress: reviewOnly } },
+    });
+    expect(meters(container)).toEqual([
+      { label: "Days you heard the drill", value: "1 / 1", width: "100%", short: false },
+    ]);
+  });
+});

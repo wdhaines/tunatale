@@ -402,7 +402,7 @@ async def get_lesson_by_day(curriculum_id: str, day: int, request: Request):
     if result is None:
         raise HTTPException(status_code=404, detail=f"No lesson found for day {day}")
     lesson_id, lesson = result
-    return serialize_lesson(lesson_id, lesson)
+    return serialize_lesson(lesson_id, lesson, srs_db=request.state.srs_db, store=store)
 
 
 # ── Pipeline status and control ──────────────────────────────────────────────

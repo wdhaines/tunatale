@@ -245,7 +245,7 @@ async def get_lesson(lesson_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     lesson = Lesson.from_json(row["data_json"])
-    return serialize_lesson(lesson_id, lesson, day=row["day"])
+    return serialize_lesson(lesson_id, lesson, day=row["day"], srs_db=request.state.srs_db, store=store)
 
 
 @router.post("/{lesson_id}/regloss", status_code=200, response_model=ReglossLessonResponse)

@@ -78,6 +78,26 @@ class Progress:
     def stuck(self) -> bool:
         return not self.met and self.drill_days >= STUCK_AFTER
 
+    def summary(self) -> dict:
+        """Each part of the gate beside what it needs, for the meters under a lesson's drill (ve4p.30).
+
+        A review-only pattern needs its drill days and nothing else, so its
+        card targets are 0.
+        """
+        review_only = self.pattern.review_only
+        return {
+            "review_only": review_only,
+            "drill_days": self.drill_days,
+            "drill_days_needed": REVIEW_ONLY_DRILL_DAYS if review_only else DRILL_DAYS,
+            "first_passes": self.first_passes,
+            "first_passes_needed": 0 if review_only else FIRST_PASSES,
+            "reviews": self.reviews,
+            "passes": self.passes,
+            "pass_rate_needed": 0.0 if review_only else PASS_RATE,
+            "met": self.met,
+            "stuck": self.stuck,
+        }
+
 
 def _drill_days(store: ContentStore, srs_db) -> dict[str, list[date]]:
     """Per pattern key, the study days on which a lesson drilling it was marked listened, in order."""

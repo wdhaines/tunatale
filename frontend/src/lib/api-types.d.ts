@@ -3174,6 +3174,7 @@ export interface components {
      *
      *     ``labels`` name the columns the forms are laid out in, one per form of a
      *     root and in the same order; empty for a pattern whose language names none.
+     *     ``progress`` is present when the route had the learner's deck to read.
      */
     LessonDrill: {
       /**
@@ -3183,6 +3184,7 @@ export interface components {
       labels: string[];
       /** Pattern */
       pattern: string;
+      progress?: components["schemas"]["LessonDrillProgress"] | null;
       /** Roots */
       roots: components["schemas"]["LessonDrillRoot"][];
       /** Title */
@@ -3197,6 +3199,36 @@ export interface components {
       english: string;
       /** Form */
       form: string;
+    };
+    /**
+     * LessonDrillProgress
+     * @description LessonDrill.progress: how far the learner is with the pattern, beside what the pace gate needs.
+     *
+     *     ``pattern_gate.Progress.summary``. A review-only pattern needs drill days
+     *     alone, so its card targets are 0. ``stuck`` is a pattern still short of
+     *     the gate after five drill days.
+     */
+    LessonDrillProgress: {
+      /** Drill Days */
+      drill_days: number;
+      /** Drill Days Needed */
+      drill_days_needed: number;
+      /** First Passes */
+      first_passes: number;
+      /** First Passes Needed */
+      first_passes_needed: number;
+      /** Met */
+      met: boolean;
+      /** Pass Rate Needed */
+      pass_rate_needed: number;
+      /** Passes */
+      passes: number;
+      /** Review Only */
+      review_only: boolean;
+      /** Reviews */
+      reviews: number;
+      /** Stuck */
+      stuck: boolean;
     };
     /**
      * LessonDrillRoot

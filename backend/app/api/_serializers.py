@@ -1,11 +1,20 @@
 """Response serialization helpers for API endpoints."""
 
-from app.generation.grammar_lesson import drill_table
+from app.generation.grammar_lesson import drill_table, find_pattern
+from app.generation.pattern_gate import progress
 from app.models.lesson import Lesson, project_key_phrases
+from app.storage.store import ContentStore
 
 
-def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) -> dict:
-    """Build the standard lesson response dict shared by ``get_lesson`` and ``get_lesson_by_day``."""
+def serialize_lesson(
+    lesson_id: str, lesson: Lesson, *, day: int | None = None, srs_db=None, store: ContentStore | None = None
+) -> dict:
+    """Build the standard lesson response dict shared by ``get_lesson`` and ``get_lesson_by_day``.
+
+    With the learner's *srs_db* and *store*, a lesson's drill also carries how
+    far the learner is with its pattern (``pattern_gate.Progress.summary``),
+    read at fetch time.
+    """
     result: dict = {
         "id": lesson_id,
         "title": lesson.title,
@@ -36,5 +45,8 @@ def serialize_lesson(lesson_id: str, lesson: Lesson, *, day: int | None = None) 
     # Present only on a lesson that has an affix drill, like ``day`` above.
     drill = drill_table(lesson)
     if drill is not None:
+        if srs_db is not None and store is not None:
+            pattern = find_pattern(lesson.language_code, drill["pattern"])
+            drill["progress"] = progress(pattern, srs_db=srs_db, store=store).summary()
         result["drill"] = drill
     return result

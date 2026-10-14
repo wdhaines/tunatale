@@ -24,6 +24,49 @@
 	function reveal(form: string) {
 		revealed = new Set([...revealed, form]);
 	}
+
+	/** A bar's fill, as a whole percent of the way to what the gate needs. */
+	function filled(share: number): string {
+		return `${Math.round(Math.min(1, share) * 100)}%`;
+	}
+
+	/**
+	 * The parts of the pace gate beside what each needs (bd tunatale-ve4p.30).
+	 * A review-only pattern needs its drill days alone. A part is drawn short
+	 * (amber) only once the pattern is stuck: before then it is just not there yet.
+	 */
+	const meters = $derived.by(() => {
+		const p = drill.progress;
+		if (!p) return [];
+		const rate = p.reviews ? p.passes / p.reviews : 0;
+		const parts = [
+			{
+				label: t('drillForms.drillDays'),
+				value: `${p.drill_days} / ${p.drill_days_needed}`,
+				share: p.drill_days / p.drill_days_needed,
+				met: p.drill_days >= p.drill_days_needed
+			}
+		];
+		if (!p.review_only) {
+			parts.push(
+				{
+					label: t('drillForms.firstPasses'),
+					value: `${p.first_passes} / ${p.first_passes_needed}`,
+					share: p.first_passes / p.first_passes_needed,
+					met: p.first_passes >= p.first_passes_needed
+				},
+				{
+					label: t('drillForms.passRate'),
+					value: p.reviews
+						? `${Math.round(rate * 100)}% / ${Math.round(p.pass_rate_needed * 100)}%`
+						: t('drillForms.noReviews'),
+					share: rate / p.pass_rate_needed,
+					met: p.reviews > 0 && rate >= p.pass_rate_needed
+				}
+			);
+		}
+		return parts.map((part) => ({ ...part, width: filled(part.share), short: p.stuck && !part.met }));
+	});
 </script>
 
 <h2 class="drill-title">{t('drillForms.heading')}</h2>
@@ -66,6 +109,25 @@
 		</li>
 	{/each}
 </ul>
+{#if meters.length}
+	<div class="meters">
+		<div class="meters-head">
+			<span class="meters-title">{t('drillForms.progressHeading')}</span>
+			{#if drill.progress?.stuck}
+				<span class="chip stuck">{t('drillForms.stuck')}</span>
+			{:else if drill.progress?.met}
+				<span class="chip passed">{t('drillForms.passed')}</span>
+			{/if}
+		</div>
+		{#each meters as meter (meter.label)}
+			<div class="meter">
+				<span class="meter-label">{meter.label}</span>
+				<span class="meter-value">{meter.value}</span>
+				<span class="bar"><i class:short={meter.short} style="width: {meter.width}"></i></span>
+			</div>
+		{/each}
+	</div>
+{/if}
 
 <style>
 	.drill-title {
@@ -143,6 +205,66 @@
 	.english {
 		font-size: 0.8rem;
 		color: var(--color-muted);
+	}
+	/* The pace gate's three parts under the table (bd tunatale-ve4p.30). */
+	.meters {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		margin-top: 0.6rem;
+		padding-top: 0.6rem;
+		border-top: 1px solid var(--color-border);
+	}
+	.meters-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+	.meters-title {
+		font-size: 0.8rem;
+		font-weight: 700;
+	}
+	.chip {
+		padding: 0.05rem 0.5rem;
+		border: 1px solid currentColor;
+		border-radius: var(--radius-pill);
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+	.chip.stuck {
+		color: var(--color-warning);
+	}
+	.chip.passed {
+		color: var(--color-success);
+	}
+	.meter {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.15rem 0.75rem;
+		font-size: 0.8rem;
+		font-variant-numeric: tabular-nums;
+	}
+	.meter-value {
+		color: var(--color-muted);
+	}
+	.bar {
+		grid-column: 1 / -1;
+		height: 6px;
+		border-radius: var(--radius-pill);
+		background: var(--color-border);
+		overflow: hidden;
+	}
+	.bar i {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: var(--color-success);
+	}
+	.bar i.short {
+		background: var(--color-warning);
 	}
 	.new-tag {
 		margin-top: 0.15rem;

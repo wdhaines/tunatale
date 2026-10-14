@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, time
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api._serializers import serialize_lesson
 from app.generation.grammar_lesson import find_pattern, pattern_title, plan_grammar_lesson
 from app.generation.pipeline import LessonPipeline
 from app.languages import get_language
@@ -284,8 +285,44 @@ async def test_the_lesson_is_served_with_the_table_of_what_it_drills(deck, srs_d
                 "forms": [{"form": "moadto", "english": "will go"}, {"form": "miadto", "english": "went"}],
             },
         ],
+        # How far the learner is with the pattern, for the meters under the
+        # table (tunatale-ve4p.30). Nothing heard or reviewed yet.
+        "progress": {
+            "review_only": False,
+            "drill_days": 0,
+            "drill_days_needed": 2,
+            "first_passes": 0,
+            "first_passes_needed": 4,
+            "reviews": 0,
+            "passes": 0,
+            "pass_rate_needed": 0.8,
+            "met": False,
+            "stuck": False,
+        },
     }
     assert "drill" not in story
+
+
+def test_a_drill_served_without_the_learners_deck_has_no_progress():
+    """Nothing to count listens or cards from, so no meters rather than zeros."""
+    lesson = _wake()
+    lesson.generation_metadata["affix_drill"] = {"pattern": "mo-mi", "roots": ["adto"], "new_roots": []}
+    served = serialize_lesson("wake", lesson)
+    assert served["drill"]["pattern"] == "mo-mi"
+    assert "progress" not in served["drill"]
+
+
+async def test_the_drills_progress_counts_a_listen_when_the_lesson_is_fetched_again(deck, srs_db):
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _drill_lesson(store, srs_db, pipeline)
+        await client.post("/api/srs/listen", json={"content_id": lesson_id})
+        by_day = (await client.get(f"/api/curriculum/{_CID}/days/2/lesson")).json()
+        by_id = (await client.get(f"/api/story/{lesson_id}")).json()
+    await pipeline.shutdown()
+
+    assert by_day["drill"]["progress"]["drill_days"] == by_id["drill"]["progress"]["drill_days"] == 1
 
 
 async def test_a_grammar_lesson_can_be_previewed_read_and_marked_listened(deck, srs_db):
