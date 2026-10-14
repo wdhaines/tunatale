@@ -1908,6 +1908,7 @@ anki = [
 
 [package.dev-dependencies]
 alignment = [
+    { name = "torch" },
     { name = "transformers" },
 ]
 dev = [
@@ -1949,7 +1950,10 @@ requires-dist = [
 provides-extras = ["anki"]
 
 [package.metadata.requires-dev]
-alignment = [{ name = "transformers", specifier = ">=5.18.0" }]
+alignment = [
+    { name = "torch", specifier = ">=2.9" },
+    { name = "transformers", specifier = ">=5.18.0" },
+]
 dev = [
     { name = "anyio", specifier = ">=4.15.1" },
     { name = "fsrs-rs-python", specifier = ">=0.9.3" },

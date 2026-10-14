@@ -128,7 +128,12 @@ norwegian = [
 # different capabilities that happen to share torch today. (The original second
 # half of this sentence — "and CI's opt-out list stays readable as a list of
 # capabilities it declines" — described an opt-out list that no longer exists.)
-alignment = ["transformers>=5.18.0"]
+# torch is declared here, not left to arrive through slovene/norwegian: the
+# laptop instance installs alignment WITHOUT those groups (switch.sh, for the
+# take check, tunatale-ve4p.29), and transformers does not depend on torch, so
+# the first such install had transformers and no torch — the model could not
+# load and every Gemini take rendered unchecked (2026-10-14).
+alignment = ["transformers>=5.18.0", "torch>=2.9"]
 
 [tool.uv]
 # The slovene/norwegian/alignment groups are DEFAULT groups, so a bare
