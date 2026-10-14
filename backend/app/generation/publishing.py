@@ -49,6 +49,7 @@ from typing import Protocol
 
 from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
+from app.generation.known_buildups import trim_well_known_buildups
 from app.generation.lemma_annotation import _prewarm_lesson, annotate_chunk_upos_for_lesson
 from app.generation.story_pattern import add_day_drill
 from app.languages import get_language
@@ -107,6 +108,13 @@ async def publish_lesson(
 
         await resolve_lesson_lemmas(lesson, srs_db, llm, **lemmatizer_kwargs)
         await annotate_chunk_upos_for_lesson(lesson, srs_db, **lemmatizer_kwargs)
+        # Last before the write: the drill is appended and every piece annotated.
+        # An enrichment, so it never sinks a publish: on a failure the lesson
+        # keeps every buildup, and the warning says so.
+        try:
+            trim_well_known_buildups(lesson, srs_db, lemmatizer_kwargs.get("lemmatizer"))
+        except Exception as e:  # noqa: BLE001
+            _logger.warning("Known-word trim failed; the lesson keeps every buildup: %s", e)
 
     content_id = target.write(lesson)
 
