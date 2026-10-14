@@ -320,8 +320,8 @@ def test_a_closing_drill_asks_for_every_form_twice_and_ends_on_the_line(srs_db):
     answers = _answers(lesson)
     forms = answers[:12]
     assert sorted(forms[:6]) == sorted(forms[6:]) == sorted(set(forms))
-    # Then the two lines the drill itself brings, and last the story's.
-    assert answers[12:] == ["Wala ko moadto.", "Moanhi ko kada adlaw.", "Mouban ko ugma."]
+    # Then the three lines the drill itself brings, and last the story's.
+    assert answers[12:] == ["Wala ko moadto.", "Moanhi ko kada adlaw.", "Gusto ko moadto.", "Mouban ko ugma."]
 
 
 # --- aspect, not tense (tunatale-ve4p.25) --------------------------------------
@@ -331,17 +331,22 @@ def test_a_closing_drill_asks_for_every_form_twice_and_ends_on_the_line(srs_db):
 # and for what did not happen, and "begun / not begun" over the page's columns.
 
 # The lines the wake's drill brings: adto is its first root and anhi its second.
-_FRAMED = [("Wala ko moadto.", "I didn't go."), ("Moanhi ko kada adlaw.", "I come every day.")]
+# uban has none, so the third comes round to adto again (tunatale-ve4p.31: gusto).
+_FRAMED = [
+    ("Wala ko moadto.", "I didn't go."),
+    ("Moanhi ko kada adlaw.", "I come every day."),
+    ("Gusto ko moadto.", "I want to go."),
+]
 
 
-def test_the_drill_teaches_then_asks_for_a_line_that_did_not_happen_and_one_that_usually_does():
+def test_the_drill_teaches_then_asks_for_what_did_not_happen_what_usually_does_and_what_is_wanted():
     """Rule-built, on the roots the drill models, a different root for each. They
     come before the story's own line and need no deck: the drill teaches them
     the way it teaches any line, the whole of it first."""
     lesson = _closed(_WAKE, None)
     phrases = lesson.sections[-1].phrases
 
-    assert _answers(lesson)[-2:] == [text for text, _ in _FRAMED]
+    assert _answers(lesson)[-len(_FRAMED) :] == [text for text, _ in _FRAMED]
     for text, english in _FRAMED:
         said = [i for i, p in enumerate(phrases) if p.text == text]
         taught, asked = said[0], said[-1]
@@ -349,7 +354,7 @@ def test_the_drill_teaches_then_asks_for_a_line_that_did_not_happen_and_one_that
         assert phrases[taught - 1].text == english
         assert taught < asked
     prompts = [p.text for p in phrases if p.role == "prompt"]
-    assert prompts[-2:] == ['How do you say "I didn\'t go"?', "I come every day."]
+    assert prompts[-3:] == ['How do you say "I didn\'t go"?', "I come every day.", "I want to go."]
 
 
 def test_a_drill_whose_roots_have_no_line_written_ends_as_it_did():

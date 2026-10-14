@@ -64,3 +64,16 @@ sulti	mo-mi	speak	will speak	spoke
 hurot	ma-na	use up	will run out	has run out
 uban	mo-mi	accompany	will go along	went along
 uban	mag-nag	accompany	will go together	went together
+#
+# maka- / naka-, the potential (tunatale-ve4p.31). Added 2026-10-14 and approved by the owner the same day.
+# Wolff, maka-_1: unreal "can" (capability, or the chance to), real "had the chance or managed to".
+# kita is [A123S]: in the active it takes only the potential, so nakakita is the plain "saw".
+# Checked: sulod [A2], gawas [A2], inom [A], adto [A2], dala [A], bayad [A2S3S]. Left out: uban (mutual),
+# trabaho (maka- is "find a job"), patay ("kill"). The root's English matches its other rows.
+kita	maka-naka	see	can see	saw
+sulod	maka-naka	inside	can get in	managed to get in
+gawas	maka-naka	go out	can get out	managed to get out
+inom	maka-naka	drink	can drink	managed to drink
+adto	maka-naka	go	can go	managed to go
+dala	maka-naka	bring	can bring	managed to bring
+bayad	maka-naka	pay	can pay	managed to pay
