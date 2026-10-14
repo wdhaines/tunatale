@@ -241,6 +241,22 @@ test("lesson page: a HOVER-revealed tooltip near the right margin never overflow
 
 		for (const t of targets) {
 			const word = page.locator(".tt-wrap").nth(t.index);
+			// Close the previous word's popover first, as the left-margin test
+			// below does. A hover-revealed popover stays open while the pointer
+			// sits on it, and once a due word's popover grew its four-rating row
+			// (tunatale-8jgb) it covered the next target, so its "Hard" button
+			// intercepted the hover until the test timed out.
+			await page.mouse.move(0, 0);
+			await expect
+				.poll(() =>
+					page.evaluate(
+						() =>
+							[...document.querySelectorAll(".tt")].filter(
+								(el) => getComputedStyle(el).display !== "none",
+							).length,
+					),
+				)
+				.toBe(0);
 			await word.hover();
 			// Guard against measuring a popover that never appeared — that would
 			// pass for the same reason the closed-only test does. `.tt` is

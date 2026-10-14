@@ -77,7 +77,7 @@ describe("WordSpan blur-as-cloze", () => {
         tooltipActions: { onProductionGrade },
       },
     });
-    expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
+    expect(queryByRole("button", { name: "Undo ↩" })).toBeNull();
     for (const name of RATING_LABELS) expect(queryByRole("button", { name })).toBeNull();
     expect(onProductionGrade).not.toHaveBeenCalled();
     expect(onWordClick).not.toHaveBeenCalled();
@@ -121,7 +121,7 @@ describe("WordSpan blur-as-cloze", () => {
     expect(onWordClick).not.toHaveBeenCalled();
   });
 
-  it("the four ratings lead the action row in the review queue's order, on the grid", async () => {
+  it("the four ratings render in their own row, in the review queue's order", async () => {
     const { container } = render(WordSpan, {
       props: {
         word: prodDue(),
@@ -131,12 +131,14 @@ describe("WordSpan blur-as-cloze", () => {
       },
     });
     await fireEvent.click(wordEl(container));
+    const rate = container.querySelector(".tt-rate") as HTMLElement;
+    const labels = [...rate.querySelectorAll("button")].map((b) => b.textContent?.trim());
+    expect(labels).toEqual(RATING_LABELS);
+    // The ratings are a row of their own; the utilities live in `.tt-actions`.
     const actions = container.querySelector(".tt-actions") as HTMLElement;
-    const labels = [...actions.querySelectorAll("button")].map((b) => b.textContent?.trim());
-    expect(labels.slice(0, 4)).toEqual(RATING_LABELS);
-    // Four ratings alone already exceed one line at the coarse-pointer button
-    // size (F-17), so the row must be the two-column grid: a 2x2 rating block.
-    expect(actions.classList.contains("tt-actions-grid")).toBe(true);
+    expect([...actions.querySelectorAll("button")].map((b) => b.textContent?.trim())).not.toContain(
+      "Good",
+    );
   });
 
   it("each rating carries its own colour class, as on the review card", async () => {

@@ -15,8 +15,8 @@ import { backendAvailable, BACKEND } from "./helpers";
  * `playwright.config.ts` declares one project, `devices['Desktop Chrome']`. At a
  * fine pointer `.tt-btn` is 11px/2px 6px; at a coarse pointer the
  * `@media (pointer: coarse)` block takes it to 14px/8px 12px. Measured on a
- * 412px Pixel 7, the four actions of a word in `learning` state
- * (`Got it ✓` / `Ignore` / `Known` / `Reset`) need **301px** against `.tt`'s
+ * 412px Pixel 7, the four buttons of a word in `learning` state
+ * (the grade button / `Ignore` / `Known` / `Reset`) need **301px** against `.tt`'s
  * **280px** content box — so the row wraps and `Reset` lands alone. At the
  * desktop size the same four fit one line and the defect does not exist. A
  * desktop-only oracle would have gone green on a live bug; that is F-12's
@@ -190,9 +190,11 @@ test.describe("word popover (coarse pointer)", () => {
 		);
 	}
 
-	/** The open popover's action buttons, grouped into visual lines. `shown: 0`
-	 *  when no popover is displayed, so a caller can tell "nothing to measure"
-	 *  from "measured and fine". */
+	/** The open popover's ACTION-row buttons (`.tt-actions`), grouped into visual
+	 *  lines. `shown: 0` when no popover is displayed, so a caller can tell
+	 *  "nothing to measure" from "measured and fine". The four ratings live in
+	 *  their own `.tt-rate` row (bd tunatale-8jgb) and are measured separately —
+	 *  they are deliberately never part of the wrapping action row. */
 	async function measureActionLines(page: import("@playwright/test").Page) {
 		return page.evaluate(() => {
 			const tip = [...document.querySelectorAll(".tt")].find(
@@ -204,7 +206,7 @@ test.describe("word popover (coarse pointer)", () => {
 			// 2px: wrapped lines differ by a full row height, so no real grouping
 			// is at risk, while sub-pixel layout noise cannot split one line in two.
 			const byTop = new Map<number, DOMRect[]>();
-			const buttons = [...tip.querySelectorAll(".tt-btn")];
+			const buttons = [...tip.querySelectorAll(".tt-actions .tt-btn")];
 			for (const b of buttons) {
 				const rect = b.getBoundingClientRect();
 				const key = Math.round(rect.top / 2) * 2;
@@ -235,6 +237,11 @@ test.describe("word popover (coarse pointer)", () => {
 	 *
 	 * Measured on `main` at 412px: line 1 spans 10..240 (230px), line 2 is
 	 * `Reset` alone at 10..73 (63px) — a ratio of 0.27.
+	 *
+	 * Since bd tunatale-8jgb the grade button is the ratings row (its own
+	 * `.tt-rate`, `flex-wrap: nowrap`), and the utilities hide behind "More…".
+	 * So the row that can still wrap raggedly is the EXPANDED `.tt-actions`
+	 * row — this test opens "More…" first and measures that row alone.
 	 */
 	test("F-17: the popover's action row never leaves a short stub line", async ({
 		page,
@@ -244,8 +251,8 @@ test.describe("word popover (coarse pointer)", () => {
 		const { curriculumId } = await seed(request);
 		await openRead(page, curriculumId);
 
-		// Words carrying the full action set are the ones that can wrap. A word
-		// with two actions passes trivially and would make this vacuous.
+		// Words carrying the ratings row are the ones with a full action set. A
+		// word with two actions passes trivially and would make this vacuous.
 		const targets = await page.evaluate(() =>
 			[...document.querySelectorAll(".tt-wrap")]
 				.map((el, i) => ({ i, btns: el.querySelectorAll(".tt-btn").length }))
@@ -255,13 +262,18 @@ test.describe("word popover (coarse pointer)", () => {
 		);
 		expect(
 			targets.length,
-			"no word rendered 4+ actions — the seed is not in `learning` state and this test would be vacuous",
+			"no word rendered the full rating set — the seed is not due and this test would be vacuous",
 		).toBeGreaterThan(0);
 
 		const failures: string[] = [];
 
 		for (const index of targets) {
 			if (!(await longPress(page, index))) continue;
+
+			// Expand the utilities so the action row is at its longest. Absent when
+			// the word has fewer than two utilities (nothing was collapsed).
+			const more = page.locator(".tt:visible").getByRole("button", { name: "More…" });
+			if (await more.count()) await more.tap();
 
 			const r = await measureActionLines(page);
 
@@ -287,15 +299,16 @@ test.describe("word popover (coarse pointer)", () => {
 
 	/**
 	 * bd tunatale-dvdm.5 — a revealed production cloze offers the review queue's
-	 * four ratings, and they must lay out as cleanly as F-17 demands of any other
-	 * action set. Four ratings plus the word's own actions is the LONGEST row the
-	 * popover has, so it is the one most likely to leave a stub.
+	 * four ratings. Since bd tunatale-8jgb they render in their OWN `.tt-rate`
+	 * row (`flex-wrap: nowrap`, above `.tt-actions`), so they can never wrap into
+	 * a stub — the row is one line or it overflows, and the row's box is measured
+	 * here. The word's utility actions collapse behind "More…" beneath it.
 	 *
 	 * No extra seeding: `POST /items/{id}/state {learning}` moves BOTH directions
 	 * to learning, due today, so this spec's words are already production-due and
 	 * blur as soon as the reader setting is on.
 	 */
-	test("dvdm.5: a revealed production cloze's four ratings leave no stub line", async ({
+	test("dvdm.5: a revealed production cloze's four ratings hold one clean row", async ({
 		page,
 		request,
 	}) => {
@@ -317,15 +330,29 @@ test.describe("word popover (coarse pointer)", () => {
 		await expect(page.locator(".tt-wrap").nth(index).locator(".word-blurred")).toHaveCount(0);
 		expect(await longPress(page, index)).toBe(true);
 
-		const r = await measureActionLines(page);
+		const r = await page.evaluate(() => {
+			const tip = [...document.querySelectorAll(".tt")].find(
+				(el) => getComputedStyle(el).display !== "none",
+			);
+			if (!tip) return { shown: 0, labels: [] as string[], tops: [] as number[] };
+			const rate = tip.querySelector(".tt-rate");
+			const buttons = rate ? [...rate.querySelectorAll(".tt-btn")] : [];
+			const rects = buttons.map((b) => b.getBoundingClientRect());
+			return {
+				shown: 1,
+				labels: buttons.map((b) => (b.textContent ?? "").trim()),
+				tops: rects.map((x) => Math.round(x.top / 2) * 2),
+				rateInside: !!(
+					rate &&
+					(rate as HTMLElement).getBoundingClientRect().right <= tip.getBoundingClientRect().right
+				),
+			};
+		});
 		expect(r.shown, "popover never opened for the revealed word").toBe(1);
-		expect(r.labels.slice(0, 4)).toEqual(["Again", "Hard", "Good", "Easy"]);
-
-		const widest = Math.max(...r.lines.map((l) => l.w));
-		const ragged = r.lines.filter((l) => l.w < widest * 0.9);
-		expect(ragged, `action row is ragged: ${JSON.stringify(r.lines)}`).toEqual([]);
-		// The ratings are a 2x2 block: no rating shares a line with a non-rating.
-		expect(r.lines.slice(0, 2).map((l) => l.n)).toEqual([2, 2]);
+		expect(r.labels).toEqual(["Again", "Hard", "Good", "Easy"]);
+		// All four ratings share one row, and it stays inside the popover.
+		expect(new Set(r.tops).size).toBe(1);
+		expect(r.rateInside, "the ratings row overflows the popover").toBe(true);
 
 		// Each rating is PAINTED the review card's colour for it. The cascade is
 		// the engine's verdict: a class on the button proves nothing if another
@@ -353,6 +380,75 @@ test.describe("word popover (coarse pointer)", () => {
 			await button.hover();
 			expect(await paint(), `${label} under the pointer`).toBe(wanted[label]);
 		}
+	});
+
+	/**
+	 * bd tunatale-8jgb — at 320px the four ratings must fit their own row, and
+	 * the popover must not push the page sideways. `.tt-rate` is
+	 * `flex-wrap: nowrap` on purpose: a wrapped rating row is worse than a
+	 * slightly narrower button, so the row's job is to FIT, and these are the
+	 * three numbers the browser computes for that.
+	 *
+	 * Runs at 320px — the narrowest screen the product supports — with touch on,
+	 * which is where `@media (pointer: coarse)` widens `.tt-btn` to 8px/10px and
+	 * pushes the row closest to the content box's edge.
+	 */
+	test("8jgb: at 320px the four ratings fit one row without overflowing", async ({
+		page,
+		request,
+	}) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const { curriculumId } = await seed(request);
+		await page.setViewportSize({ width: 320, height: 720 });
+		await openRead(page, curriculumId);
+
+		// The seed promotes its words to LEARNING, which is due today — the reader's
+		// due path, and the only one that shows the ratings row.
+		const index = await page.evaluate(() =>
+			[...document.querySelectorAll(".tt-wrap")].findIndex((el) => !!el.querySelector(".word-due")),
+		);
+		expect(
+			index,
+			"no due word on screen — the seed is not due and this test would be vacuous",
+		).toBeGreaterThanOrEqual(0);
+		expect(await longPress(page, index), "long-press target not found").toBe(true);
+
+		const measure = () =>
+			page.evaluate(() => {
+				const root = document.documentElement;
+				const tip = [...document.querySelectorAll(".tt")].find(
+					(el) => getComputedStyle(el).display !== "none",
+				);
+				const rate = tip?.querySelector(".tt-rate") as HTMLElement | null;
+				const rects = rate
+					? [...rate.querySelectorAll(".tt-btn")].map((b) => b.getBoundingClientRect())
+					: [];
+				const tipRect = tip?.getBoundingClientRect() ?? null;
+				return {
+					shown: tip ? 1 : 0,
+					pageOverflow: root.scrollWidth - root.clientWidth,
+					rateOverflow: rate ? rate.scrollWidth - rate.clientWidth : 0,
+					tops: rects.map((r) => Math.round(r.top)),
+					lastRight: rects.length ? Math.round(rects[rects.length - 1].right) : 0,
+					tipRight: tipRect ? Math.round(tipRect.right) : 0,
+				};
+			});
+
+		const r = await measure();
+		expect(r.shown, "popover never opened").toBe(1);
+		// 1. The document gains no horizontal scroll from the open popover.
+		expect(r.pageOverflow, "the page itself scrolls sideways").toBe(0);
+		// 2. The rating row fits its own content box.
+		expect(r.rateOverflow, "the rating row overflows its box").toBeLessThanOrEqual(0);
+		// 3. The four ratings share one row and stay inside the popover.
+		expect(new Set(r.tops).size, "the ratings wrapped onto more than one row").toBe(1);
+		expect(r.lastRight, "the last rating extends past the popover's right edge").
+			toBeLessThanOrEqual(r.tipRight);
+
+		// Expanding the utilities must not reintroduce the horizontal scroll.
+		await page.locator(".tt:visible").getByRole("button", { name: "More…" }).tap();
+		const after = await measure();
+		expect(after.pageOverflow, "the page scrolls sideways after expanding More…").toBe(0);
 	});
 
 	/**

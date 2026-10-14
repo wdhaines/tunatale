@@ -8,7 +8,7 @@
 
 	interface Props {
 		word: WordToken;
-		onWordClick?: (word: WordToken, lineIndex: number) => void;
+		onWordClick?: (word: WordToken, lineIndex: number, rating?: GradeRating) => void;
 		requireModifier?: boolean;
 		altHover?: boolean;
 		lineIndex?: number;
@@ -162,9 +162,8 @@
 		word.active_state === 'new' && word.active_direction != null && word.srs_item_id != null
 	);
 
-	// Grade-button label mirrors what the old direct click did (the "cycle"):
-	// unknown → create a base card; due+tracked → grade Good; not-due but readable
-	// → review ahead; otherwise the click was a no-op, so no button.
+	// Grade-button label
+	const ratable = $derived(gotItApplies || readAheadApplies);
 	const gradeLabel = $derived(
 		productionCloze && !undoable
 			? null
@@ -174,25 +173,24 @@
 				? null
 				: word.active_state === 'unknown'
 					? 'Start learning'
-					: gotItApplies
-						? 'Got it ✓'
-						: readAheadApplies
-							? 'Review ✓'
-							: startsCardedWord
-								? 'Start learning'
-								: null
+					: startsCardedWord && !ratable
+						? 'Start learning'
+						: null
 	);
-
-	// Style the read-ahead grade subtler than the due "Got it ✓" so the user can
-	// see it's ahead of schedule (not the card the SRS is asking for).
-	const gradeVariant = $derived(!undoable && readAheadApplies ? 'ahead' : 'primary');
 
 	// The four ratings for a REVEALED production cloze; nothing while it is
 	// still blurred (the reveal comes first).
-	const productionGrade = $derived(
-		productionCloze && revealed && tooltipActions?.onProductionGrade
-			? { onRate: (rating: GradeRating) => void tooltipActions!.onProductionGrade!(word, rating) }
-			: null
+	const ratings = $derived(
+		productionCloze
+			? revealed && tooltipActions?.onProductionGrade
+				? {
+						onRate: (rating: GradeRating) =>
+							void tooltipActions.onProductionGrade!(word, rating)
+					}
+				: null
+			: !undoable && onWordClick && ratable
+				? { onRate: (rating: GradeRating) => onWordClick(word, lineIndex ?? 0, rating) }
+				: null
 	);
 
 	const gloss = $derived(wordGloss(word));
@@ -214,9 +212,8 @@
 	actions={tooltipActions}
 	suppressed={!showTooltip}
 	{gradeLabel}
-	{gradeVariant}
 	{onGrade}
-	{productionGrade}
+	{ratings}
 	{masteryLabel}
 	{masterySides}
 >

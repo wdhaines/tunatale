@@ -42,17 +42,14 @@
 		suppressed?: boolean;
 		// All grading lives in the popover: the grade button (label + callback) is
 		// the ONLY way to advance a word/phrase from the transcript. Callers decide
-		// the label ("Start learning" / "Got it ✓" / "Undo ↩") and pass null to hide it.
+		// the label ("Start learning" / "Undo ↩") and pass null to hide it.
 		gradeLabel?: string | null;
-		// 'primary' = the due "Got it ✓" grade (accent); 'ahead' = a read-ahead
-		// recognition review of a not-due word (subtler, so it reads as ahead of
-		// schedule rather than the card the SRS is asking for).
-		gradeVariant?: 'primary' | 'ahead';
 		onGrade?: (() => void) | null;
-		// A revealed blur-as-cloze word (bd tunatale-dvdm.3): the review queue's
-		// four ratings grade its PRODUCTION direction (bd tunatale-dvdm.5). Replaces
-		// the single grade button while present.
-		productionGrade?: { onRate: (rating: GradeRating) => void } | null;
+		// The review queue's four ratings (Again/Hard/Good/Easy), rendered in their
+		// own row above `.tt-actions`. A due/read-ahead word grades its own card; a
+		// revealed blur-as-cloze word grades PRODUCTION (bd tunatale-dvdm.5). Present
+		// replaces the single grade button; the rating row is not part of `.tt-actions`.
+		ratings?: { onRate: (rating: GradeRating) => void } | null;
 		// "Words…" — the touch path into a phrase's individual words (what
 		// Alt+hover does on desktop). Only collocation popovers pass this.
 		onDrillIn?: (() => void) | null;
@@ -72,9 +69,8 @@
 		actions,
 		suppressed = false,
 		gradeLabel = null,
-		gradeVariant = 'primary',
 		onGrade = null,
-		productionGrade = null,
+		ratings = null,
 		onDrillIn = null,
 		masteryLabel = null,
 		masterySides = null
@@ -137,6 +133,7 @@
 	function handlePointerLeave() {
 		cancelPress();
 		hovered = false;
+		moreOpen = false;
 	}
 
 	function handlePressMove(e: PointerEvent) {
@@ -177,9 +174,15 @@
 	// left stale popovers open when tapping the next word); pointerdown so it
 	// fires immediately on touch instead of waiting for the synthesized click.
 	$effect(() => {
-		if (!open) return;
+		if (!open) {
+			moreOpen = false;
+			return;
+		}
 		function handleOutside(e: PointerEvent) {
-			if (!wrapEl!.contains(e.target as Node)) open = false;
+			if (!wrapEl!.contains(e.target as Node)) {
+				open = false;
+				moreOpen = false;
+			}
 		}
 		document.addEventListener('pointerdown', handleOutside);
 		return () => document.removeEventListener('pointerdown', handleOutside);
@@ -352,36 +355,60 @@
 	);
 
 	// The review queue's order (DrillCard), so the two surfaces read alike.
-	const PRODUCTION_RATINGS: readonly GradeRating[] = ['again', 'hard', 'good', 'easy'];
+	const RATINGS: readonly GradeRating[] = ['again', 'hard', 'good', 'easy'];
 
-	const showGrade = $derived(Boolean(gradeLabel && onGrade) && productionGrade == null);
-	const showProductionGrade = $derived(productionGrade != null);
+	// "More…" disclosure (bd tunatale-8jgb): when a primary action shares the
+	// popover with two or more utilities, the utilities hide behind one "More…"
+	// button to keep the popover short. Reset to false whenever the popover
+	// closes, so reopening never shows the expanded set.
+	let moreOpen = $state(false);
+
+	const showGrade = $derived(Boolean(gradeLabel && onGrade) && ratings == null);
 	const showDrillIn = $derived(Boolean(onDrillIn));
 
-	// Counted, not just OR-ed, because the action row's LAYOUT depends on how many
-	// there are: four or more never fit one line at the coarse-pointer button size
-	// (F-17), so they lay out as a two-column grid instead of a wrapping row.
-	const actionCount = $derived(
+	const utilityCount = $derived(
 		[
-			showGrade,
-			// One entry per rating button: the count drives the layout.
-			...PRODUCTION_RATINGS.map(() => showProductionGrade),
-			showDrillIn,
 			showCreateInflection,
 			showCreateSense,
-			showIgnore,
-			showIgnoreCardless,
 			showUnignore,
 			showUnignoreCardless,
+			showIgnore,
+			showIgnoreCardless,
 			showMarkKnown,
 			showUnmarkKnown,
 			showResetNew
 		].filter(Boolean).length
 	);
 
-	const hasActions = $derived(actionCount > 0);
+	const hasPrimary = $derived(showGrade || ratings != null || showDrillIn);
+	const collapsed = $derived(hasPrimary && utilityCount >= 2 && !moreOpen);
 
-	const hasContent = $derived(!suppressed && Boolean(translation || masteryLabel || masterySides || dueLabel || hasActions));
+	// Counted, not just OR-ed, because the action row's LAYOUT depends on how many
+	// buttons it holds: four or more never fit one line at the coarse-pointer
+	// button size (F-17), so they lay out as a two-column grid instead of a
+	// wrapping row. Only buttons actually rendered in `.tt-actions` count — the
+	// rating row above it is not in the action row, and the "More…" button stands
+	// in for the utilities it hides.
+	const actionCount = $derived(
+		(showGrade ? 1 : 0) + (showDrillIn ? 1 : 0) + (collapsed ? 1 : utilityCount)
+	);
+
+	// True when the popover has anything at all to show — including the rating
+	// row on its own, which no longer lives inside `.tt-actions`.
+	const hasContent = $derived(
+		!suppressed &&
+			Boolean(
+				translation ||
+					masteryLabel ||
+					masterySides ||
+					dueLabel ||
+					showGrade ||
+					ratings != null ||
+					showDrillIn ||
+					utilityCount > 0 ||
+					moreOpen
+			)
+	);
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
@@ -414,94 +441,110 @@
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if cardTranslation}<span class="tt-card-translation">{t('tooltip.cardTranslation', { translation: cardTranslation })}</span>{/if}
 			{#if masterySides}<span class="tt-sides">{#each masterySides as line (line)}<span class="tt-side">{line}</span>{/each}</span>{/if}
-			{#if hasActions}
+			{#if ratings}
+				<span class="tt-rate">
+					{#each RATINGS as rating (rating)}
+						<button type="button" class="tt-btn tt-btn-{rating}" onclick={() => ratings!.onRate(rating)}
+							>{t(`tooltip.${rating}`)}</button
+						>
+					{/each}
+				</span>
+			{/if}
+			{#if showGrade || showDrillIn || (!collapsed && (showCreateInflection || showCreateSense || showUnignore || showUnignoreCardless || showIgnore || showIgnoreCardless || showMarkKnown || showUnmarkKnown || showResetNew)) || collapsed}
 				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
 					{#if showGrade}
-						<button
-							type="button"
-							class="tt-btn tt-btn-grade"
-							class:tt-btn-review-ahead={gradeVariant === 'ahead'}
-							onclick={() => onGrade!()}
-						>{gradeLabel}</button>
-					{/if}
-					{#if showProductionGrade}
-						{#each PRODUCTION_RATINGS as rating (rating)}
-							<button
-								type="button"
-								class="tt-btn tt-btn-{rating}"
-								onclick={() => productionGrade!.onRate(rating)}
-							>{t(`tooltip.${rating}`)}</button>
-						{/each}
+						<button type="button" class="tt-btn tt-btn-grade" onclick={() => onGrade!()}
+							>{gradeLabel}</button
+						>
 					{/if}
 					{#if showDrillIn}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => onDrillIn!()}
-						>{t('tooltip.words')}</button>
+						<button type="button" class="tt-btn" onclick={() => onDrillIn!()}
+							>{t('tooltip.words')}</button
+						>
 					{/if}
-					{#if showCreateInflection}
+					{#if collapsed}
 						<button
 							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onCreateInflection!(word!, sentence ?? '')}
-						>{t('tooltip.createInflectionCard')}</button>
+							class="tt-btn tt-btn-more"
+							aria-expanded="false"
+							onclick={() => {
+								moreOpen = true;
+							}}>{t('tooltip.more')}</button
+						>
 					{/if}
-					{#if showCreateSense}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onCreateSense!(word!, sentence ?? '')}
-						>{t('tooltip.differentMeaning')}</button>
-					{/if}
-					{#if showUnignore}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onUnignore!(word!.srs_item_id!)}
-						>{t('tooltip.unignore')}</button>
-					{/if}
-					{#if showUnignoreCardless}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onUnignoreLemma!(word!.lemma)}
-						>{t('tooltip.unignore')}</button>
-					{/if}
-					{#if showIgnore}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onUntrack!(word!.srs_item_id!)}
-						>{t('tooltip.ignore')}</button>
-					{/if}
-					{#if showIgnoreCardless}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onIgnoreLemma!(word!.lemma)}
-						>{t('tooltip.ignore')}</button>
-					{/if}
-					{#if showMarkKnown}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onSetState!(word!.srs_item_id!, 'known')}
-						>{t('tooltip.known')}</button>
-					{/if}
-					{#if showUnmarkKnown}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onRestoreKnown!(word!.srs_item_id!)}
-						>{t('tooltip.unmarkKnown')}</button>
-					{/if}
-					{#if showResetNew}
-						<button
-							type="button"
-							class="tt-btn"
-							onclick={() => actions!.onSetState!(word!.srs_item_id!, 'new')}
-						>{t('tooltip.reset')}</button>
+					{#if !collapsed}
+						{#if showCreateInflection}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onCreateInflection!(word!, sentence ?? '')}
+								>{t('tooltip.createInflectionCard')}</button
+							>
+						{/if}
+						{#if showCreateSense}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onCreateSense!(word!, sentence ?? '')}
+								>{t('tooltip.differentMeaning')}</button
+							>
+						{/if}
+						{#if showUnignore}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onUnignore!(word!.srs_item_id!)}
+								>{t('tooltip.unignore')}</button
+							>
+						{/if}
+						{#if showUnignoreCardless}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onUnignoreLemma!(word!.lemma)}
+								>{t('tooltip.unignore')}</button
+							>
+						{/if}
+						{#if showIgnore}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onUntrack!(word!.srs_item_id!)}
+								>{t('tooltip.ignore')}</button
+							>
+						{/if}
+						{#if showIgnoreCardless}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onIgnoreLemma!(word!.lemma)}
+								>{t('tooltip.ignore')}</button
+							>
+						{/if}
+						{#if showMarkKnown}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onSetState!(word!.srs_item_id!, 'known')}
+								>{t('tooltip.known')}</button
+							>
+						{/if}
+						{#if showUnmarkKnown}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onRestoreKnown!(word!.srs_item_id!)}
+								>{t('tooltip.unmarkKnown')}</button
+							>
+						{/if}
+						{#if showResetNew}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => actions!.onSetState!(word!.srs_item_id!, 'new')}
+								>{t('tooltip.reset')}</button
+							>
+						{/if}
 					{/if}
 				</span>
 			{/if}
@@ -625,6 +668,12 @@
 		font-size: 11px;
 		opacity: 0.8;
 	}
+	.tt-rate {
+		display: flex;
+		flex-wrap: nowrap;
+		gap: 4px;
+		margin-top: 4px;
+	}
 	.tt-actions {
 		display: flex;
 		flex-wrap: wrap;
@@ -632,7 +681,7 @@
 		margin-top: 4px;
 	}
 	/* F-17. Four actions do not fit one line: measured on a 412px Pixel 7, the
-	   `learning`-state set (Got it ✓ / Ignore / Known / Reset) needs 301px against
+	   `learning`-state set (the grade button / Ignore / Known / Reset) needs 301px against
 	   this popover's 280px content box. flex-wrap fills greedily, so it packed
 	   three across and orphaned `Reset` alone on a 63px second line — a quarter of
 	   the width above it, which is what the phone report was about.
@@ -713,15 +762,10 @@
 	.tt-btn-easy:hover {
 		filter: brightness(1.12);
 	}
-	/* Read-ahead review of a not-due word — subtler than the due grade (outlined
-	   accent, not filled) so it reads as "ahead of schedule," not the SRS's ask. */
-	.tt-btn-review-ahead {
-		background: transparent;
-		color: var(--color-primary, #2563eb);
-		border-color: var(--color-primary, #2563eb);
-	}
-	.tt-btn-review-ahead:hover {
-		background: rgba(37, 99, 235, 0.12);
+	/* More button for utility actions */
+	.tt-btn-more {
+		background: rgba(255, 255, 255, 0.15);
+		border-color: rgba(255, 255, 255, 0.3);
 	}
 	@media (pointer: coarse) {
 		/* Long-press must win over the OS gestures it collides with: iOS text
@@ -740,6 +784,13 @@
 		.tt-btn {
 			font-size: 14px;
 			padding: 8px 12px;
+		}
+		.tt-rate {
+			gap: 8px;
+			margin-top: 8px;
+		}
+		.tt-rate > .tt-btn {
+			padding: 8px 10px;
 		}
 		.tt-actions {
 			gap: 8px;

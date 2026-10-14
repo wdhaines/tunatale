@@ -116,6 +116,32 @@ async function seedPhraseCard(request: import("@playwright/test").APIRequestCont
 	phraseSeeded = true;
 }
 
+/** Seed one word as a DUE review so its popover opens on the four ratings.
+ *  A fresh item is NEW (never due); promoting it to LEARNING gives it today's
+ *  due_at, which is the state the reader's due path reads (same body
+ *  `review-pressure.spec.ts` uses). Idempotent: a 409 means an earlier run made
+ *  it, and the id is then looked up so the promotion still happens. */
+async function seedDueWord(request: import("@playwright/test").APIRequestContext, text: string) {
+	const created = await request.post(`${BACKEND}/api/srs/items`, {
+		data: { text, translation: "seeded", language_code: "sl", word_count: 1 },
+	});
+	if (!created.ok() && created.status() !== 409)
+		throw new Error(`seed item failed: ${created.status()} ${await created.text()}`);
+	const id = created.ok()
+		? (await created.json()).id
+		: await (async () => {
+				const res = await request.get(`${BACKEND}/api/srs/items?search=${encodeURIComponent(text)}`);
+				const items = ((await res.json()).items ?? []) as Array<{ id: number; text: string }>;
+				return items.find((i) => i.text.toLowerCase() === text.toLowerCase())?.id ?? null;
+			})();
+	if (id == null) throw new Error(`no SRS item id for "${text}"`);
+	const promoted = await request.post(`${BACKEND}/api/srs/items/${id}/state`, {
+		data: { state: "learning" },
+	});
+	if (!promoted.ok())
+		throw new Error(`promote failed: ${promoted.status()} ${await promoted.text()}`);
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.describe("real touch taps", () => {
@@ -328,5 +354,49 @@ test.describe("real touch taps", () => {
 		await expect(inner).toHaveCount(0);
 		await expect(phraseTip).toHaveCount(1);
 		await expect(phraseTip).toBeHidden();
+	});
+
+	/**
+	 * bd tunatale-8jgb — a real tap on a rating posts THAT rating, then the row
+	 * flips to the undo. The journey only a browser can walk: the ratings only
+	 * appear on a DUE word, the POST body is the learner's choice, and the undo
+	 * affordance proves the grade was accepted.
+	 *
+	 * `danec` is untouched by the two journeys above, so seeding it due cannot
+	 * change what they measure (all three words those steps touch stay untracked).
+	 */
+	test("a real tap on a due word's rating posts it, then offers Undo ↩", async ({
+		page,
+		request,
+	}) => {
+		test.skip(!(await backendAvailable(request)), "Backend not available");
+		const { curriculumId } = await seed(request);
+		await seedDueWord(request, "danec");
+		await openRead(page, curriculumId);
+
+		const wrap = wordWrap(page, "danec");
+		await expect(wrap, "no reader word exactly 'danec'").toHaveCount(1);
+		const tip = wrap.locator("> .tt");
+		const word = wrap.locator(".word");
+
+		// 1. Tap the word. The popover opens on the four ratings.
+		await word.tap();
+		await expect(tip).toBeVisible();
+		await expect(tip.getByRole("button", { name: "Good", exact: true })).toBeVisible();
+
+		// 2. Tap "Hard". The POST carries the rating the learner chose, on the
+		//    card's own recognition direction — the reader grades one direction.
+		const posted = page.waitForRequest(
+			(r) =>
+				r.method() === "POST" &&
+				/^\/api\/srs\/items\/\d+\/direction\/recognition\/feedback$/.test(
+					new URL(r.url()).pathname,
+				),
+		);
+		await tip.getByRole("button", { name: "Hard", exact: true }).tap();
+		expect(JSON.parse((await posted).postData() ?? "{}")).toMatchObject({ rating: "hard" });
+
+		// 3. The grade was recorded: the ratings give way to the undo affordance.
+		await expect(tip.getByRole("button", { name: "Undo ↩" })).toBeVisible();
 	});
 });

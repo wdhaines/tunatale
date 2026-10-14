@@ -1220,7 +1220,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
@@ -1243,7 +1243,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(42, "production", "good");
@@ -1287,7 +1287,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Review ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
@@ -1312,7 +1312,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Review ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(42, "recognition", "good");
@@ -1455,7 +1455,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      const btn = await findByRole("button", { name: "Got it ✓" });
+      const btn = await findByRole("button", { name: "Good" });
       await fireEvent.click(btn);
       await fireEvent.click(btn);
 
@@ -1478,7 +1478,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: t } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       expect(await findByText("drill failed")).toBeTruthy();
     });
@@ -1548,7 +1548,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       await waitFor(() => {
         expect(mockSubmitDrill).toHaveBeenCalledWith(77, "recognition", "good");
@@ -1564,7 +1564,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
       });
 
-      const btn = await findByRole("button", { name: "Got it ✓" });
+      const btn = await findByRole("button", { name: "Good" });
       await fireEvent.click(btn);
       await fireEvent.click(btn);
 
@@ -1581,7 +1581,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
         props: { data: { curriculum, lesson, audio, transcript: transcriptWithCollocation } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByRole("button", { name: "Good" }));
 
       expect(await findByText("coll drill failed")).toBeTruthy();
     });

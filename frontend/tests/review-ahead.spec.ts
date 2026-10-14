@@ -74,7 +74,8 @@ test('review-ahead: reading a not-due recognition word records a review', async 
 	const { lemma, surface } = candidate!;
 
 	// Create a NEW base card for the word. NEW is review-ahead eligible (reading it
-	// is a valid early introduction) and never "due", so the word gets "Review ✓".
+	// is a valid early introduction) and never "due", so the word offers the four
+	// ratings from its popover (bd tunatale-8jgb).
 	const createRes = await request.post(`${backendURL}/api/srs/items`, {
 		data: { text: lemma, language_code: 'sl', word_count: 1, translation: 'x' }
 	});
@@ -98,7 +99,7 @@ test('review-ahead: reading a not-due recognition word records a review', async 
 	);
 	await wordButton.click();
 
-	const reviewAhead = wrapper.getByRole('button', { name: 'Review ✓' });
+	const reviewAhead = wrapper.getByRole('button', { name: 'Good', exact: true });
 	await expect(reviewAhead).toBeVisible();
 	await reviewAhead.click();
 

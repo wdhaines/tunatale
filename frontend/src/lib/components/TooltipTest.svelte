@@ -12,8 +12,8 @@
 		actions?: TooltipActions;
 		suppressed?: boolean;
 		gradeLabel?: string | null;
-		gradeVariant?: 'primary' | 'ahead';
 		onGrade?: (() => void) | null;
+		ratings?: { onRate: (rating: any) => void } | null;
 		onDrillIn?: (() => void) | null;
 		onChildClick?: () => void;
 		masteryLabel?: string | null;
@@ -28,8 +28,8 @@
 		actions,
 		suppressed = false,
 		gradeLabel = null,
-		gradeVariant = 'primary',
 		onGrade = null,
+		ratings = null,
 		onDrillIn = null,
 		onChildClick,
 		masteryLabel = null,
@@ -37,7 +37,7 @@
 	}: Props = $props();
 </script>
 
-<Tooltip {translation} {cardTranslation} {word} {sentence} {actions} {suppressed} {gradeLabel} {gradeVariant} {onGrade} {onDrillIn} {masteryLabel} {masterySides}>
+<Tooltip {translation} {cardTranslation} {word} {sentence} {actions} {suppressed} {gradeLabel} {onGrade} {ratings} {onDrillIn} {masteryLabel} {masterySides}>
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<span onclick={onChildClick}>{childText}</span>
 </Tooltip>

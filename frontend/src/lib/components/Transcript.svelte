@@ -3,7 +3,7 @@
 	import Tooltip from './Tooltip.svelte';
 	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '$lib/api';
-	import type { ReadableLesson, TranscriptData, WordToken } from '$lib/api';
+	import type { GradeRating, ReadableLesson, TranscriptData, WordToken } from '$lib/api';
 	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
 	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
 	import { railPropsFor } from '$lib/masteryBands';
@@ -39,8 +39,8 @@
 	interface Props {
 		transcript: TranscriptData;
 		lesson?: ReadableLesson;
-		onWordClick?: (word: WordToken, lineIndex: number) => void;
-		onCollocationStateChange?: (span_id: number) => void;
+		onWordClick?: (word: WordToken, lineIndex: number, rating?: GradeRating) => void;
+		onCollocationStateChange?: (span_id: number, rating?: GradeRating) => void;
 		// Undo cycle for phrase grades: when undoableItemId matches a span_id the
 		// phrase popover shows "Undo ↩" (calling onCollocationUndo) instead of its
 		// grade label. Word-level undo flows through tooltipActions instead.
@@ -519,16 +519,16 @@
 											translation={segment.words[0].collocation_translation}
 											suppressed={drilledIn}
 											word={segment.words[0]}
-											gradeLabel={collUndoable
-									? t('transcript.gradeUndo')
-									: segment.words[0].collocation_is_due
-										? t('transcript.gradeGotIt')
-										: null}
-											onGrade={collUndoable
-												? () => void onCollocationUndo!(segment.span_id)
-												: onCollocationStateChange
-													? () => handleCollocationClick(segment)
-													: null}
+											gradeLabel={collUndoable ? t('transcript.gradeUndo') : null}
+											onGrade={collUndoable ? () => void onCollocationUndo!(segment.span_id) : null}
+											ratings={
+												!collUndoable && onCollocationStateChange && segment.words[0].collocation_is_due
+													? {
+															onRate: (rating: GradeRating) =>
+																onCollocationStateChange!(segment.span_id, rating)
+														}
+													: null
+											}
 											onDrillIn={() => (expandedSpanId = segment.span_id)}
 										>
 											<span
