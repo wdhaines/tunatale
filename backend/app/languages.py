@@ -73,6 +73,9 @@ class TakeCheckConfig:
     model_factory: Callable[[str], object]
     swaps: Mapping[str, str]
     normalize: Callable[[str], str | None]
+    # Which texts must show a glottal closure (``take_check.glottal_closure_ms``),
+    # or ``None`` for a language that screens none. Needs no model.
+    closure_screen: Callable[[str], bool] | None = None
 
 
 class LexiconOutcome(enum.StrEnum):
