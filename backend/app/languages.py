@@ -53,6 +53,28 @@ class AlignmentConfig:
     syllabify_fn: Callable[[str], list[str] | None]
 
 
+@dataclass(frozen=True)
+class TakeCheckConfig:
+    """How to tell whether a TTS take said the consonant it was asked for (tunatale-ve4p.29).
+
+    A Gemini voice sometimes says a ``t`` as ``p`` ("Kaon na ta!" came out
+    "...pa"). A character CTC model scores the take as the text it was asked to
+    say against the same text with each ``t`` swapped for a rival, and a take
+    that loses is drawn again (``app.audio.take_check``).
+
+    The model is a language literal and an optional dependency, so it stays
+    behind the plugin as ALIGNMENT does: an id plus a factory core calls at most
+    once per process. ``swaps`` maps a character to the rivals tested in its
+    place. ``normalize`` spells a text in the model's characters (word breaks as
+    the model writes them), or returns ``None`` for a text it cannot spell.
+    """
+
+    model_id: str
+    model_factory: Callable[[str], object]
+    swaps: Mapping[str, str]
+    normalize: Callable[[str], str | None]
+
+
 class LexiconOutcome(enum.StrEnum):
     """Why a pronunciation-lexicon lookup ended the way it did.
 
@@ -307,6 +329,9 @@ class LanguageConfig:
     # Forced-alignment wiring for that slicing. ``None`` when the language has no
     # aligner, which is also a complete off-switch for the feature.
     alignment: AlignmentConfig | None = None
+    # How a Gemini take is checked for a consonant said as another one, or
+    # ``None`` for a language whose takes are not checked (``app.audio.take_check``).
+    take_check: TakeCheckConfig | None = None
     # A worked planner example day written IN THIS language, shown to the planner
     # when some OTHER language is the target. See ``get_planner_example``.
     # ``None`` for languages that supply no example (``en``).
@@ -761,6 +786,18 @@ def get_alignment(code: str) -> AlignmentConfig | None:
     process-level gate is ``app.audio.slicer.alignment_installed``.
     """
     return _facet(code, "alignment", None)
+
+
+def get_take_check_for_tts_locale(locale: str) -> TakeCheckConfig | None:
+    """The take check of the one language served at *locale*, or ``None``.
+
+    The Gemini adapter knows only the locale sliced out of the voice id, as it
+    does for the language's name (:func:`language_name_for_tts_locale`). A
+    locale two languages declare gets no check rather than the wrong one.
+    """
+    discover()
+    found = [c for c in _CONFIGS.values() if c.language.tts_locale == locale]
+    return found[0].take_check if len(found) == 1 else None
 
 
 def get_slow_word(code: str) -> Callable[[str], str] | None:

@@ -20,6 +20,7 @@ from pathlib import Path
 from app.audio.azure_tts import AzureTTSService
 from app.audio.gemini_tts import GeminiTTSService
 from app.audio.ports import TTSService
+from app.audio.take_check import checkers_by_locale
 from app.audio.tts_router import RoutingTTSService
 
 
@@ -38,5 +39,6 @@ def get_tts_service(cache_dir: Path | None = None) -> TTSService:
     # shows is the month synthesis is refused in.
     ledger = AzureCharacterLedger(settings.azure_tts_usage_ledger_path, reset_tz=settings.azure_tts_quota_reset_tz)
     azure = AzureTTSService(cache_dir=cache_dir, ledger=ledger)
-    gemini = GeminiTTSService(cache_dir=cache_dir)
+    # Gemini only: it is the nondeterministic provider, so a re-drawn take can differ.
+    gemini = GeminiTTSService(cache_dir=cache_dir, take_checker=checkers_by_locale())
     return RoutingTTSService(azure, gemini, cache_dir=cache_dir)

@@ -234,6 +234,8 @@ omit = [
     # mapping and every fallback live in app/audio/alignment.py and app/audio/slicer.py,
     # both covered by model-free tests.
     "app/plugins/languages/no/alignment.py",
+    # The take check's model loader, for the same reason (tunatale-ve4p.29).
+    "app/plugins/languages/ceb/take_check_model.py",
 ]
 
 [tool.coverage.report]

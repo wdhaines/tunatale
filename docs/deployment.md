@@ -631,7 +631,9 @@ Quit desktop Anki before `--apply` (the transfer refuses otherwise). The dev
 server can stay running: the laptop instance never touches it.
 
 **The laptop instance is not the dev server.** It is a git worktree at the
-commit prod runs (`~/TunaTaleLive/app`), built with prod's dependency set, on
+commit prod runs (`~/TunaTaleLive/app`), built with prod's dependency set plus the
+`alignment` group (its model checks each Gemini take for a t said as p and draws
+again, `app/audio/take_check.py`; the prod image logs `TAKE_CHECK_UNAVAILABLE`), on
 its own data (`~/TunaTaleLive/data`, laid out exactly like prod's volume) and
 its own ports: API 8100, page 5273 at `https://<mac>.ts.net:5273`. So learning
 never runs code that is mid-edit, and a dev-server reload never migrates your

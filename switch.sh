@@ -93,9 +93,12 @@ build() {  # $1 = commit. Check out and build it in the instance's worktree, onc
   # instance must NOT share with dev is overridden in start().
   ln -sfn "$REPO/backend/.env" "$APP/backend/.env"
   ln -sfn "$REPO/certs" "$APP/certs"
-  # The same dependency set as the prod image (Dockerfile), plus its built data
-  # (lemma tables AND the NST lexicon — app.build_data, tunatale-ip8q).
-  (cd "$APP/backend" && uv sync -q --frozen --no-dev --no-group slovene --no-group norwegian --no-group alignment \
+  # The prod image's dependency set (Dockerfile) PLUS the alignment group, and
+  # its built data (lemma tables AND the NST lexicon — app.build_data,
+  # tunatale-ip8q). alignment is the owner's call, 2026-10-14 (tunatale-ve4p.29):
+  # its model checks every Gemini take for a t said as p and draws again. It
+  # also turns on Norwegian syllable slicing here, as it is on the dev server.
+  (cd "$APP/backend" && uv sync -q --frozen --no-dev --no-group slovene --no-group norwegian \
     && .venv/bin/python -m app.build_data >/dev/null)
   (cd "$APP/frontend" && bun install --frozen-lockfile >/dev/null && bun run build >/dev/null)
   echo "$head" > "$RUN/built"
