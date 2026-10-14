@@ -107,6 +107,23 @@ def test_a_syllable_break_is_written_between_syllables_when_the_plugin_asks():
     assert _planner("mo", "a", "ko").plan_word("moako") == "moʔako"
 
 
+def test_a_word_of_a_line_can_be_read_run_together():
+    """The caller of a line says whether its words show their syllable breaks.
+
+    The break is the planner's by default; a line that wants its words whole
+    asks for them run together and gets the reading as it was before breaks
+    were written. Nothing else about a line word changes: the lone syllable
+    still loses its stress mark, and a reading written by hand is as written.
+    """
+    dotted = _planner("mo", "a", "ko", syllable_break=".")
+    assert dotted.plan_line_word("moako") == "mo.ʔa.ko"
+    assert dotted.plan_line_word("moako", run_together=True) == "moʔako"
+    assert dotted.plan_word("moako") == "mo.ʔa.ko"
+
+    assert _planner("ko", syllable_break=".").plan_line_word("ko", run_together=True) == "ko"
+    assert _planner("mo", "a", "ko").plan_line_word("moako", run_together=True) == "moʔako"
+
+
 def test_a_whole_word_override_is_not_broken_into_syllables():
     """An override is a reading somebody wrote by hand; it is returned as written."""
     planner = SpelledPhonemePlanner(
@@ -119,6 +136,7 @@ def test_a_whole_word_override_is_not_broken_into_syllables():
     )
     assert planner.plan_word("moa") == "mowa"
     assert planner.plan_line_word("moa") == "muwa"
+    assert planner.plan_line_word("moa", run_together=True) == "muwa"
 
 
 def test_the_onset_vowels_are_the_plugins_to_choose():

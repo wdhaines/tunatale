@@ -986,7 +986,8 @@ def test_collect_keys_carries_the_cut_for_a_caller_that_addresses_a_clip() -> No
 
 
 _CEB_LINE = "Buntag sa Jimenez. Naglakaw si Paul."
-_CEB_LINE_IPA = "bun.taɡ sa himɛnɛs. naɡ.la.kaw si pol."
+# An Enunciated line's words are run together (synth_plan), so no syllable breaks here.
+_CEB_LINE_IPA = "buntaɡ sa himɛnɛs. naɡlakaw si pol."
 
 
 def _price_ceb_line(cache_dir: Path) -> RenderCost:

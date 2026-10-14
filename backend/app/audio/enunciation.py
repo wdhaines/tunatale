@@ -98,7 +98,7 @@ def plan_line(text: str, slow_word: Callable[[str], str] | None = None) -> Enunc
     return EnunciatedLine(text=" ".join(natural), words=tuple(words))
 
 
-def line_phonemes(line: EnunciatedLine, planner: object | None) -> dict[str, str] | None:
+def line_phonemes(line: EnunciatedLine, planner: object | None, *, run_together: bool = False) -> dict[str, str] | None:
     """Every word of *line* as IPA, keyed by the bare lowercase word, or ``None``.
 
     For a voice that is told how a line sounds rather than marked up word by
@@ -110,6 +110,10 @@ def line_phonemes(line: EnunciatedLine, planner: object | None) -> dict[str, str
     (``plan_line_word`` — a lexicon-backed planner has no such method and is
     never asked), and when it cannot read ONE of the words: a line with a gap in
     its reading is a line whose reading is wrong, and no reading is better.
+
+    *run_together* asks the planner for each word without its syllable breaks.
+    It is passed on only when asked for, so a planner whose ``plan_line_word``
+    takes a word and nothing else is called as it always was.
     """
     plan_line_word = getattr(planner, "plan_line_word", None)
     if plan_line_word is None:
@@ -119,7 +123,7 @@ def line_phonemes(line: EnunciatedLine, planner: object | None) -> dict[str, str
         bare = token.strip(_SENTENCE_PUNCTUATION)
         if not any(c.isalnum() for c in bare):
             continue
-        ipa = plan_line_word(bare)
+        ipa = plan_line_word(bare, run_together=True) if run_together else plan_line_word(bare)
         if not ipa:
             return None
         readings[bare.lower()] = ipa

@@ -118,6 +118,10 @@ class SpelledPhonemePlanner:
         *upos* is accepted and ignored. It picks among a whole word's REAL
         readings, and there are none here to pick between.
         """
+        return self._plan(source_word, span, chunk_text, self._syllable_break)
+
+    def _plan(self, source_word: str, span: tuple[int, int], chunk_text: str | None, syllable_break: str) -> str | None:
+        """:meth:`plan_chunk`, with what is written between syllables named by the caller."""
         pieces = [p.lower() for p in self._syllabify(_bare(source_word))]
         start, stop = span
         if not 0 <= start < stop <= len(pieces) or not all(pieces):
@@ -126,7 +130,7 @@ class SpelledPhonemePlanner:
             return None
         if (start, stop) == (0, len(pieces)) and (override := self._whole_word_ipa.get("".join(pieces))) is not None:
             return override
-        spelled = self._syllable_break.join(self._spell(p) for p in pieces[start:stop])
+        spelled = syllable_break.join(self._spell(p) for p in pieces[start:stop])
         return "ˈ" + spelled if stop - start == 1 else spelled
 
     def plan_word(self, word: str) -> str | None:
@@ -146,7 +150,7 @@ class SpelledPhonemePlanner:
         """
         return self.plan_chunk(word, (0, len(self._syllabify(_bare(word)))))
 
-    def plan_line_word(self, word: str) -> str | None:
+    def plan_line_word(self, word: str, *, run_together: bool = False) -> str | None:
         """The IPA of *word* as one word of a spoken LINE, or ``None``.
 
         :meth:`plan_word`, with the two things a sentence changes
@@ -160,6 +164,10 @@ class SpelledPhonemePlanner:
         * ``line_word_ipa`` is consulted first, for the words a line contains
           and a drill mostly does not: names.
 
+        *run_together* leaves the syllable break out of the reading, for a line
+        whose caller wants its words whole (an Enunciated line: see
+        ``synth_plan``). It changes nothing for a planner that writes no break.
+
         ``None`` for a word with nothing to read, a digit included: a bare
         stress mark is not a reading, and the caller refuses the whole line
         rather than send one with a hole in it.
@@ -167,7 +175,10 @@ class SpelledPhonemePlanner:
         fixed = self._line_word_ipa.get(_bare(word).lower())
         if fixed is not None:
             return fixed
-        ipa = self.plan_word(word)
+        if run_together:
+            ipa = self._plan(word, (0, len(self._syllabify(_bare(word)))), None, "")
+        else:
+            ipa = self.plan_word(word)
         if ipa is None:
             return None
         return ipa.removeprefix("ˈ") or None
