@@ -39,7 +39,6 @@ from app.generation.drill_lines import admitted_lines, understood
 from app.generation.drill_lines import fold as _fold
 from app.generation.section_builder import build_affix_drill_section
 from app.languages import get_a1_morphology
-from app.models.curriculum import CurriculumDay
 from app.models.language import Language
 from app.models.lesson import Lesson, SectionType, extract_sentence_translations_from_translated
 from app.models.srs_item import Direction
@@ -290,18 +289,4 @@ def build_grammar_lesson(language: Language, plan: GrammarPlan) -> Lesson:
             }
         },
         kind="grammar",
-    )
-
-
-def grammar_day(day: int, plan: GrammarPlan) -> CurriculumDay:
-    """The curriculum day that holds *plan*'s lesson; its collocations are the forms drilled."""
-    affixes = pattern_title(plan.pattern).removeprefix("Affix drill: ")
-    return CurriculumDay(
-        day=day,
-        title=pattern_title(plan.pattern),
-        focus=f"The {affixes} pair, on roots you already understand",
-        collocations=list(plan.forms),
-        learning_objective="Say each form of a root you understand when asked for it in English.",
-        kind="grammar",
-        pattern=plan.pattern.key,
     )

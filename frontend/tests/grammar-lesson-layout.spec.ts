@@ -2,23 +2,16 @@ import { test, expect } from "./fixtures";
 import { backendAvailable, BACKEND } from "./helpers";
 
 /**
- * Geometry of the grammar-lesson UI on a phone (bd tunatale-ve4p.5), in a REAL
- * browser: jsdom lays nothing out, so "fits" and "on one row" are true of any
- * elements there.
+ * Geometry of the drill-only lesson UI on a phone (bd tunatale-ve4p.5), in a
+ * REAL browser: jsdom lays nothing out, so "fits" and "on one row" are true of
+ * any elements there.
  *
- * Two surfaces, both new and both built from text whose length the app does
- * not choose (root lists, affixed forms):
- *
- *   - "Add a grammar lesson" on the curriculum page: each pattern is a row of
- *     text beside an Add button. The text must wrap INSIDE its row; the button
- *     must stay on the row and inside the screen.
- *   - The table of forms on a drill-only lesson page: a root and its forms are
- *     one row of three cells, and a long form wraps in its cell.
- *
- * Neither may widen the page. The e2e backend is Slovene, which has no affix
- * patterns, so the pattern list, the lesson body and the audio are stubbed on
- * top of a real imported curriculum: what is under test is layout, and the
- * routes themselves are tested against a real Cebuano deck in the backend.
+ * The table of forms on a drill-only lesson page: a root and its forms are one
+ * row of three cells, and a long form wraps in its cell. It may not widen the
+ * page. The e2e backend is Slovene, which has no affix patterns, so the lesson
+ * body and the audio are stubbed on top of a real imported curriculum: what is
+ * under test is layout, and the routes themselves are tested against a real
+ * Cebuano deck in the backend.
  */
 
 const TOPIC = "grammar-lesson-layout-e2e";
@@ -35,24 +28,6 @@ const STORY = {
   dialogue_glosses: [{ word: "dan", translation: "day" }],
   morphology_focus: [],
 };
-
-// The owner's deck on 2026-10-07: five roots each for the first two patterns
-// (the longest line this row has had to hold), and none for the third.
-const PATTERNS = [
-  {
-    key: "mo-mi",
-    title: "Affix drill: mo- / mi-",
-    roots: ["lakaw", "inom", "adto", "anhi", "uban"],
-    ready: true,
-  },
-  {
-    key: "mag-nag",
-    title: "Affix drill: mag- / nag-",
-    roots: ["lakaw", "ampo", "dala", "kita", "uban"],
-    ready: true,
-  },
-  { key: "ma-na", title: "Affix drill: ma- / na-", roots: [], ready: false },
-];
 
 const root = (name: string, english: string, isNew: boolean, forms: [string, string][]) => ({
   root: name,
@@ -164,9 +139,6 @@ async function curriculumId(
 test.describe.configure({ mode: "serial" });
 
 async function stubGrammar(page: import("@playwright/test").Page) {
-  await page.route("**/api/curriculum/*/grammar-patterns", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PATTERNS) }),
-  );
   // The real lesson, turned into a drill-only one: same id, so every other
   // request the page makes for it still reaches the backend and finds it.
   await page.route("**/api/story/*", async (route) => {
@@ -232,47 +204,6 @@ for (const [name, width, height] of [
   ["a 412px phone", 412, 915],
   ["a 320px phone", 320, 700],
 ] as const) {
-  test(`adding a grammar lesson on ${name}: every Add button stays on its row and on the screen`, async ({
-    page,
-    request,
-  }) => {
-    test.skip(!(await backendAvailable(request)), "Backend not available");
-    await page.setViewportSize({ width, height });
-    await stubGrammar(page);
-    await page.goto(`/c/${await curriculumId(request)}`);
-
-    await page.getByRole("button", { name: /Add a grammar lesson/ }).click();
-    const rows = page.locator(".grammar-pattern");
-    await expect(rows).toHaveCount(3);
-
-    // Every rect is read in ONE frame. Read one await at a time, a row and its
-    // own button were measured either side of the rate-limit chip above them
-    // arriving, and the button "left" its row by the chip's 9px (the gate,
-    // 2026-10-07; the spec passed when run alone).
-    const measured = await rows.evaluateAll((els) =>
-      els.map((el) => {
-        const rect = (node: Element) => {
-          const r = node.getBoundingClientRect();
-          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-        };
-        return {
-          row: rect(el),
-          text: rect(el.querySelector(".pattern-text")!),
-          add: rect(el.querySelector(".pattern-add")!),
-        };
-      }),
-    );
-    expect(measured).toHaveLength(3);
-    for (const { row, text, add } of measured) {
-      // Beside the text, not under it; inside the row; inside the screen.
-      expect(add.left).toBeGreaterThanOrEqual(text.right);
-      expect(add.top).toBeGreaterThanOrEqual(row.top);
-      expect(add.bottom).toBeLessThanOrEqual(row.bottom + 0.5);
-      expect(add.right).toBeLessThanOrEqual(width);
-    }
-    expect(await overflowX(page)).toBe(0);
-  });
-
   test(`a drill-only lesson on ${name}: each root and its forms are one row, inside the screen`, async ({
     page,
     request,

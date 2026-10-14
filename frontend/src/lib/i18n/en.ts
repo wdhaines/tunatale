@@ -631,18 +631,6 @@ export const en = {
   "curriculum.deleteTopic": "Delete {topic}",
   "curriculum.confirmDeleteTopic": "Confirm delete {topic}",
 
-  // AddGrammarLesson.svelte
-  "addGrammarLesson.toggle": "Add a grammar lesson",
-  "addGrammarLesson.roots": {
-    one: "{count} root you understand: {roots}.",
-    other: "{count} roots you understand: {roots}.",
-  },
-  "addGrammarLesson.noRoots": "No roots yet. A drill needs two you understand.",
-  "addGrammarLesson.needsTwo": "A drill needs two.",
-  "addGrammarLesson.add": "Add",
-  "addGrammarLesson.adding": "Adding…",
-  "addGrammarLesson.addPattern": "Add {title}",
-
   // DrillForms.svelte
   "drillForms.heading": "In this drill",
   "drillForms.new": "New",
