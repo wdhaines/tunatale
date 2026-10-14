@@ -1885,3 +1885,124 @@ def test_the_repeat_limit_was_measured_on_the_reading_instruction_in_force():
 
 def test_the_adapter_measures_with_ffmpeg_unless_told_otherwise():
     assert GeminiTTSService(min_delay=0, token_provider=_fake_token)._speech_seconds is speech_seconds
+
+
+# --- the take check: a take that says t as p is drawn again (tunatale-ve4p.29) --
+
+
+def _takes(*names: bytes):
+    """A provider that answers each request with the next of *names* as the audio."""
+    return [httpx.Response(200, json={"audioContent": base64.b64encode(n).decode()}) for n in names]
+
+
+class _Checker:
+    """Scores each take by name: a take is judged by what it says, not by when it came."""
+
+    passes = staticmethod(gemini_tts.TakeChecker.passes)
+
+    def __init__(self, scores: dict[bytes, float | None]) -> None:
+        self.scores = scores
+        self.asked: list[tuple[bytes, str]] = []
+
+    def margin(self, audio: bytes, text: str) -> float | None:
+        self.asked.append((audio, text))
+        return self.scores[audio]
+
+
+@respx.mock
+async def test_a_take_that_passes_is_kept_and_nothing_more_is_drawn(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"ta"))
+    checker = _Checker({b"ta": 9.0})
+
+    await _svc(cache_dir=tmp_path / "c", take_checker=lambda locale: checker).synthesize(
+        "Kaon na ta!", VOICE, tmp_path / "o.mp3"
+    )
+
+    assert route.call_count == 1
+    assert checker.asked == [(b"ta", "Kaon na ta!")]
+    assert (tmp_path / "o.mp3").read_bytes() == b"ta"
+
+
+@respx.mock
+async def test_a_take_that_fails_is_drawn_again_and_the_good_one_is_cached(tmp_path, caplog):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"pa", b"ta"))
+    svc = _svc(cache_dir=tmp_path / "c", take_checker=lambda locale: _Checker({b"pa": -6.2, b"ta": 9.0}))
+
+    with caplog.at_level(logging.WARNING):
+        await svc.synthesize("Kaon na ta!", VOICE, tmp_path / "o.mp3")
+
+    assert route.call_count == 2
+    assert (tmp_path / "o.mp3").read_bytes() == b"ta"
+    assert [f.read_bytes() for f in (tmp_path / "c").glob("*.mp3")] == [b"ta"]
+    assert "TAKE_CHECK_REROLL 'Kaon na ta!' scored -6.2" in caplog.text
+    assert "GAVE_UP" not in caplog.text
+
+
+@respx.mock
+async def test_after_every_reroll_fails_the_best_take_is_kept_and_it_says_so(tmp_path, caplog):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"pa1", b"pa2", b"pa3", b"pa4"))
+    checker = _Checker({b"pa1": -6.0, b"pa2": -1.0, b"pa3": -7.0, b"pa4": -5.0})
+
+    with caplog.at_level(logging.WARNING):
+        await _svc(take_checker=lambda locale: checker).synthesize("Kaon na ta!", VOICE, tmp_path / "o.mp3")
+
+    assert route.call_count == 1 + gemini_tts.TAKE_CHECK_REROLLS
+    assert (tmp_path / "o.mp3").read_bytes() == b"pa2"
+    assert "TAKE_CHECK_GAVE_UP 'Kaon na ta!': 4 takes, best scored -1.0" in caplog.text
+
+
+@respx.mock
+async def test_a_take_the_check_cannot_score_is_kept(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"oo"))
+
+    await _svc(take_checker=lambda locale: _Checker({b"oo": None})).synthesize("Oo!", VOICE, tmp_path / "o.mp3")
+
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_a_redraw_the_check_cannot_score_ends_the_redraws(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"pa", b"??"))
+
+    await _svc(take_checker=lambda locale: _Checker({b"pa": -6.0, b"??": None})).synthesize(
+        "Kaon na ta!", VOICE, tmp_path / "o.mp3"
+    )
+
+    assert route.call_count == 2
+    assert (tmp_path / "o.mp3").read_bytes() == b"??"
+
+
+@respx.mock
+async def test_the_checker_is_looked_up_by_the_voices_locale(tmp_path):
+    respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"ta"))
+    asked: list[str] = []
+
+    await _svc(take_checker=lambda locale: asked.append(locale)).synthesize(TEXT, VOICE, tmp_path / "o.mp3")
+
+    assert asked == ["ceb-PH"]
+
+
+@respx.mock
+async def test_an_enunciated_line_is_checked_and_redrawn_too(tmp_path):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"pa", b"ta"))
+    checker = _Checker({b"pa": -6.0, b"ta": 3.0})
+
+    await _svc(take_checker=lambda locale: checker).synthesize(
+        "Kaon na ta!", VOICE, tmp_path / "o.mp3", enunciation=("Kaon", "na", "ta!")
+    )
+
+    assert route.call_count == 2
+    assert (tmp_path / "o.mp3").read_bytes() == b"ta"
+
+
+@respx.mock
+async def test_a_take_that_passes_on_the_last_redraw_is_kept(tmp_path, caplog):
+    route = respx.post(SYNTHESIS_URL).mock(side_effect=_takes(b"pa1", b"pa2", b"pa3", b"ta"))
+    checker = _Checker({b"pa1": -6.0, b"pa2": -6.0, b"pa3": -6.0, b"ta": 4.0})
+
+    with caplog.at_level(logging.WARNING):
+        await _svc(take_checker=lambda locale: checker).synthesize("Kaon na ta!", VOICE, tmp_path / "o.mp3")
+
+    assert route.call_count == 4
+    assert (tmp_path / "o.mp3").read_bytes() == b"ta"
+    assert "GAVE_UP" not in caplog.text

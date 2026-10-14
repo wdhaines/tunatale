@@ -10,6 +10,7 @@ from app.plugins.languages.ceb.a1_morphology import CEBUANO_A1_MORPHOLOGY
 from app.plugins.languages.ceb.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
 from app.plugins.languages.ceb.syllabify import syllabify_cebuano_word
+from app.plugins.languages.ceb.take_check import take_check_config
 
 _DATA = Path(__file__).parent / "data"
 _style_notes = (_DATA / "style.md").read_text(encoding="utf-8").strip()
@@ -163,6 +164,8 @@ register(
         # Stage 2 (tunatale-u8nz.20): an affixed form (milakaw) becomes an
         # inflection cloze on its root card once the root is in production review.
         a1_morphology=CEBUANO_A1_MORPHOLOGY,
+        # A take that says a t as p or b is drawn again (tunatale-ve4p.29).
+        take_check=take_check_config(),
         # Deliberately omitted until their owning beads ship:
         # - planner_example: get_planner_example picks the LOWEST-SORTING other
         #   language that supplies one, and "ceb" sorts before every other

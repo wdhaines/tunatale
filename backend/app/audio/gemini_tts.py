@@ -40,6 +40,7 @@ import httpx
 
 from app.audio.ports import Enunciation, TTSExhausted
 from app.audio.speech_length import speech_seconds as measure_speech_seconds
+from app.audio.take_check import TAKE_CHECK_REROLLS, TakeChecker
 from app.audio.word_gaps import rewrite_word_gaps
 from app.generation.section_builder import _SENTENCE_PUNCTUATION
 from app.languages import language_name_for_tts_locale
@@ -495,6 +496,7 @@ class GeminiTTSService:
         now: Callable[[], float] | None = None,
         speech_seconds: Callable[[bytes], float] | None = None,
         rewrite_gaps: Callable[[bytes, int], bytes | None] | None = None,
+        take_checker: Callable[[str], TakeChecker | None] | None = None,
     ) -> None:
         if model is None or min_delay is None:
             from app.config import settings
@@ -537,6 +539,9 @@ class GeminiTTSService:
         # the renderer would otherwise emit a line per render, and one line is
         # the entire diagnostic value here.
         self._warned_phonemes = False
+        # Locale -> the checker for the language served there, or None. A take
+        # that fails it is drawn again (``_checked``); None checks nothing.
+        self._take_checker = take_checker
 
     # ------------------------------------------------------------------
     # TTSService Protocol implementation
@@ -602,9 +607,17 @@ class GeminiTTSService:
         # line whose reading has a gap is sent plain, and is not measured.
         if enunciated or (line and ipa is not None):
             words = len(enunciation) if enunciated and enunciation else 0
-            audio = await self._line_take(text, language_code, name, speaking_rate, ipa, phrase, enunciated, words)
+
+            async def draw() -> bytes:
+                return await self._line_take(text, language_code, name, speaking_rate, ipa, phrase, enunciated, words)
         else:
-            audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
+
+            async def draw() -> bytes:
+                return await self._synthesize_with_retry(
+                    text, language_code, name, speaking_rate, ipa, phrase, enunciated
+                )
+
+        audio = await self._checked(await draw(), text, language_code, draw)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
@@ -613,6 +626,39 @@ class GeminiTTSService:
             cached = self._cache_path(text, voice_id, rate, ipa, enunciated)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
+
+    async def _checked(self, audio: bytes, text: str, locale: str, draw: Callable[[], Awaitable[bytes]]) -> bytes:
+        """*audio*, or a fresh take of it when the language's take check fails it (tunatale-ve4p.29).
+
+        Gemini is nondeterministic, so a take that says a ``t`` as ``p`` is
+        fixed by drawing again, up to ``TAKE_CHECK_REROLLS`` times. Every
+        re-draw is logged, and so is giving up: the best-scoring take is kept
+        and cached, and ``scripts/reroll_tts_clip.py`` is the way to evict it.
+        The model runs off the event loop; it is CPU work.
+        """
+        checker = self._take_checker(locale) if self._take_checker is not None else None
+        if checker is None:
+            return audio
+        margin = await asyncio.to_thread(checker.margin, audio, text)
+        best, best_margin = audio, margin
+        for attempt in range(1, TAKE_CHECK_REROLLS + 1):
+            if checker.passes(margin):
+                return audio
+            logger.warning("TAKE_CHECK_REROLL %r scored %.1f; drawing take %d", text, margin, attempt + 1)
+            audio = await draw()
+            margin = await asyncio.to_thread(checker.margin, audio, text)
+            if margin is None or margin > best_margin:
+                best, best_margin = audio, margin
+        if checker.passes(margin):
+            return audio
+        logger.warning(
+            "TAKE_CHECK_GAVE_UP %r: %d takes, best scored %.1f — cached as it is; "
+            "evict it with scripts/reroll_tts_clip.py",
+            text,
+            TAKE_CHECK_REROLLS + 1,
+            best_margin,
+        )
+        return best
 
     async def list_voices(self, language_code: str | None = None) -> list[dict]:
         """Return no voices.
