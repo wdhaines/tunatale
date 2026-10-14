@@ -34,9 +34,27 @@ def spell_for_model(text: str) -> str | None:
     return _WORD_BREAK.join(words) or None
 
 
+# Two like vowels side by side: in Cebuano spelling that is a glottal stop
+# between them (miinom = mi.ʔi.nom, kaayo = ka.ʔa.yo), and the one the drill
+# voice loses when it runs them together (tunatale-ve4p.24). Unlike vowels
+# (moinom, mianhi) pass by ear without a closure, so they are not screened.
+_LIKE_VOWELS = re.compile(r"([aeiou])\1")
+
+
+def needs_closure_screen(text: str) -> bool:
+    """One word with like vowels side by side. A line is not screened: the
+    pauses between its words would read as closures."""
+    words = _NOT_LETTERS.sub(" ", text.lower()).split()
+    return len(words) == 1 and _LIKE_VOWELS.search(words[0]) is not None
+
+
 def take_check_config() -> TakeCheckConfig:
     from app.plugins.languages.ceb.take_check_model import create_emission_model
 
     return TakeCheckConfig(
-        model_id=MODEL_ID, model_factory=create_emission_model, swaps=SWAPS, normalize=spell_for_model
+        model_id=MODEL_ID,
+        model_factory=create_emission_model,
+        swaps=SWAPS,
+        normalize=spell_for_model,
+        closure_screen=needs_closure_screen,
     )

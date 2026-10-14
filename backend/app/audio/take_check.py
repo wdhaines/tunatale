@@ -39,6 +39,19 @@ from app.languages import TakeCheckConfig, get_take_check_for_tts_locale
 
 logger = logging.getLogger(__name__)
 
+# A glottal stop between like vowels is a closure this long or longer: a dip of
+# CLOSURE_DIP_DB under the word's loudest 10 ms frame, held. Measured against
+# the owner's blind ear test, 2026-10-14 (tunatale-ve4p.24): 17 of 18 takes of
+# miinom and kaayo agreed, the one that lacked the stop measured 20 ms, and the
+# one disagreement was a take heard WITH the stop that also measured 20 ms — a
+# false alarm, which costs one more take.
+CLOSURE_MIN_MS = 40
+CLOSURE_DIP_DB = 20.0
+# The word is the frames within this many dB of its peak; quieter is the
+# silence around it, which is no closure.
+_WORD_FLOOR_DB = 30.0
+_FRAME = MODEL_SAMPLE_RATE // 100  # 10 ms
+
 # How many more takes a failed one may draw. Measured: about one take in ten
 # fails, so three re-draws leave about one clip in ten thousand unfixed, and
 # that one is logged.
@@ -100,6 +113,25 @@ def decode_audio(audio: bytes) -> np.ndarray:
     return np.frombuffer(proc.stdout, dtype=np.float32)
 
 
+def glottal_closure_ms(samples: np.ndarray) -> int:
+    """The longest dip inside the word, in ms: frames ``CLOSURE_DIP_DB`` or more under its peak.
+
+    *samples* is mono at the model's rate. Any oral stop (k, d, t) reads as a
+    closure too, so this says something only about a word with none where the
+    stop should be — which is why a language chooses the texts it screens.
+    """
+    n = len(samples) // _FRAME
+    frames = samples[: n * _FRAME].astype(np.float64).reshape(n, _FRAME)
+    db = 20 * np.log10(np.sqrt((frames**2).mean(axis=1)) + 1e-9)
+    peak = db.max()
+    word = np.flatnonzero(db > peak - _WORD_FLOOR_DB)
+    longest = run = 0
+    for level in db[word[0] : word[-1] + 1]:
+        run = run + 1 if level < peak - CLOSURE_DIP_DB else 0
+        longest = max(longest, run)
+    return longest * 10
+
+
 class TakeChecker:
     """Scores takes for one language. The model loads on the first take that needs it."""
 
@@ -123,14 +155,37 @@ class TakeChecker:
         return self._model
 
     def margin(self, audio: bytes, text: str) -> float | None:
-        """How surely *audio* says *text* rather than a rival, or ``None`` when it cannot be asked."""
+        """How well *audio* says *text*: below zero fails. ``None`` when nothing could be asked.
+
+        The worst of the checks that apply: the consonant swap (``swap_margin``)
+        and, for a text the language screens, the glottal closure, scored as
+        tens of ms over ``CLOSURE_MIN_MS``. Both are zero at their own line, so
+        the lower one decides, and a re-draw keeps the take that scored best.
+        """
+        samples: list[np.ndarray] = []
+
+        def decoded() -> np.ndarray:
+            if not samples:
+                samples.append(self._decode(audio))
+            return samples[0]
+
+        scores = []
+        screen = self._config.closure_screen
+        if screen is not None and screen(text):
+            scores.append((glottal_closure_ms(decoded()) - CLOSURE_MIN_MS) / 10)
+        swapped = self._swap_margin(decoded, text)
+        if swapped is not None:
+            scores.append(swapped)
+        return min(scores) if scores else None
+
+    def _swap_margin(self, decoded: Callable[[], np.ndarray], text: str) -> float | None:
         spelled = self._config.normalize(text)
         if spelled is None or not any(ch in self._config.swaps for ch in spelled):
             return None
         model = self._loaded()
         if model is None or any(ch not in model.vocab for ch in spelled):
             return None
-        log_probs = model.log_probs(self._decode(audio))
+        log_probs = model.log_probs(decoded())
         return swap_margin(log_probs, spelled, model.vocab, model.blank, self._config.swaps)
 
     @staticmethod

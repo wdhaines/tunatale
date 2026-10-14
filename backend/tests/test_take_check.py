@@ -248,3 +248,129 @@ def test_audio_ffmpeg_cannot_read_raises_naming_ffmpeg():
 
     with pytest.raises(RuntimeError, match="ffmpeg decode failed"):
         decode_audio(b"not audio")
+
+
+# --- the glottal stop between like vowels (tunatale-ve4p.24) ---------------------
+#
+# The owner's blind ear test, 2026-10-14: with the dotted reading, miinom kept
+# its stop in 5 of 6 takes. The closure screen (a dip of 20 dB or more under the
+# word's peak, held 40 ms or more) agreed with the ear on 17 of 18 takes: it
+# caught the one that lacked the stop, and called one take that had it open (a
+# false alarm costs one more take). The owner chose to re-draw on it.
+
+_RATE = 16_000
+
+
+def _tone(ms: int) -> np.ndarray:
+    t = np.arange(int(_RATE * ms / 1000)) / _RATE
+    return (0.5 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+
+def _silence(ms: int) -> np.ndarray:
+    return np.zeros(int(_RATE * ms / 1000), dtype=np.float32)
+
+
+def test_a_closure_inside_the_word_is_measured():
+    from app.audio.take_check import glottal_closure_ms
+
+    assert glottal_closure_ms(np.concatenate([_tone(200), _silence(60), _tone(200)])) == 60
+
+
+def test_a_word_with_no_closure_measures_zero():
+    from app.audio.take_check import glottal_closure_ms
+
+    assert glottal_closure_ms(_tone(400)) == 0
+
+
+def test_the_silence_around_the_word_is_not_a_closure():
+    from app.audio.take_check import glottal_closure_ms
+
+    assert glottal_closure_ms(np.concatenate([_silence(300), _tone(400), _silence(300)])) == 0
+
+
+def test_the_longest_dip_is_the_one_that_counts():
+    from app.audio.take_check import glottal_closure_ms
+
+    word = np.concatenate([_tone(100), _silence(20), _tone(100), _silence(50), _tone(100)])
+
+    assert glottal_closure_ms(word) == 50
+
+
+def _closure_config(model=None, loads=None) -> TakeCheckConfig:
+    def factory(model_id: str):
+        if loads is not None:
+            loads.append(model_id)
+        return model
+
+    return TakeCheckConfig(
+        model_id="test-model",
+        model_factory=factory,
+        swaps={"t": "pb"},
+        normalize=str.lower,
+        closure_screen=lambda text: text == "miinom",
+    )
+
+
+def test_a_take_that_runs_like_vowels_together_fails():
+    checker = TakeChecker(_closure_config(), decode=lambda audio: _tone(400))
+
+    assert not checker.passes(checker.margin(b"audio", "miinom"))
+
+
+def test_a_take_that_keeps_the_stop_passes_and_scores_by_how_long_it_closes():
+    long_stop = TakeChecker(
+        _closure_config(), decode=lambda audio: np.concatenate([_tone(200), _silence(90), _tone(200)])
+    )
+    short_stop = TakeChecker(
+        _closure_config(), decode=lambda audio: np.concatenate([_tone(200), _silence(50), _tone(200)])
+    )
+
+    assert long_stop.margin(b"a", "miinom") > short_stop.margin(b"a", "miinom") >= 0
+
+
+def test_the_closure_screen_needs_no_model():
+    """Plain signal arithmetic: it runs where the speech model cannot load."""
+    loads: list[str] = []
+    checker = TakeChecker(_closure_config(loads=loads), decode=lambda audio: _tone(400))
+
+    checker.margin(b"audio", "miinom")
+
+    assert loads == []
+
+
+def test_a_text_the_screen_does_not_ask_about_is_not_screened():
+    checker = TakeChecker(_closure_config(), decode=lambda audio: _tone(400))
+
+    assert checker.margin(b"audio", "moinom") is None
+
+
+def test_a_take_must_pass_both_checks_when_both_apply():
+    """A t said as p fails a take whose stop closed cleanly."""
+    says_pa = _Model(_emissions({"p": 0.9}, {"a": 0.9}))
+    config = TakeCheckConfig(
+        model_id="m",
+        model_factory=lambda _: says_pa,
+        swaps={"t": "pb"},
+        normalize=str.lower,
+        closure_screen=lambda t: True,
+    )
+    checker = TakeChecker(config, decode=lambda audio: np.concatenate([_tone(200), _silence(90), _tone(200)]))
+
+    assert not checker.passes(checker.margin(b"audio", "ta"))
+
+
+@pytest.mark.parametrize(
+    ("text", "screened"),
+    [
+        ("miinom", True),
+        ("kaayo", True),
+        ("Maayo!", True),
+        ("moinom", False),  # unlike vowels: the ear passes them without a closure
+        ("Maayong gabii.", False),  # a line: the pauses between words would read as closures
+        ("adto", False),
+    ],
+)
+def test_cebuano_screens_one_word_with_like_vowels_side_by_side(text, screened):
+    from app.plugins.languages.ceb.take_check import needs_closure_screen
+
+    assert needs_closure_screen(text) is screened
