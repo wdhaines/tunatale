@@ -636,6 +636,13 @@ export const en = {
   "drillForms.new": "New",
   "drillForms.newTitle": "You are asked for these forms without hearing them first",
   "drillForms.reveal": "Show the form for: {english}",
+  "drillForms.progressHeading": "Before the next pattern",
+  "drillForms.drillDays": "Days you heard the drill",
+  "drillForms.firstPasses": "Cards past a first review",
+  "drillForms.passRate": "Reviews passed",
+  "drillForms.noReviews": "none yet",
+  "drillForms.stuck": "Stuck",
+  "drillForms.passed": "Passed",
 
   // +error.svelte
   "error.genericFallback": "Something went wrong",

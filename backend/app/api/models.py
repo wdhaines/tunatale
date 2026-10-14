@@ -1478,17 +1478,39 @@ class LessonDrillRoot(BaseModel):
     forms: list[LessonDrillForm]
 
 
+class LessonDrillProgress(BaseModel):
+    """LessonDrill.progress: how far the learner is with the pattern, beside what the pace gate needs.
+
+    ``pattern_gate.Progress.summary``. A review-only pattern needs drill days
+    alone, so its card targets are 0. ``stuck`` is a pattern still short of
+    the gate after five drill days.
+    """
+
+    review_only: bool
+    drill_days: int
+    drill_days_needed: int
+    first_passes: int
+    first_passes_needed: int
+    reviews: int
+    passes: int
+    pass_rate_needed: float
+    met: bool
+    stuck: bool
+
+
 class LessonDrill(BaseModel):
     """LessonResponse.drill: the pattern a lesson drills and the roots it drills it on.
 
     ``labels`` name the columns the forms are laid out in, one per form of a
     root and in the same order; empty for a pattern whose language names none.
+    ``progress`` is present when the route had the learner's deck to read.
     """
 
     pattern: str
     title: str
     labels: list[str] = []
     roots: list[LessonDrillRoot]
+    progress: LessonDrillProgress | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class LessonResponse(BaseModel):

@@ -297,5 +297,39 @@ def test_a_pattern_unpassed_after_five_drill_days_says_so(srs_db, store, caplog)
     )
 
 
+# --- what the lesson page shows (tunatale-ve4p.30, option B) ---------------------
+
+
+def test_the_summary_says_how_far_each_part_of_the_gate_is_and_what_it_needs(srs_db, store):
+    _heard(srs_db, store, "mo-mi", *(_at(day) for day in (5, 6, 7, 8, 9)))
+    _passed_first_review(srs_db, "mo-mi", _MO_MI_FOUR[:2])
+    _graded(srs_db, "mo-mi", "lakaw", 1, (_LEARN, _GOOD), (_REVIEW, _AGAIN), (_REVIEW, _GOOD), (_REVIEW, _AGAIN))
+
+    assert progress(_PATTERNS["mo-mi"], srs_db=srs_db, store=store).summary() == {
+        "review_only": False,
+        "drill_days": 5,
+        "drill_days_needed": 2,
+        "first_passes": 2,
+        "first_passes_needed": 4,
+        "reviews": 5,
+        "passes": 3,
+        "pass_rate_needed": 0.8,
+        "met": False,
+        "stuck": True,
+    }
+
+
+def test_a_review_only_summary_needs_one_drill_day_and_nothing_else(srs_db, store):
+    _heard(srs_db, store, "ma-na", _at(9))
+    summary = progress(_PATTERNS["ma-na"], srs_db=srs_db, store=store).summary()
+    assert {k: summary[k] for k in ("review_only", "drill_days", "drill_days_needed", "met", "stuck")} == {
+        "review_only": True,
+        "drill_days": 1,
+        "drill_days_needed": 1,
+        "met": True,
+        "stuck": False,
+    }
+
+
 def test_a_language_with_no_patterns_has_no_next_pattern(srs_db, store):
     assert next_pattern("no", srs_db=srs_db, store=store) is None
