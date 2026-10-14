@@ -116,4 +116,7 @@ def test_public_method_count_pinned() -> None:
     #  spelling?", as one set per language. count_vocab_with_text answers the
     #  same question for one text, exact-case, one query each — the queue asks
     #  it of every item, casefolded — tunatale-p7ak)
-    assert count == 140
+    # +get_listens / +get_collocation_ids_by_disambig_key (the affix pace gate:
+    #  on which study days a pattern's drill was heard, and which contrast cards
+    #  are its cells — tunatale-ve4p.26)
+    assert count == 142

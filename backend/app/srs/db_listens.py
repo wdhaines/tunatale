@@ -10,9 +10,9 @@ from datetime import UTC, datetime
 class DbListensMixin:
     """lesson_listens accessors. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
 
-    def record_listen(self, lesson_id: str, source: str = "listen") -> None:
-        """Append one row to lesson_listens with the current UTC timestamp."""
-        listened_at = datetime.now(UTC).isoformat()
+    def record_listen(self, lesson_id: str, source: str = "listen", *, at: datetime | None = None) -> None:
+        """Append one row to lesson_listens, stamped *at* (default: now, UTC)."""
+        listened_at = (at or datetime.now(UTC)).isoformat()
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT INTO lesson_listens (lesson_id, listened_at, source) VALUES (?, ?, ?)",
@@ -58,6 +58,12 @@ class DbListensMixin:
             {"lesson_id": r["lesson_id"], "listen_count": r["listen_count"], "last_listened_at": r["last_listened_at"]}
             for r in rows
         ]
+
+    def get_listens(self) -> list[tuple[str, str]]:
+        """Every listen as ``(lesson_id, listened_at)``, oldest first."""
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT lesson_id, listened_at FROM lesson_listens ORDER BY listened_at, id").fetchall()
+        return [(r["lesson_id"], r["listened_at"]) for r in rows]
 
     def latest_listen_at(self, lesson_id: str) -> str | None:
         """Most recent listened_at ISO timestamp, or None if never listened."""

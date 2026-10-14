@@ -201,7 +201,7 @@ def build_story_prompts(
         content_store.get_curriculum(curriculum_id) if content_store is not None and curriculum_id is not None else None
     )
     pattern = (
-        pattern_for_day(curriculum, curriculum_day)
+        pattern_for_day(curriculum, curriculum_day, srs_db=srs_db, store=content_store)
         if curriculum is not None
         else named_pattern(language.code, curriculum_day)
     )
