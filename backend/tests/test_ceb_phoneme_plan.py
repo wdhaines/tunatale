@@ -130,6 +130,9 @@ def test_a_reading_shows_where_its_syllables_part(planner):
     assert planner.plan_chunk("moadto", (0, 1)) == "ˈmo"
     assert planner.plan_word("mga") == "maˈŋa"
     assert planner.plan_line_word("Jimenez") == "himɛnɛs"
+    # An Enunciated line asks for its words run together (synth_plan).
+    assert planner.plan_line_word("Oo,", run_together=True) == "ʔoʔo"
+    assert planner.plan_line_word("kaayo", run_together=True) == "kaʔajo"
 
 
 def test_mga_is_said_manga_not_as_spelled(planner):

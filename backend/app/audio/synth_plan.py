@@ -177,7 +177,20 @@ def plan_section(
             # The reading of the whole line, for a language whose voice is
             # told how a line sounds. Never a chunk's: an Enunciated line
             # has no provenance, and for every other language it is plain.
-            return line_phonemes(line, planner) if line_ipa else None
+            #
+            # Its words are run together, with no mark at their syllable
+            # breaks, where every other reading of the language has one
+            # (tunatale-ve4p.24). Measured 2026-10-13 on six lines, three
+            # fresh takes each way: with the breaks an Enunciated take spoke
+            # 1.13 times as long, longer on five lines of six, on a section
+            # whose pace the owner had set by ear that day. And by the
+            # owner's ear on the paired clips: "baybayon" less chopped up
+            # without them, a line "chopped up very weirdly" with them, and
+            # an "Oo" with no stop in it with them. This section's word gaps
+            # are made after the take, by the adapter's pause rewrite, which
+            # also shuts every pause inside a word; a break written into the
+            # reading has nothing left to add here and those costs.
+            return line_phonemes(line, planner, run_together=True) if line_ipa else None
         if natural is not None:
             return line_phonemes(natural, planner)
         if phrase.source_word is None or phrase.syllable_span is None:

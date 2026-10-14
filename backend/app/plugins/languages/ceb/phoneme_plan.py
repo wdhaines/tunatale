@@ -96,7 +96,8 @@ _LINE_WORD_IPA = {"jimenez": "himɛnɛs", "paul": "pol", "liza": "lisa"}
 # (2026-10-13, tunatale-ve4p.24; the owner's ear on seven of those clips agreed
 # with the measure on every one). The owner's call, the same day: "I'd do it
 # everywhere", so it is the planner's, and a drill piece, a drilled form and a
-# line all get it.
+# line at natural speed all get it. An Enunciated line is the one caller that
+# asks for its words run together: see ``synth_plan``.
 _SYLLABLE_BREAK = "."
 
 

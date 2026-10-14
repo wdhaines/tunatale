@@ -154,6 +154,24 @@ def test_every_word_of_the_line_is_read_and_keyed_bare_and_lowercase():
     assert planner.asked == ["Liza", "Maayong", "buntag"]
 
 
+def test_a_line_can_ask_for_its_words_run_together():
+    """The ask reaches the planner as a keyword, and only when it is made.
+
+    ``_LinePlanner`` above takes a word and nothing else, the shape a planner
+    with no syllable break to leave out is free to keep: every other test here
+    calls it without the keyword, and would raise if it were always passed.
+    """
+
+    class _Breaking:
+        def plan_line_word(self, word: str, *, run_together: bool = False) -> str:
+            return "maʔajoŋ" if run_together else "ma.ʔa.joŋ"
+
+    line = plan_line("Maayong maayong")
+
+    assert line_phonemes(line, _Breaking()) == {"maayong": "ma.ʔa.joŋ"}
+    assert line_phonemes(line, _Breaking(), run_together=True) == {"maayong": "maʔajoŋ"}
+
+
 def test_a_repeated_word_is_one_entry():
     """Unlike a drill phrase, a line is read by LOOKUP, so a repeat is fine."""
     planner = _LinePlanner({"ako": "ʔako", "si": "si"})

@@ -222,11 +222,12 @@ async def test_a_cebuano_line_carries_the_reading_of_every_word(tmp_path):
 
     assert calls[0]["text"] == "Liza! Maayong buntag. Kumusta ka?"
     assert calls[0]["enunciation"] == (("Liza!",), ("Maayong",), ("buntag.",), ("Kumusta",), ("ka?",))
+    # Run together, with no mark at the syllable breaks: see the test below.
     assert calls[0]["phonemes"] == {
         "liza": "lisa",
-        "maayong": "ma.ʔa.joŋ",
-        "buntag": "bun.taɡ",
-        "kumusta": "ku.mus.ta",
+        "maayong": "maʔajoŋ",
+        "buntag": "buntaɡ",
+        "kumusta": "kumusta",
         "ka": "ka",
     }
 
@@ -243,7 +244,15 @@ async def test_a_cebuano_line_with_an_unreadable_word_is_still_enunciated(tmp_pa
 
 async def test_a_natural_cebuano_line_carries_its_reading_and_is_not_enunciated(tmp_path):
     """Dialogue at natural speed is told how the line sounds, and that is all:
-    the Enunciated line's reading, sent as a line, with no words to pause between."""
+    a reading sent as a line, with no words to pause between.
+
+    The two readings differ in one thing (tunatale-ve4p.24). At natural speed a
+    word shows where its syllables part, as every other Cebuano reading does.
+    An Enunciated line's words are run together: with the breaks its takes
+    spoke 1.13 times as long (18 takes each way) and the owner heard words
+    "chopped up very weirdly" and an Oo with no stop in it, on a section whose
+    pace and word gaps are set after the take, by the pause rewrite.
+    """
     natural = Section(SectionType.NATURAL_SPEED, [_line("Liza! Maayong buntag.", _ORUS, "ceb")])
     slow = Section(SectionType.SLOW_SPEED, [_line("Liza! Maayong buntag.", _ORUS, "ceb")])
 
@@ -252,7 +261,8 @@ async def test_a_natural_cebuano_line_carries_its_reading_and_is_not_enunciated(
     reading = {"liza": "lisa", "maayong": "ma.ʔa.joŋ", "buntag": "bun.taɡ"}
     assert (calls[0]["phonemes"], calls[0]["enunciation"], calls[0]["line"]) == (reading, None, True)
     # The Enunciated section's copy is a second request, not a reuse of this one.
-    assert (calls[1]["phonemes"], calls[1]["line"]) == (reading, False)
+    run_together = {"liza": "lisa", "maayong": "maʔajoŋ", "buntag": "buntaɡ"}
+    assert (calls[1]["phonemes"], calls[1]["line"]) == (run_together, False)
     assert calls[1]["enunciation"] is not None
 
 
@@ -301,7 +311,7 @@ _CEB_HEARD = {
     "prompt": (
         "Say exactly this Cebuano phrase, once, with nothing before or after it. "
         "Say each word whole and at a normal speaking speed, then stop briefly before the next word. "
-        "Pronounce it exactly as the IPA /bun.taɡ sa himɛnɛs. naɡ.la.kaw si pol./."
+        "Pronounce it exactly as the IPA /buntaɡ sa himɛnɛs. naɡlakaw si pol./."
     ),
 }
 
