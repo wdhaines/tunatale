@@ -34,6 +34,7 @@ import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test
 const drill = {
   pattern: "mo-mi",
   title: "Affix drill: mo- / mi-",
+  labels: ["not begun", "begun"],
   roots: [
     {
       root: "inom",

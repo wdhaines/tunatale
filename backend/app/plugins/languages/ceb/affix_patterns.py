@@ -32,11 +32,53 @@ GLOSSES_PATH = Path(__file__).parent / "data" / "affix_glosses.tsv"
 VOUCH_FLOOR = 20
 _VOWELS = "aeiou"
 
+# The two forms of a pair are not a future and a past (tunatale-ve4p.25). Wolff's
+# course calls them UNREAL and REAL (Beginning Cebuano, lesson 4B): what has not
+# begun, and what has begun or is done. The labels go over the page's columns;
+# the notes are said by the narrator the first time a learner meets the pair.
+_CELLS = ("not begun", "begun")
+
 PATTERNS: tuple[AffixPattern, ...] = (
-    AffixPattern("mo-mi", ("verb:mo", "verb:mi")),
-    AffixPattern("mag-nag", ("verb:mag", "verb:nag")),
-    AffixPattern("ma-na", ("verb:ma", "verb:na")),
+    AffixPattern(
+        "mo-mi",
+        ("verb:mo", "verb:mi"),
+        labels=_CELLS,
+        notes=(
+            "The first is for something that has not begun yet, or something you usually do.",
+            "The second is for something that has begun, or is already done.",
+        ),
+    ),
+    AffixPattern(
+        "mag-nag",
+        ("verb:mag", "verb:nag"),
+        labels=_CELLS,
+        notes=(
+            "The first is for something that has not begun yet, and will go on for a while.",
+            "The second is for something going on, now or before.",
+        ),
+    ),
+    AffixPattern(
+        "ma-na",
+        ("verb:ma", "verb:na"),
+        labels=_CELLS,
+        notes=(
+            "The first is for a state that has not come about yet.",
+            "The second is for a state that has come about.",
+        ),
+    ),
 )
+
+# Whole lines for the two jobs of the unreal form that an English tense gets
+# wrong, each ``(line, its English)`` with ``{form}`` the unreal form and
+# ``{root}`` the root's English. Wolff's dictionary, under mu- and mag-:
+# "Wala ku muadtu didtu, I did not go there"; "Mumata mi sa alas singku kada
+# buntag, We wake up every morning at five"; "Waq mi maglisud, We did not have
+# a hard time" (the course, lesson 4). None for ma- / na-: the roots there are
+# states, and "I didn't happy" is what the English frame would make of lipay.
+_LINES: dict[str, tuple[tuple[str, str], ...]] = {
+    key: (("Wala ko {form}.", "I didn't {root}."), ("{Form} ko kada adlaw.", "I {root} every day."))
+    for key in ("mo-mi", "mag-nag")
+}
 PATTERN_AFFIXES: tuple[str, ...] = tuple(f.removeprefix("verb:") for p in PATTERNS for f in p.features)
 
 
@@ -96,6 +138,24 @@ def load_affix_glosses(path: Path) -> dict[tuple[str, str], tuple[str, tuple[str
 def pattern_glosses(root: str, pattern: AffixPattern) -> tuple[str, tuple[str, ...]] | None:
     """The hand-written English for *root* in *pattern*, or ``None`` when there is none."""
     return load_affix_glosses(GLOSSES_PATH).get((root.casefold(), pattern.key))
+
+
+def pattern_lines(root: str, pattern: AffixPattern) -> tuple[tuple[str, str], ...]:
+    """The whole lines that show *root*'s unreal form after wala and as a habit, or none.
+
+    None unless the unreal form is worded as "will" plus the root's own English:
+    only then does the root's English stand in an English sentence as a verb
+    meaning what the form means. ``mouban`` is "will go along" and ``uban`` is
+    "accompany", so "I didn't accompany" would be a line about something else.
+    """
+    forms, glosses = pattern_forms(root, pattern), pattern_glosses(root, pattern)
+    if forms is None or glosses is None or glosses[1][0] != f"will {glosses[0]}":
+        return ()
+    form = forms[0]
+    return tuple(
+        (line.format(form=form, Form=form.capitalize()), english.format(root=glosses[0]))
+        for line, english in _LINES.get(pattern.key, ())
+    )
 
 
 def pattern_roots(pattern: AffixPattern) -> tuple[str, ...]:

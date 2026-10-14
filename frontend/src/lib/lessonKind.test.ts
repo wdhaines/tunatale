@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import { isDrillOnly } from "./lessonKind";
 import type { LessonDrill, ReadableLesson } from "./api";
 
-const drill: LessonDrill = { pattern: "mo-mi", title: "Affix drill: mo- / mi-", roots: [] };
+const drill: LessonDrill = {
+  pattern: "mo-mi",
+  title: "Affix drill: mo- / mi-",
+  labels: [],
+  roots: [],
+};
 const section = (type: string) => ({ type, phrases: [] });
 const lesson = (types: string[], withDrill: LessonDrill | null | undefined): ReadableLesson => ({
   id: "l1",

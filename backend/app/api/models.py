@@ -1519,10 +1519,15 @@ class LessonDrillRoot(BaseModel):
 
 
 class LessonDrill(BaseModel):
-    """LessonResponse.drill: the pattern a lesson drills and the roots it drills it on."""
+    """LessonResponse.drill: the pattern a lesson drills and the roots it drills it on.
+
+    ``labels`` name the columns the forms are laid out in, one per form of a
+    root and in the same order; empty for a pattern whose language names none.
+    """
 
     pattern: str
     title: str
+    labels: list[str] = []
     roots: list[LessonDrillRoot]
 
 

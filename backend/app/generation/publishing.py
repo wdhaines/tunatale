@@ -152,6 +152,7 @@ class CurriculumDayTarget:
             self._day,
             srs_db=srs_db,
             lemmatizer=lemmatizer,
+            store=self._store,
         )
 
     def write(self, lesson: Lesson) -> str:

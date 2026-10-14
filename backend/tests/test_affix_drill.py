@@ -23,10 +23,10 @@ _FIRST_ROUND = ["mouban", "moadto", "moinom", "miadto", "miuban", "miinom"]
 
 def test_a_root_is_paired_with_its_forms_and_their_english():
     assert drill_root("ceb", "lakaw", _MAG_NAG) == DrillRoot(
-        "lakaw", "walk", (("maglakaw", "will walk"), ("naglakaw", "walked"))
+        "lakaw", "walk", (("maglakaw", "will walk"), ("naglakaw", "is walking"))
     )
     assert drill_root("ceb", "tulog", _PATTERNS["ma-na"]) == DrillRoot(
-        "tulog", "sleep", (("matulog", "will sleep"), ("natulog", "slept"))
+        "tulog", "sleep", (("matulog", "will sleep"), ("natulog", "is asleep"))
     )
 
 
@@ -111,13 +111,13 @@ def test_the_script_is_model_then_your_turn_then_new_roots_then_everything_then_
         DrillStep("model", "lakaw", "ceb"),
         DrillStep("model", "will walk", "en"),
         *_built("maglakaw"),
-        DrillStep("model", "walked", "en"),
+        DrillStep("model", "is walking", "en"),
         *_built("naglakaw"),
         DrillStep("model", "pray", "en"),
         DrillStep("model", "ampo", "ceb"),
         DrillStep("model", "will pray", "en"),
         *_built("mag-ampo"),
-        DrillStep("model", "prayed", "en"),
+        DrillStep("model", "is praying", "en"),
         *_built("nag-ampo"),
     ]
 
@@ -273,7 +273,16 @@ def test_only_the_first_prompt_of_a_round_carries_the_question():
     bare = [text for i, text in enumerate(prompts) if i not in asked]
     assert set(bare[:-1]) <= {
         f"{tense}."
-        for tense in ("walked", "will walk", "prayed", "will pray", "cooked", "will cook", "brought", "will bring")
+        for tense in (
+            "is walking",
+            "will walk",
+            "is praying",
+            "will pray",
+            "is cooking",
+            "will cook",
+            "is bringing",
+            "will bring",
+        )
     }
     assert prompts[-2:] == ['How do you say "Paul walked on the road"?', "Are you happy, Paul?"]
 
@@ -303,6 +312,24 @@ def test_every_form_is_asked_twice_when_there_are_no_new_roots():
 
     yours, everything = _rounds(drill)
     assert sorted(yours) == sorted(everything) == sorted(_forms(_MAG_NAG, "lakaw", "ampo"))
+
+
+def test_the_note_is_said_once_right_after_the_first_root_is_modelled():
+    """'The first' and 'the second' are then the two forms just heard, and the
+    second root is met with the note in mind. Nothing else in the script moves."""
+    note = ("The first is for what has not begun.", "The second is for what is going on.")
+    drill = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"], note=note)
+
+    said = drill.steps.index(DrillStep("model", note[0], "en"))
+    assert drill.steps[said - 1] == _built("naglakaw")[-1]
+    assert drill.steps[said : said + 3] == [
+        DrillStep("model", note[0], "en"),
+        DrillStep("model", note[1], "en"),
+        DrillStep("model", "pray", "en"),
+    ]
+    plain = build_affix_drill("ceb", _MAG_NAG, roots=["lakaw", "ampo"])
+    assert [step for step in drill.steps if step.text not in note] == plain.steps
+    assert not [step for step in plain.steps if step.text in note]
 
 
 def test_roots_that_cannot_be_drilled_are_dropped_and_named():

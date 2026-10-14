@@ -210,6 +210,7 @@ async def test_the_lesson_is_served_with_the_table_of_what_it_drills(deck):
     assert lesson["drill"] == {
         "pattern": "mo-mi",
         "title": "Affix drill: mo- / mi-",
+        "labels": ["not begun", "begun"],
         "roots": [
             {
                 "root": "uban",

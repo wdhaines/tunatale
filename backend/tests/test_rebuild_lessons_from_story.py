@@ -641,6 +641,7 @@ class TestTheClosingDrill:
             "pattern": "mo-mi",
             "roots": ["adto", "uban"],
             "new_roots": [],
+            "note": True,
         }
         assert rebuilt.sections[-1].section_type.value == "affix_drill"
 

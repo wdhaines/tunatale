@@ -26,10 +26,18 @@ class AffixPattern:
     ``features`` are A1 feature strings in teaching order (Cebuano's
     ``("verb:mo", "verb:mi")``: not yet done, then done). ``key`` names the
     pattern in stored lessons and card keys, so it must stay stable.
+
+    ``labels`` name each feature's cell where the forms are laid out in
+    columns, and ``notes`` are the sentences a narrator says to tell the learner
+    what the forms are for; they speak of "the first" and "the second" form, in
+    ``features`` order. Both are the language's to word, and both are empty for
+    a pattern that has neither.
     """
 
     key: str
     features: tuple[str, ...]
+    labels: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,3 +70,6 @@ class A1Morphology:
     # written down: what a drill may be built FROM, before the learner's own
     # cards decide what it is built of.
     pattern_roots: Callable[[AffixPattern], tuple[str, ...]] | None = None
+    # Whole lines that show a root's forms doing what a gloss cannot say, each
+    # ``(line, its English)``: empty for a root the language has none for.
+    pattern_lines: Callable[[str, AffixPattern], tuple[tuple[str, str], ...]] | None = None
