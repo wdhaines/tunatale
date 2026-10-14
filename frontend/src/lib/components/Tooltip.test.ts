@@ -457,23 +457,23 @@ describe("Tooltip", () => {
     it("renders the grade button with the given label when gradeLabel and onGrade are set", () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
       const { getByRole } = render(TooltipTest, {
-        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade: vi.fn() },
+        props: { word, childText: "test", gradeLabel: "Undo ↩", onGrade: vi.fn() },
       });
-      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+      expect(getByRole("button", { name: "Undo ↩" })).toBeTruthy();
     });
 
     it("calls onGrade when the grade button is clicked, and keeps the popover open", async () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
       const onGrade = vi.fn();
       const { getByRole, getByText, container } = render(TooltipTest, {
-        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade },
+        props: { word, childText: "test", gradeLabel: "Undo ↩", onGrade },
       });
       const wrap = container.querySelector(".tt-wrap")!;
 
       await fireEvent.click(getByText("test"));
       expect(wrap.className).toContain("open");
 
-      await fireEvent.click(getByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(getByRole("button", { name: "Undo ↩" }));
       expect(onGrade).toHaveBeenCalledTimes(1);
       // Stays open so the user can watch the state advance (cycle) and keep acting.
       expect(wrap.className).toContain("open");
@@ -490,34 +490,33 @@ describe("Tooltip", () => {
     it("does not render a grade button when onGrade is null", () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
       const { queryByRole } = render(TooltipTest, {
-        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade: null },
+        props: { word, childText: "test", gradeLabel: "Undo ↩", onGrade: null },
       });
       expect(queryByRole("button", { name: /got it/i })).toBeNull();
     });
 
-    it("applies the review-ahead variant class when gradeVariant is 'ahead'", () => {
-      const word = makeWordToken({ is_due: false, srs_item_id: 1, recognition_reviewable: true });
-      const { getByRole } = render(TooltipTest, {
-        props: {
-          word,
-          childText: "test",
-          gradeLabel: "Review ✓",
-          gradeVariant: "ahead",
-          onGrade: vi.fn(),
-        },
+    // The grade button's old variant-class feature is gone (bd tunatale-8jgb):
+    // the read-ahead "ahead" variant is replaced by the four-rating row below,
+    // and the plain grade button no longer has a variant to distinguish it.
+    it("renders the four ratings in a .tt-rate row when ratings is set", () => {
+      const word = makeWordToken({ is_due: true, srs_item_id: 1 });
+      const { container } = render(TooltipTest, {
+        props: { word, childText: "test", ratings: { onRate: vi.fn() } },
       });
-      const btn = getByRole("button", { name: "Review ✓" });
-      expect(btn.className).toContain("tt-btn-review-ahead");
+      const row = container.querySelector(".tt-rate")!;
+      expect(row).toBeTruthy();
+      const labels = Array.from(row.querySelectorAll("button")).map((b) =>
+        (b.textContent ?? "").trim(),
+      );
+      expect(labels).toEqual(["Again", "Hard", "Good", "Easy"]);
     });
 
-    it("does not apply the review-ahead class for the default (primary) grade", () => {
+    it("renders no rating row for the plain grade button (ratings is null)", () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
-      const { getByRole } = render(TooltipTest, {
-        props: { word, childText: "test", gradeLabel: "Got it ✓", onGrade: vi.fn() },
+      const { container } = render(TooltipTest, {
+        props: { word, childText: "test", gradeLabel: "Undo ↩", onGrade: vi.fn() },
       });
-      expect(getByRole("button", { name: "Got it ✓" }).className).not.toContain(
-        "tt-btn-review-ahead",
-      );
+      expect(container.querySelector(".tt-rate")).toBeNull();
     });
 
     it("grade button alone makes the popover renderable (counts as content)", () => {
@@ -531,6 +530,52 @@ describe("Tooltip", () => {
       });
       expect(getByRole("tooltip")).toBeTruthy();
       expect(getByRole("button", { name: "Start learning" })).toBeTruthy();
+    });
+  });
+
+  // --- "More…" disclosure (progressive disclosure of the utility actions) ---
+
+  describe("More… disclosure", () => {
+    // A tracked learning word with a primary action (the ratings) and three
+    // utilities (Ignore / Known / Reset) collapses the utilities behind More….
+    function props() {
+      return {
+        word: makeWordToken({ is_due: true, srs_item_id: 5 }),
+        childText: "tap-me",
+        ratings: { onRate: vi.fn() },
+        actions: { onUntrack: vi.fn(), onSetState: vi.fn() },
+      };
+    }
+
+    it("hides the utilities behind More… until it is clicked", async () => {
+      const { getByRole, queryByRole } = render(TooltipTest, { props: props() });
+      expect(queryByRole("button", { name: /^ignore$/i })).toBeNull();
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      expect(getByRole("button", { name: /^ignore$/i })).toBeTruthy();
+      expect(queryByRole("button", { name: /more…/i })).toBeNull();
+    });
+
+    it("goes back to collapsed when the popover is closed and reopened", async () => {
+      const { getByText, getByRole, queryByRole } = render(TooltipTest, { props: props() });
+      await fireEvent.click(getByText("tap-me"));
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      expect(getByRole("button", { name: /^ignore$/i })).toBeTruthy();
+
+      await fireEvent.click(getByText("tap-me"));
+      await tick();
+      expect(queryByRole("button", { name: /^ignore$/i })).toBeNull();
+      expect(getByRole("button", { name: /more…/i })).toBeTruthy();
+    });
+
+    it("goes back to collapsed when the pointer leaves the popover", async () => {
+      const { container, getByRole, queryByRole } = render(TooltipTest, { props: props() });
+      const wrap = container.querySelector(".tt-wrap")!;
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      expect(getByRole("button", { name: /^ignore$/i })).toBeTruthy();
+
+      await fireEvent.pointerLeave(wrap);
+      expect(queryByRole("button", { name: /^ignore$/i })).toBeNull();
+      expect(getByRole("button", { name: /more…/i })).toBeTruthy();
     });
   });
 

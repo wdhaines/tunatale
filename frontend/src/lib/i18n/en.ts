@@ -65,7 +65,7 @@ export const en = {
   "transcript.legend.known": "Half a year +",
   "transcript.translationFailed": "Translation failed. Check connection and try again.",
   "transcript.gradeUndo": "Undo ↩",
-  "transcript.gradeGotIt": "Got it ✓",
+
   "transcript.translationOptional": "translation (optional)",
   "transcript.translateWithAi": "Translate with AI",
   "transcript.create": "Create",
@@ -96,6 +96,7 @@ export const en = {
   "tooltip.hard": "Hard",
   "tooltip.good": "Good",
   "tooltip.easy": "Easy",
+  "tooltip.more": "More…",
   "wordSpan.hiddenWord": "Hidden word, due for production — tap to reveal",
 
   // DrillCard.svelte

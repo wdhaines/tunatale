@@ -340,12 +340,12 @@ describe("the reader", () => {
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
     vi.mocked(api.submitDrill).mockResolvedValue({} as never);
 
-    const { findByRole } = render(Page, { props: { data: data() } });
+    const { findByText } = render(Page, { props: { data: data() } });
 
-    await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+    await fireEvent.click(await findByText("Again"));
 
     await vi.waitFor(() => {
-      expect(api.submitDrill).toHaveBeenCalledWith(42, "recognition", "good");
+      expect(api.submitDrill).toHaveBeenCalledWith(42, "recognition", "again");
       expect(mockSessionTranscript).toHaveBeenCalledTimes(2);
     });
   });
@@ -359,8 +359,8 @@ describe("the reader", () => {
     vi.mocked(api.createBaseCard).mockResolvedValue({ id: 7 } as never);
     vi.mocked(api.submitDrill).mockResolvedValue({} as never);
 
-    const { findByRole } = render(Page, { props: { data: data() } });
-    await fireEvent.click(await findByRole("button", { name: "Start learning" }));
+    const { findByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(await findByText("Again"));
 
     await vi.waitFor(() =>
       expect(api.createBaseCard).toHaveBeenCalledWith(
@@ -375,24 +375,24 @@ describe("the reader", () => {
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
     vi.mocked(api.submitDrill).mockRejectedValue(new Error("already synced to Anki"));
 
-    const { findByRole, findByText } = render(Page, {
+    const { findByText } = render(Page, {
       props: { data: data() },
     });
-    await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+    await fireEvent.click(await findByText("Again"));
 
     expect(await findByText(/already synced to Anki/)).toBeTruthy();
   });
 
   it("a graded word can be undone, exactly as on a lesson", async () => {
-    // Completes the Got it ✓ -> Undo ↩ cycle here too. The undo state lives in
+    // Completes the grade -> Undo ↩ cycle here too. The undo state lives in
     // the shared actions, so this is the same code path the lesson page's own
     // undo test drives — which is the point of the extraction.
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
     vi.mocked(api.submitDrill).mockResolvedValue({} as never);
     vi.mocked(api.undoGrade).mockResolvedValue({} as never);
 
-    const { findByRole } = render(Page, { props: { data: data() } });
-    await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+    const { findByRole, findByText } = render(Page, { props: { data: data() } });
+    await fireEvent.click(await findByText("Again"));
     await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
 
     await vi.waitFor(() => expect(api.undoGrade).toHaveBeenCalledWith(42, "recognition"));
@@ -461,12 +461,12 @@ describe("the reader", () => {
     // Same control, same store, same behaviour as a lesson: the mode is one
     // persisted preference, so switching here and opening a lesson keeps it.
     mockSessionTranscript.mockResolvedValue(transcriptWithWord() as never);
-    const { findByRole, queryByText, getByRole } = render(Page, {
+    const { findByRole, findByText, queryByText, getByRole } = render(Page, {
       props: { data: data() },
     });
 
     expect(await findByRole("button", { name: "Read" })).toBeTruthy();
-    await findByRole("button", { name: "Got it ✓" });
+    await findByText("Again");
 
     await fireEvent.click(getByRole("button", { name: "Listen" }));
 

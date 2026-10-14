@@ -1,7 +1,7 @@
 /**
  * Tests for /c/[curriculumId]/l/[lessonId] — the `load` function, plus
  * post-sync transcript refresh (store notification) and the undo-grade
- * ("Got it ✓" → "Undo ↩") cycle.
+ * (grade → "Undo ↩") cycle.
  *
  * Split from page.test.ts (item 14, Phase B) — see page-test-helpers.ts for
  * the shared $lib/api / pipeline mock factories and fixtures.
@@ -176,7 +176,7 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
     });
   });
 
-  describe("undo grade flow (Got it ✓ → Undo ↩ cycle)", () => {
+  describe("undo grade flow (grade → Undo ↩ cycle)", () => {
     const dueWordTranscript = {
       lesson_id: "l1",
       key_phrases: [],
@@ -219,11 +219,11 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
       });
       mockGetTranscript.mockResolvedValue(dueWordTranscript);
 
-      const { findByRole } = render(Page, {
+      const { findByRole, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: dueWordTranscript } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByText("Again"));
 
       const undoBtn = await findByRole("button", { name: "Undo ↩" });
       await fireEvent.click(undoBtn);
@@ -232,7 +232,7 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
         expect(mockUndoGrade).toHaveBeenCalledWith(42, "recognition");
       });
       // Cycle complete: the grade button is back.
-      expect(await findByRole("button", { name: "Got it ✓" })).toBeTruthy();
+      expect(await findByText("Again")).toBeTruthy();
     });
 
     it("the undo targets the direction that was graded, even if the active direction shifts after refetch", async () => {
@@ -248,11 +248,11 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
       });
       mockGetTranscript.mockResolvedValue(after);
 
-      const { findByRole } = render(Page, {
+      const { findByRole, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: dueWordTranscript } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByText("Again"));
       await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
 
       await waitFor(() => {
@@ -323,11 +323,11 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
       });
       mockGetTranscript.mockResolvedValue(collocationTranscript);
 
-      const { findByRole } = render(Page, {
+      const { findByRole, findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: collocationTranscript } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByText("Again"));
       await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
 
       await waitFor(() => {
@@ -344,7 +344,7 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
         props: { data: { curriculum, lesson, audio, transcript: dueWordTranscript } },
       });
 
-      await fireEvent.click(await findByRole("button", { name: "Got it ✓" }));
+      await fireEvent.click(await findByText("Again"));
       await fireEvent.click(await findByRole("button", { name: "Undo ↩" }));
 
       expect(await findByText("grade already synced to Anki")).toBeTruthy();

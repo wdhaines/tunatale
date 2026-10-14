@@ -70,7 +70,7 @@ export function createReadingActions(opts: ReadingActionsOptions) {
     }
   };
 
-  async function onWordClick(word: WordToken, lineIndex: number) {
+  async function onWordClick(word: WordToken, lineIndex: number, rating: GradeRating = "good") {
     if (wordActionInFlight) return;
     wordActionInFlight = true;
     await guarded(async () => {
@@ -93,18 +93,20 @@ export function createReadingActions(opts: ReadingActionsOptions) {
         // 2026-09-24). Grade the direction the new card actually has.
         const direction =
           created.item.directions?.recognition === null ? "production" : "recognition";
+        // The one-tap introduction has no rating to carry (the "Start learning"
+        // button and the keyboard path pass none): it always records Good.
         await api.submitDrill(created.id, direction, "good");
         undoable = { itemId: created.id, direction };
       } else if (word.is_due && word.active_direction && word.srs_item_id != null) {
         const direction = word.active_direction as "recognition" | "production";
-        await api.submitDrill(word.srs_item_id, direction, "good");
+        await api.submitDrill(word.srs_item_id, direction, rating);
         undoable = { itemId: word.srs_item_id, direction };
       } else if (word.recognition_reviewable && word.srs_item_id != null) {
         // Read-ahead: reading a not-due word is a valid RECOGNITION review.
         // Always grade the literal recognition direction — never
         // active_direction, which flips to production once recognition
         // graduates (that would silently grade the wrong card).
-        await api.submitDrill(word.srs_item_id, "recognition", "good");
+        await api.submitDrill(word.srs_item_id, "recognition", rating);
         undoable = { itemId: word.srs_item_id, direction: "recognition" };
       } else if (word.active_state === "new" && word.active_direction && word.srs_item_id != null) {
         // A card that exists but was never started (a sync-minted cloze such as
@@ -112,6 +114,7 @@ export function createReadingActions(opts: ReadingActionsOptions) {
         // one-tap introduction as an untracked word; last, so a due or
         // review-ahead grade always wins.
         const direction = word.active_direction as "recognition" | "production";
+        // Still the literal Good: the one-tap introduction carries no rating.
         await api.submitDrill(word.srs_item_id, direction, "good");
         undoable = { itemId: word.srs_item_id, direction };
       } else {
@@ -124,11 +127,11 @@ export function createReadingActions(opts: ReadingActionsOptions) {
     wordActionInFlight = false;
   }
 
-  async function onCollocationStateChange(span_id: number) {
+  async function onCollocationStateChange(span_id: number, rating: GradeRating = "good") {
     if (wordActionInFlight) return;
     wordActionInFlight = true;
     await guarded(async () => {
-      await api.submitDrill(span_id, "recognition", "good");
+      await api.submitDrill(span_id, "recognition", rating);
       undoable = { itemId: span_id, direction: "recognition" };
       await refetch();
     });
@@ -275,8 +278,8 @@ export function createReadingActions(opts: ReadingActionsOptions) {
      * Handed over whole rather than listed prop-by-prop at each call site: six
      * identical lines in two templates is exactly the duplication this module
      * exists to remove, and the set can now grow without editing both pages.
-     * Reading `undoable` here keeps the spread reactive, so the popover's
-     * "Got it ✓" → "Undo ↩" cycle still works through it.
+     * Reading `undoable` here keeps the spread reactive, so a graded word's
+     * rating row gives way to "Undo ↩" through it.
      */
     get transcriptProps() {
       return {

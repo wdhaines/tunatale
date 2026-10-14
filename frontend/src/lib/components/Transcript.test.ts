@@ -286,17 +286,22 @@ describe("Transcript", () => {
       expect(onCollocationStateChange).not.toHaveBeenCalled();
     });
 
-    it("popover grade button fires onCollocationStateChange with the span id", async () => {
+    it("a due phrase's popover shows the four ratings and 'Words…', and a rating fires onCollocationStateChange", async () => {
       const onCollocationStateChange = vi.fn();
-      const { getByRole } = render(Transcript, {
+      const { getByRole, getByText, queryByRole } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
           onCollocationStateChange,
         }),
       });
-      // collocation_srs_state is "learning" → past the intro, label is "Got it ✓"
-      await fireEvent.click(getByRole("button", { name: "Got it ✓" }));
-      expect(onCollocationStateChange).toHaveBeenCalledWith(99);
+      // collocation_is_due → the four ratings, in the review card's order.
+      for (const label of ["Again", "Hard", "Good", "Easy"]) expect(getByText(label)).toBeTruthy();
+      expect(getByRole("button", { name: /words…/i })).toBeTruthy();
+      // The undo affordance is not the phrasing here — these are live ratings.
+      expect(queryByRole("button", { name: "Undo ↩" })).toBeNull();
+
+      await fireEvent.click(getByText("Hard"));
+      expect(onCollocationStateChange).toHaveBeenCalledWith(99, "hard");
     });
 
     it("shows no collocation grade button when onCollocationStateChange is not provided", () => {
@@ -306,7 +311,7 @@ describe("Transcript", () => {
           onCollocationStateChange: undefined,
         }),
       });
-      expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
+      expect(queryByRole("button", { name: "Again" })).toBeNull();
     });
 
     it("shows no grade button when the collocation is not due (parity with words)", () => {
@@ -320,13 +325,13 @@ describe("Transcript", () => {
           onCollocationStateChange: vi.fn(),
         }),
       });
-      expect(queryByRole("button", { name: "Got it ✓" })).toBeNull();
+      expect(queryByRole("button", { name: "Again" })).toBeNull();
     });
 
     it('phrase popover shows "Undo ↩" when undoableItemId matches the span, and fires onCollocationUndo', async () => {
       const onCollocationStateChange = vi.fn();
       const onCollocationUndo = vi.fn();
-      const { getByRole } = render(Transcript, {
+      const { getByRole, queryByRole } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
           onCollocationStateChange,
@@ -337,10 +342,13 @@ describe("Transcript", () => {
       await fireEvent.click(getByRole("button", { name: "Undo ↩" }));
       expect(onCollocationUndo).toHaveBeenCalledWith(99);
       expect(onCollocationStateChange).not.toHaveBeenCalled();
+      // Undo replaces the rating row entirely — no ratings beside it.
+      for (const label of ["Again", "Hard", "Good", "Easy"])
+        expect(queryByRole("button", { name: label })).toBeNull();
     });
 
     it("phrase popover shows the normal grade button when undoableItemId is a different id", () => {
-      const { getByRole, queryByRole } = render(Transcript, {
+      const { queryByRole, getByText } = render(Transcript, {
         props: defaultProps({
           transcript: transcriptWithCollocation,
           onCollocationStateChange: vi.fn(),
@@ -348,7 +356,7 @@ describe("Transcript", () => {
           undoableItemId: 12345,
         }),
       });
-      expect(getByRole("button", { name: "Got it ✓" })).toBeTruthy();
+      expect(getByText("Again")).toBeTruthy();
       expect(queryByRole("button", { name: "Undo ↩" })).toBeNull();
     });
 
