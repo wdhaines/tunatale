@@ -12,13 +12,15 @@ the renderer are stood in for.
 
 from __future__ import annotations
 
+from app.models.curriculum import CurriculumDay
 from app.models.lesson import SectionType
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 from tests.test_api_grammar_lesson import _CID, _client, _understand, deck  # noqa: F401
 from tests.test_grammar_lesson import _BURIAL, _WAKE, _story_lesson
 from tests.test_pipeline import wait_for_job
 
-_DRILL = {"pattern": "mo-mi", "roots": ["adto", "anhi", "uban"], "new_roots": []}
+# The day's first drill of the pattern, so the narrator says what its forms are for.
+_DRILL = {"pattern": "mo-mi", "roots": ["adto", "anhi", "uban"], "new_roots": [], "note": True}
 
 
 def _story(lines: list[tuple[str, str]]) -> dict:
@@ -66,6 +68,30 @@ async def test_a_story_imported_by_hand_ends_on_the_same_drill(deck):  # noqa: F
     assert lesson.sections[-1].section_type is SectionType.AFFIX_DRILL
 
 
+async def test_a_later_day_of_the_same_pattern_is_not_told_again(deck):  # noqa: F811
+    """The publish seam hands the drill the curriculum's own lessons, and day 1's
+    says the note was said (tunatale-ve4p.25). Without them every lesson would
+    open its drill on the same two sentences."""
+    store, _, _ = deck
+    curriculum = store.get_curriculum(_CID)
+    curriculum.days.append(
+        CurriculumDay(
+            day=2, title="A burial", focus="f", collocations=["lubong"], learning_objective="o", pattern="mo-mi"
+        )
+    )
+    store.save_curriculum(_CID, curriculum)
+
+    async with _client() as client:
+        for day in (1, 2):
+            response = await client.post(
+                "/api/story/import", json={"curriculum_id": _CID, "day": day, "story": _story(_WAKE)}
+            )
+            assert response.status_code == 201, response.text
+
+    said = [store.get_latest_lesson_by_day(_CID, day)[1].generation_metadata["affix_drill"]["note"] for day in (1, 2)]
+    assert said == [True, False]
+
+
 async def test_the_lesson_is_served_with_its_story_and_its_drill(deck):  # noqa: F811
     """Not a drill-only lesson: the reader keeps its dialogue and the player gains a Drill phase."""
     store, _, _ = deck
@@ -79,6 +105,7 @@ async def test_the_lesson_is_served_with_its_story_and_its_drill(deck):  # noqa:
     assert types[-1] == "affix_drill"
     assert "natural_speed" in types
     assert [root["root"] for root in served["drill"]["roots"]] == ["adto", "anhi", "uban"]
+    assert served["drill"]["labels"] == ["not begun", "begun"]
     assert len(transcript["dialogue_lines"]) == len(_WAKE)
 
 

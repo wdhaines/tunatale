@@ -48,6 +48,7 @@ from app.models.language import Language
 from app.models.lesson import Lesson, SectionType
 from app.srs.a1_morphology import AffixPattern
 from app.srs.lemmatizer import Lemmatizer
+from app.storage.store import ContentStore
 
 ASKED = 4  # roots the story is asked to use in both forms; the target is three
 DRILLED = 3  # roots the closing drill models: it ends a lesson, it is not one
@@ -108,7 +109,13 @@ def pattern_block(language_code: str, pattern: AffixPattern, *, srs_db=None) -> 
 
 
 def add_closing_drill(
-    lesson: Lesson, language: Language, pattern: AffixPattern, *, srs_db, lemmatizer: Lemmatizer | None
+    lesson: Lesson,
+    language: Language,
+    pattern: AffixPattern,
+    *,
+    srs_db,
+    lemmatizer: Lemmatizer | None,
+    introduce: bool = False,
 ) -> None:
     """Append to *lesson* a drill of *pattern* on the roots its story used. In place.
 
@@ -128,6 +135,13 @@ def add_closing_drill(
     word (``drill_lines.admitted_lines``). What this lesson teaches counts as
     had: the drilled forms, and the words of its key phrases. With no *srs_db*
     no line is admitted. *lemmatizer* of ``None`` is the language's own.
+
+    Before those come the language's own lines for the pattern
+    (``A1Morphology.pattern_lines``), one from each modelled root in turn: what
+    did not happen, and what usually does, which are where an English tense
+    picks the wrong form (tunatale-ve4p.25). They are the drill's to teach, so
+    no deck is asked about their words. *introduce* has the narrator say what
+    the pattern's forms are for; whether it did is recorded with the drill.
     """
     if lesson.kind != "thematic" or any(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections):
         return
@@ -161,12 +175,17 @@ def add_closing_drill(
         and line[0] in admitted
     ]
     roots = [root.root for root in drilled]
+    lines_of = get_a1_morphology(language.code).pattern_lines
+    written = [lines for root in roots if (lines := lines_of(root, pattern))] if lines_of is not None else []
+    framed = [written[i % len(written)][i] for i in range(len(written[0]))] if written else []
+    note = pattern.notes if introduce else ()
     drill = build_affix_drill(
         language.code,
         pattern,
         roots=roots,
         new_roots=new_roots,
-        lines=sorted(whole, key=lambda line: len(line[0].split()))[:CLOSING_LINES],
+        lines=[*framed, *sorted(whole, key=lambda line: len(line[0].split()))[:CLOSING_LINES]],
+        note=note,
     )
     voices = language.tts_voice_map
     lesson.sections.append(
@@ -174,7 +193,28 @@ def add_closing_drill(
             drill, narrator_voice=voices["narrator"], l2_voice=voices.get("key-phrases") or voices["female-1"]
         )
     )
-    lesson.generation_metadata["affix_drill"] = {"pattern": pattern.key, "roots": roots, "new_roots": new_roots}
+    lesson.generation_metadata["affix_drill"] = {
+        "pattern": pattern.key,
+        "roots": roots,
+        "new_roots": new_roots,
+        "note": bool(note),
+    }
+
+
+def _noted(store: ContentStore, curriculum_id: str, pattern: AffixPattern, day: int) -> bool:
+    """Whether a lesson of an earlier day already told the learner what *pattern*'s forms are for.
+
+    Earlier DAYS only: the lesson *day* holds now is the one being replaced.
+    A drill made before the note existed recorded none, so the pattern is
+    still owed it.
+    """
+    for entry in store.get_lesson_days(curriculum_id):
+        if entry["day"] < day:
+            earlier = store.get_latest_lesson_by_day(curriculum_id, entry["day"])[1]
+            recorded = (earlier.generation_metadata or {}).get("affix_drill") or {}
+            if recorded.get("pattern") == pattern.key and recorded.get("note"):
+                return True
+    return False
 
 
 def add_day_drill(
@@ -185,6 +225,7 @@ def add_day_drill(
     *,
     srs_db,
     lemmatizer: Lemmatizer | None,
+    store: ContentStore | None = None,
 ) -> None:
     """Append to *lesson* the closing drill of the pattern its curriculum *day* is planned around. In place.
 
@@ -192,8 +233,13 @@ def add_day_drill(
     seam, and the script that rebuilds a stored lesson from its story. Nothing
     happens with no curriculum, for a day it does not hold, or for a day with
     no pattern.
+
+    *store* holds the curriculum's lessons, which say whether the learner has
+    been told what the pattern's forms are for. Until one says so the narrator
+    tells them; with no store nothing says so.
     """
     planned = next((d for d in curriculum.days if d.day == day), None) if curriculum is not None else None
     pattern = pattern_for_day(curriculum, planned) if planned is not None else None
     if pattern is not None:
-        add_closing_drill(lesson, language, pattern, srs_db=srs_db, lemmatizer=lemmatizer)
+        told = store is not None and _noted(store, curriculum.id, pattern, day)
+        add_closing_drill(lesson, language, pattern, srs_db=srs_db, lemmatizer=lemmatizer, introduce=not told)

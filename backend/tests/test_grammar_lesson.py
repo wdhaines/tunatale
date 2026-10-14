@@ -347,6 +347,8 @@ def test_the_drills_table_marks_the_roots_left_for_the_learner_to_build(owner):
     table = drill_table(build_grammar_lesson(get_language("ceb"), plan))
 
     assert (table["pattern"], table["title"]) == ("mo-mi", "Affix drill: mo- / mi-")
+    # What the page puts over the two columns of forms (tunatale-ve4p.25).
+    assert table["labels"] == ["not begun", "begun"]
     assert [(r["root"], r["new"]) for r in table["roots"]] == [
         ("uban", False),
         ("inom", False),

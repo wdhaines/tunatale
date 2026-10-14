@@ -64,6 +64,7 @@ const root = (name: string, english: string, isNew: boolean, forms: [string, str
 const DRILL = {
   pattern: "mag-nag",
   title: "Affix drill: mag- / nag-",
+  labels: ["not begun", "begun"],
   roots: [
     root("uban", "accompany", false, [
       ["mag-uban", "will go together"],
@@ -313,6 +314,17 @@ for (const [name, width, height] of [
       // track ran on over the first form (seen at 412px, 2026-10-07) while
       // every cell box above was still exactly where it should be.
       for (const cell of cells) expect(cell.wordRight).toBeLessThanOrEqual(cell.right + 0.5);
+    }
+    // The two labels over the forms start where their columns do. They are a
+    // grid of their own above the list, so nothing but the two grids resolving
+    // to the same tracks puts "begun" over the second form and not the first.
+    const labels = await page
+      .locator(".drill-labels .label")
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().left));
+    expect(labels).toHaveLength(2);
+    for (const cells of measured) {
+      expect(Math.abs(labels[0] - cells[1].left)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(labels[1] - cells[2].left)).toBeLessThanOrEqual(0.5);
     }
     expect(await overflowX(page)).toBe(0);
   });

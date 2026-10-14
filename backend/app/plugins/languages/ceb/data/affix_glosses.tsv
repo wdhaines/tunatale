@@ -28,24 +28,39 @@
 #   and the thing seen is the subject. That is object focus, which is deferred. Drilling it beside
 #   matulog would teach "makita ko" for "I will see", which means "I will be seen".
 #
+# ASPECT, NOT TENSE (tunatale-ve4p.25, the owner 2026-10-13). The two forms of a pair are what
+# Wolff's course calls UNREAL and REAL (Beginning Cebuano, Yale 1966, lesson 4B), in that order:
+# - the first (mo-, mag-, ma-) is what has not begun. It is worded "will ...", the one English
+#   that cannot be read as begun. It is also the habitual ("Mumata mi sa alas singku kada buntag,
+#   We wake up every morning at five") and what follows wala ("Wala ku muadtu didtu, I did not go
+#   there"); the drill teaches those as whole lines (affix_patterns.py::pattern_lines).
+# - the second is what has begun or is done, and how it is worded follows the pair:
+#     mi-   an act seen whole, so the done act: "went" ("Miadtu ku didtu gahapun, I went there").
+#     nag-  something going on, so "is ...ing" ("Nagmata pa ba kaha sila? Are they still awake?";
+#           lesson 4's nag-uwan is "it is raining"). It is also "was ...ing" and "...ed"; one
+#           English has to stand for the three, and the past is the one that hid the other two.
+#           Mutual action (class C: kita, uban) has no other real form, so there nag- is the done
+#           act too: nagkita is "met".
+#     na-   the state arrived at: "is asleep", "is happy", "has run out".
+#
 # Every row must also be a pair native news uses (tests/test_ceb_affix_patterns.py enforces it).
 lakaw	mo-mi	walk	will walk	walked
-lakaw	mag-nag	walk	will walk	walked
-ampo	mag-nag	pray	will pray	prayed
-dala	mag-nag	bring	will bring	brought
+lakaw	mag-nag	walk	will walk	is walking
+ampo	mag-nag	pray	will pray	is praying
+dala	mag-nag	bring	will bring	is bringing
 inom	mo-mi	drink	will drink	drank
 adto	mo-mi	go	will go	went
 anhi	mo-mi	come	will come	came
 kita	mag-nag	see	will meet	met
-tulog	ma-na	sleep	will sleep	slept
+tulog	ma-na	sleep	will sleep	is asleep
 lipay	ma-na	happy	will be happy	is happy
-luto	mag-nag	cook	will cook	cooked
-hulat	mag-nag	wait	will wait	waited
+luto	mag-nag	cook	will cook	is cooking
+hulat	mag-nag	wait	will wait	is waiting
 balik	mo-mi	return	will return	returned
 sulod	mo-mi	inside	will enter	entered
 tan-aw	mo-mi	watch	will watch	watched
 kaon	mo-mi	eat	will eat	ate
 sulti	mo-mi	speak	will speak	spoke
-hurot	ma-na	use up	will run out	ran out
+hurot	ma-na	use up	will run out	has run out
 uban	mo-mi	accompany	will go along	went along
 uban	mag-nag	accompany	will go together	went together

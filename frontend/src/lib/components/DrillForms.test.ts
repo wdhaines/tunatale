@@ -10,6 +10,7 @@ import type { LessonDrill } from "$lib/api";
 const drill: LessonDrill = {
   pattern: "mo-mi",
   title: "Affix drill: mo- / mi-",
+  labels: ["not begun", "begun"],
   roots: [
     {
       root: "uban",
@@ -50,6 +51,27 @@ describe("DrillForms", () => {
     expect(
       [...container.querySelectorAll(".form-cell .english")].map((e) => e.textContent),
     ).toEqual(["will go along", "went along", "will walk", "walked"]);
+  });
+
+  it("names the two columns of forms by whether the thing has begun, not by a tense", () => {
+    const { container } = render(DrillForms, { props: { drill } });
+
+    expect(
+      [...container.querySelectorAll(".drill-labels .label")].map((e) => e.textContent),
+    ).toEqual(["not begun", "begun"]);
+    // Over the forms, so before the first root.
+    const labels = container.querySelector(".drill-labels")!;
+    const first = container.querySelector(".drill-root")!;
+    expect(labels.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a drill that names no columns has no heading row over them", () => {
+    const { container } = render(DrillForms, {
+      props: { drill: { ...drill, labels: [] } },
+    });
+
+    expect(container.querySelector(".drill-labels")).toBeNull();
+    expect(container.querySelectorAll(".drill-root")).toHaveLength(2);
   });
 
   it("marks only the roots whose forms are asked for without being modelled", () => {

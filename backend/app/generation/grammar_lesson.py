@@ -99,7 +99,7 @@ def drill_table(lesson: Lesson) -> dict | None:
                         "forms": [{"form": form, "english": english} for form, english in ready.cells],
                     }
                 )
-    return {"pattern": pattern.key, "title": pattern_title(pattern), "roots": roots}
+    return {"pattern": pattern.key, "title": pattern_title(pattern), "labels": list(pattern.labels), "roots": roots}
 
 
 def find_pattern(language_code: str, key: str) -> AffixPattern | None:

@@ -106,7 +106,7 @@ def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, l
     # rebuilt lesson would lose the drill the stored one ends on. Its whole
     # lines are chosen against the learner's deck AS IT IS NOW (*srs_db*), so a
     # rebuild can end on lines the first build held back.
-    add_day_drill(rebuilt, language, curriculum, day, srs_db=srs_db, lemmatizer=None)
+    add_day_drill(rebuilt, language, curriculum, day, srs_db=srs_db, lemmatizer=None, store=store)
     return rebuilt
 
 

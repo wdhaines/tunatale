@@ -29,6 +29,7 @@ from app.plugins.languages.ceb.affix_patterns import (
     load_affix_glosses,
     pattern_forms,
     pattern_glosses,
+    pattern_lines,
     spell,
 )
 
@@ -185,6 +186,103 @@ def test_mosulti_is_speaking_not_telling():
     assert pattern_glosses("sulti", _BY_KEY["mo-mi"]) == ("speak", ("will speak", "spoke"))
 
 
+# ── aspect, not tense (tunatale-ve4p.25) ─────────────────────────────────────
+#
+# The owner, 2026-10-13: "some of these prefixes are more about aspect than
+# tense. Would be amazing to get that across somehow." Wolff's course calls the
+# two forms REAL and UNREAL (Beginning Cebuano, lesson 4B): real is what has
+# begun or is done, and his own example of a nag- form is "it is raining". The
+# table worded every real form as an English past, so the drill asked for
+# naglakaw as "walked" while the lesson it closed said "Paul is walking".
+
+# Mutual action (Wolff's class C) takes mag- / nag- as its only pair, so there
+# nag- is also the done act: nagkita is "met".
+_MUTUAL = {"kita", "uban"}
+
+
+def test_a_nag_form_is_worded_as_going_on_not_as_a_past():
+    table = load_affix_glosses(GLOSSES_PATH)
+    real = {root: forms[1] for (root, key), (_, forms) in table.items() if key == "mag-nag" and root not in _MUTUAL}
+
+    assert len(real) >= 5
+    assert [(root, english) for root, english in real.items() if not english.startswith("is ")] == []
+    assert real["lakaw"] == "is walking"
+    assert {table[(root, "mag-nag")][1][1] for root in _MUTUAL} == {"met", "went together"}
+
+
+def test_a_na_form_is_worded_as_the_state_it_names():
+    """Wolff: "Natulug na ba siya? Is he asleep yet?"; "Nalipay ku nga nia ka, I am glad that you're here"."""
+    table = load_affix_glosses(GLOSSES_PATH)
+    real = {root: forms[1] for (root, key), (_, forms) in table.items() if key == "ma-na"}
+
+    assert real == {"tulog": "is asleep", "lipay": "is happy", "hurot": "has run out"}
+
+
+def test_a_mi_form_stays_the_done_act_and_every_unreal_form_stays_will():
+    """mi- is the punctual real form, an act seen whole: Wolff, "Miadtu ku didtu
+    gahapun, I went there yesterday". And the unreal form of every pair is asked
+    for as what has not begun."""
+    table = load_affix_glosses(GLOSSES_PATH)
+
+    assert table[("adto", "mo-mi")][1] == ("will go", "went")
+    assert [key for key, (_, forms) in table.items() if not forms[0].startswith("will ")] == []
+
+
+def test_every_pattern_names_its_two_cells_by_whether_the_thing_has_begun():
+    """What the page puts over the two columns of forms. Nothing tense-like."""
+    assert {pattern.key: pattern.labels for pattern in PATTERNS} == {
+        "mo-mi": ("not begun", "begun"),
+        "mag-nag": ("not begun", "begun"),
+        "ma-na": ("not begun", "begun"),
+    }
+
+
+def test_every_pattern_says_what_its_two_forms_are_for():
+    """Two sentences the narrator says once the first root has been modelled, so
+    'the first' and 'the second' are forms the learner has just heard. No
+    sentence names a tense."""
+    for pattern in PATTERNS:
+        first, second = pattern.notes
+        assert first.startswith("The first is for ")
+        assert second.startswith("The second is for ")
+        assert not any(word in f"{first} {second}".casefold() for word in ("past", "future", "tense"))
+    assert len({pattern.notes for pattern in PATTERNS}) == len(PATTERNS)
+    # The other job of the unreal form, which an English future hides.
+    assert "usually" in _BY_KEY["mo-mi"].notes[0]
+
+
+# The two places an English tense picks the wrong Cebuano form, taught as whole
+# lines: after wala the form is the unreal one though the English is a past
+# (Wolff: "Wala ku muadtu didtu, I did not go there"), and so is the habitual
+# ("Mumata mi sa alas singku kada buntag, We wake up every morning at five").
+
+
+def test_a_root_gets_a_line_for_what_did_not_happen_and_one_for_what_usually_does():
+    assert pattern_lines("adto", _BY_KEY["mo-mi"]) == (
+        ("Wala ko moadto.", "I didn't go."),
+        ("Moadto ko kada adlaw.", "I go every day."),
+    )
+    assert pattern_lines("Ampo", _BY_KEY["mag-nag"]) == (
+        ("Wala ko mag-ampo.", "I didn't pray."),
+        ("Mag-ampo ko kada adlaw.", "I pray every day."),
+    )
+
+
+@pytest.mark.parametrize(
+    ("root", "pattern", "why"),
+    [
+        ("uban", "mo-mi", "mouban is 'will go along': 'I didn't accompany' is not what the line says"),
+        ("kita", "mag-nag", "magkita is 'will meet', not 'will see'"),
+        ("lipay", "ma-na", "a state: 'I didn't happy'"),
+        ("tulog", "ma-na", "no ma- / na- line is written down"),
+        ("andam", "mag-nag", "nobody has worded the root"),
+        ("tulog", "mo-mi", "the root does not take the pair"),
+    ],
+)
+def test_a_root_whose_english_would_not_come_out_right_gets_no_lines(root, pattern, why):
+    assert pattern_lines(root, _BY_KEY[pattern]) == (), why
+
+
 def test_every_worded_pair_is_one_native_news_uses():
     """The table cannot word a pair the count table would refuse to drill."""
     table = load_affix_glosses(GLOSSES_PATH)
@@ -214,7 +312,8 @@ def test_cebuano_registers_its_patterns_on_the_bundle():
     bundle = get_a1_morphology("ceb")
     assert bundle.patterns == PATTERNS
     assert bundle.pattern_forms("tulog", _BY_KEY["ma-na"]) == ("matulog", "natulog")
-    assert bundle.pattern_glosses("tulog", _BY_KEY["ma-na"]) == ("sleep", ("will sleep", "slept"))
+    assert bundle.pattern_glosses("tulog", _BY_KEY["ma-na"]) == ("sleep", ("will sleep", "is asleep"))
+    assert bundle.pattern_lines("adto", _BY_KEY["mo-mi"])[0] == ("Wala ko moadto.", "I didn't go.")
 
 
 def test_a_language_without_patterns_registers_none():

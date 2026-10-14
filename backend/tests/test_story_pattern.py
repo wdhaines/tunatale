@@ -195,6 +195,7 @@ def test_the_drill_is_built_from_the_roots_the_story_used():
         "pattern": "mo-mi",
         "roots": ["adto", "anhi", "uban"],
         "new_roots": [],
+        "note": False,
     }
     assert lesson.kind == "thematic"
 
@@ -221,10 +222,116 @@ def test_a_closing_drill_asks_for_every_form_twice_and_ends_on_the_line(srs_db):
     # closing drill is given what the grammar lesson had). Last, the one whole
     # line of the story that says a drilled form in a single sentence.
     answers = _answers(lesson)
-    forms = answers[:-1]
-    assert len(forms) == 3 * 2 * 2
+    forms = answers[:12]
     assert sorted(forms[:6]) == sorted(forms[6:]) == sorted(set(forms))
-    assert answers[-1] == "Mouban ko ugma."
+    # Then the two lines the drill itself brings, and last the story's.
+    assert answers[12:] == ["Wala ko moadto.", "Moanhi ko kada adlaw.", "Mouban ko ugma."]
+
+
+# --- aspect, not tense (tunatale-ve4p.25) --------------------------------------
+#
+# The owner, 2026-10-13, chose all four: reworded prompts (the gloss table), a
+# sentence from the narrator when a pattern is first met, lines for the habitual
+# and for what did not happen, and "begun / not begun" over the page's columns.
+
+# The lines the wake's drill brings: adto is its first root and anhi its second.
+_FRAMED = [("Wala ko moadto.", "I didn't go."), ("Moanhi ko kada adlaw.", "I come every day.")]
+
+
+def test_the_drill_teaches_then_asks_for_a_line_that_did_not_happen_and_one_that_usually_does():
+    """Rule-built, on the roots the drill models, a different root for each. They
+    come before the story's own line and need no deck: the drill teaches them
+    the way it teaches any line, the whole of it first."""
+    lesson = _closed(_WAKE, None)
+    phrases = lesson.sections[-1].phrases
+
+    assert _answers(lesson)[-2:] == [text for text, _ in _FRAMED]
+    for text, english in _FRAMED:
+        said = [i for i, p in enumerate(phrases) if p.text == text]
+        taught, asked = said[0], said[-1]
+        assert (phrases[taught].role, phrases[asked].role) == ("model", "answer")
+        assert phrases[taught - 1].text == english
+        assert taught < asked
+    prompts = [p.text for p in phrases if p.role == "prompt"]
+    assert prompts[-2:] == ['How do you say "I didn\'t go"?', "I come every day."]
+
+
+def test_a_drill_whose_roots_have_no_line_written_ends_as_it_did():
+    """ma- / na- has none: 'I didn't happy' is what a rule would make of lipay."""
+    lines = [("Natulog siya.", "He is asleep."), ("Matulog ko.", "I will sleep."), ("Nalipay ko.", "I am happy.")]
+    lesson = _story_lesson("A Day at the Beach", lines)
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["ma-na"], srs_db=None, lemmatizer=None)
+
+    assert lesson.generation_metadata["affix_drill"]["roots"] == ["tulog", "lipay"]
+    assert not [a for a in _answers(lesson) if " " in a]
+
+
+def _noted(lesson) -> list[str]:
+    notes = _PATTERNS[lesson.generation_metadata["affix_drill"]["pattern"]].notes
+    return [p.text for p in lesson.sections[-1].phrases if p.text in notes]
+
+
+def _stored(store, curriculum, day: int, lesson) -> None:
+    store.save_curriculum(curriculum.id, curriculum)
+    store.save_lesson(f"lesson-{day}", curriculum.id, day, lesson)
+
+
+def _drilled(curriculum, day: int, store, title: str = "An Evening Wake"):
+    lesson = _story_lesson(title, _WAKE)
+    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=None, lemmatizer=None, store=store)
+    return lesson
+
+
+def test_the_narrator_says_what_the_pair_is_for_the_first_time_a_pattern_is_met():
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1, pattern="mo-mi"), _day(2, pattern="mo-mi"), _day(3, pattern="mo-mi")])
+
+    first = _drilled(curriculum, 1, store)
+    assert _noted(first) == list(_PATTERNS["mo-mi"].notes)
+    assert first.generation_metadata["affix_drill"]["note"] is True
+    assert {p.role for p in first.sections[-1].phrases if p.text in _noted(first)} == {"narrator"}
+
+    _stored(store, curriculum, 1, first)
+    second = _drilled(curriculum, 2, store, "The Burial Morning")
+    assert _noted(second) == []
+    assert second.generation_metadata["affix_drill"]["note"] is False
+
+
+def test_a_day_made_again_says_its_note_again():
+    """What an earlier DAY said is what counts. The lesson a day already holds
+    is the one being replaced, and the new one must not lose the note to it."""
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1, pattern="mo-mi")])
+    _stored(store, curriculum, 1, _drilled(curriculum, 1, store))
+
+    assert _noted(_drilled(curriculum, 1, store)) == list(_PATTERNS["mo-mi"].notes)
+
+
+def test_a_pattern_drilled_before_the_note_existed_is_still_owed_it():
+    """The owner's day 3 and day 4 drilled mo- / mi- and ma- / na- and said
+    nothing about what the forms are for. The next lesson of either says it."""
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1, pattern="mo-mi"), _day(2, pattern="mo-mi")])
+    silent = _story_lesson("An Evening Wake", _WAKE)
+    silent.generation_metadata["affix_drill"] = {"pattern": "mo-mi", "roots": ["adto", "anhi"], "new_roots": []}
+    _stored(store, curriculum, 1, silent)
+
+    assert _noted(_drilled(curriculum, 2, store, "The Burial Morning")) == list(_PATTERNS["mo-mi"].notes)
+
+
+def test_another_patterns_note_does_not_stand_in_for_this_ones():
+    store = ContentStore(":memory:")
+    curriculum = _curriculum([_day(1, pattern="mag-nag"), _day(2, pattern="mo-mi")])
+    other = _story_lesson("An Evening Wake", _WAKE)
+    other.generation_metadata["affix_drill"] = {"pattern": "mag-nag", "roots": [], "new_roots": [], "note": True}
+    _stored(store, curriculum, 1, other)
+
+    assert _noted(_drilled(curriculum, 2, store, "The Burial Morning")) == list(_PATTERNS["mo-mi"].notes)
+
+
+def test_with_no_store_to_ask_the_note_is_said():
+    """Nothing says the learner has heard it, and hearing it twice costs ten seconds."""
+    assert _noted(_drilled(_curriculum([_day(1, pattern="mo-mi")]), 1, None)) == list(_PATTERNS["mo-mi"].notes)
 
 
 # --- roots the story did not use (the owner, 2026-10-13: closing drills only) ---
@@ -317,7 +424,7 @@ def test_a_line_with_a_word_the_learner_has_not_met_is_not_asked_for(srs_db):
 
     answers = _answers(_closed(_WAKE, srs_db))
 
-    assert len(answers) == 3 * 2 * 2
+    assert len(answers) == 3 * 2 * 2 + len(_FRAMED)
     assert "Mouban ko ugma." not in answers
 
 
@@ -346,7 +453,7 @@ def test_with_no_deck_to_ask_the_drill_ends_on_its_forms(srs_db):
 
     lesson = _closed(_WAKE, None)
 
-    assert len(_answers(lesson)) == 3 * 2 * 2
+    assert len(_answers(lesson)) == 3 * 2 * 2 + len(_FRAMED)
     assert _new_roots(lesson) == []
 
 

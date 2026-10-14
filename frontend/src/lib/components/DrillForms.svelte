@@ -27,6 +27,16 @@
 </script>
 
 <h2 class="drill-title">{t('drillForms.heading')}</h2>
+{#if drill.labels.length}
+	<!-- What the two forms of a root are: named by the language's own plugin,
+	     by whether the thing has begun and never by a tense (bd tunatale-ve4p.25). -->
+	<div class="drill-labels">
+		<span></span>
+		{#each drill.labels as label (label)}
+			<span class="label">{label}</span>
+		{/each}
+	</div>
+{/if}
 <ul class="drill-roots">
 	{#each drill.roots as root (root.root)}
 		<li class="drill-root">
@@ -72,13 +82,30 @@
 	}
 	/* Root, then one column per form. minmax(0, …) on every track so a long
 	   form wraps inside its cell instead of widening the page on a phone. */
-	.drill-root {
+	.drill-root,
+	.drill-labels {
 		display: grid;
 		grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr);
 		gap: 0.25rem 0.75rem;
 		align-items: start;
+	}
+	.drill-root {
 		padding: 0.55rem 0;
 		border-top: 1px solid var(--color-border);
+	}
+	/* The same three tracks as a row, so a label sits over its column. */
+	.drill-labels {
+		padding-bottom: 0.3rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.label {
+		min-width: 0;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-muted);
+		overflow-wrap: anywhere;
 	}
 	.drill-root:first-child {
 		border-top: none;

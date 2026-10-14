@@ -6,6 +6,8 @@ handful of roots the learner knows, the script is:
 1. **Meet the pair.** "Listen and repeat", then each root, then each of its
    forms after its English, built up the Key Phrases way (whole, the pieces
    from the end, whole again: the owner's Pimsleur verdict, tunatale-ve4p.16).
+   When the pattern is new to the learner the narrator says, after the first
+   root, what the two forms are for (tunatale-ve4p.25).
 2. **Your turn.** Each form asked by its English; the answer follows.
 3. **New roots.** Roots named but NOT modelled: the learner has to build the
    form. Getting these right is the affix, not a remembered word.
@@ -172,11 +174,15 @@ def build_affix_drill(
     roots: list[str],
     new_roots: list[str] | None = None,
     lines: list[tuple[str, str]] | None = None,
+    note: tuple[str, ...] = (),
 ) -> AffixDrill:
     """The drill script for *pattern*.
 
     *roots* are modelled and then asked; *new_roots* are only asked. Each of
-    *lines* is ``(target-language line, its English)``.
+    *lines* is ``(target-language line, its English)``. *note* is what the
+    narrator says about the pattern's forms, once, straight after the first
+    root has been modelled: its sentences speak of "the first" and "the
+    second", which are then the two forms the learner has just heard.
     """
     drill = AffixDrill()
 
@@ -196,10 +202,12 @@ def build_affix_drill(
         raise ValueError(f"a {pattern.key} drill needs at least {MIN_ROOTS} roots, got {len(modelled)} usable ({why})")
 
     drill.steps.append(DrillStep("model", _LISTEN, "en"))
-    for found in modelled:
+    for i, found in enumerate(modelled):
         drill.steps += _named(found, language_code)
         for form, english in found.cells:
             drill.steps += _taught(english, form, language_code)
+        if i == 0:
+            drill.steps += [DrillStep("model", sentence, "en") for sentence in note]
     # Seeded by a string, which Python hashes itself: the interpreter's hash
     # salt does not reach it, so the order survives a restart.
     rng = random.Random(repr((pattern.key, roots, new_roots, lines)))
