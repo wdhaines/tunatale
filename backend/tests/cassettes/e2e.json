@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "recorded_at": "2026-09-30T18:04:35.135212+00:00",
+  "recorded_at": "2026-10-14T13:32:20.253996+00:00",
   "calls": [
     {
       "prompt_hash": "sha256:0c7754f646249150",
@@ -126,6 +126,20 @@
       "prompt_preview": "Below are Slovene dialogue lines. The following words still need a gloss entry: ",
       "max_tokens": 1548,
       "response": "[{\"word\":\"pros\u00edm\",\"translation\":\"please\"},{\"word\":\"evri\",\"translation\":\"euros\"}]",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:75015a766236ce5f",
+      "prompt_preview": "Below are Slovene dialogue lines. List EVERY unique Slovene word that appears (i",
+      "max_tokens": 2376,
+      "response": "[\n  {\"word\":\"dober\",\"translation\":\"good\"},\n  {\"word\":\"dan\",\"translation\":\"day\"},\n  {\"word\":\"pros\u00edm\",\"translation\":\"please\"},\n  {\"word\":\"ali\",\"translation\":\"whether\"},\n  {\"word\":\"imate\",\"translation\":\"you have\",\"base\":\"have\"},\n  {\"word\":\"mizo\",\"translation\":\"table\"},\n  {\"word\":\"za\",\"translation\":\"for\"},\n  {\"word\":\"dva\",\"translation\":\"two\"},\n  {\"word\":\"seveda\",\"translation\":\"of course\"},\n  {\"word\":\"sledite\",\"translation\":\"follow\",\"base\":\"follow\"},\n  {\"word\":\"mi\",\"translation\":\"me\"},\n  {\"word\":\"sedeva\",\"translation\":\"we sit\",\"base\":\"sit\"},\n  {\"word\":\"tukaj\",\"translation\":\"here\"},\n  {\"word\":\"hvala\",\"translation\":\"thank you\"},\n  {\"word\":\"midva\",\"translation\":\"we (two)\"},\n  {\"word\":\"bova\",\"translation\":\"we will\",\"base\":\"be\"},\n  {\"word\":\"sedeli\",\"translation\":\"sit\",\"base\":\"sit\"},\n  {\"word\":\"imam\",\"translation\":\"I have\",\"base\":\"have\"},\n  {\"word\":\"prosto\",\"translation\":\"free\"},\n  {\"word\":\"mesto\",\"translation\":\"seat\"},\n  {\"word\":\"tudi\",\"translation\":\"also\"},\n  {\"word\":\"vas\",\"translation\":\"you\"},\n  {\"word\":\"\u010de\",\"translation\":\"if\"},\n  {\"word\":\"\u017eelite\",\"translation\":\"you want\",\"base\":\"want\"},\n  {\"word\":\"odli\u010dno\",\"translation\":\"excellent\"},\n  {\"word\":\"lepa\",\"translation\":\"very much\"},\n  {\"word\":\"\u017eelim\",\"translation\":\"I would like\",\"base\":\"want\"},\n  {\"word\":\"kavo\",\"translation\":\"coffee\"},\n  {\"word\":\"kako\",\"translation\":\"how\"},\n  {\"word\":\"\u010drno\",\"translation\":\"black\"},\n  {\"word\":\"mleko\",\"translation\":\"milk\"},\n  {\"word\":\"sladko\",\"translation\":\"sweet\"},\n  {\"word\":\"vro\u010do\",\"translation\":\"hot\"},\n  {\"word\":\"brez\",\"translation\":\"without\"},\n  {\"word\":\"sladkorja\",\"translation\":\"sugar\"},\n  {\"word\":\"ne\",\"translation\":\"no\"},\n  {\"word\":\"le\",\"translation\":\"just\"},\n  {\"word\":\"koliko\",\"translation\":\"how much\"},\n  {\"word\":\"stane\",\"translation\":\"costs\",\"base\":\"cost\"},\n  {\"word\":\"dve\",\"translation\":\"two\"},\n  {\"word\":\"evri\",\"translation\":\"euros\"},\n  {\"word\":\"evo\",\"translation\":\"here\"},\n  {\"word\":\"va\u0161a\",\"translation\":\"your\"},\n  {\"word\":\"kava\",\"translation\":\"coffee\"},\n  {\"word\":\"oprostite\",\"translation\":\"excuse me\"},\n  {\"word\":\"lahko\",\"translation\":\"could\"},\n  {\"word\":\"prinesete\",\"translation\":\"bring\",\"base\":\"bring\"},\n  {\"word\":\"\u0161e\",\"translation\":\"another\"},\n  {\"word\":\"en\",\"translation\":\"one\"},\n  {\"word\":\"kozarec\",\"translation\":\"cup\"},\n  {\"word\":\"kave\",\"translation\":\"coffee\"},\n  {\"word\":\"greva\",\"translation\":\"we go\",\"base\":\"go\"},\n  {\"word\":\"po\",\"translation\":\"for\"},\n  {\"word\":\"eno\",\"translation\":\"one\"},\n  {\"word\":\"mi\",\"translation\":\"we\"},\n  {\"word\":\"bomo\",\"translation\":\"we will\",\"base\":\"be\"},\n  {\"word\":\"malo\",\"translation\":\"a little\"},\n  {\"word\":\"v\",\"translation\":\"in\"},\n  {\"word\":\"redu\",\"translation\":\"order\"},\n  {\"word\":\"prinesel\",\"translation\":\"will bring\",\"base\":\"bring\"},\n  {\"word\":\"bom\",\"translation\":\"I will\",\"base\":\"be\"},\n  {\"word\":\"\u010dez\",\"translation\":\"in\"},\n  {\"word\":\"minuto\",\"translation\":\"minute\"},\n  {\"word\":\"pla\u010damo\",\"translation\":\"we pay\",\"base\":\"pay\"},\n  {\"word\":\"skupaj\",\"translation\":\"together\"},\n  {\"word\":\"kartico\",\"translation\":\"card\"},\n  {\"word\":\"gotovino\",\"translation\":\"cash\"},\n  {\"word\":\"ra\u010dun\",\"translation\":\"bill\"},\n  {\"word\":\"\u0161tiri\",\"translation\":\"four\"},\n  {\"word\":\"evre\",\"translation\":\"euros\"},\n  {\"word\":\"nasvidenje\",\"translation\":\"goodbye\"},\n  {\"word\":\"u\u017eivajte\",\"translation\":\"enjoy\",\"base\":\"enjoy\"},\n  {\"word\":\"ljubljani\",\"translation\":\"Ljubljana\"}\n]",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:8205de2b917975b5",
+      "prompt_preview": "Below are Slovene dialogue lines. The following words still need a gloss entry: ",
+      "max_tokens": 1548,
+      "response": "[{\"word\":\"pros\u00edm\",\"translation\":\"please\"},{\"word\":\"je\",\"translation\":\"is\",\"base\":\"be\"}]",
       "provider": "groq"
     }
   ]

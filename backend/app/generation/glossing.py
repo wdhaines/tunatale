@@ -66,13 +66,13 @@ _GLOSS_MIN_TOKENS = 256
 _GLOSS_SYSTEM = "You are a concise translation assistant. Return ONLY valid JSON, no other text."
 
 _GLOSS_PROMPT = """\
-Below are {language_name} dialogue lines. List EVERY unique word that appears
-(including articles, prepositions, pronouns, auxiliary and conjugated verbs,
-proper names, and interjections). For each, give its lowercased surface form
-exactly as written and a concise English translation appropriate to how it is
-used in these lines. Conjugated and inflected forms get their specific
+Below are {language_name} dialogue lines. List EVERY unique {language_name} word
+that appears (including articles, prepositions, pronouns, auxiliary and
+conjugated verbs, proper names, and interjections). For each, give its lowercased
+surface form exactly as written and a concise English translation appropriate to
+how it is used in these lines. Conjugated and inflected forms get their specific
 translation, NOT the dictionary form (e.g. "boste" -> "you will", "sem" -> "I am").
-
+{translation_rule}
 Every "word" value must be a SINGLE word. Do not emit phrases or multi-word
 entries — a phrase like "ses neste tirsdag" must appear only as its individual
 words. Whole-phrase meanings are carried elsewhere and are not wanted here.
@@ -99,7 +99,7 @@ give its lowercased surface form exactly as written and a concise English
 translation appropriate to how it is used in the lines shown. Conjugated and
 inflected forms get their specific translation, NOT the dictionary form
 (e.g. "boste" -> "you will", "sem" -> "I am").
-
+{translation_rule}
 Every "word" value must be a SINGLE word. Do not emit phrases or multi-word
 entries — a phrase like "ses neste tirsdag" must appear only as its individual
 words. Whole-phrase meanings are carried elsewhere and are not wanted here.
@@ -114,6 +114,27 @@ Respond with ONLY a JSON array (no markdown fences, no prose):
 Dialogue:
 {dialogue}
 """
+
+# tunatale-qrzr: the pass used to see the L2 alone and guess the sense — Cebuano
+# "Moadto ko sa haya." ("I'm going to the wake.") glossed ``haya`` as "garden".
+# Each line now travels with the English the story already gives it.
+_LINE_SEPARATOR = " => "
+
+_TRANSLATION_RULE = """\
+Each line is followed by "=>" and its English translation, when it has one. Gloss
+only the {language_name} words, never the English. Give each word the sense that
+line's translation uses: a word that can mean several things gets the meaning the
+translation shows (e.g. a word that means either "garden" or "wake" gets "wake"
+when the line is translated "I'm going to the wake").
+"""
+
+#: One dialogue line: its L2 text and its English translation ("" when the story
+#: gives none).
+DialogueLine = tuple[str, str]
+
+
+def _format_dialogue(lines: list[DialogueLine]) -> str:
+    return "\n".join(f"{text}{_LINE_SEPARATOR}{english}" if english else text for text, english in lines)
 
 
 def _recover_entries(text: str) -> tuple[list[dict], int]:
@@ -218,14 +239,15 @@ def parse_gloss_array(raw: str) -> list[dict]:
     return _strip_markup([g for g in data if isinstance(g, dict)])
 
 
-def dialogue_lines_from_story(data: dict) -> list[str]:
-    """The L2 lines of a story JSON, in order — the input the gloss call needs.
+def dialogue_lines_from_story(data: dict) -> list[DialogueLine]:
+    """The lines of a story JSON, in order, each with its English translation —
+    the input the gloss call needs.
 
     Reads the raw story dict rather than a built ``Lesson`` so the pass can run
     before the build, which is what lets the result be spliced in as if the model
     had produced it in one call.
     """
-    lines: list[str] = []
+    lines: list[DialogueLine] = []
     for scene in data.get("scenes", []):
         if not isinstance(scene, dict):
             continue
@@ -234,7 +256,8 @@ def dialogue_lines_from_story(data: dict) -> list[str]:
                 continue
             text = line.get("text", "").strip()
             if text:
-                lines.append(text)
+                english = line.get("translation")
+                lines.append((text, english.strip() if isinstance(english, str) else ""))
     return lines
 
 
@@ -279,28 +302,34 @@ def uncovered_surfaces(surface_lemma: dict[str, str], glosses: list[dict]) -> li
     return [s for s in surface_lemma if s not in keys and surface_lemma[s] not in keys]
 
 
-def build_gloss_prompt(lines: list[str], language_name: str) -> str:
-    return _GLOSS_PROMPT.format(language_name=language_name, dialogue="\n".join(lines))
-
-
-def build_gloss_topup_prompt(words: list[str], lines: list[str], language_name: str) -> str:
-    """Prompt asking for gloss entries for EXACTLY *words*.
-
-    Context is only the lines containing at least one of *words* (token
-    membership), so the model sees the sentences where the missing surfaces
-    actually appear and nothing else — the full dialogue would re-raise the
-    truncation risk this one-call top-up is sized to avoid.
-    """
-    wanted = set(words)
-    context_lines = [line for line in lines if wanted & {t.lower() for t in tokenize(line)}]
-    return _GLOSS_TOPUP_PROMPT.format(
+def build_gloss_prompt(lines: list[DialogueLine], language_name: str) -> str:
+    return _GLOSS_PROMPT.format(
         language_name=language_name,
-        words="\n".join(f"- {w}" for w in words),
-        dialogue="\n".join(context_lines),
+        translation_rule=_TRANSLATION_RULE.format(language_name=language_name),
+        dialogue=_format_dialogue(lines),
     )
 
 
-def _unique_words(lines: list[str]) -> set[str]:
+def build_gloss_topup_prompt(words: list[str], lines: list[DialogueLine], language_name: str) -> str:
+    """Prompt asking for gloss entries for EXACTLY *words*.
+
+    Context is only the lines containing at least one of *words* (token
+    membership of the L2 text — never the English), so the model sees the
+    sentences where the missing surfaces actually appear and nothing else — the
+    full dialogue would re-raise the truncation risk this one-call top-up is sized
+    to avoid.
+    """
+    wanted = set(words)
+    context_lines = [line for line in lines if wanted & {t.lower() for t in tokenize(line[0])}]
+    return _GLOSS_TOPUP_PROMPT.format(
+        language_name=language_name,
+        words="\n".join(f"- {w}" for w in words),
+        translation_rule=_TRANSLATION_RULE.format(language_name=language_name),
+        dialogue=_format_dialogue(context_lines),
+    )
+
+
+def _unique_words(lines: list[DialogueLine]) -> set[str]:
     """The distinct surface words in *lines* — one gloss entry each, near enough.
 
     Deliberately crude: this sizes a token budget, not a lexicon. Splitting on
@@ -308,10 +337,10 @@ def _unique_words(lines: list[str]) -> set[str]:
     counts once, a possessive counts as its own word), and over-counting is the
     safe direction — it raises the cap.
     """
-    return {w.strip(_PUNCTUATION).casefold() for line in lines for w in line.split() if w.strip(_PUNCTUATION)}
+    return {w.strip(_PUNCTUATION).casefold() for text, _ in lines for w in text.split() if w.strip(_PUNCTUATION)}
 
 
-def gloss_max_tokens(lines: list[str]) -> int:
+def gloss_max_tokens(lines: list[DialogueLine]) -> int:
     """Completion cap for the gloss call, sized from what is left of the budget.
 
     ⚠️ NOT a constant. ``regloss_lessons`` hardcodes 2048, which is BELOW the 3,213
@@ -325,12 +354,16 @@ def gloss_max_tokens(lines: list[str]) -> int:
     # Sized from the WORK, then clamped by what the budget allows. The array has
     # one entry per unique word, so the dialogue's own vocabulary is the estimate
     # — a count nothing else has to supply and that cannot drift out of step with
-    # the prompt.
-    needed = len(_unique_words(lines)) * _TOKENS_PER_ENTRY
+    # the prompt. A short dialogue also needs the reasoning the model spends
+    # before its JSON (see _TOPUP_REASONING_TOKENS): measured 2026-10-14, a
+    # 57-word dialogue capped at 57 * 24 truncated in 2 of 3 calls. Above ~125
+    # words the per-entry margin already covers it and the cap is unchanged.
+    n = len(_unique_words(lines))
+    needed = max(n * _TOKENS_PER_ENTRY, _TOPUP_REASONING_TOKENS + n * _REASONED_TOKENS_PER_ENTRY)
     return max(_GLOSS_MIN_TOKENS, min(needed, available))
 
 
-async def generate_dialogue_glosses(lines: list[str], llm, language: Language) -> list[dict]:
+async def generate_dialogue_glosses(lines: list[DialogueLine], llm, language: Language) -> list[dict]:
     """One LLM call returning the ``dialogue_glosses`` array for *lines*."""
     prompt = build_gloss_prompt(lines, language.name)
     raw = await llm.complete(
@@ -351,9 +384,12 @@ async def generate_dialogue_glosses(lines: list[str], llm, language: Language) -
 # settled on 1500; the main pass never shows it only because a whole dialogue's
 # n * 24 already dwarfs the reasoning.
 _TOPUP_REASONING_TOKENS = 1500
+# Per entry ON TOP of that reasoning allowance. Live captures ran 9.4 and 10.4
+# completion tokens per entry with the reasoning included (see _TOKENS_PER_ENTRY).
+_REASONED_TOKENS_PER_ENTRY = 12
 
 
-def gloss_topup_max_tokens(words: list[str], lines: list[str]) -> int:
+def gloss_topup_max_tokens(words: list[str], lines: list[DialogueLine]) -> int:
     """Completion cap for the top-up: reasoning allowance plus the entries,
     clamped to what the free-tier request reservation leaves after the prompt."""
     prompt_chars = len(build_gloss_topup_prompt(words, lines, "X" * 16))
@@ -361,7 +397,7 @@ def gloss_topup_max_tokens(words: list[str], lines: list[str]) -> int:
     return min(_TOPUP_REASONING_TOKENS + len(words) * _TOKENS_PER_ENTRY, available)
 
 
-async def generate_gloss_topup(words: list[str], lines: list[str], llm, language: Language) -> list[dict]:
+async def generate_gloss_topup(words: list[str], lines: list[DialogueLine], llm, language: Language) -> list[dict]:
     """One LLM call toping up gloss entries for exactly *words*.
 
     Sized by :func:`gloss_topup_max_tokens`; the context is filtered to the lines
@@ -426,7 +462,7 @@ async def ensure_dialogue_glosses(data: dict, llm, language: Language) -> None:
     # EMPTY array, and 226-of-227 glossed then sat incomplete forever
     # (tunatale-grv3). Never a loop: one call, then a warning for whatever is
     # still missing, and the glosses already obtained are kept unchanged.
-    surface_lemma = dialogue_surface_lemmas(lines, language.code)
+    surface_lemma = dialogue_surface_lemmas([text for text, _ in lines], language.code)
     missing = uncovered_surfaces(surface_lemma, glosses)
     if missing:
         try:
