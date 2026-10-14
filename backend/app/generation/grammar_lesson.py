@@ -272,10 +272,6 @@ def build_grammar_lesson(language: Language, plan: GrammarPlan) -> Lesson:
         roots=list(plan.roots),
         new_roots=list(plan.new_roots),
         lines=list(plan.lines),
-        # Five roots are ten forms, and asked once that is two minutes. Asked
-        # again in mixed order it is a lesson, and the second asking is the
-        # one that is recall rather than echo.
-        again=True,
     )
     voices = language.tts_voice_map
     narrator = voices["narrator"]

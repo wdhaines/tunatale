@@ -6,15 +6,19 @@ handful of roots the learner knows, the script is:
 1. **Meet the pair.** "Listen and repeat", then each root, then each of its
    forms after its English, built up the Key Phrases way (whole, the pieces
    from the end, whole again: the owner's Pimsleur verdict, tunatale-ve4p.16).
-2. **Your turn.** Each form asked by its English, done-first so it is not an
-   echo of the order just modelled; the answer follows.
-3. **New on this root.** Roots named but NOT modelled: the learner has to
-   build the form. Getting these right is the affix, not a remembered word.
-4. **Once more, mixed**, when asked for: every form again, a different root
-   each time. In rounds 2 and 3 a root's forms are asked back to back, so the
-   second is half given away by the first; here it is not.
+2. **Your turn.** Each form asked by its English; the answer follows.
+3. **New roots.** Roots named but NOT modelled: the learner has to build the
+   form. Getting these right is the affix, not a remembered word.
+4. **Everything, once more**: every form of every root again, the new roots'
+   among the modelled ones.
 5. **Whole lines**, when the caller supplies any: every line taught first,
    built up like a form, and only then asked for (tunatale-ve4p.20).
+
+Every asking round is in mixed order (:func:`_mixed`, tunatale-ve4p.19): no two
+neighbours are forms of one root, so no prompt is half given away by the one
+before it, and neither the root nor the tense can be told from the position.
+The order is drawn from what the drill is made of, so the same drill is the
+same script every time it is built.
 
 Two things can stop a root being drilled, and both DROP it with a reason
 rather than guess: the language cannot vouch for every form
@@ -29,6 +33,7 @@ carries it into a lesson are the renderer's and the lesson model's business.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -119,11 +124,6 @@ def _round(asks: list[tuple[str, str]], language_code: str) -> list[DrillStep]:
     return steps
 
 
-def _asks(found: DrillRoot) -> list[tuple[str, str]]:
-    """A root's forms as asks, done-first so it is not an echo of the model order."""
-    return [(f"{english}.", form) for form, english in reversed(found.cells)]
-
-
 def _named(found: DrillRoot, language_code: str) -> list[DrillStep]:
     return [DrillStep("model", found.english, "en"), DrillStep("model", found.root, language_code)]
 
@@ -141,18 +141,27 @@ def _taught(english: str, text: str, language_code: str) -> list[DrillStep]:
     ]
 
 
-def _mixed(found: list[DrillRoot], language_code: str) -> list[DrillStep]:
-    """Every form of every root, once, with no two neighbours on the same root.
+def _mixed(found: list[DrillRoot], language_code: str, rng: random.Random) -> list[DrillStep]:
+    """One round asking every form of every root in *found* once, in an order drawn from *rng*.
 
-    One pass per cell; in each pass root *i* is asked for the cell *i* steps on
-    from the pass's own, so the cell changes from one prompt to the next too.
+    One lap of the roots per cell. Each lap takes the roots in an order of its
+    own and does not open on the root the last one closed on, so no two
+    neighbours are forms of one root. Which cell a root gives up in which lap
+    is drawn per root, so the tense does not follow from the position either.
+    A single root has nobody to stand between its forms and is asked them in
+    a row.
     """
+    cells = {root.root: rng.sample(root.cells, len(root.cells)) for root in found}
     asks: list[tuple[str, str]] = []
-    cells = len(found[0].cells)
-    for turn in range(cells):
-        for i, root in enumerate(found):
-            form, english = root.cells[(i + turn) % cells]
+    last = None
+    for _ in found[0].cells:
+        lap = rng.sample(found, len(found))
+        if lap[0] is last:
+            lap.append(lap.pop(0))
+        for root in lap:
+            form, english = cells[root.root].pop()
             asks.append((f"{english}.", form))
+        last = lap[-1]
     return _round(asks, language_code)
 
 
@@ -163,13 +172,11 @@ def build_affix_drill(
     roots: list[str],
     new_roots: list[str] | None = None,
     lines: list[tuple[str, str]] | None = None,
-    again: bool = False,
 ) -> AffixDrill:
     """The drill script for *pattern*.
 
     *roots* are modelled and then asked; *new_roots* are only asked. Each of
-    *lines* is ``(target-language line, its English)``. *again* adds the mixed
-    round, which asks every form a second time.
+    *lines* is ``(target-language line, its English)``.
     """
     drill = AffixDrill()
 
@@ -193,12 +200,16 @@ def build_affix_drill(
         drill.steps += _named(found, language_code)
         for form, english in found.cells:
             drill.steps += _taught(english, form, language_code)
-    drill.steps += _round([ask for found in modelled for ask in _asks(found)], language_code)
+    # Seeded by a string, which Python hashes itself: the interpreter's hash
+    # salt does not reach it, so the order survives a restart.
+    rng = random.Random(repr((pattern.key, roots, new_roots, lines)))
+    drill.steps += _mixed(modelled, language_code, rng)
     unmodelled = usable(new_roots or [])
-    for found in unmodelled:
-        drill.steps += _named(found, language_code) + _round(_asks(found), language_code)
-    if again:
-        drill.steps += _mixed([*modelled, *unmodelled], language_code)
+    if unmodelled:
+        for found in unmodelled:
+            drill.steps += _named(found, language_code)
+        drill.steps += _mixed(unmodelled, language_code, rng)
+    drill.steps += _mixed([*modelled, *unmodelled], language_code, rng)
     if lines:
         drill.steps.append(DrillStep("model", _LISTEN, "en"))
         for text, english in lines:
