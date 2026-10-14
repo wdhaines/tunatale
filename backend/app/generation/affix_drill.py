@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app.generation.section_builder import build_word_breakdown_spans
+from app.generation.syllabify import syllabify_word
 from app.languages import get_a1_morphology
 from app.srs.a1_morphology import AffixPattern
 
@@ -130,17 +131,70 @@ def _named(found: DrillRoot, language_code: str) -> list[DrillStep]:
     return [DrillStep("model", found.english, "en"), DrillStep("model", found.root, language_code)]
 
 
-def _taught(english: str, text: str, language_code: str) -> list[DrillStep]:
+@dataclass
+class _Built:
+    """What a drill has already built up, piece by piece (the owner, 2026-10-14).
+
+    "We shouldn't need to Pimsleur rebuild the root once the root is
+    introduced." A root's syllables are built once, by its first form; a later
+    word on that root adds only its affix, and a word built before is said whole.
+    """
+
+    language_code: str
+    words: set[str] = field(default_factory=set)
+    roots: set[str] = field(default_factory=set)
+
+    def _syllables(self, word: str) -> list[str]:
+        return syllabify_word(word, self.language_code)
+
+    def _root_start(self, word: str) -> int | None:
+        """The syllable *word*'s built root starts at, or ``None`` when it has none.
+
+        Only a root the word ENDS in and whose syllables are the word's last
+        ones: a prefix pattern. An infix or a root the syllables cut across is
+        left alone, which costs repetition and never a missing piece.
+        """
+        syls = self._syllables(word)
+        for root in self.roots:
+            root_syls = self._syllables(root)
+            k = len(root_syls)
+            if 0 < k < len(syls) and "".join(syls[-k:]).lstrip("-") == root:
+                return len(syls) - k
+        return None
+
+    def keeps(self, source_word: str | None, span: tuple[int, int] | None) -> bool:
+        """Whether a breakdown piece is still news. Bookends, multi-word
+        partials and a word's whole-word rung always are."""
+        if source_word is None or span is None:
+            return True
+        word = source_word.lower()
+        if span == (0, len(self._syllables(word))):
+            return True
+        if word in self.words:
+            return False
+        start = self._root_start(word)
+        return start is None or span[0] < start
+
+    def add(self, steps: list[DrillStep], root: str | None = None) -> None:
+        self.words.update(step.source_word.lower() for step in steps if step.source_word and step.span)
+        if root is not None:
+            self.roots.add(root)
+
+
+def _taught(english: str, text: str, language_code: str, built: _Built) -> list[DrillStep]:
     """*text* after its English, built up as Key Phrases builds a phrase.
 
     The breakdown opens and closes on the whole of *text*, so the learner hears
     it, repeats it piece by piece, and hears it whole again; every target-language
-    step leaves its own repeat gap (``pause_calculator``).
+    step leaves its own repeat gap (``pause_calculator``). Pieces of what
+    *built* says the drill has already built are left out.
     """
-    return [DrillStep("model", english, "en")] + [
+    steps = [
         DrillStep("model", chunk.text, language_code, chunk.source_word, chunk.span)
         for chunk in build_word_breakdown_spans(text, language_code)
+        if built.keeps(chunk.source_word, chunk.span)
     ]
+    return [DrillStep("model", english, "en"), *steps]
 
 
 def _mixed(found: list[DrillRoot], language_code: str, rng: random.Random) -> list[DrillStep]:
@@ -202,10 +256,13 @@ def build_affix_drill(
         raise ValueError(f"a {pattern.key} drill needs at least {MIN_ROOTS} roots, got {len(modelled)} usable ({why})")
 
     drill.steps.append(DrillStep("model", _LISTEN, "en"))
+    built = _Built(language_code)
     for i, found in enumerate(modelled):
         drill.steps += _named(found, language_code)
         for form, english in found.cells:
-            drill.steps += _taught(english, form, language_code)
+            taught = _taught(english, form, language_code, built)
+            built.add(taught, root=found.root)
+            drill.steps += taught
         if i == 0:
             drill.steps += [DrillStep("model", sentence, "en") for sentence in note]
     # Seeded by a string, which Python hashes itself: the interpreter's hash
@@ -221,6 +278,8 @@ def build_affix_drill(
     if lines:
         drill.steps.append(DrillStep("model", _LISTEN, "en"))
         for text, english in lines:
-            drill.steps += _taught(english, text, language_code)
+            taught = _taught(english, text, language_code, built)
+            built.add(taught)
+            drill.steps += taught
         drill.steps += _round([(english, text) for text, english in lines], language_code)
     return drill
