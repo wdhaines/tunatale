@@ -256,8 +256,6 @@ export interface LessonDetail {
 }
 
 export type LessonDrill = components["schemas"]["LessonDrill"];
-export type GrammarPatternOption = components["schemas"]["GrammarPatternOption"];
-export type CreatedGrammarLesson = components["schemas"]["CreateGrammarLessonResponse"];
 
 /** What the reading UI actually needs off a lesson.
  *
@@ -994,18 +992,6 @@ export class TunaTaleAPI {
 
   async deleteCurriculum(id: string): Promise<{ deleted: string }> {
     return this.request(`/api/curriculum/${id}`, { method: "DELETE" });
-  }
-
-  async listGrammarPatterns(id: string): Promise<GrammarPatternOption[]> {
-    return this.request(`/api/curriculum/${id}/grammar-patterns`);
-  }
-
-  async createGrammarLesson(id: string, pattern: string): Promise<CreatedGrammarLesson> {
-    return this.request(`/api/curriculum/${id}/grammar-lessons`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pattern }),
-    });
   }
 
   async deleteCurriculumDay(

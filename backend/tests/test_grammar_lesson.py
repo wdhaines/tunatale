@@ -24,7 +24,6 @@ from app.generation.grammar_lesson import (
     GrammarPlan,
     build_grammar_lesson,
     drill_table,
-    grammar_day,
     plan_grammar_lesson,
     understood_roots,
 )
@@ -431,16 +430,6 @@ def test_a_lesson_stored_before_kinds_existed_is_thematic():
 
 
 # --- the day ---------------------------------------------------------------
-
-
-def test_the_day_names_the_pattern_and_lists_the_forms(owner):
-    srs_db, store = owner
-    plan = plan_grammar_lesson("ceb", _MO_MI, srs_db=srs_db, store=store, curriculum_id="funeral", lemmatizer=None)
-
-    day = grammar_day(3, plan)
-
-    assert (day.day, day.kind, day.pattern, day.title) == (3, "grammar", "mo-mi", "Affix drill: mo- / mi-")
-    assert day.collocations == list(_FORMS)
 
 
 def test_a_day_is_thematic_unless_it_says_otherwise():
