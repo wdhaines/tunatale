@@ -20,6 +20,8 @@ What counts as having a word:
 
 * its card is in REVIEW or KNOWN (``UNDERSTOOD``; recognition for a vocab card,
   production for a cloze, which is what ``SRSItem.state`` reads);
+* its card is buried for the day and was in review before that
+  (:func:`understood`): a sibling was graded, nothing was forgotten;
 * it sits inside a multi-word phrase whose own card is;
 * the learner put it on the ignore list — names and loanwords they chose not to
   card, not words they are waiting to learn;
@@ -36,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Collection
 
 from app.models.lesson import Lesson, SectionType
-from app.models.srs_item import SRSState
+from app.models.srs_item import DirectionState, SRSItem, SRSState
 from app.srs.lemmatizer import Lemmatizer, get_lemmatizer
 from app.srs.transcript import WordToken, extract_transcript
 
@@ -47,6 +49,24 @@ UNDERSTOOD = (SRSState.REVIEW, SRSState.KNOWN)
 _UNDERSTOOD_VALUES = frozenset(state.value for state in UNDERSTOOD)
 # ``WordToken.srs_state`` for a word with no card that is on the ignore list.
 _IGNORED = "ignored"
+_BURIED = SRSState.BURIED.value
+
+
+def understood(card: DirectionState | SRSItem | None) -> bool:
+    """Whether *card* is one the learner understands. ``None`` is no card.
+
+    REVIEW or KNOWN, and BURIED when what is buried is a card that has been
+    reviewed. Grading one side of a card buries the other until the next
+    rollover; that hides it for the day and takes nothing away. What a buried
+    card is underneath is read the way the rollover sweep reads it when it
+    gives the state back (``db_queue.py::unbury_if_needed``): REVIEW once it
+    has reps or a last review, NEW otherwise.
+    """
+    if card is None:
+        return False
+    if card.state in UNDERSTOOD:
+        return True
+    return card.state is SRSState.BURIED and (card.reps > 0 or card.last_review is not None)
 
 
 def fold(word: str) -> str:
@@ -54,12 +74,19 @@ def fold(word: str) -> str:
     return word.casefold().replace("-", "")
 
 
-def _has(word: WordToken, taught: Collection[str]) -> bool:
+def _resting(srs_db, state: str | None, card_id: int | None) -> bool:
+    """Whether a card the transcript shows as buried is one the learner understands."""
+    return state == _BURIED and understood(srs_db.get_collocation_by_id(card_id)[1])
+
+
+def _has(word: WordToken, taught: Collection[str], srs_db) -> bool:
     return (
         word.srs_state in _UNDERSTOOD_VALUES
         or word.srs_state == _IGNORED
         or word.collocation_srs_state in _UNDERSTOOD_VALUES
         or fold(word.surface) in taught
+        or _resting(srs_db, word.srs_state, word.srs_item_id)
+        or _resting(srs_db, word.collocation_srs_state, word.collocation_span_id)
     )
 
 
@@ -89,5 +116,5 @@ def admitted_lines(lesson: Lesson, *, srs_db, lemmatizer: Lemmatizer | None, tau
     return {
         text
         for text, line in zip(said, transcript.dialogue_lines, strict=True)
-        if line.words and all(_has(word, taught) for word in line.words)
+        if line.words and all(_has(word, taught, srs_db) for word in line.words)
     }

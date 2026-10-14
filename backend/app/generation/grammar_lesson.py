@@ -35,7 +35,7 @@ from dataclasses import dataclass
 
 from app.common.guid import compute_guid
 from app.generation.affix_drill import MIN_ROOTS, DrillRoot, build_affix_drill, drill_root
-from app.generation.drill_lines import UNDERSTOOD, admitted_lines
+from app.generation.drill_lines import admitted_lines, understood
 from app.generation.drill_lines import fold as _fold
 from app.generation.section_builder import build_affix_drill_section
 from app.languages import get_a1_morphology
@@ -52,7 +52,6 @@ from app.storage.store import ContentStore
 MODELLED = 3
 MAX_LINES = 3
 
-_UNDERSTOOD = UNDERSTOOD
 _NO_PATTERNS = "the language registers no affix patterns"
 _WORD = re.compile(r"[\w'-]+")
 # A sentence end with more text after it: the line is two sentences.
@@ -116,7 +115,7 @@ def _understood(language_code: str, pattern: AffixPattern, srs_db) -> dict[str, 
     for root in bundle.pattern_roots(pattern):
         ready = drill_root(language_code, root, pattern)
         if isinstance(ready, DrillRoot) and any(
-            (state := item.directions.get(Direction.RECOGNITION)) is not None and state.state in _UNDERSTOOD
+            understood(item.directions.get(Direction.RECOGNITION))
             for _, item in srs_db.get_collocations_by_lemma_with_id(root)
         ):
             found[root] = ready
@@ -179,13 +178,13 @@ def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id
     pattern = find_pattern(lesson.language_code, recorded["pattern"]) if recorded else None
     if pattern is None:
         return []
-    understood = _understood(lesson.language_code, pattern, srs_db)
+    drillable = _understood(lesson.language_code, pattern, srs_db)
     story = [line for line in dict.fromkeys(_story_lines(store, curriculum_id)) if line[1]]
     heard = {_fold(word) for text, _ in story for word in _WORD.findall(text)}
 
     cards: list[ContrastCard] = []
     for root in (*recorded["roots"], *recorded["new_roots"]):
-        ready = understood.get(root)
+        ready = drillable.get(root)
         if ready is None:
             continue
         held = [
@@ -193,7 +192,7 @@ def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id
             for (form, _), feature in zip(ready.cells, pattern.features, strict=True)
         ]
         missing = [i for i, item in enumerate(held) if item is None]
-        learned = all(item is None or item.directions[Direction.PRODUCTION].state in _UNDERSTOOD for item in held)
+        learned = all(item is None or understood(item.directions[Direction.PRODUCTION]) for item in held)
         if not missing or not learned:
             continue
         blank = min(missing, key=lambda i: (_fold(ready.cells[i][0]) in heard, -i))

@@ -55,6 +55,7 @@ def _add(srs_db, card, state: SRSState = SRSState.NEW) -> None:
                 difficulty=4.0,
                 reps=5,
                 state=state,
+                bury_kind="sched" if state is SRSState.BURIED else None,
             ),
         )
 
@@ -118,6 +119,16 @@ def test_a_roots_other_form_follows_once_its_first_card_is_in_review(owner):  # 
         ("Mouban ko ugma.", "I will come along tomorrow."),
         ("", ""),
     ]
+
+
+def test_a_first_card_buried_for_the_day_still_counts_as_in_review(owner):  # noqa: F811
+    """Burying hides a card until tomorrow; it does not put it back to being learned."""
+    srs_db, store = owner
+    lesson = _drill(srs_db, store)
+    for card in contrast_cards(lesson, srs_db=srs_db, store=store, curriculum_id="funeral"):
+        _add(srs_db, card, SRSState.BURIED if card.root == "uban" else SRSState.NEW)
+
+    assert _offered(lesson, srs_db, store) == ["mouban"]
 
 
 def test_a_root_with_both_cards_is_finished(owner):  # noqa: F811

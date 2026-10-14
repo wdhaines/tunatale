@@ -35,7 +35,7 @@ from app.models.srs_item import SRSState
 from app.models.strategy import ContentStrategy
 from app.storage.store import ContentStore
 from tests._helpers.lemmatizer import StubLemmatizer
-from tests.test_grammar_lesson import _BURIAL, _WAKE, _card, _story_lesson, owner  # noqa: F401
+from tests.test_grammar_lesson import _BURIAL, _WAKE, _bury, _card, _story_lesson, owner  # noqa: F401
 
 _PATTERNS = {p.key: p for p in get_a1_morphology("ceb").patterns}
 
@@ -390,6 +390,14 @@ def test_a_root_whose_forms_have_to_be_shown_is_not_asked_for_as_new(srs_db):
 def test_a_root_the_learner_does_not_understand_is_not_asked_for_as_new(srs_db):
     _understands(srs_db, "lakaw")
     _card(srs_db, "balik", recognition=SRSState.NEW)
+
+    assert _new_roots(_closed(_WAKE, srs_db)) == ["lakaw"]
+
+
+def test_a_root_buried_for_the_day_can_still_be_asked_for_as_new(srs_db):
+    """The owner's day 5: the one eligible root had been reviewed that morning."""
+    _understands(srs_db, "lakaw")
+    _bury(srs_db, "lakaw", reps=5)
 
     assert _new_roots(_closed(_WAKE, srs_db)) == ["lakaw"]
 
