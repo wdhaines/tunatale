@@ -92,11 +92,18 @@ def drill_table(lesson: Lesson) -> dict | None:
     pattern = find_pattern(lesson.language_code, recorded["pattern"]) if recorded else None
     if pattern is None:
         return None
+    half = recorded.get("half")
+    cells = pattern.halves[half] if half is not None else ()
+    labels = list(pattern.labels)
     roots = []
     for new, names in ((False, recorded["roots"]), (True, recorded["new_roots"])):
         for name in names:
             ready = drill_root(lesson.language_code, name, pattern)
             if isinstance(ready, DrillRoot):
+                if cells:
+                    # One half of a split pattern: its own cells, under their own labels.
+                    labels = [pattern.labels[i - ready.contrast] for i in cells if i >= ready.contrast]
+                    ready = ready.only(cells)
                 roots.append(
                     {
                         "root": ready.root,
@@ -107,7 +114,7 @@ def drill_table(lesson: Lesson) -> dict | None:
                         "forms": [{"form": form, "english": english} for form, english in ready.shown],
                     }
                 )
-    return {"pattern": pattern.key, "title": pattern_title(pattern), "labels": list(pattern.labels), "roots": roots}
+    return {"pattern": pattern.key, "title": pattern_title(pattern), "labels": labels, "roots": roots}
 
 
 def find_pattern(language_code: str, key: str) -> AffixPattern | None:

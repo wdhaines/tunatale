@@ -74,6 +74,35 @@ describe("DrillForms", () => {
     expect(container.querySelectorAll(".drill-root")).toHaveLength(2);
   });
 
+  it("lays out as many form columns as each root has forms", () => {
+    // One half of a split pattern (on-gi) drills one object-focus sentence per
+    // root: its column takes the row instead of sitting beside an empty one.
+    const half: LessonDrill = {
+      pattern: "on-gi",
+      title: "Affix drill: -on / gi-",
+      labels: ["begun"],
+      roots: [
+        {
+          root: "inom",
+          english: "drink",
+          new: false,
+          forms: [{ form: "Giinom ko ang tubig.", english: "I drank the water." }],
+        },
+      ],
+    };
+    const one = render(DrillForms, { drill: half }).container;
+    expect(one.querySelector<HTMLElement>(".drill-labels")!.style.getPropertyValue("--forms")).toBe(
+      "1",
+    );
+    expect(one.querySelector<HTMLElement>(".drill-roots")!.style.getPropertyValue("--forms")).toBe(
+      "1",
+    );
+    const two = render(DrillForms, { drill }).container;
+    expect(two.querySelector<HTMLElement>(".drill-roots")!.style.getPropertyValue("--forms")).toBe(
+      "2",
+    );
+  });
+
   it("marks only the roots whose forms are asked for without being modelled", () => {
     const { container } = render(DrillForms, { props: { drill } });
     const rows = [...container.querySelectorAll(".drill-root")];

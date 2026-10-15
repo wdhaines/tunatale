@@ -102,6 +102,15 @@ PATTERNS: tuple[AffixPattern, ...] = (
         # The focus card's order (tunatale-ve4p.9): the first two, one object
         # focus and one actor focus, already test the choice.
         card_features=("verb:gi", "verb:mi", "verb:on", "verb:mo"),
+        # The whole drill ran 10:47, "too long for the end of a lesson" (the
+        # owner, 2026-10-15), so it is split by tense: what has begun (mi-,
+        # gi-), then what has not (mo-, -on). Each half still turns on the
+        # focus, with only "the" to tell its two sentences apart.
+        halves=((1, 3), (0, 2)),
+        half_notes=(
+            ("When it is the thing you mean, the verb takes gi-, and the thing takes ang.",),
+            ("For what has not begun yet, the verb takes -on, and the thing still takes ang.",),
+        ),
     ),
 )
 # What each cell of a focus row asks for, in ``focus_sentence``'s cell order.

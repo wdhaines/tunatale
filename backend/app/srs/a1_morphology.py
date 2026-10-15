@@ -46,6 +46,10 @@ class AffixPattern:
     a root takes them: every cell of the sentence grid, the forms the learner
     already has among them (Cebuano gi-, mi-, -on, mo-). Empty for a word
     pattern, whose cards ask for ``features``.
+
+    ``halves`` split a sentence pattern's cells over two lessons, each a tuple
+    of cell indices, taken in turn by the days that drill it; ``half_notes``
+    are each half's own ``notes``. Both empty for a pattern drilled whole.
     """
 
     key: str
@@ -56,6 +60,8 @@ class AffixPattern:
     sentences: bool = False
     spelled: tuple[str, ...] = ()
     card_features: tuple[str, ...] = ()
+    halves: tuple[tuple[int, ...], ...] = ()
+    half_notes: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)

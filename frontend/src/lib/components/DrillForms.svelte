@@ -67,20 +67,24 @@
 		}
 		return parts.map((part) => ({ ...part, width: filled(part.share), short: p.stuck && !part.met }));
 	});
+
+	// One column per form: two for a word pattern, one for a half of a split
+	// sentence pattern (on-gi), whose sentence then takes the row.
+	const columns = $derived(Math.max(1, ...drill.roots.map((root) => root.forms.length)));
 </script>
 
 <h2 class="drill-title">{t('drillForms.heading')}</h2>
 {#if drill.labels.length}
 	<!-- What the two forms of a root are: named by the language's own plugin,
 	     by whether the thing has begun and never by a tense (bd tunatale-ve4p.25). -->
-	<div class="drill-labels">
+	<div class="drill-labels" style:--forms={columns}>
 		<span></span>
 		{#each drill.labels as label (label)}
 			<span class="label">{label}</span>
 		{/each}
 	</div>
 {/if}
-<ul class="drill-roots">
+<ul class="drill-roots" style:--forms={columns}>
 	{#each drill.roots as root (root.root)}
 		<li class="drill-root">
 			<div class="root-cell">
@@ -147,7 +151,7 @@
 	.drill-root,
 	.drill-labels {
 		display: grid;
-		grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr);
+		grid-template-columns: minmax(0, 0.9fr) repeat(var(--forms, 2), minmax(0, 1fr));
 		gap: 0.25rem 0.75rem;
 		align-items: start;
 	}
@@ -155,7 +159,7 @@
 		padding: 0.55rem 0;
 		border-top: 1px solid var(--color-border);
 	}
-	/* The same three tracks as a row, so a label sits over its column. */
+	/* The same tracks as a row, so a label sits over its column. */
 	.drill-labels {
 		padding-bottom: 0.3rem;
 		border-bottom: 1px solid var(--color-border);

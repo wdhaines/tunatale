@@ -134,6 +134,7 @@ def add_closing_drill(
     srs_db,
     lemmatizer: Lemmatizer | None,
     introduce: bool = False,
+    half: int | None = None,
 ) -> None:
     """Append to *lesson* a drill of *pattern* on the roots its story used. In place.
 
@@ -166,7 +167,11 @@ def add_closing_drill(
     the order it first said them, the roots the learner understands and that
     are not transparent join the drill. Its lines are the story's own, and only
     one that says a cell of the pattern itself.
+
+    *half* drills one of the pattern's ``halves`` only, its cells and its note,
+    and is recorded with the drill. ``None`` drills the whole pattern.
     """
+    cells = pattern.halves[half] if half is not None else ()
     if lesson.kind != "thematic" or any(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections):
         return
     story = list(dict.fromkeys(lesson_lines(lesson)))
@@ -196,6 +201,8 @@ def add_closing_drill(
     unsaid = [name for name, root in understood.items() if root.transparent and name not in said]
     new_roots = random.Random(f"{lesson.title}:{pattern.key}").sample(unsaid, min(NEW, len(unsaid)))
 
+    if cells:
+        drilled = [root.only(cells) for root in drilled]
     forms = {_fold(form) for root in drilled for form in root.forms}
     # What a line has to say to end the drill: a sentence pattern's first two
     # cells are only the contrast it stands against.
@@ -214,7 +221,8 @@ def add_closing_drill(
     lines_of = get_a1_morphology(language.code).pattern_lines
     written = [lines for root in roots if (lines := lines_of(root, pattern))] if lines_of is not None else []
     framed = [written[i % len(written)][i] for i in range(len(written[0]))] if written else []
-    note = pattern.notes if introduce else ()
+    notes = pattern.half_notes[half] if half is not None else pattern.notes
+    note = notes if introduce else ()
     drill = build_affix_drill(
         language.code,
         pattern,
@@ -222,6 +230,7 @@ def add_closing_drill(
         new_roots=new_roots,
         lines=[*framed, *sorted(whole, key=lambda line: len(line[0].split()))[:CLOSING_LINES]],
         note=note,
+        cells=cells,
     )
     voices = language.tts_voice_map
     lesson.sections.append(
@@ -235,22 +244,48 @@ def add_closing_drill(
         "new_roots": new_roots,
         "note": bool(note),
     }
+    if half is not None:
+        lesson.generation_metadata["affix_drill"]["half"] = half
 
 
-def _noted(store: ContentStore, curriculum_id: str, pattern: AffixPattern, day: int) -> bool:
-    """Whether a lesson of an earlier day already told the learner what *pattern*'s forms are for.
+def _earlier_drills(store: ContentStore, curriculum_id: str, pattern: AffixPattern, day: int) -> list[dict]:
+    """What each lesson of an earlier day recorded of its *pattern* drill, in day order.
 
     Earlier DAYS only: the lesson *day* holds now is the one being replaced.
-    A drill made before the note existed recorded none, so the pattern is
-    still owed it.
     """
+    drills = []
     for entry in store.get_lesson_days(curriculum_id):
         if entry["day"] < day:
             earlier = store.get_latest_lesson_by_day(curriculum_id, entry["day"])[1]
             recorded = (earlier.generation_metadata or {}).get("affix_drill") or {}
-            if recorded.get("pattern") == pattern.key and recorded.get("note"):
-                return True
-    return False
+            if recorded.get("pattern") == pattern.key:
+                drills.append(recorded)
+    return drills
+
+
+def _noted(store: ContentStore, curriculum_id: str, pattern: AffixPattern, day: int, half: int | None) -> bool:
+    """Whether a lesson of an earlier day already told the learner what *pattern*'s forms are for.
+
+    For a split pattern, what *half*'s forms are for: each half has its own
+    note. A drill made before the note existed recorded none, so the pattern
+    is still owed it.
+    """
+    return any(r.get("note") and r.get("half") == half for r in _earlier_drills(store, curriculum_id, pattern, day))
+
+
+def _half_for_day(store: ContentStore | None, curriculum: Curriculum, pattern: AffixPattern, day: int) -> int:
+    """Which of *pattern*'s halves *day* drills: the next in turn after the earlier days'.
+
+    A day whose lesson already drills a half keeps it, as a day keeps its
+    pattern (``pattern_for_day``). With no store, the first.
+    """
+    if store is None:
+        return 0
+    held = store.get_latest_lesson_by_day(curriculum.id, day)
+    recorded = (held[1].generation_metadata or {}).get("affix_drill") or {} if held is not None else {}
+    if recorded.get("pattern") == pattern.key and recorded.get("half") is not None:
+        return recorded["half"]
+    return len(_earlier_drills(store, curriculum.id, pattern, day)) % len(pattern.halves)
 
 
 def add_day_drill(
@@ -277,5 +312,8 @@ def add_day_drill(
     planned = next((d for d in curriculum.days if d.day == day), None) if curriculum is not None else None
     pattern = pattern_for_day(curriculum, planned, srs_db=srs_db, store=store) if planned is not None else None
     if pattern is not None:
-        told = store is not None and _noted(store, curriculum.id, pattern, day)
-        add_closing_drill(lesson, language, pattern, srs_db=srs_db, lemmatizer=lemmatizer, introduce=not told)
+        half = _half_for_day(store, curriculum, pattern, day) if pattern.halves else None
+        told = store is not None and _noted(store, curriculum.id, pattern, day, half)
+        add_closing_drill(
+            lesson, language, pattern, srs_db=srs_db, lemmatizer=lemmatizer, introduce=not told, half=half
+        )
