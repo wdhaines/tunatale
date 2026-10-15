@@ -3,7 +3,8 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
-import { tick } from "svelte";
+import { tick, createRawSnippet } from "svelte";
+import Tooltip from "./Tooltip.svelte";
 import TooltipTest from "./TooltipTest.svelte";
 import { makeWordToken } from "$lib/../test/factories";
 
@@ -1339,6 +1340,85 @@ describe("Tooltip", () => {
       await fireEvent.pointerLeave(wrap);
       await tick();
       expect(tt.className).not.toContain("tt-below");
+    });
+  });
+
+  // --- "Phrase…" (bd tunatale-1409): start a phrase at this word. Its own
+  // callback prop (not a TooltipActions entry) because it is a reader action,
+  // like onDrillIn. It is a UTILITY, so it collapses behind More… by default.
+  // Rendered directly (not through TooltipTest) so the harness stays untouched.
+  describe("Phrase… utility", () => {
+    const child = (text: string) =>
+      createRawSnippet(() => ({ render: () => `<span>${text}</span>` }));
+
+    it("is absent when onStartPhrase is not given", () => {
+      const { queryByRole } = render(Tooltip, {
+        props: { translation: "hello", children: child("hi") },
+      });
+      expect(queryByRole("button", { name: /phrase…/i })).toBeNull();
+    });
+
+    it("renders directly when it is the only utility", () => {
+      const { getByRole } = render(Tooltip, {
+        props: { translation: "hello", onStartPhrase: vi.fn(), children: child("hi") },
+      });
+      expect(getByRole("button", { name: /phrase…/i })).toBeTruthy();
+    });
+
+    it("collapses behind More… when a primary action shares it with another utility", async () => {
+      // A due tracked word gives the ratings row (a primary action) and two
+      // utilities (Ignore, Reset), so adding Phrase… makes three — More….
+      const { getByRole, queryByRole } = render(Tooltip, {
+        props: {
+          word: makeWordToken({ is_due: true, srs_item_id: 5 }),
+          ratings: { onRate: vi.fn() },
+          actions: { onUntrack: vi.fn(), onSetState: vi.fn() },
+          onStartPhrase: vi.fn(),
+          children: child("hi"),
+        },
+      });
+      expect(queryByRole("button", { name: /phrase…/i })).toBeNull();
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      expect(getByRole("button", { name: /phrase…/i })).toBeTruthy();
+    });
+
+    it("keeps the expanded utilities when the pointer leaves a click-opened popover", async () => {
+      // A touch tap fires pointerleave right after pointerup and before the
+      // synthesized click (bd tunatale-1409): collapsing More… there re-rendered
+      // the row and the tap landed on the wrong button. So a pointerleave on a
+      // CLICK-OPENED popover must leave the expanded set alone; only the hover
+      // path (open === false) collapses on leave.
+      const { container, getByText, getByRole, queryByRole } = render(Tooltip, {
+        props: {
+          word: makeWordToken({ is_due: true, srs_item_id: 5 }),
+          ratings: { onRate: vi.fn() },
+          actions: { onUntrack: vi.fn(), onSetState: vi.fn() },
+          onStartPhrase: vi.fn(),
+          children: child("open-me"),
+        },
+      });
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      await fireEvent.click(getByText("open-me"));
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      expect(getByRole("button", { name: /phrase…/i })).toBeTruthy();
+
+      await fireEvent.pointerLeave(wrap);
+      expect(getByRole("button", { name: /phrase…/i })).toBeTruthy();
+      expect(queryByRole("button", { name: /more…/i })).toBeNull();
+    });
+
+    it("calls onStartPhrase and closes the popover when clicked", async () => {
+      const onStartPhrase = vi.fn();
+      const { container, getByText, getByRole } = render(Tooltip, {
+        props: { translation: "hi", onStartPhrase, children: child("open-me") },
+      });
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      await fireEvent.click(getByText("open-me"));
+      expect(wrap.classList.contains("open")).toBe(true);
+
+      await fireEvent.click(getByRole("button", { name: /phrase…/i }));
+      expect(onStartPhrase).toHaveBeenCalledTimes(1);
+      expect(wrap.classList.contains("open")).toBe(false);
     });
   });
 });
