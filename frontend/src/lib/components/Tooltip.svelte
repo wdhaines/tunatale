@@ -53,6 +53,10 @@
 		// "Words…" — the touch path into a phrase's individual words (what
 		// Alt+hover does on desktop). Only collocation popovers pass this.
 		onDrillIn?: (() => void) | null;
+		// "Phrase…" — start a phrase at THIS word (bd tunatale-1409). Only the
+		// reader's free words pass it (the next word must be able to end the
+		// phrase); null hides it.
+		onStartPhrase?: (() => void) | null;
 		// Single-word mastery state shown beside the translation ("not tracked", "known", "ignored").
 		// Caller computes the label; null hides the line.
 		masteryLabel?: string | null;
@@ -72,6 +76,7 @@
 		onGrade = null,
 		ratings = null,
 		onDrillIn = null,
+		onStartPhrase = null,
 		masteryLabel = null,
 		masterySides = null
 	}: Props = $props();
@@ -133,7 +138,15 @@
 	function handlePointerLeave() {
 		cancelPress();
 		hovered = false;
-		moreOpen = false;
+		// Only collapse the expanded action set on the HOVER path. When the
+		// popover is click-opened (`open`), a touch pointer fires pointerleave
+		// right after pointerup — before the synthesized click — so resetting
+		// here re-rendered the collapsed row and the tap landed on "More…"
+		// instead of the button the user actually pressed (bd tunatale-1409:
+		// "Phrase…" → More… re-appeared under the finger, the tap missed). The
+		// `!open` guard leaves that reset to the close paths (the `!open` effect
+		// and handleOutside), which run when the popover actually closes.
+		if (!open) moreOpen = false;
 	}
 
 	function handlePressMove(e: PointerEvent) {
@@ -369,9 +382,11 @@
 
 	const showGrade = $derived(Boolean(gradeLabel && onGrade) && ratings == null);
 	const showDrillIn = $derived(Boolean(onDrillIn));
+	const showStartPhrase = $derived(Boolean(onStartPhrase));
 
 	const utilityCount = $derived(
 		[
+			showStartPhrase,
 			showCreateInflection,
 			showCreateSense,
 			showUnignore,
@@ -454,7 +469,7 @@
 					{/each}
 				</span>
 			{/if}
-			{#if showGrade || showDrillIn || (!collapsed && (showCreateInflection || showCreateSense || showUnignore || showUnignoreCardless || showIgnore || showIgnoreCardless || showMarkKnown || showUnmarkKnown || showResetNew)) || collapsed}
+			{#if showGrade || showDrillIn || (!collapsed && (showStartPhrase || showCreateInflection || showCreateSense || showUnignore || showUnignoreCardless || showIgnore || showIgnoreCardless || showMarkKnown || showUnmarkKnown || showResetNew)) || collapsed}
 				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
 					{#if showGrade}
 						<button type="button" class="tt-btn tt-btn-grade" onclick={() => onGrade!()}
@@ -477,6 +492,17 @@
 						>
 					{/if}
 					{#if !collapsed}
+						{#if showStartPhrase}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => {
+									onStartPhrase!();
+									open = false;
+									moreOpen = false;
+								}}>{t('tooltip.phrase')}</button
+							>
+						{/if}
 						{#if showCreateInflection}
 							<button
 								type="button"

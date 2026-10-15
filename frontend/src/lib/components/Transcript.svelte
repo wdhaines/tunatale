@@ -71,6 +71,12 @@
 	let dragAnchor = $state<{ lineIndex: number; wordIdx: number } | null>(null);
 	let pendingTranslation = $state('');
 
+	// "Phrase…" (bd tunatale-1409): the popover's touch path to a phrase. The
+	// popover button arms `picking` at its word; the next tap on the SAME line
+	// (capture-swallowed, so it neither opens a popover nor starts a drag) ends
+	// the phrase and drops into the same confirm bar the desktop drag uses.
+	let picking = $state<{ lineIndex: number; startIdx: number } | null>(null);
+
 	let translateLoading = $state(false);
 	let translateError = $state('');
 
@@ -129,9 +135,51 @@
 	}
 
 	function wordIsSelected(lineIndex: number, wordIdx: number): boolean {
+		// While picking, the start word reads as selected — it is the phrase's
+		// held first word, before any end has been picked.
+		if (picking && picking.lineIndex === lineIndex && picking.startIdx === wordIdx) return true;
 		if (!selection) return false;
 		if (selection.lineIndex !== lineIndex) return false;
 		return wordIdx >= selection.startIdx && wordIdx <= selection.endIdx;
+	}
+
+	// Arm picking at a word from its popover. Clears anything the bar or a drag
+	// had already put on screen, so the picking bar is the only state showing.
+	function startPhrase(lineIndex: number, wordIdx: number) {
+		picking = { lineIndex, startIdx: wordIdx };
+		selection = null;
+		pendingTranslation = '';
+		translateError = '';
+	}
+
+	// Capture-phase swallow while picking. A tap on a word must SELECT, not open
+	// that word's popover (Tooltip.toggle) and not begin a drag (handlePointerDown
+	// resets selection on pointerup). Both handlers are on EVERY line's
+	// `.dialogue-words` but gated on `picking`, so with no picking active they do
+	// nothing and normal taps/drags behave exactly as before.
+	function handlePickingPointerDown(e: PointerEvent) {
+		if (picking === null) return;
+		e.stopPropagation();
+	}
+
+	function handlePickingClick(e: MouseEvent) {
+		if (picking === null) return;
+		e.stopPropagation();
+		e.preventDefault();
+		const resolved = resolveWordTarget(e);
+		// A tap that names no word, another line's word, the start word itself, or
+		// a word overlapping an existing phrase is swallowed but ignored — the
+		// user stays in picking.
+		if (!resolved || resolved.lineIndex !== picking.lineIndex) return;
+		if (resolved.wordIdx === picking.startIdx) return;
+		const min = Math.min(picking.startIdx, resolved.wordIdx);
+		const max = Math.max(picking.startIdx, resolved.wordIdx);
+		const lineIndex = picking.lineIndex;
+		const words = transcript.dialogue_lines[lineIndex].words;
+		if (hasOverlap(words, min, max)) return;
+		selection = { lineIndex, startIdx: min, endIdx: max };
+		picking = null;
+		void fetchTranslation(lineIndex);
 	}
 
 	function hasOverlap(words: WordToken[], start: number, end: number): boolean {
@@ -218,7 +266,13 @@
 	function confirmPhrase(lineIndex: number, words: WordToken[]) {
 		const { startIdx, endIdx } = selection!;
 		const text = words.slice(startIdx, endIdx + 1).map((w) => w.surface).join(' ');
-		const sourceSentence = transcript?.dialogue_lines?.[lineIndex]?.words?.map((w: WordToken) => w.surface).join(' ');
+		// A word's `surface` carries no punctuation — the tokenizer keeps it in the
+		// sibling `prefix_punct`/`suffix_punct` fields — so joining surfaces alone
+		// drops the sentence's final "." ("… kemal tapo" instead of "… kemal tapo.").
+		// Rebuild the sentence the way the backend's line `sentence` does.
+		const sourceSentence = transcript?.dialogue_lines?.[lineIndex]?.words
+			?.map((w: WordToken) => `${w.prefix_punct ?? ''}${w.surface}${w.suffix_punct ?? ''}`)
+			.join(' ');
 		onCreatePhrase?.({
 			text,
 			word_count: endIdx - startIdx + 1,
@@ -234,6 +288,7 @@
 	}
 
 	function cancelPhrase() {
+		picking = null;
 		resetSelection();
 	}
 
@@ -498,6 +553,9 @@
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<span
 								class="dialogue-words"
+								class:picking={picking?.lineIndex === lineIndex}
+								onpointerdowncapture={handlePickingPointerDown}
+								onclickcapture={handlePickingClick}
 								onpointerdown={(e) => handlePointerDown(e, lineIndex)}
 								onpointermove={(e) => handlePointerMove(e, lineIndex, line.words)}
 								onpointerup={(e) => handlePointerUp(e, lineIndex, line.words)}
@@ -562,6 +620,17 @@
 										</Tooltip>
 									{:else}
 										{@const wIdx = wordIndexInLine(segments, segIdx, 0)}
+										{@const nextWord = line.words[wIdx + 1]}
+										<!-- "Phrase…" is offered only where a tap on the NEXT word can
+										     end the phrase: a next word exists and is free (not inside a
+										     collocation), nothing is already being picked or selected, and
+										     the reader can create phrases at all (bd tunatale-1409). -->
+										{@const canStartPhrase =
+											onCreatePhrase != null &&
+											picking === null &&
+											selection === null &&
+											nextWord != null &&
+											nextWord.collocation_span_id === null}
 										<span>
 											<WordSpan
 												word={segment.word}
@@ -573,6 +642,7 @@
 												tooltipActions={tooltipActions}
 												{showGloss}
 												blurProduction={readerProductionPref.enabled}
+												onStartPhrase={canStartPhrase ? () => startPhrase(lineIndex, wIdx) : null}
 											/>
 										</span>
 									{/if}
@@ -587,7 +657,17 @@
 						{/if}
 					</div>
 
-					{#if selection && selection.lineIndex === lineIndex}
+					{#if picking && picking.lineIndex === lineIndex}
+						<div class="phrase-confirm-bar">
+							<span class="phrase-preview">{line.words[picking.startIdx].surface}…</span>
+							<span class="phrase-picking-hint">{t('transcript.tapLastWord')}</span>
+							{#if line.words.some((w) => w.collocation_span_id !== null)}
+								<span class="phrase-picking-greyed">{t('transcript.greyedWordsTaken')}</span>
+							{/if}
+							<button class="confirm-create" disabled>{t('transcript.create')}</button>
+							<button class="confirm-cancel" onclick={cancelPhrase}>{t('transcript.cancel')}</button>
+						</div>
+					{:else if selection && selection.lineIndex === lineIndex}
 						<div class="phrase-confirm-bar">
 							<span class="phrase-preview">
 								{line.words.slice(selection.startIdx, selection.endIdx + 1).map((w) => w.surface).join(' ')}
@@ -927,7 +1007,16 @@
 		   `.paint-rails` below — instead of as a second child row. */
 		display: inline;
 		cursor: pointer;
-		border-radius: 2px;
+		border-radius: 4px;
+		/* The faint NEUTRAL tint that marks a phrase in the text (bd
+		   tunatale-yh47.5). `--phrase-tint` is theme-aware; it carries no band
+		   colour, so it never reads as mastery. The 3px padding and its negative
+		   margin cancel, so no word moves and no line wraps differently. */
+		background-color: var(--phrase-tint);
+		padding-left: 3px;
+		padding-right: 3px;
+		margin-left: -3px;
+		margin-right: -3px;
 		transition: background-color 0.1s;
 	}
 	/* The inner words flow inline and wrap like normal text inside the inline
@@ -945,6 +1034,21 @@
 	.coll-bg-ignored {
 		background-color: rgba(156, 163, 175, 0.15);
 		text-decoration: line-through;
+	}
+	/* While picking (bd tunatale-1409), the phrases on the line are greyed — they
+	   are already taken, so they refuse the tap — and every word that can end the
+	   phrase is outlined. `.word` is WordSpan's scoped class, hence :global. The
+	   outline does not change layout, and the start word (word-selected) and the
+	   words inside a phrase are excluded. */
+	.dialogue-words.picking .collocation-span {
+		opacity: 0.45;
+	}
+	.dialogue-words.picking :global(.word:not(.word-selected)) {
+		outline: 1px dashed var(--color-muted);
+		outline-offset: 1px;
+	}
+	.dialogue-words.picking :global(.collocation-words .word) {
+		outline: none;
 	}
 	/* Twin rails — painted exactly like WordSpan's `.word` (same four layers,
 	   same custom props), re-declared because Svelte scoping gives each
@@ -991,6 +1095,13 @@
 		font-weight: 500;
 		color: var(--color-primary, #4f46e5);
 		overflow-wrap: anywhere;
+	}
+	.phrase-picking-hint {
+		color: var(--color-muted, #6b7280);
+	}
+	.phrase-picking-greyed {
+		color: var(--color-muted, #6b7280);
+		font-style: italic;
 	}
 	.phrase-translation-input {
 		flex: 1 1 8rem;

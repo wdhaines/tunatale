@@ -21,6 +21,9 @@
 		// "Practise production" is on (bd tunatale-dvdm.3). Off by default, and
 		// with it off nothing below changes a byte of the render.
 		blurProduction?: boolean;
+		// "Phrase…" — start a phrase at this word (bd tunatale-1409). Passed
+		// straight through to Tooltip; null hides the utility.
+		onStartPhrase?: (() => void) | null;
 	}
 
 	let {
@@ -35,7 +38,8 @@
 		tooltipActions,
 		showGloss = false,
 		hideRails = false,
-		blurProduction = false
+		blurProduction = false,
+		onStartPhrase = null
 	}: Props = $props();
 
 	// Blur-as-cloze (bd tunatale-dvdm.3). A word whose PRODUCTION direction is a
@@ -216,6 +220,7 @@
 	{ratings}
 	{masteryLabel}
 	{masterySides}
+	{onStartPhrase}
 >
 	<span
 		class="word-wrapper"

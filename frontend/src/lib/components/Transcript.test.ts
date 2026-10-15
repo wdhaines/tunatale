@@ -7,7 +7,7 @@ import Transcript from "./Transcript.svelte";
 import { tick } from "svelte";
 import { readerEnglishPref } from "$lib/stores/readerEnglishPref.svelte";
 import { api } from "$lib/api";
-import type { Cue, LessonDetail, TranscriptData } from "$lib/api";
+import type { Cue, LessonDetail, TranscriptData, WordToken } from "$lib/api";
 import type { PlaybackController } from "$lib/playback/playbackController.svelte";
 
 vi.mock("$lib/api", () => ({
@@ -2189,7 +2189,9 @@ describe("Transcript", () => {
       expect(helpToggle.getAttribute("aria-expanded")).toBe("true");
       const panel = container.querySelector(".help-panel");
       expect(panel).toBeTruthy();
-      expect(panel!.textContent).toContain("Drag across words to make a phrase card");
+      expect(panel!.textContent).toContain(
+        "Drag across words, or use Phrase… in a word's popover, to make a phrase card",
+      );
       // Tap-selection is gone (bd tunatale-685k): the help must not send the
       // learner looking for a button that no longer exists.
       expect(panel!.textContent).not.toContain("+ New phrase");
@@ -3005,6 +3007,294 @@ describe("Transcript", () => {
         2,
       );
       expect(elementsSpaceSeparated(words!)).toBe(true);
+    });
+  });
+
+  // --- "Phrase…" from a word's popover (bd tunatale-1409) ---
+  //
+  // jsdom cannot prove the tap journey (a real pointerdown/pointerup/click is
+  // tests/reader-phrases.spec.ts's job); these cover the logic and every branch:
+  // when the button is offered, what a pick swallows, and the picking-state bar.
+  describe("phrase from the popover (picking)", () => {
+    function word(surface: string, overrides: Partial<WordToken> = {}): WordToken {
+      return {
+        surface,
+        lemma: surface.replace(/[^\p{L}]/gu, "").toLowerCase() || surface,
+        srs_state: "new",
+        srs_item_id: null,
+        translation: null,
+        collocation_span_id: null,
+        collocation_start: false,
+        collocation_srs_state: null,
+        collocation_lemma: null,
+        collocation_translation: null,
+        card_type: null,
+        active_state: "new",
+        active_direction: null,
+        is_due: false,
+        progress: null,
+        inflectable: false,
+        inflection_feature: null,
+        known_marked: false,
+        ...overrides,
+      };
+    }
+
+    const coll = (surface: string, start: boolean) =>
+      word(surface, {
+        collocation_span_id: 5,
+        collocation_start: start,
+        collocation_srs_state: "new",
+        collocation_lemma: "mesta dober",
+        collocation_translation: "good",
+      });
+
+    // No primary action and no tooltipActions, so Phrase… is the only utility
+    // and renders directly (never behind More…).
+    const freeLine: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        { role: "A", sentence: "", words: [word("centru"), word("mesta"), word("hvala")] },
+      ],
+    };
+
+    // "centru mesta" free, then the phrase "dober dan", then a free last word —
+    // so word 0 can start a phrase, word 1 is followed by the phrase, and the
+    // line carries a collocation for the greyed hint.
+    const lineWithPhrase: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "A",
+          sentence: "",
+          words: [
+            word("centru"),
+            word("mesta"),
+            coll("dober", true),
+            coll("dan", false),
+            word("hvala"),
+          ],
+        },
+      ],
+    };
+
+    const twoLines: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        { role: "A", sentence: "", words: [word("centru"), word("mesta")] },
+        { role: "B", sentence: "", words: [word("konec")] },
+      ],
+    };
+
+    const lesson = { id: "l1", title: "t", language_code: "sl", key_phrases: [], sections: [] };
+
+    const el = (container: HTMLElement, index: number, line = 0) =>
+      container.querySelector(
+        `[data-line-index="${line}"][data-word-index="${index}"]`,
+      ) as HTMLElement;
+
+    const tipOf = (container: HTMLElement, index: number, line = 0) =>
+      el(container, index, line).closest(".tt-wrap")!.querySelector(".tt") as HTMLElement;
+
+    const phraseButton = (root: ParentNode) =>
+      Array.from(root.querySelectorAll("button")).find((b) =>
+        (b.textContent ?? "").includes("Phrase…"),
+      );
+
+    const bar = (container: HTMLElement) =>
+      container.querySelector(".phrase-confirm-bar") as HTMLElement;
+
+    /** Open word *index*'s popover and click its Phrase… button. */
+    async function startPicking(container: HTMLElement, index = 0, line = 0) {
+      await fireEvent.click(el(container, index, line));
+      const btn = phraseButton(el(container, index, line).closest(".tt-wrap") as HTMLElement);
+      expect(btn, `word ${index} offered no Phrase…`).toBeTruthy();
+      await fireEvent.click(btn!);
+    }
+
+    const picking = (container: HTMLElement) =>
+      (bar(container)?.textContent ?? "").includes("Tap the last word of the phrase");
+
+    it("offers Phrase… only where the next word is free", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      expect(phraseButton(tipOf(container, 0))).toBeTruthy(); // next is free
+      expect(phraseButton(tipOf(container, 1))).toBeTruthy(); // next is free
+      expect(phraseButton(tipOf(container, 2))).toBeFalsy(); // last word
+    });
+
+    it("does not offer Phrase… where the next word is inside a phrase, and none for arms of a phrase", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: lineWithPhrase, onCreatePhrase: vi.fn() }),
+      });
+      expect(phraseButton(tipOf(container, 0))).toBeTruthy(); // centru → free mesta
+      expect(phraseButton(tipOf(container, 1))).toBeFalsy(); // mesta → next is a phrase arm
+      // A phrase arm's popover is suppressed (requireModifier), so it exposes no
+      // Phrase… button at all — check its whole wrapper.
+      expect(phraseButton(el(container, 2).closest(".tt-wrap") as HTMLElement)).toBeFalsy();
+      expect(phraseButton(tipOf(container, 4))).toBeFalsy(); // last word
+    });
+
+    it("offers no Phrase… without onCreatePhrase", () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine }),
+      });
+      expect(phraseButton(tipOf(container, 0))).toBeFalsy();
+    });
+
+    it("offers no Phrase… on any word while picking", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      for (const i of [0, 1, 2]) {
+        expect(phraseButton(tipOf(container, i))).toBeFalsy();
+      }
+    });
+
+    it("picking → tap a later word on the line → confirms with the phrase and auto-translates once", async () => {
+      vi.mocked(api.translateTerm).mockClear();
+      vi.mocked(api.translateTerm).mockResolvedValue({ translation: "city centre" });
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn(), lesson }),
+      });
+      await startPicking(container, 0);
+      await fireEvent.click(el(container, 2));
+
+      const b = bar(container);
+      expect(b).toBeTruthy();
+      expect(b.querySelector(".phrase-preview")!.textContent).toBe("centru mesta hvala");
+      expect(b.querySelector(".phrase-translation-input")).toBeTruthy();
+      await waitFor(() =>
+        expect((b.querySelector(".phrase-translation-input") as HTMLInputElement).value).toBe(
+          "city centre",
+        ),
+      );
+      expect(vi.mocked(api.translateTerm)).toHaveBeenCalledTimes(1);
+      // The tap selected instead of opening the tapped word's popover.
+      expect(container.querySelector(".tt-wrap.open")).toBeNull();
+    });
+
+    it("picking → tap the start word, a phrase arm, another line's word or no word → still picking", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: twoLines, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+
+      const words = container.querySelectorAll(".dialogue-words");
+      await fireEvent.click(el(container, 0)); // the start word
+      expect(picking(container)).toBe(true);
+      await fireEvent.click(words[0]); // no word under the tap
+      expect(picking(container)).toBe(true);
+      await fireEvent.click(el(container, 0, 1)); // another line
+      expect(picking(container)).toBe(true);
+
+      expect(container.querySelector(".tt-wrap.open")).toBeNull();
+    });
+
+    it("picking → tap a phrase arm on the same line → still picking (no overlap)", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: lineWithPhrase, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      await fireEvent.click(el(container, 2)); // "dober", inside the phrase
+      expect(picking(container)).toBe(true);
+      expect(container.querySelector(".tt-wrap.open")).toBeNull();
+    });
+
+    it("pointerdown while picking is swallowed (no drag, still picking)", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      await fireEvent.pointerDown(el(container, 1));
+      await fireEvent.pointerMove(el(container, 2));
+      await fireEvent.pointerUp(el(container, 2));
+      expect(picking(container)).toBe(true);
+      expect(container.querySelector(".tt-wrap.open")).toBeNull();
+    });
+
+    it("the picking line's words container carries .picking; other lines do not", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: twoLines, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      const containers = container.querySelectorAll(".dialogue-words");
+      expect(containers[0].classList.contains("picking")).toBe(true);
+      expect(containers[1].classList.contains("picking")).toBe(false);
+    });
+
+    it("the start word reads as selected while picking", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      expect(el(container, 0).className).toContain("word-selected");
+      expect(el(container, 1).className).not.toContain("word-selected");
+    });
+
+    it("picking bar asks for the last word, disables Add card, offers no translate input", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      const b = bar(container);
+      expect(b.textContent).toContain("Tap the last word of the phrase");
+      const create = b.querySelector("button.confirm-create") as HTMLButtonElement;
+      expect(create.textContent).toBe("Add card");
+      expect(create.disabled).toBe(true);
+      expect(b.querySelector(".phrase-translation-input")).toBeNull();
+      expect(b.querySelector(".phrase-translate-btn")).toBeNull();
+    });
+
+    it("shows the greyed-words hint only when the line holds a phrase", async () => {
+      const { container: withPhrase } = render(Transcript, {
+        props: defaultProps({ transcript: lineWithPhrase, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(withPhrase, 0);
+      expect(bar(withPhrase).textContent).toContain("Greyed words already belong to a phrase");
+
+      const { container: withoutPhrase } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(withoutPhrase, 0);
+      expect(bar(withoutPhrase).textContent).not.toContain(
+        "Greyed words already belong to a phrase",
+      );
+    });
+
+    it("Cancel while picking clears it and offers Phrase… again", async () => {
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase: vi.fn() }),
+      });
+      await startPicking(container, 0);
+      await fireEvent.click(container.querySelector("button.confirm-cancel") as HTMLElement);
+      expect(container.querySelector(".phrase-confirm-bar")).toBeNull();
+      expect(phraseButton(tipOf(container, 0))).toBeTruthy();
+    });
+
+    it("picking → tap an end word → Add card sends the picked phrase", async () => {
+      const onCreatePhrase = vi.fn();
+      const { container } = render(Transcript, {
+        props: defaultProps({ transcript: freeLine, onCreatePhrase }),
+      });
+      await startPicking(container, 0);
+      await fireEvent.click(el(container, 1)); // "mesta" ends "centru mesta"
+      await fireEvent.click(container.querySelector("button.confirm-create") as HTMLElement);
+      expect(onCreatePhrase).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "centru mesta",
+          word_count: 2,
+          lineIndex: 0,
+          startIdx: 0,
+          endIdx: 1,
+        }),
+      );
+      expect(container.querySelector(".phrase-confirm-bar")).toBeNull();
     });
   });
 });

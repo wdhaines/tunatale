@@ -448,6 +448,9 @@
 		--band-months: #5f602a;
 		--band-solid: #2c4f28;
 		--band-track: #e4e9e6;
+		/* The faint neutral tint that marks a phrase in the reader text (bd
+		   tunatale-yh47.5) — theme-aware, no band colour. */
+		--phrase-tint: rgba(0, 0, 0, 0.06);
 		/* An untracked word (not in the deck): the app's own link blue, 7.0:1 on
 		   white. Replaced the old indigo #818cf8, which was 2.98:1 in light. */
 		--word-untracked: var(--color-primary);
@@ -488,6 +491,7 @@
 		/* Translucent, so the empty track shows on any dark surface. The first
 		   value (#2b302e) was 1.04:1 on the #182f3c card: invisible. */
 		--band-track: rgba(255, 255, 255, 0.18);
+		--phrase-tint: rgba(255, 255, 255, 0.09);
 		/* The dark primary is 3.38:1 on the card, too faint for body text; the
 		   info blue from the same family is 4.68:1. */
 		--word-untracked: var(--color-info);

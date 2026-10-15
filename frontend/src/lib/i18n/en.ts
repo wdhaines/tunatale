@@ -48,7 +48,7 @@ export const en = {
   "transcript.narrator": "Narrator",
   "transcript.howToUse": "How to use the transcript",
   "transcript.helpInstructions":
-    "Tap or hover a word/phrase to open its popover — grading and all other actions live there. Alt+hover a phrase for its individual words. Drag across words to make a phrase card.",
+    "Tap or hover a word/phrase to open its popover — grading and all other actions live there. Alt+hover a phrase for its individual words. Drag across words, or use Phrase… in a word's popover, to make a phrase card.",
   "transcript.legend.wordsLabel": "Words:",
   "transcript.legend.railsLabel": "Rails (understand / produce):",
   "transcript.legend.sample": "word",
@@ -68,7 +68,11 @@ export const en = {
 
   "transcript.translationOptional": "translation (optional)",
   "transcript.translateWithAi": "Translate with AI",
-  "transcript.create": "Create",
+  "transcript.create": "Add card",
+  // The picking state of the phrase bar: the start word is in hand, the bar
+  // asks for the last one (bd tunatale-1409).
+  "transcript.tapLastWord": "Tap the last word of the phrase.",
+  "transcript.greyedWordsTaken": "Greyed words already belong to a phrase.",
 
   // ReaderChips.svelte
   "readerChips.english": "English",
@@ -85,6 +89,7 @@ export const en = {
   "tooltip.due": "Due",
   "tooltip.notDue": "Not Due",
   "tooltip.words": "Words…",
+  "tooltip.phrase": "Phrase…",
   "tooltip.createInflectionCard": "Inflect",
   "tooltip.differentMeaning": "Different meaning",
   "tooltip.unignore": "Un-ignore",

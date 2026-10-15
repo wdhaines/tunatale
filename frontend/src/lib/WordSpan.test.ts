@@ -908,4 +908,24 @@ describe("WordSpan", () => {
       expect(onWordClick).toHaveBeenCalledWith(word, 7);
     });
   });
+
+  // "Phrase…" is passed straight through to the popover (bd tunatale-1409);
+  // WordSpan decides nothing about it.
+  describe("Phrase… pass-through", () => {
+    it("forwards onStartPhrase to the popover and fires it on click", async () => {
+      const onStartPhrase = vi.fn();
+      const { getByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ surface: "hvala" }), onStartPhrase },
+      });
+      await fireEvent.click(getByRole("button", { name: /phrase…/i }));
+      expect(onStartPhrase).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers no Phrase… without onStartPhrase", () => {
+      const { queryByRole } = render(WordSpan, {
+        props: { word: makeWordToken({ surface: "hvala" }) },
+      });
+      expect(queryByRole("button", { name: /phrase…/i })).toBeNull();
+    });
+  });
 });
