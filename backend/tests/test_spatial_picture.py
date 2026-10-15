@@ -110,6 +110,11 @@ class TestGlossGuard:
             ("first", "at first; firstly"),
             ("last", "last"),
             ("last", "last; latest"),
+            # The flag pair (2026-10-14), on the glosses the Cebuano cards carry.
+            ("from", "come from"),
+            ("from", "from"),
+            ("toward", "going"),
+            ("toward", "towards; heading to"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -128,6 +133,8 @@ class TestGlossGuard:
             ("in", "inch"),
             ("last", "lasting"),
             ("first", "fir"),
+            ("from", "frome"),
+            ("toward", "tow"),
         ],
     )
     def test_a_gloss_that_does_not_name_the_relation_refuses(self, concept, gloss) -> None:
@@ -184,6 +191,10 @@ class TestDispatch:
             ("spodaj", "sl", "down; downstairs", "down_there"),
             ("nad", "sl", "above", "above"),
             ("pod", "sl", "under", "under"),
+            # Productive roots the POS route had made clozes (the user, 2026-10-14:
+            # "it's about pictureability"); drawn with a flag for the place.
+            ("gikan", "ceb", "come from", "from"),
+            ("padulong", "ceb", "going", "toward"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
@@ -222,7 +233,10 @@ class TestDrawnPicture:
 class TestFunctionWordVeto:
     """A spatial word is a picture card, never a cloze (the user, 2026-09-28)."""
 
-    @pytest.mark.parametrize(("word", "code"), [("under", "no"), ("over", "no"), ("mellom", "no"), ("pod", "sl")])
+    @pytest.mark.parametrize(
+        ("word", "code"),
+        [("under", "no"), ("over", "no"), ("mellom", "no"), ("pod", "sl"), ("gikan", "ceb"), ("padulong", "ceb")],
+    )
     def test_a_spatial_word_is_not_a_function_word(self, word, code) -> None:
         assert is_spatial_word(word, code)
         assert not is_function_word(word, code)

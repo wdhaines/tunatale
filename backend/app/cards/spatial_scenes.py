@@ -91,6 +91,12 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     # photographs (the user, 2026-10-06: "first and last are good candidates").
     "first",
     "last",
+    # Movement relative to a PLACE: Cebuano gikan ("from") and padulong
+    # ("toward") had been clozes by their ADP tag until the user ruled that a
+    # picturable root is a picture card (2026-10-14). A flag stands for the place;
+    # the house draft lost because a ball beside a house is already `outdoors`.
+    "from",
+    "toward",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -584,6 +590,51 @@ def _queue(ball_slot: int) -> list[str]:
     ]
 
 
+# ── Movement relative to a place ─────────────────────────────────────────────
+# A flag on the ground is the place, a dotted trail is the path, and the arrow
+# always runs left to right so the pair differs only in which end the flag is
+# at. No box: a flag can stand for any place, where a box would make "from" read
+# as `out` and a house as `outdoors`.
+
+_FLAG_H = 90.0
+_PENNANT_W = 38.0
+_PENNANT_H = 26.0
+
+
+def _flag(x: float) -> str:
+    """The place: a pole standing on the ground and a pennant in the accent."""
+    top = _G - _FLAG_H
+    return (
+        '<g class="marker">'
+        f'<line class="pole" x1="{_n(x)}" y1="{_G}" x2="{_n(x)}" y2="{_n(top)}" stroke="{_BOX_STROKE}" '
+        'stroke-width="5" stroke-linecap="round"/>'
+        f'<polygon class="pennant" points="{_n(x)},{_n(top)} {_n(x + _PENNANT_W)},{_n(top + _PENNANT_H / 2)} '
+        f'{_n(x)},{_n(top + _PENNANT_H)}" fill="{_ACCENT}"/>'
+        "</g>"
+    )
+
+
+def _trail(x1: float, x2: float) -> str:
+    """A dotted path along the ball's line of travel."""
+    y = _G - _BALL_R
+    return (
+        f'<line class="trail" x1="{_n(x1)}" y1="{_n(y)}" x2="{_n(x2)}" y2="{_n(y)}" stroke="{_BOX_STROKE}" '
+        'stroke-width="4" stroke-linecap="round" stroke-dasharray="2 10"/>'
+    )
+
+
+def _from() -> list[str]:
+    """Moving away: the flag behind, the trail back to it, the ball at the arrow's tip."""
+    y = _G - _BALL_R
+    return [_flag(40.0), _trail(48.0, 92.0), _arrow(100.0, y, 172.0, y), _ball(200.0, y)]
+
+
+def _toward() -> list[str]:
+    """Heading for it: the ball at the arrow's tail, the trail on to the flag ahead."""
+    y = _G - _BALL_R
+    return [_ball(40.0, y), _arrow(66.0, y, 138.0, y), _trail(150.0, 196.0), _flag(212.0)]
+
+
 def _first() -> list[str]:
     """The ball at the head of the line: ahead of every block, the way the arrow points."""
     return _queue(3)
@@ -622,6 +673,8 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "middle": _middle,
     "first": _first,
     "last": _last,
+    "from": _from,
+    "toward": _toward,
 }
 
 
