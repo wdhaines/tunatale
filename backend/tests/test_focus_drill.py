@@ -194,15 +194,40 @@ def test_the_forms_the_learner_has_are_said_whole_and_the_new_ones_built_up():
         ("model", "en", "I drank water."),
         ("model", "ceb", "Miinom ko og tubig."),
     ]
-    assert (steps[7].language_code, steps[7].text) == ("en", "I'll drink the water.")
+
+
+def _built_after(steps, english: str) -> list[str]:
+    """The Cebuano lines that follow *english* in the meet, up to the next English line."""
+    start = next(i for i, s in enumerate(steps) if s.language_code == "en" and s.text == english) + 1
     built = []
-    for step in steps[8:]:
+    for step in steps[start:]:
         if step.language_code != "ceb":
             break
         built.append(step.text)
-    # Whole, the pieces from the end, whole again: it is new.
-    assert built[0] == built[-1] == "Imnon ko ang tubig."
-    assert len(built) > 2
+    return built
+
+
+@pytest.mark.parametrize(
+    ("english", "built"),
+    [
+        # Whole, the new verb's pieces from the end, whole again.
+        ("I'll drink the water.", ["Imnon ko ang tubig.", "non", "im", "imnon", "Imnon ko ang tubig."]),
+        ("I drank the water.", ["Giinom ko ang tubig.", "gi", "giinom", "Giinom ko ang tubig."]),
+        ("He'll eat the bread.", ["Kan-on niya ang pan.", "-on", "kan", "kan-on", "Kan-on niya ang pan."]),
+    ],
+)
+def test_an_object_focus_sentence_builds_up_only_its_new_verb(english, built):
+    """The owner, 2026-10-15 (cut A): the words around the verb are ones the learner has.
+
+    Building tubig, ang, ko, niya and the tails "ang tubig." / "ko ang tubig."
+    again in every sentence cost about 1.6 minutes of an 11-minute drill.
+    """
+    assert _built_after(_drill().steps, english) == built
+
+
+def test_no_word_but_the_verb_is_built_up_in_a_sentence_drill():
+    texts = {s.text for s in _drill().steps if s.language_code == "ceb"}
+    assert texts.isdisjoint({"big", "tu", "tubig", "ang", "ko", "ang tubig.", "ko ang tubig.", "ni", "ya", "niya"})
 
 
 def test_the_note_follows_the_first_roots_four_sentences():

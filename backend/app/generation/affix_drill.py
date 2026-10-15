@@ -244,18 +244,24 @@ class _Built:
             self.roots.add(root)
 
 
-def _taught(english: str, text: str, language_code: str, built: _Built) -> list[DrillStep]:
+def _taught(english: str, text: str, language_code: str, built: _Built, *, verb: str | None = None) -> list[DrillStep]:
     """*text* after its English, built up as Key Phrases builds a phrase.
 
     The breakdown opens and closes on the whole of *text*, so the learner hears
     it, repeats it piece by piece, and hears it whole again; every target-language
     step leaves its own repeat gap (``pause_calculator``). Pieces of what
     *built* says the drill has already built are left out.
+
+    With *verb*, *text* is a sentence cell and only *verb* is built up: the
+    words around it are ones the learner has, said whole in the sentence (the
+    owner, 2026-10-15; rebuilding them cost 1.6 minutes of an on-gi drill).
     """
+    chunks = build_word_breakdown_spans(text, language_code)
     steps = [
         DrillStep("model", chunk.text, language_code, chunk.source_word, chunk.span)
-        for chunk in build_word_breakdown_spans(text, language_code)
+        for chunk in chunks
         if built.keeps(chunk.source_word, chunk.span)
+        and (verb is None or chunk.text == text or (chunk.source_word or "").casefold() == verb.casefold())
     ]
     return [DrillStep("model", english, "en"), *steps]
 
@@ -335,7 +341,7 @@ def build_affix_drill(
             taught = (
                 [DrillStep("model", english, "en"), DrillStep("model", form, language_code)]
                 if cell < found.contrast
-                else _taught(english, form, language_code, built)
+                else _taught(english, form, language_code, built, verb=found.forms[cell] if pattern.sentences else None)
             )
             built.add(taught, root=found.root)
             drill.steps += taught
