@@ -571,3 +571,117 @@ async def test_an_exported_plan_with_a_grammar_day_imports_again(deck, srs_db):
 
     assert response.status_code == 201, response.text
     assert [(d.kind, d.pattern) for d in store.get_curriculum(_CID).days] == [("thematic", ""), ("grammar", "mo-mi")]
+
+
+# --- object focus: the focus card (tunatale-ve4p.9) -------------------------------
+
+
+async def _focus_lesson(store, srs_db, pipeline) -> str:
+    """The on-gi day for a learner who understands inom, kaon and dala, built by the pipeline."""
+    for root in ("kaon", "dala"):
+        _understand(srs_db, root)
+    _append_grammar_day(store, srs_db, pipeline, pattern="on-gi")
+    await wait_for_job(pipeline, "ceb", _CID, 2, "ready")
+    return store.get_latest_lesson_by_day(_CID, 2)[0]
+
+
+def _focus_rows(db) -> list[dict]:
+    with db._get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.text, c.lemma, c.disambig_key, c.card_type, c.source_sentence, c.anki_note_id,
+                   d.direction, d.state, d.anki_card_id, d.last_review
+            FROM collocations c JOIN collocation_directions d ON d.collocation_id = c.id
+            WHERE c.disambig_key LIKE 'morph:focus-%' ORDER BY c.id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _parts(*runs: str) -> list[dict]:
+    """``"*bold*"`` and plain runs, as the review screen receives them."""
+    return [{"text": run.strip("*"), "bold": run.startswith("*")} for run in runs]
+
+
+async def test_marking_an_object_focus_lesson_listened_adds_one_focus_card_per_root(deck, srs_db):
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        listened = await client.post("/api/srs/listen", json={"content_id": lesson_id})
+        queue = await client.get("/api/srs/review-queue")
+    await pipeline.shutdown()
+
+    rows = _focus_rows(srs_db)
+    assert [(row["lemma"], row["text"], row["disambig_key"]) for row in rows] == [
+        ("inom", "Giinom ko ang tubig.", "morph:focus-verb-gi"),
+        ("kaon", "Gikaon ko ang pan.", "morph:focus-verb-gi"),
+        ("dala", "Gidala ko ang pagkaon.", "morph:focus-verb-gi"),
+    ]
+    assert listened.json()["created"] == 3
+    for row in rows:
+        assert (row["card_type"], row["direction"], row["state"]) == ("cloze", "production", "new")
+        assert (row["anki_note_id"], row["anki_card_id"], row["last_review"]) == (None,) * 3
+        assert row["source_sentence"] == f"{{{{c1::{row['text']}}}}}"
+    assert {row["text"] for row in rows} <= {entry["text"] for entry in queue.json()["queue"]}
+
+
+async def test_the_review_queue_serves_the_focus_with_a_focus_card(deck, srs_db):
+    """The bold is not stored, so the queue hands the review screen its runs."""
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        await client.post("/api/srs/listen", json={"content_id": lesson_id})
+        queue = (await client.get("/api/srs/review-queue")).json()["queue"]
+    await pipeline.shutdown()
+
+    served = {entry["text"]: entry for entry in queue}
+    assert served["Giinom ko ang tubig."]["focus"] == {
+        "prompt": _parts("I drank ", "*the water*", "."),
+        "answer": _parts("*Giinom*", " ko ", "*ang tubig*", "."),
+    }
+    assert served["Giinom ko ang tubig."]["paradigm"] is None
+    focus_texts = {"Giinom ko ang tubig.", "Gikaon ko ang pan.", "Gidala ko ang pagkaon."}
+    assert {entry["focus"] is None for entry in queue if entry["text"] not in focus_texts} == {True}
+
+
+async def test_the_preview_lists_the_focus_cards_by_their_sentences(deck, srs_db):
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        preview = await client.get(f"/api/srs/content/{lesson_id}/listen-preview")
+    await pipeline.shutdown()
+
+    assert preview.json()["affix_cards"] == [
+        {
+            "form": "Giinom ko ang tubig.",
+            "english": "I drank the water.",
+            "root": "inom",
+            "model": [],
+            "will_create": True,
+        },
+        {"form": "Gikaon ko ang pan.", "english": "I ate the bread.", "root": "kaon", "model": [], "will_create": True},
+        {
+            "form": "Gidala ko ang pagkaon.",
+            "english": "I brought the food.",
+            "root": "dala",
+            "model": [],
+            "will_create": True,
+        },
+    ]
+    assert _focus_rows(srs_db) == []
+
+
+async def test_a_skipped_focus_card_is_named_by_its_sentence(deck, srs_db):
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        await client.post(
+            "/api/srs/listen", json={"content_id": lesson_id, "skipped_affix_cards": ["Gikaon ko ang pan."]}
+        )
+    await pipeline.shutdown()
+
+    assert [row["text"] for row in _focus_rows(srs_db)] == ["Giinom ko ang tubig.", "Gidala ko ang pagkaon."]

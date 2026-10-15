@@ -2,7 +2,7 @@
   "components": {
     "schemas": {
       "AffixCardPreview": {
-        "description": "One contrast card a listen would add: one root, one form of an affix pair left to say.",
+        "description": "One card a listen would add for its affix drill.\n\nA contrast card (one root, one form of an affix pair left to say) or, for a\npattern taught as sentences, a focus card (one whole sentence to say).",
         "properties": {
           "english": {
             "title": "English",
@@ -957,6 +957,24 @@
         "title": "DueCollocationsResponse",
         "type": "object"
       },
+      "FocusRun": {
+        "properties": {
+          "bold": {
+            "title": "Bold",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "bold"
+        ],
+        "title": "FocusRun",
+        "type": "object"
+      },
       "GenerateStoryRequest": {
         "properties": {
           "curriculum_id": {
@@ -1702,6 +1720,31 @@
         "title": "ItemExtra",
         "type": "object"
       },
+      "ItemFocus": {
+        "description": "A focus card's two sides as runs of plain and bold text (tunatale-ve4p.9).\n\nBuilt when the card is served (``app.srs.focus_card.focus``), not stored.\n``prompt`` is the English with the focus in bold, the front; ``answer`` is\nthe sentence with the verb and the focus in bold, the back.",
+        "properties": {
+          "answer": {
+            "items": {
+              "$ref": "#/components/schemas/FocusRun"
+            },
+            "title": "Answer",
+            "type": "array"
+          },
+          "prompt": {
+            "items": {
+              "$ref": "#/components/schemas/FocusRun"
+            },
+            "title": "Prompt",
+            "type": "array"
+          }
+        },
+        "required": [
+          "prompt",
+          "answer"
+        ],
+        "title": "ItemFocus",
+        "type": "object"
+      },
       "ItemParadigm": {
         "description": "A contrast card's grid: one root across an affix pattern, one cell left to say.\n\nBuilt when the card is served (``app.srs.contrast_card.paradigm``), not\nstored: the card's own sentence is its lesson line, or the bare form.",
         "properties": {
@@ -2069,6 +2112,16 @@
             },
             "title": "Extras",
             "type": "array"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemFocus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "grammar": {
             "title": "Grammar",
@@ -3559,7 +3612,7 @@
         "type": "object"
       },
       "QueueItemResponse": {
-        "description": "One served card: the 25 ``_item_to_dict`` keys + the 2 queue-only keys.\n\nThe 7 flat per-direction keys inherited from SrsItemResponse are overwritten\nby ``_queue_item_to_dict`` with the *queued* direction's values, so their\ntypes are unchanged \u2014 only their provenance is.",
+        "description": "One served card: the 28 ``_item_to_dict`` keys + the 2 queue-only keys.\n\nThe 7 flat per-direction keys inherited from SrsItemResponse are overwritten\nby ``_queue_item_to_dict`` with the *queued* direction's values, so their\ntypes are unchanged \u2014 only their provenance is.",
         "properties": {
           "anki_note_id": {
             "anyOf": [
@@ -3623,6 +3676,16 @@
             },
             "title": "Extras",
             "type": "array"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemFocus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "grammar": {
             "title": "Grammar",
@@ -4687,7 +4750,7 @@
         "type": "object"
       },
       "SrsItemResponse": {
-        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 25 keys, one per ``_item_to_dict`` output key.",
+        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 28 keys, one per ``_item_to_dict`` output key.",
         "properties": {
           "anki_note_id": {
             "anyOf": [
@@ -4747,6 +4810,16 @@
             },
             "title": "Extras",
             "type": "array"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemFocus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "grammar": {
             "title": "Grammar",

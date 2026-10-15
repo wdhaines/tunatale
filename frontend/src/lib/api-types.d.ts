@@ -2283,7 +2283,10 @@ export interface components {
   schemas: {
     /**
      * AffixCardPreview
-     * @description One contrast card a listen would add: one root, one form of an affix pair left to say.
+     * @description One card a listen would add for its affix drill.
+     *
+     *     A contrast card (one root, one form of an affix pair left to say) or, for a
+     *     pattern taught as sentences, a focus card (one whole sentence to say).
      */
     AffixCardPreview: {
       /** English */
@@ -2771,6 +2774,13 @@ export interface components {
       /** Due */
       due: components["schemas"]["SrsItemResponse"][];
     };
+    /** FocusRun */
+    FocusRun: {
+      /** Bold */
+      bold: boolean;
+      /** Text */
+      text: string;
+    };
     /** GenerateStoryRequest */
     GenerateStoryRequest: {
       /** Curriculum Id */
@@ -3122,6 +3132,20 @@ export interface components {
       tier: string;
     };
     /**
+     * ItemFocus
+     * @description A focus card's two sides as runs of plain and bold text (tunatale-ve4p.9).
+     *
+     *     Built when the card is served (``app.srs.focus_card.focus``), not stored.
+     *     ``prompt`` is the English with the focus in bold, the front; ``answer`` is
+     *     the sentence with the verb and the focus in bold, the back.
+     */
+    ItemFocus: {
+      /** Answer */
+      answer: components["schemas"]["FocusRun"][];
+      /** Prompt */
+      prompt: components["schemas"]["FocusRun"][];
+    };
+    /**
      * ItemParadigm
      * @description A contrast card's grid: one root across an affix pattern, one cell left to say.
      *
@@ -3292,6 +3316,7 @@ export interface components {
       due_at: string | null;
       /** Extras */
       extras: components["schemas"]["ItemExtra"][];
+      focus?: components["schemas"]["ItemFocus"] | null;
       /** Grammar */
       grammar: string;
       /** Guid */
@@ -3953,7 +3978,7 @@ export interface components {
     };
     /**
      * QueueItemResponse
-     * @description One served card: the 25 ``_item_to_dict`` keys + the 2 queue-only keys.
+     * @description One served card: the 28 ``_item_to_dict`` keys + the 2 queue-only keys.
      *
      *     The 7 flat per-direction keys inherited from SrsItemResponse are overwritten
      *     by ``_queue_item_to_dict`` with the *queued* direction's values, so their
@@ -3979,6 +4004,7 @@ export interface components {
       due_at: string | null;
       /** Extras */
       extras: components["schemas"]["ItemExtra"][];
+      focus?: components["schemas"]["ItemFocus"] | null;
       /** Grammar */
       grammar: string;
       /** Guid */
@@ -4413,7 +4439,7 @@ export interface components {
      * @description Response of create_item, patch_item, reset_item, restore_known_item,
      *     set_item_state, and suspend_item; the element of list_items and untrack_item.
      *
-     *     Exactly 25 keys, one per ``_item_to_dict`` output key.
+     *     Exactly 28 keys, one per ``_item_to_dict`` output key.
      */
     SrsItemResponse: {
       /** Anki Note Id */
@@ -4433,6 +4459,7 @@ export interface components {
       due_at: string | null;
       /** Extras */
       extras: components["schemas"]["ItemExtra"][];
+      focus?: components["schemas"]["ItemFocus"] | null;
       /** Grammar */
       grammar: string;
       /** Guid */

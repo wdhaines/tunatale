@@ -31,7 +31,7 @@ from app.plugins.languages.ceb.focus_sentences import (
     focus_row,
     focus_sentence,
 )
-from app.srs.a1_morphology import AffixPattern, PatternSentences
+from app.srs.a1_morphology import AffixPattern, PatternCard, PatternSentences
 
 COUNTS_PATH = Path(__file__).parent / "data" / "cebuano_affix_counts.tsv.gz"
 GLOSSES_PATH = Path(__file__).parent / "data" / "affix_glosses.tsv"
@@ -99,8 +99,13 @@ PATTERNS: tuple[AffixPattern, ...] = (
         ),
         sentences=True,
         spelled=("-on", "gi-"),
+        # The focus card's order (tunatale-ve4p.9): the first two, one object
+        # focus and one actor focus, already test the choice.
+        card_features=("verb:gi", "verb:mi", "verb:on", "verb:mo"),
     ),
 )
+# What each cell of a focus row asks for, in ``focus_sentence``'s cell order.
+_FOCUS_CELLS = ("verb:mo", "verb:mi", "verb:on", "verb:gi")
 
 # Whole lines for the jobs of the unreal form that an English tense gets
 # wrong, each ``(line, its English)`` with ``{form}`` the unreal form and
@@ -251,6 +256,24 @@ def pattern_sentences(root: str, pattern: AffixPattern) -> PatternSentences | No
         contrast=2,
         regular=row.forms[2] == row.root + "on",
     )
+
+
+def pattern_cards(root: str, pattern: AffixPattern) -> tuple[PatternCard, ...]:
+    """*root*'s focus cards, one per cell in *pattern*'s card order, or none.
+
+    The k-th card takes the row's k-th object round its list and the k-th doer
+    round ``DOERS``, so a root's four cards do not all say one sentence.
+    """
+    row = focus_row(root) if pattern.sentences else None
+    if row is None:
+        return ()
+    cards = []
+    for k, feature in enumerate(pattern.card_features):
+        cell = focus_sentence(
+            row, _FOCUS_CELLS.index(feature), DOERS[k % len(DOERS)], row.objects[k % len(row.objects)]
+        )
+        cards.append(PatternCard(feature, cell.text, cell.english, cell.stressed, cell.bold))
+    return tuple(cards)
 
 
 def pattern_roots(pattern: AffixPattern) -> tuple[str, ...]:

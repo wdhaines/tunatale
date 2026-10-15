@@ -1306,4 +1306,49 @@ describe("DrillCard has no cloze-rewrite control (tunatale-keb0)", () => {
       );
     });
   });
+
+  // tunatale-ve4p.9. A focus card asks for a whole sentence. Its front is the
+  // English with the focus in bold, served as runs (the bold is not stored);
+  // the back is the sentence with the verb and the focus in bold.
+  describe("focus card", () => {
+    const run = (text: string, bold = false) => ({ text, bold });
+    const item = makeSRSItemDetail({
+      text: "Giinom ko ang tubig.",
+      translation: "I drank the water.",
+      card_type: "cloze",
+      source_sentence: "{{c1::Giinom ko ang tubig.}}",
+      source_sentence_translation: "",
+      grammar: "inom · drink",
+      focus: {
+        prompt: [run("I drank "), run("the water", true), run(".")],
+        answer: [run("Giinom", true), run(" ko "), run("ang tubig", true), run(".")],
+      },
+    });
+    const bold = (el: Element) => [...el.querySelectorAll("b")].map((b) => b.textContent);
+
+    it("front is the English with the focus in bold, and no blank", () => {
+      const { container } = render(DrillCard, { item, direction: "production", onRate: vi.fn() });
+      const prompt = container.querySelector(".prompt")!;
+      expect(prompt.querySelector(".focus-prompt")!.textContent).toBe("I drank the water.");
+      expect(bold(prompt)).toEqual(["the water"]);
+      expect(prompt.textContent).not.toContain("[...]");
+      expect(prompt.textContent).not.toContain("Giinom");
+    });
+
+    it("back is the sentence with the verb and the focus in bold, and the root", async () => {
+      const { container, getByText } = render(DrillCard, {
+        item,
+        direction: "production",
+        onRate: vi.fn(),
+      });
+      await fireEvent.click(getByText("Show"));
+      const answer = container.querySelector(".answer")!;
+      expect(answer.querySelector(".focus-answer")!.textContent).toBe("Giinom ko ang tubig.");
+      expect(bold(answer)).toEqual(["Giinom", "ang tubig"]);
+      // The English is on the front already; the sentence is not shown twice.
+      expect(answer.querySelector(".answer-text")).toBeNull();
+      expect(answer.querySelectorAll(".main-text")).toHaveLength(1);
+      expect(answer.querySelector(".gram")!.textContent).toBe("inom · drink");
+    });
+  });
 });

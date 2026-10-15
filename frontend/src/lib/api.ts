@@ -10,6 +10,7 @@ import type { components } from "./api-types";
 // generated shape changes and a consumer uses a vanished field.
 export type ListenPreviewCandidate = components["schemas"]["ListenPreviewCandidate"];
 export type AffixCardPreview = components["schemas"]["AffixCardPreview"];
+export type FocusRun = components["schemas"]["FocusRun"];
 // `affix_cards` is optional HERE though the server always sends it: FastAPI
 // marks a defaulted response field required, and 172 preview fixtures across
 // 15 test files predate it. A lesson with no affix drill sends an empty list,
@@ -527,6 +528,8 @@ export interface SRSItemDetail {
   grammar?: string;
   /** A contrast card's grid, served with the card; null or absent on every other card. */
   paradigm?: components["schemas"]["ItemParadigm"] | null;
+  /** A focus card's two sides as runs of plain and bold text; null or absent on every other card. */
+  focus?: components["schemas"]["ItemFocus"] | null;
   note?: string;
   // Gender/indefinite article (en/ei/et) — rendered as a display-time prefix on
   // the headword (e.g. "en orden"). Empty for non-nouns / languages without it.

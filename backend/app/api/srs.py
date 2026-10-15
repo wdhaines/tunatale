@@ -98,6 +98,7 @@ from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due
 from app.srs.collocation_matcher import match_spans
 from app.srs.contrast_card import ContrastCard, paradigm
 from app.srs.feedback import rating_from_input
+from app.srs.focus_card import FocusCard, focus
 from app.srs.fsrs import Rating, build_revlog_row, schedule
 from app.srs.function_words import (
     format_morphology_hint,
@@ -194,6 +195,17 @@ def _paradigm_dict(language_code: str, unit: SyntacticUnit) -> dict | None:
     }
 
 
+def _focus_dict(language_code: str, unit: SyntacticUnit) -> dict | None:
+    """A focus card's bold runs for the review screen, or ``None`` for every other card."""
+    card = focus(language_code, unit)
+    if card is None:
+        return None
+    return {
+        "prompt": [{"text": text, "bold": bold} for text, bold in card.prompt_parts()],
+        "answer": [{"text": text, "bold": bold} for text, bold in card.answer_parts()],
+    }
+
+
 def _item_to_dict(
     row_id: int,
     item: SRSItem,
@@ -242,6 +254,7 @@ def _item_to_dict(
         "audio_url": audio_url,
         "grammar": item.syntactic_unit.grammar,
         "paradigm": _paradigm_dict(language_code, item.syntactic_unit),
+        "focus": _focus_dict(language_code, item.syntactic_unit),
         "note": item.syntactic_unit.note,
         # Gender article (en/ei/et) — display-time prefix on the headword.
         "article": item.syntactic_unit.article,
@@ -489,8 +502,8 @@ async def undo_grade(item_id: int, direction: str, request: Request):
 
 def _due_contrast_cards(
     db, store, lesson, content_id: str, *, intro_budget: int, new_state_rows: list, live_new: list, live_creates: list
-) -> list[tuple[ContrastCard, bool]]:
-    """The contrast cards a listen of *lesson* offers, each with whether the budget reaches it.
+) -> list[tuple[ContrastCard | FocusCard, bool]]:
+    """The contrast or focus cards a listen of *lesson* offers, each with whether the budget reaches it.
 
     Called with the same arguments by the preview and by the commit, which is
     what keeps a row's ``will_create`` and what the listen then does in step
@@ -512,9 +525,14 @@ def _due_contrast_cards(
 
 
 def _add_contrast_cards(
-    db, language_code: str, offered: list[tuple[ContrastCard, bool]], *, skipped: set[str], over_cap: set[str]
+    db,
+    language_code: str,
+    offered: list[tuple[ContrastCard | FocusCard, bool]],
+    *,
+    skipped: set[str],
+    over_cap: set[str],
 ) -> list[tuple[int, str, str, str]]:
-    """Add the *offered* contrast cards the learner left on.
+    """Add the *offered* contrast or focus cards the learner left on.
 
     A card the budget reaches is added unless its row was skipped; a skip
     keeps its slot, so the next card is not promoted into it. A card past the
@@ -2585,7 +2603,7 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             "form": card.form,
             "english": card.prompt,
             "root": card.root,
-            "model": [form for i, (form, _) in enumerate(card.cells) if i != card.blank],
+            "model": list(card.model),
             "will_create": live,
         }
         for card, live in offered

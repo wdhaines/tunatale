@@ -20,16 +20,18 @@ because a drill day is a study day and a study day rolls over at 04:00 local.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
+from app.common.guid import compute_guid
 from app.generation.pattern_gate import next_pattern, progress
 from app.languages import get_a1_morphology
 from app.models.lesson import Lesson
 from app.models.srs_item import Direction, RevlogRow
-from app.models.syntactic_unit import SyntacticUnit
 from app.srs.contrast_card import contrast_card, pair_key
+from app.srs.focus_card import focus_cards
 from app.storage.store import ContentStore
 from tests._helpers.localtz import local_timezone
 
@@ -94,30 +96,17 @@ def _passed_first_review(srs_db, pattern: str, roots: list[tuple[str, int]]) -> 
         _graded(srs_db, pattern, root, blank, (_LEARN, _GOOD), (_LEARN, _GOOD), (_REVIEW, _GOOD))
 
 
-_ON_GI_FOUR = [("inom", "giinom"), ("kaon", "gikaon"), ("dala", "gidala"), ("tan-aw", "gitan-aw")]
+# One root per cell: actor and object focus cards both test the choice.
+_ON_GI_FOUR = [("inom", 0), ("kaon", 1), ("dala", 2), ("tan-aw", 3)]
 
 
-def _passed_focus(srs_db, cards: list[tuple[str, str]]) -> None:
-    """Four object-focus clozes ``(root, form)``, each passing its first review like a contrast card.
-
-    ``contrast_card`` makes no card for the sentence pattern yet
-    (tunatale-ve4p.33), so the gate counts the plain cloze the focus card will
-    be (tunatale-ve4p.9) — same ``morph:`` key, one distinct form each.
-    """
-    for root, form in cards:
-        unit = SyntacticUnit(
-            text=form,
-            translation=form,
-            word_count=1,
-            difficulty=1,
-            source="test",
-            lemma=root,
-            disambig_key=pair_key("verb:gi"),
-            card_type="cloze",
-        )
+def _passed_focus(srs_db, cards: list[tuple[str, int]], *, grades=((_LEARN, _GOOD), (_LEARN, _GOOD), (_REVIEW, _GOOD))):
+    """Focus cards ``(root, k)``, the k-th of each root, each passing its first review."""
+    for root, k in cards:
+        unit = focus_cards("ceb", _PATTERNS["on-gi"], root)[k].unit()
         srs_db.add_collocation(unit, language_code="ceb")
-        collocation_id = srs_db.get_collocation_id_by_guid(srs_db.get_collocation(form).guid)
-        for kind, button in ((_LEARN, _GOOD), (_LEARN, _GOOD), (_REVIEW, _GOOD)):
+        collocation_id = srs_db.get_collocation_id_by_guid(compute_guid(unit.text, "ceb", unit.disambig_key))
+        for kind, button in grades:
             srs_db.append_revlog(
                 RevlogRow(
                     id=next(_ms),
@@ -318,6 +307,58 @@ def test_with_every_pattern_passed_the_one_heard_longest_ago_comes_round(srs_db,
 
     _heard(srs_db, store, "ma-na", _at(23))
     assert _key(srs_db, store) == "mo-mi"
+
+
+def test_on_gi_counts_its_focus_cards(srs_db, store):
+    for key, when in (("mo-mi", (5, 7)), ("mag-nag", (11, 13)), ("ma-na", (15,)), ("maka-naka", (19, 21))):
+        _heard(srs_db, store, key, *(_at(day) for day in when))
+    _passed_first_review(srs_db, "mo-mi", _MO_MI_FOUR)
+    _passed_first_review(srs_db, "mag-nag", _MAG_NAG_FOUR)
+    _passed_first_review(srs_db, "maka-naka", _MAKA_NAKA_FOUR)
+    _heard(srs_db, store, "on-gi", _at(25), _at(27))
+
+    _passed_focus(srs_db, _ON_GI_FOUR[:3])
+    assert progress(_PATTERNS["on-gi"], srs_db=srs_db, store=store).first_passes == 3
+    _passed_focus(srs_db, _ON_GI_FOUR[3:])
+    assert progress(_PATTERNS["on-gi"], srs_db=srs_db, store=store).met
+
+
+def test_a_contrast_card_keyed_like_gi_does_not_count_toward_on_gi(srs_db, store):
+    """The sentence pattern counts ``morph:focus-*``; a ``morph:pair-verb-gi`` cloze is no focus card."""
+    _heard(srs_db, store, "on-gi", _at(25), _at(27))
+    for root, form in (("inom", "giinom"), ("kaon", "gikaon"), ("dala", "gidala"), ("tan-aw", "gitan-aw")):
+        unit = replace(
+            focus_cards("ceb", _PATTERNS["on-gi"], root)[0].unit(), text=form, disambig_key=pair_key("verb:gi")
+        )
+        srs_db.add_collocation(unit, language_code="ceb")
+        _graded_existing(srs_db, compute_guid(form, "ceb", unit.disambig_key))
+    assert progress(_PATTERNS["on-gi"], srs_db=srs_db, store=store).first_passes == 0
+
+
+def test_actor_focus_cards_do_not_count_toward_mo_mi(srs_db, store):
+    """An actor focus card says mi- or mo-, but it is on-gi's evidence, not mo-mi's."""
+    _heard(srs_db, store, "mo-mi", _at(5), _at(7))
+    _passed_focus(srs_db, [("inom", 1), ("kaon", 1), ("dala", 3), ("tan-aw", 3)])
+    assert progress(_PATTERNS["mo-mi"], srs_db=srs_db, store=store).first_passes == 0
+    assert _key(srs_db, store) == "mo-mi"
+
+
+def _graded_existing(srs_db, guid: str) -> None:
+    collocation_id = srs_db.get_collocation_id_by_guid(guid)
+    for kind, button in ((_LEARN, _GOOD), (_REVIEW, _GOOD)):
+        srs_db.append_revlog(
+            RevlogRow(
+                id=next(_ms),
+                collocation_id=collocation_id,
+                direction=Direction.PRODUCTION,
+                button_chosen=button,
+                interval=1,
+                last_interval=0,
+                factor=2500,
+                taken_millis=5000,
+                review_kind=kind,
+            )
+        )
 
 
 # --- a pattern that does not pass ---------------------------------------------------

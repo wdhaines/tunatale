@@ -41,6 +41,11 @@ class AffixPattern:
     ``sentences`` is True for patterns taught as whole sentences rather than
     as isolated word forms. ``spelled`` names how each feature's affix appears
     in a title (empty means ``"<affix>-"`` as today).
+
+    ``card_features`` are what a sentence pattern's cards ask for, in the order
+    a root takes them: every cell of the sentence grid, the forms the learner
+    already has among them (Cebuano gi-, mi-, -on, mo-). Empty for a word
+    pattern, whose cards ask for ``features``.
     """
 
     key: str
@@ -50,6 +55,7 @@ class AffixPattern:
     review_only: bool = False
     sentences: bool = False
     spelled: tuple[str, ...] = ()
+    card_features: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,22 @@ class PatternSentences:
     stressed: tuple[tuple[int, int], ...]
     contrast: int
     regular: bool
+
+
+@dataclass(frozen=True)
+class PatternCard:
+    """One card of a root in a sentence-taught pattern: a whole sentence to say.
+
+    ``stressed`` is the focus as a span of ``english``, the words the narrator
+    stresses and the card's front puts in bold; ``bold`` is the affixed verb
+    and the focus as spans of ``text``, which the back puts in bold.
+    """
+
+    feature: str
+    text: str
+    english: str
+    stressed: tuple[int, int]
+    bold: tuple[tuple[int, int], ...]
 
 
 @dataclass(frozen=True)
@@ -99,3 +121,6 @@ class A1Morphology:
     # ``(line, its English)``: empty for a root the language has none for.
     pattern_lines: Callable[[str, AffixPattern], tuple[tuple[str, str], ...]] | None = None
     pattern_sentences: Callable[[str, AffixPattern], PatternSentences | None] | None = None
+    # A root's cards in a sentence pattern, one per ``card_features`` entry in
+    # that order; empty for a root nobody has checked sentences for.
+    pattern_cards: Callable[[str, AffixPattern], tuple[PatternCard, ...]] | None = None

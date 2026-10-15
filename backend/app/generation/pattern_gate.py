@@ -9,8 +9,9 @@ fortnight first proposed:
 * its drill was heard on :data:`DRILL_DAYS` different study days, a lesson
   marked listened whose ``affix_drill`` is this pattern, a grammar lesson or a
   story's closing drill alike. Two listens on one day are one drill;
-* :data:`FIRST_PASSES` of its contrast cards passed their first review, and at
-  least :data:`PASS_RATE` of all its contrast-card reviews passed. Learning
+* :data:`FIRST_PASSES` of its cards passed their first review, and at least
+  :data:`PASS_RATE` of all its card reviews passed: its contrast cards, or for
+  a pattern taught as sentences its focus cards. Learning
   steps are not reviews: passing them shows the card was read the day it was
   added, not that the form came back on a later day.
 
@@ -39,6 +40,7 @@ from app.models.srs_item import Direction
 from app.srs.a1_morphology import AffixPattern
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.contrast_card import pair_key
+from app.srs.focus_card import focus_key
 from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
@@ -113,10 +115,21 @@ def _drill_days(store: ContentStore, srs_db) -> dict[str, list[date]]:
     return {key: sorted(heard) for key, heard in days.items()}
 
 
+def _card_keys(pattern: AffixPattern) -> list[str]:
+    """The keys of the cards that are *pattern*'s evidence.
+
+    A sentence pattern's are its focus cards, actor and object focus alike:
+    both test the choice (tunatale-ve4p.9). A word pattern's are its contrast cards.
+    """
+    if pattern.sentences:
+        return [focus_key(feature) for feature in pattern.card_features]
+    return [pair_key(feature) for feature in pattern.features]
+
+
 def _progress(pattern: AffixPattern, heard: list[date], srs_db) -> Progress:
     first_passes = reviews = passes = 0
-    for feature in pattern.features:
-        for collocation_id in srs_db.get_collocation_ids_by_disambig_key(pair_key(feature)):
+    for key in _card_keys(pattern):
+        for collocation_id in srs_db.get_collocation_ids_by_disambig_key(key):
             # Every row of the card: no id is at or below 0, so "unpushed after 0" is all of them.
             rows = srs_db.get_unpushed_revlog_rows(collocation_id, Direction.PRODUCTION, 0)
             graded = [row.button_chosen > _AGAIN for row in rows if row.review_kind == _REVIEW]

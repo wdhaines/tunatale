@@ -35,6 +35,7 @@ from app.generation.affix_drill import DrillRoot, drill_root
 from app.languages import get_a1_morphology
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.a1_morphology import AffixPattern
+from app.srs.focus_card import focus
 from app.srs.function_words import make_cloze_text, uncloze_text
 
 _PAIR_PREFIX = "morph:pair-"
@@ -67,6 +68,11 @@ class ContrastCard:
     def prompt(self) -> str:
         """The English the learner is asked to say."""
         return self.cells[self.blank][1]
+
+    @property
+    def model(self) -> tuple[str, ...]:
+        """The root's other forms, shown beside the blank."""
+        return tuple(form for i, (form, _) in enumerate(self.cells) if i != self.blank)
 
     def unit(self) -> SyntacticUnit:
         """The card as TT stores it: a production-only cloze on the form."""
@@ -156,10 +162,15 @@ def paradigm(language_code: str, unit: SyntacticUnit) -> ContrastCard | None:
 def cloze_note_text(language_code: str, unit: SyntacticUnit, sentence: str) -> str:
     """Field 0 of *unit*'s Anki note, given its *sentence* with the blank marked.
 
-    Under the grid for a contrast card. For any other cloze it is *sentence*,
-    returned untouched: marking the blank stays the job of whoever stored the
-    sentence. Every blank is ``c1``, so the note makes one card.
+    Under the grid for a contrast card. For a focus card, the English with its
+    focus in bold over the bold sentence as the blank
+    (``app.srs.focus_card``). For any other cloze it is *sentence*, returned
+    untouched: marking the blank stays the job of whoever stored the sentence.
+    Every blank is ``c1``, so the note makes one card.
     """
+    focused = focus(language_code, unit)
+    if focused is not None:
+        return focused.note_text()
     card = paradigm(language_code, unit)
     if card is None:
         return sentence

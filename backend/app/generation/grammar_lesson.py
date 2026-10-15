@@ -44,6 +44,7 @@ from app.models.lesson import Lesson, SectionType, extract_sentence_translations
 from app.models.srs_item import Direction
 from app.srs.a1_morphology import AffixPattern
 from app.srs.contrast_card import ContrastCard, card_for, pair_key
+from app.srs.focus_card import FocusCard, focus_cards
 from app.srs.function_words import make_cloze_text
 from app.srs.lemmatizer import Lemmatizer
 from app.storage.store import ContentStore
@@ -165,7 +166,25 @@ def _story_lines(store: ContentStore, curriculum_id: str) -> list[tuple[str, str
     return [line for lesson in _stories(store, curriculum_id) for line in lesson_lines(lesson)]
 
 
-def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id: str) -> list[ContrastCard]:
+def _next_focus_cards(language_code: str, pattern: AffixPattern, roots, srs_db) -> list[FocusCard]:
+    """Each understood root's next focus card, while the cards it has are in review."""
+    drillable = _understood(language_code, pattern, srs_db)
+    cards: list[FocusCard] = []
+    for root in roots:
+        if root not in drillable:
+            continue
+        own = focus_cards(language_code, pattern, root)
+        held = [srs_db.get_collocation_by_guid(compute_guid(card.text, language_code, card.key)) for card in own]
+        missing = [i for i, item in enumerate(held) if item is None]
+        learned = all(item is None or understood(item.directions[Direction.PRODUCTION]) for item in held)
+        if missing and learned:
+            cards.append(own[missing[0]])
+    return cards
+
+
+def contrast_cards(
+    lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id: str
+) -> list[ContrastCard] | list[FocusCard]:
     """The contrast cards a listen of *lesson* adds, in the order its drill takes the roots.
 
     Only a lesson with an affix drill adds any, and only for that drill's
@@ -182,13 +201,17 @@ def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id
     A card carries a lesson line when one sentence of a story says its form.
     Reads only; the caller adds what it can afford.
 
-    A pattern taught as whole sentences (Cebuano gi- / -on) makes no card yet:
-    which of its cells to blank is the focus card's question (tunatale-ve4p.9).
+    A pattern taught as whole sentences (Cebuano gi- / -on) adds focus cards
+    instead, under the same one-at-a-time rule, each root's in the order the
+    language gives them (``app.srs.focus_card``; tunatale-ve4p.9).
     """
     recorded = (lesson.generation_metadata or {}).get("affix_drill")
     pattern = find_pattern(lesson.language_code, recorded["pattern"]) if recorded else None
-    if pattern is None or pattern.sentences:
+    if pattern is None:
         return []
+    if pattern.sentences:
+        roots = (*recorded["roots"], *recorded["new_roots"])
+        return _next_focus_cards(lesson.language_code, pattern, roots, srs_db)
     drillable = _understood(lesson.language_code, pattern, srs_db)
     story = [line for line in dict.fromkeys(_story_lines(store, curriculum_id)) if line[1]]
     heard = {_fold(word) for text, _ in story for word in _WORD.findall(text)}
