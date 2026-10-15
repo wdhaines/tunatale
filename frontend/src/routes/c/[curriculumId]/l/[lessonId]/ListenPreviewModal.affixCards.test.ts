@@ -262,3 +262,44 @@ describe("the bulk buttons", () => {
     expect(pressed("miadto")).toEqual(["add"]);
   });
 });
+
+// tunatale-ve4p.9. An object-focus lesson adds focus cards: each row is a whole
+// sentence to say, with nothing shown beside it.
+describe("focus cards", () => {
+  const FOCUS: AffixCardPreview[] = [
+    {
+      form: "Giinom ko ang tubig.",
+      english: "I drank the water.",
+      root: "inom",
+      model: [],
+      will_create: true,
+    },
+    {
+      form: "Gikaon ko ang pan.",
+      english: "I ate the bread.",
+      root: "kaon",
+      model: [],
+      will_create: true,
+    },
+  ];
+
+  it("a row is the sentence, glossed by its English alone", async () => {
+    const { container } = await open({ candidates: [], affix_cards: FOCUS });
+    const rows = [...container.querySelectorAll(".candidate.affix")];
+    expect(rows.map((row) => row.querySelector(".text")!.textContent)).toEqual([
+      "Giinom ko ang tubig.",
+      "Gikaon ko ang pan.",
+    ]);
+    expect(rows.map((row) => row.querySelector(".affix-gloss")!.textContent)).toEqual([
+      "I drank the water.",
+      "I ate the bread.",
+    ]);
+  });
+
+  it("a skipped row is sent by its sentence", async () => {
+    const { button, commit } = await open({ candidates: [], affix_cards: FOCUS });
+    await fireEvent.click(button("Gikaon ko ang pan.", "skip"));
+    const payload = await commit();
+    expect(payload.skippedAffixCards).toEqual(["Gikaon ko ang pan."]);
+  });
+});

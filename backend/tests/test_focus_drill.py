@@ -23,7 +23,6 @@ import pytest
 from app.generation.affix_drill import DrillRoot, build_affix_drill, drill_root
 from app.generation.grammar_lesson import (
     build_grammar_lesson,
-    contrast_cards,
     drill_table,
     pattern_title,
     plan_grammar_lesson,
@@ -348,10 +347,8 @@ def test_the_lesson_ends_on_a_story_line_that_says_an_object_focus_form(learner)
     assert _plan(learner).lines == (("Giinom ko ang kape.", "I drank the coffee."),)
 
 
-def test_a_focus_lesson_adds_no_contrast_cards_until_the_focus_card_exists(learner):
-    srs_db, store = learner
-    lesson = build_grammar_lesson(get_language("ceb"), _plan(learner))
-    assert contrast_cards(lesson, srs_db=srs_db, store=store, curriculum_id="funeral") == []
+def test_a_sentence_pattern_has_no_contrast_card_its_cells_are_focus_cards():
+    """Blanking one cell of a sentence is the focus card's job (``test_focus_card.py``)."""
     assert contrast_card("ceb", _ON_GI, "inom", 1) is None
 
 

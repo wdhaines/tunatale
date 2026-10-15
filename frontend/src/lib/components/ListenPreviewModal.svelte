@@ -1016,7 +1016,8 @@
 							<li class="candidate affix" class:tail={!a.will_create} class:opted={choice === 'add'}>
 								<span class="text" lang={languageCode}>{a.form}</span>
 								<div class="sub">
-									<span class="affix-gloss">{t('listenPreview.affixBeside', { english: a.english, model: a.model.join(', ') })}</span>
+									<!-- A focus card shows nothing beside it: its row is the sentence and its English. -->
+									<span class="affix-gloss">{a.model.length > 0 ? t('listenPreview.affixBeside', { english: a.english, model: a.model.join(', ') }) : a.english}</span>
 								</div>
 								<span class="day-cell">
 									<span class="tag day is-new">{a.will_create ? t('listenPreview.new') : t('listenPreview.later')}</span>

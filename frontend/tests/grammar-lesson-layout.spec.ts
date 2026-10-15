@@ -53,8 +53,8 @@ const DRILL = {
   ],
 };
 
-// What a listen of a drill lesson offers. The third row is past the day's
-// budget, and it carries the longest form and English these rows have to hold.
+// What a listen of a drill lesson offers. The last two rows are past the day's
+// budget; the third carries the longest form and English these rows have to hold.
 const AFFIX_CARDS = [
   { form: "miuban", english: "went along", root: "uban", model: ["mouban"], will_create: true },
   { form: "moinom", english: "will drink", root: "inom", model: ["miinom"], will_create: true },
@@ -65,6 +65,8 @@ const AFFIX_CARDS = [
     model: ["mag-istoryahanay"],
     will_create: false,
   },
+  // A focus card (tunatale-ve4p.9): a whole sentence where a form was, the longest one stage 6 makes.
+  { form: "Motan-aw siya og sakyanan.", english: "He'll look at a vehicle.", root: "tan-aw", model: [], will_create: false },
 ];
 
 // A contrast card as the review queue serves it: the long pair again, with a
@@ -323,7 +325,7 @@ for (const [name, width, height] of [
     await page.getByRole("button", { name: "Mark as Listened" }).click();
 
     const group = page.locator(".affix-group");
-    await expect(group.locator(".candidate.affix")).toHaveCount(3);
+    await expect(group.locator(".candidate.affix")).toHaveCount(4);
 
     // Every rect in ONE evaluate: reading them a box per await races content
     // that is still arriving.

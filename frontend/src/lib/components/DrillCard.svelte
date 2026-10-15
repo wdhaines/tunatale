@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SRSItemDetail } from '$lib/api';
+	import type { FocusRun, SRSItemDetail } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
 
 	type Rating = 'again' | 'hard' | 'good' | 'easy';
@@ -164,6 +164,9 @@
 	</div>
 {/snippet}
 
+<!-- A focus card's side: the bold runs are served with the card, never stored. -->
+{#snippet runs(parts: FocusRun[])}{#each parts as part, i (i)}{#if part.bold}<b>{part.text}</b>{:else}{part.text}{/if}{/each}{/snippet}
+
 {#snippet backExtras()}
 	{#if summaryExtras.length > 0 || detailExtras.length > 0 || deepExtras.length > 0}
 		<div class="extras">
@@ -209,6 +212,11 @@
 			{/if}
 		{:else if direction === 'production'}
 			{#if item.card_type === 'cloze' && item.source_sentence}
+				{#if item.focus}
+					<!-- A whole sentence to say (tunatale-ve4p.9): the English, its
+					     focus in bold, is the whole front. -->
+					<p class="main-text focus-prompt">{@render runs(item.focus.prompt)}</p>
+				{/if}
 				{#if item.paradigm}
 					<!-- One root across an affix pattern. The filled cells are the
 					     model; the blank is the form asked for, and it is filled in
@@ -233,7 +241,7 @@
 						</dl>
 					</div>
 				{/if}
-				{#if !blankOnly}
+				{#if !blankOnly && !item.focus}
 					<p class="main-text">{@html clozePromptHtml()}</p>
 				{/if}
 			{:else if item.image_url != null}
@@ -265,7 +273,9 @@
 						<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
 						<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 					{/if}
-					{#if !blankOnly}
+					{#if item.focus}
+						<p class="main-text slovene focus-answer">{@render runs(item.focus.answer)}</p>
+					{:else if !blankOnly}
 						<p class="main-text">{@html clozeAnswerHtml()}</p>
 					{/if}
 					{#if item.word_audio_url}
@@ -287,7 +297,10 @@
 				     Its `grammar` is the root line again, kept in the data for the
 				     Anki note and for a card the table has stopped vouching for. -->
 				{#if !item.paradigm}
-					<p class="answer-text english">{item.translation}</p>
+					<!-- A focus card's English is its front. -->
+					{#if !item.focus}
+						<p class="answer-text english">{item.translation}</p>
+					{/if}
 					{#if item.grammar}
 						<div class="gram">{@html item.grammar}</div>
 					{/if}

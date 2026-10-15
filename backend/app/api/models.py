@@ -122,12 +122,16 @@ class ListenPreviewCandidate(BaseModel):
 
 
 class AffixCardPreview(BaseModel):
-    """One contrast card a listen would add: one root, one form of an affix pair left to say."""
+    """One card a listen would add for its affix drill.
 
-    form: str  # the form the card asks for; also how the listen request names the row
+    A contrast card (one root, one form of an affix pair left to say) or, for a
+    pattern taught as sentences, a focus card (one whole sentence to say).
+    """
+
+    form: str  # what the card asks for, a form or a sentence; also how the listen request names the row
     english: str  # what the card asks for, in English
     root: str
-    model: list[str]  # the root's other forms, shown on the card beside the blank
+    model: list[str]  # the root's other forms, shown beside the blank; empty for a focus card
     # False past the shared introduction budget, exactly as on a candidate row.
     will_create: bool
 
@@ -1085,11 +1089,28 @@ class ItemParadigm(BaseModel):
     cells: list[ParadigmCell]
 
 
+class FocusRun(BaseModel):
+    text: str
+    bold: bool
+
+
+class ItemFocus(BaseModel):
+    """A focus card's two sides as runs of plain and bold text (tunatale-ve4p.9).
+
+    Built when the card is served (``app.srs.focus_card.focus``), not stored.
+    ``prompt`` is the English with the focus in bold, the front; ``answer`` is
+    the sentence with the verb and the focus in bold, the back.
+    """
+
+    prompt: list[FocusRun]
+    answer: list[FocusRun]
+
+
 class SrsItemResponse(BaseModel):
     """Response of create_item, patch_item, reset_item, restore_known_item,
     set_item_state, and suspend_item; the element of list_items and untrack_item.
 
-    Exactly 25 keys, one per ``_item_to_dict`` output key.
+    Exactly 28 keys, one per ``_item_to_dict`` output key.
     """
 
     id: int
@@ -1118,6 +1139,8 @@ class SrsItemResponse(BaseModel):
     grammar: str
     # Set on a contrast card only; the review screen draws it above the sentence.
     paradigm: ItemParadigm | None = None
+    # Set on a focus card only; the review screen draws the prompt on the front.
+    focus: ItemFocus | None = None
     note: str
     article: str
     extras: list[ItemExtra]
@@ -1182,7 +1205,7 @@ class NewCollocationsResponse(BaseModel):
 
 
 class QueueItemResponse(SrsItemResponse):
-    """One served card: the 25 ``_item_to_dict`` keys + the 2 queue-only keys.
+    """One served card: the 28 ``_item_to_dict`` keys + the 2 queue-only keys.
 
     The 7 flat per-direction keys inherited from SrsItemResponse are overwritten
     by ``_queue_item_to_dict`` with the *queued* direction's values, so their
