@@ -248,6 +248,8 @@
 	// shift currently applied. `untrack` keeps `shiftX` out of the dependencies;
 	// the effect writes it and must not re-run on its own write.
 	$effect(() => {
+		// Expanding More… resizes the popover, so it re-places (tunatale-dmw4).
+		void moreOpen;
 		if ((!open && !hovered) || !ttEl) {
 			shiftX = 0;
 			return;
@@ -291,6 +293,8 @@
 		return parseFloat(raw) || 0;
 	}
 	$effect(() => {
+		// A taller popover after More… may no longer fit above (tunatale-dmw4).
+		void moreOpen;
 		if ((!open && !hovered) || !ttEl || !wrapEl) {
 			flipBelow = false;
 			return;
