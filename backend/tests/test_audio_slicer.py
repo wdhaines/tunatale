@@ -52,7 +52,14 @@ class FakeTTS:
         self._rate = rate
 
     async def synthesize(
-        self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None, speak_locale=None
+        self,
+        text: str,
+        voice_id: str,
+        output_path,
+        rate: str = "+0%",
+        phonemes=None,
+        speak_locale=None,
+        stressed=None,
     ) -> None:
         self.calls.append((text, voice_id, rate))
         self.locales.append(speak_locale)
@@ -91,7 +98,14 @@ class NotchedTTS(FakeTTS):
     """
 
     async def synthesize(
-        self, text: str, voice_id: str, output_path, rate: str = "+0%", phonemes=None, speak_locale=None
+        self,
+        text: str,
+        voice_id: str,
+        output_path,
+        rate: str = "+0%",
+        phonemes=None,
+        speak_locale=None,
+        stressed=None,
     ) -> None:
         self.calls.append((text, voice_id, rate))
         n = int(0.100 * _RATE)

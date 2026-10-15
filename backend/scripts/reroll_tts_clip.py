@@ -84,7 +84,7 @@ _NEAR_MATCH_LIMIT = 20
 def _describe(path: Path, value: _SynthValue) -> str:
     """One key as a block of ``field<TAB>value`` lines — the shape this repo's
     reports already print, so it diffs and greps like the rest."""
-    text, voice_id, rate, phonemes, _speak_locale, enunciation, line = value
+    text, voice_id, rate, phonemes, _speak_locale, enunciation, line, _stressed = value
     ipa, _phrase = resolve_ipa(text, phonemes, enunciation, line)
     return "\n".join(
         [

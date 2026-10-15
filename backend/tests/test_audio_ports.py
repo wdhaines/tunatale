@@ -18,6 +18,7 @@ class MockTTSService:
         speak_locale=None,
         enunciation=None,
         line=False,
+        stressed=None,
     ) -> None:
         output_path.write_bytes(b"fake audio")
 

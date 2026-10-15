@@ -61,8 +61,11 @@ _GEMINI_ENUNCIATED_LENGTH_FACTOR = 2.1
 
 # The value carried for a key (``synth_plan.MemoKey``, the renderer's own dedupe
 # key): the same fields, phonemes in the dict form ``_cache_path`` /
-# ``_billable_body`` expect. The last field is ``SynthRequest.line``.
-_SynthValue = tuple[str, str, str, Mapping[str, str] | None, str | None, Enunciation | None, bool]
+# ``_billable_body`` expect. The second-to-last field is ``SynthRequest.line``,
+# the last is ``SynthRequest.stressed``.
+_SynthValue = tuple[
+    str, str, str, Mapping[str, str] | None, str | None, Enunciation | None, bool, tuple[int, int] | None
+]
 
 
 @dataclass(frozen=True)
@@ -284,6 +287,7 @@ def collect_keys(
                         request.speak_locale,
                         request.enunciation,
                         request.line,
+                        request.stressed,
                     ),
                 )
 
@@ -311,7 +315,7 @@ def collect_keys(
                     leg = keys.gemini_slicer if provider_for(phrase.voice_id) == "gemini" else keys.slicer
                     leg.setdefault(
                         skey,
-                        (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale, None, False),
+                        (phrase.source_word, phrase.voice_id, parent_rate, None, target_locale, None, False, None),
                     )
 
     return keys
@@ -372,8 +376,12 @@ def gemini_cache_path(gemini: GeminiTTSService, value: _SynthValue) -> Path:
     decides hit-vs-miss without writing, and the re-roll script, which must
     never recompute a digest by hand (a hand-rolled digest is a silent miss,
     and a silent miss here is a clip that is evicted from nowhere).
+
+    The stress is dropped here for the same reason the ``speak_locale`` is: this
+    provider accepts the argument and ignores it, so a span cannot change the
+    file — passing it on would split one file into two.
     """
-    text, voice_id, rate, phonemes, _speak_locale, enunciation, line = value
+    text, voice_id, rate, phonemes, _speak_locale, enunciation, line, _stressed = value
     ipa, _phrase = resolve_ipa(text, phonemes, enunciation, line)
     return gemini._cache_path(text, voice_id, rate, ipa, enunciates(enunciation))
 
@@ -387,12 +395,14 @@ def _leg_stats(keys: Mapping[object, _SynthValue], tts: AzureTTSService) -> LegS
     """
     hits = misses = 0
     billable = 0
-    for text, voice_id, rate, phonemes, speak_locale, enunciation, _line in keys.values():
-        if tts._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation).exists():
+    for text, voice_id, rate, phonemes, speak_locale, enunciation, _line, stressed in keys.values():
+        if tts._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed).exists():
             hits += 1
         else:
             misses += 1
-            billable += len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation))
+            billable += len(
+                AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed)
+            )
     return LegStats(distinct=len(keys), hits=hits, misses=misses, billable_chars=billable)
 
 
@@ -412,11 +422,12 @@ def _gemini_leg_stats(keys: Mapping[object, _SynthValue], gemini: GeminiTTSServi
     hits = misses = chars = 0
     audio_tokens = 0.0
     # Two renderer keys that differ only in what this provider ignores (the
-    # locale, or a mapping that resolves to the same IPA) are ONE file and one
-    # request, so the leg dedupes again on the adapter's own key.
+    # locale, a mapping that resolves to the same IPA, a stress span it never
+    # speaks) are ONE file and one request, so the leg dedupes again on the
+    # adapter's own key.
     files: set[Path] = set()
     for value in keys.values():
-        text, _voice_id, rate, _phonemes, _speak_locale, enunciation, _line = value
+        text, _voice_id, rate, _phonemes, _speak_locale, enunciation, _line, _stressed = value
         path = gemini_cache_path(gemini, value)
         if path in files:
             continue

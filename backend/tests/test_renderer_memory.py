@@ -51,7 +51,15 @@ def tts():
     clip = _wav_bytes(_PHRASE_S)
 
     async def synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ):
         output_path.write_bytes(clip)
 

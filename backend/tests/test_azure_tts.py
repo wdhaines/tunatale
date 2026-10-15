@@ -648,6 +648,7 @@ async def test_renderer_completes_through_a_throttled_tts_port(tmp_path):
             speak_locale=None,
             enunciation=None,
             line=False,
+            stressed=None,
         ):
             nonlocal in_flight, observed_max
             async with self._semaphore:

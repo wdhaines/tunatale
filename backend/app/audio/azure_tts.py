@@ -88,6 +88,18 @@ _WORD_RE = re.compile(r"[^\W\d_]+")
 _WORD_BREAK = '<break time="450ms"/>'
 _PART_BREAK = '<break time="150ms"/>'
 
+# The narrator's focus, as markup wrapped around the stressed words alone —
+# nested INSIDE the line's own rate wrapper, never around it. Measured
+# 2026-10-15 on en-US-DavisMultilingualNeural with Praat (F0 of the stressed
+# region, plain -> stressed): "the fish" 111 -> 153 Hz with this prosody in
+# that nesting, "He" 190 -> 203 Hz. ``<emphasis level="strong">`` was measured
+# the same day and raised no pitch at all, so it is not used. The three numbers
+# are deliberately ear-tunable (design §2a D5): the owner re-tunes them by ear
+# on the first real drill render, and ``_cache_path`` keys a stressed request
+# on the markup as well as the span, so a re-tune re-renders the stressed clips
+# instead of serving the old stress under the new numbers.
+_STRESS_PROSODY = '<prosody pitch="+15%" volume="+30%" rate="-20%">'
+
 
 def _parse_retry_after(value: str | None) -> float | None:
     """Parse a Retry-After header into seconds, or ``None`` if absent/malformed.
@@ -215,6 +227,7 @@ class AzureTTSService:
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
         line: bool = False,
+        stressed: tuple[int, int] | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Azure Speech.
 
@@ -241,11 +254,19 @@ class AzureTTSService:
             line: Accepted and IGNORED. It tells an instruction-led voice that
                 *phonemes* reads a whole line; here *phonemes* is already
                 applied token by token, to a line as to anything else.
+            stressed: A ``(start, end)`` span of *text* whose words the narrator
+                says with the focus marked on them. The body wraps exactly that
+                slice in a prosody of its own (``_STRESS_PROSODY``) and escapes
+                the rest as before — markup reaches the SSML through this
+                argument, never through *text*. It does not combine with
+                *phonemes* or *enunciation* (it raises rather than silently
+                dropping one of them), and ``None`` changes nothing at all,
+                cache key included.
         """
         self._require_credentials()
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation)
+            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
@@ -267,13 +288,13 @@ class AzureTTSService:
                     f"quota resets in {days}d{hours}h"
                 )
 
-        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes, speak_locale, enunciation)
+        audio = await self._synthesize_with_retry(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation)
+            cached = self._cache_path(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -319,6 +340,7 @@ class AzureTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        stressed: tuple[int, int] | None = None,
     ) -> Path:
         key = f"{voice_id}|{rate}|{text}"
         # Extend the key ONLY when a mapping is present: backend/media and
@@ -340,6 +362,15 @@ class AzureTTSService:
         # and how long they are is exactly what makes the audio different.
         if enunciation:
             key += f"|say:{self._enunciated_body(enunciation, None)}"
+        # Same rule once more. The words under the stress are what change the
+        # audio, so a clip rendered BEFORE the narrator had a focus is a clip
+        # with none in it — serving it for a stressed request would drop the
+        # focus silently. Keyed on the span AND the markup, as the enunciation
+        # is keyed on its own: which words are marked and how hard they are
+        # pressed are both what makes the audio different, and a key on the
+        # span alone would keep serving a clip from before a re-tune.
+        if stressed:
+            key += f"|stress:{stressed[0]}-{stressed[1]}:{_STRESS_PROSODY}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
@@ -378,6 +409,7 @@ class AzureTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        stressed: tuple[int, int] | None = None,
     ) -> str:
         """The Azure-billable portion of one synthesis request's SSML.
 
@@ -387,8 +419,25 @@ class AzureTTSService:
         characters"). What remains is exactly this string: what ``_build_ssml``
         wraps in those two tags. ``len(_billable_body(...))`` is therefore the
         billable character count for one request.
+
+        *stressed* adds markup to the count, as every other marker does: the
+        prosody element and the words it wraps are billed characters.
         """
-        if enunciation:
+        if stressed is not None:
+            start, end = stressed
+            if not (0 <= start < end <= len(text)):
+                raise ValueError(
+                    f"stress span {stressed!r} names no non-empty run of the {len(text)}-character text {text!r}"
+                )
+            # Refused, not resolved: this body is built from ONE structure, and
+            # silently picking one of the two would hide a request the caller
+            # thought it had asked for.
+            if phonemes or enunciation:
+                raise ValueError(f"stress does not combine with phonemes or enunciation: {stressed!r} on {text!r}")
+            # Everything is escaped on both sides of the span, so markup still
+            # reaches the SSML only through this argument, never through text.
+            body = escape(text[:start]) + _STRESS_PROSODY + escape(text[start:end]) + "</prosody>" + escape(text[end:])
+        elif enunciation:
             body = AzureTTSService._enunciated_body(enunciation, phonemes)
         else:
             body = AzureTTSService._phoneme_body(text, phonemes) if phonemes else escape(text)
@@ -408,6 +457,7 @@ class AzureTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        stressed: tuple[int, int] | None = None,
     ) -> str:
         """Wrap *text* in SSML.
 
@@ -421,10 +471,11 @@ class AzureTTSService:
         ALL caller text is still escaped either way — markup can only enter
         the SSML through the argument, never through *text*. The same holds for
         *enunciation*: its STRUCTURE becomes ``<break>`` elements and every
-        string in it is escaped.
+        string in it is escaped, and for *stressed*, whose span becomes one
+        ``<prosody>`` element around escaped text.
         """
         locale = "-".join(voice_id.split("-")[:2])
-        inner = AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation)
+        inner = AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed)
         return (
             f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang={quoteattr(locale)}>'
             f"<voice name={quoteattr(voice_id)}>"
@@ -465,11 +516,12 @@ class AzureTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        stressed: tuple[int, int] | None = None,
     ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, voice_id, rate, phonemes, speak_locale, enunciation)
+                return await self._do_synthesize(text, voice_id, rate, phonemes, speak_locale, enunciation, stressed)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in _FATAL_STATUSES:
                     raise RuntimeError(
@@ -532,6 +584,7 @@ class AzureTTSService:
         phonemes: Mapping[str, str] | None = None,
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
+        stressed: tuple[int, int] | None = None,
     ) -> bytes:
         async with self._semaphore:
             headers = {
@@ -553,9 +606,9 @@ class AzureTTSService:
                     response = await http.post(
                         self._url(_SYNTHESIS_PATH),
                         headers=headers,
-                        content=self._build_ssml(text, voice_id, rate, phonemes, speak_locale, enunciation).encode(
-                            "utf-8"
-                        ),
+                        content=self._build_ssml(
+                            text, voice_id, rate, phonemes, speak_locale, enunciation, stressed
+                        ).encode("utf-8"),
                     )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
@@ -574,7 +627,11 @@ class AzureTTSService:
                 # a clip that eventually succeeds records once, not per attempt.
                 if self._ledger is not None:
                     self._ledger.record(
-                        len(AzureTTSService._billable_body(text, voice_id, rate, phonemes, speak_locale, enunciation)),
+                        len(
+                            AzureTTSService._billable_body(
+                                text, voice_id, rate, phonemes, speak_locale, enunciation, stressed
+                            )
+                        ),
                         now=self._now(),
                     )
                 return response.content

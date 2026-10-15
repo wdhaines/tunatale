@@ -44,9 +44,12 @@ from app.languages import (
 )
 from app.models.lesson import Phrase, Section, SectionType
 
-# (text, voice_id, rate, phoneme mapping, speak locale, enunciation) — none of
-# the last three is an attribute of the text, and each changes the audio.
-MemoKey = tuple[str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None, bool]
+# (text, voice_id, rate, phoneme mapping, speak locale, enunciation, line,
+# stress span) — none of the last four is an attribute of the text, and each
+# changes the audio.
+MemoKey = tuple[
+    str, str, str, tuple[tuple[str, str], ...] | None, str | None, Enunciation | None, bool, tuple[int, int] | None
+]
 
 # The sections whose steps are drill steps, read word by word whether a step is
 # one word or several (``_drill_phrase_phonemes``); every other section is
@@ -76,6 +79,9 @@ class SynthRequest:
     speak_locale: str | None = None
     enunciation: Enunciation | None = None
     line: bool = False
+    # The span of *text* the narrator stresses, in the coordinates of the text
+    # the voice actually receives (``plan_section`` re-finds the words there).
+    stressed: tuple[int, int] | None = None
 
     @property
     def key(self) -> MemoKey:
@@ -100,6 +106,10 @@ class SynthRequest:
         ``line`` is part of it because it changes what an instruction-led voice
         is told: the same words and readings are one request as a drill phrase
         and another as a line.
+
+        ``stressed`` is part of it for the same reason the enunciation is: the
+        same words said with the focus marked and without are two clips, and
+        whichever was submitted first would otherwise voice both.
         """
         return (
             self.text,
@@ -109,6 +119,7 @@ class SynthRequest:
             self.speak_locale,
             self.enunciation,
             self.line,
+            self.stressed,
         )
 
 
@@ -280,14 +291,34 @@ def plan_section(
             return None
         return target_locale
 
+    def _stress_span(phrase: Phrase, request_text: str) -> tuple[int, int] | None:
+        """The phrase's stress span, re-based onto the text the voice receives.
+
+        What is synthesized is the PREPROCESSED text — which may differ from
+        ``phrase.text`` (an Enunciated line drops its `` ... `` notation) — so
+        the stored span cannot simply be copied: the stressed words are re-found
+        in what actually goes out. A span whose words are not there is a
+        refused, not guessed, because the alternative is a voice stressing
+        whatever happens to sit at those coordinates.
+        """
+        if phrase.stressed is None:
+            return None
+        a, b = phrase.stressed
+        words = phrase.text[a:b]
+        start = request_text.find(words)
+        if start == -1:
+            raise ValueError(f"stressed words {words!r} are not in the text sent to the voice: {request_text!r}")
+        return (start, start + len(words))
+
     requests: list[SynthRequest] = []
     for text, phrase, line, natural in zip(texts, section.phrases, lines, natural_lines, strict=True):
         phonemes = _phrase_phonemes(phrase, line, natural)
+        # What goes to the voice as text is the line as written, with none of
+        # the stored `` ... `` notation in it.
+        request_text = line.text if line is not None else text
         requests.append(
             SynthRequest(
-                # What goes to the voice as text is the line as written, with
-                # none of the stored `` ... `` notation in it.
-                text=line.text if line is not None else text,
+                text=request_text,
                 voice_id=phrase.voice_id,
                 rate=phrase.rate,
                 phonemes=phonemes,
@@ -296,6 +327,7 @@ def plan_section(
                 # Only with a reading: a line whose reading has a hole in it is
                 # sent as plain text, and a plain request is not a line's.
                 line=natural is not None and phonemes is not None,
+                stressed=_stress_span(phrase, request_text),
             )
         )
     return requests

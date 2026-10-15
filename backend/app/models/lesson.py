@@ -20,6 +20,11 @@ def _phrase_from_dict(d: dict) -> Phrase:
     span = d.get("syllable_span")
     if isinstance(span, list):
         d["syllable_span"] = tuple(span)
+    # The stress is written as a JSON list like syllable_span; a lesson stored
+    # before this key existed simply has no ``stressed`` and reads back None.
+    stress = d.get("stressed")
+    if isinstance(stress, list):
+        d["stressed"] = tuple(stress)
     return Phrase(**d)
 
 
@@ -82,6 +87,10 @@ class Phrase:
     source_word: str | None = None
     syllable_span: tuple[int, int] | None = None
     upos: str = ""
+    # The narrator's focus: the span of ``text`` its English carries as stress,
+    # a span of a drill step's own text (``generation.affix_drill.DrillStep``).
+    # None for every target-language line — only the English is ever stressed.
+    stressed: tuple[int, int] | None = None
 
 
 @dataclass
@@ -138,6 +147,7 @@ class Lesson:
                             "source_word": p.source_word,
                             "syllable_span": list(p.syllable_span) if p.syllable_span is not None else None,
                             "upos": p.upos,
+                            "stressed": list(p.stressed) if p.stressed is not None else None,
                         }
                         for p in s.phrases
                     ],

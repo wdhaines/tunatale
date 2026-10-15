@@ -131,6 +131,7 @@ async def _rendered(lesson: Lesson) -> set[tuple]:
             speak_locale=None,
             enunciation=None,
             line=False,
+            stressed=None,
         ):
             requests.add(
                 (
@@ -141,6 +142,7 @@ async def _rendered(lesson: Lesson) -> set[tuple]:
                     speak_locale,
                     enunciation,
                     line,
+                    stressed,
                 )
             )
             output_path.write_bytes(audio)
@@ -172,8 +174,17 @@ def _reported(lesson: Lesson) -> set[tuple]:
         slow_word_fn=get_slow_word(code),
     )
     return {
-        (text, voice_id, rate, tuple(sorted(phonemes.items())) if phonemes else None, speak_locale, enunciation, line)
-        for text, voice_id, rate, phonemes, speak_locale, enunciation, line in (
+        (
+            text,
+            voice_id,
+            rate,
+            tuple(sorted(phonemes.items())) if phonemes else None,
+            speak_locale,
+            enunciation,
+            line,
+            stressed,
+        )
+        for text, voice_id, rate, phonemes, speak_locale, enunciation, line, stressed in (
             *keys.phrase.values(),
             *keys.gemini_phrase.values(),
         )
@@ -212,17 +223,17 @@ async def test_the_story_really_reaches_the_rule_it_is_there_for(code, what):
     target = get_tts_locale(code)
 
     found = {
-        "an IPA chunk with no locale wrapper": any(ph and locale is None for _, _, _, ph, locale, _, _ in rendered),
+        "an IPA chunk with no locale wrapper": any(ph and locale is None for _, _, _, ph, locale, _, _, _ in rendered),
         "a multi-word drill step with a per-word reading": any(
             ph and len(ph) >= 2 and say is None and not line and locale == target
-            for _, _, _, ph, locale, say, line in rendered
+            for _, _, _, ph, locale, say, line, _ in rendered
         ),
-        "an Enunciated line with its reading": any(ph and say for _, _, _, ph, _, say, _ in rendered),
+        "an Enunciated line with its reading": any(ph and say for _, _, _, ph, _, say, _, _ in rendered),
         "a natural-speed line with its reading": any(
-            ph and line and say is None for _, _, _, ph, _, say, line in rendered
+            ph and line and say is None for _, _, _, ph, _, say, line, _ in rendered
         ),
         "an Enunciated line with a cut inside a word": any(
-            say and any(len(parts) > 1 for parts in say) for _, _, _, _, _, say, _ in rendered
+            say and any(len(parts) > 1 for parts in say) for _, _, _, _, _, say, _, _ in rendered
         ),
     }[what]
 

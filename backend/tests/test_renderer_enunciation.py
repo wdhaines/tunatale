@@ -92,7 +92,15 @@ async def _calls(tmp_path, code: str, sections: list[Section], **kw) -> list[dic
     fake_audio = _make_wav_bytes()
 
     async def fake_synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ):
         calls.append(
             {
