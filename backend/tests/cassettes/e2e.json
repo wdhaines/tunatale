@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "recorded_at": "2026-10-14T13:32:20.253996+00:00",
+  "recorded_at": "2026-10-15T02:50:54.870035+00:00",
   "calls": [
     {
       "prompt_hash": "sha256:0c7754f646249150",
@@ -140,6 +140,34 @@
       "prompt_preview": "Below are Slovene dialogue lines. The following words still need a gloss entry: ",
       "max_tokens": 1548,
       "response": "[{\"word\":\"pros\u00edm\",\"translation\":\"please\"},{\"word\":\"je\",\"translation\":\"is\",\"base\":\"be\"}]",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:66165d928ca377c8",
+      "prompt_preview": "in \u2014 in: Dober dan, prosim kavo in enain\u0161tirideset evrov, hvala lepa, nasvidenje",
+      "max_tokens": 50,
+      "response": "good day, please coffee and twelve euros, thank you",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:69bb0e0cacd91c67",
+      "prompt_preview": "dan \u2014 in: Dober dan, prosim kavo in enain\u0161tirideset evrov, hvala lepa, nasvidenj",
+      "max_tokens": 50,
+      "response": "day",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:2c30bf608452b7db",
+      "prompt_preview": "dober \u2014 in: Dober dan, prosim kavo in enain\u0161tirideset evrov, hvala lepa, nasvide",
+      "max_tokens": 50,
+      "response": "good",
+      "provider": "groq"
+    },
+    {
+      "prompt_hash": "sha256:88b3cafbcdca6c6e",
+      "prompt_preview": "in \u2014 in: Hvala lepa, zelo dobro, enain\u0161tirideset let imam in veliko kavo pijem v",
+      "max_tokens": 50,
+      "response": "",
       "provider": "groq"
     }
   ]

@@ -771,6 +771,23 @@ def test_curated_function_word_gloss_overrides_the_llm():
     assert lesson.generation_metadata["story"]["dialogue_glosses"][1]["translation"] == "and"
 
 
+def test_curated_pronoun_gloss_overrides_the_llm():
+    """kami is the exclusive we; the gloss pass said "we" (the user, 2026-10-14).
+    The pronoun table's gloss wins; kita, also "see", has none and keeps the LLM's."""
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    story = _ceb_story([{"word": "kami", "translation": "we"}, {"word": "kita", "translation": "see"}])
+    story["scenes"][0]["lines"][0] = {
+        "speaker": "female-1",
+        "text": "Kami ug kita.",
+        "translation": "Us and see.",
+    }
+    glosses = build_lesson_from_story(story, language=get_language("ceb")).generation_metadata["token_glosses"]
+    assert glosses["kami"] == "we (not including you)"
+    assert glosses["kita"] == "see"
+
+
 def test_curated_function_word_gloss_fills_a_word_the_llm_skipped():
     from app.generation.story import build_lesson_from_story
     from app.languages import get_language

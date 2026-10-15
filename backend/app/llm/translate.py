@@ -127,7 +127,8 @@ async def generate_word_gloss(
             f"You are a {source_lang}->{target_lang} translator. "
             "Give ONLY a concise dictionary gloss (one to three words) for the given "
             f"{source_lang} word. For verbs, use the bare form WITHOUT a leading 'to' "
-            "(e.g. 'show', not 'to show'). No quotes, no explanation, no trailing period."
+            "(e.g. 'show', not 'to show'). Give nouns in the singular. "
+            "No quotes, no explanation, no trailing period."
         )
         # Include the part of speech so an ambiguous lemma is glossed in the
         # right sense — e.g. "hotel" (NOUN) must not come back as the verb "to

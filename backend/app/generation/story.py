@@ -8,6 +8,7 @@ import logging
 from collections.abc import Sequence
 from typing import NamedTuple
 
+from app.cards.pronoun_picture import pronoun_gloss
 from app.generation.glossing import dialogue_surface_lemmas, ensure_dialogue_glosses, uncovered_surfaces
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
@@ -604,8 +605,10 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
     # grammatical role (Cebuano `og` came back "and"). Applied to the built map
     # only — the stored story keeps the model's verbatim array, and a re-import
     # rebuilds through here, so the override reapplies.
+    # A listed pronoun's gloss likewise comes from the pronoun table: the pass
+    # said "we" for Cebuano kami, which is the exclusive we (tunatale-jm3d).
     for surface in surface_lemma:
-        curated = fixed_gloss(surface, language.code)
+        curated = fixed_gloss(surface, language.code) or pronoun_gloss(surface, language.code)
         if curated:
             token_glosses[surface] = curated
 

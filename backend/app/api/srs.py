@@ -60,6 +60,7 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.field_map import upos_for_disambig
+from app.cards.pronoun_picture import pronoun_gloss
 from app.common.guid import compute_guid
 from app.config import settings
 from app.generation.grammar_lesson import contrast_cards
@@ -3168,22 +3169,23 @@ async def _analyze_surface(db, language_code: str, sentence: str, surface: str):
     return next((ta for ta in analyses if ta.surface.casefold() == surface.casefold()), None)
 
 
-async def _verb_dictionary_gloss(
+async def _dictionary_gloss(
     request: Request, *, surface: str, front: str, language_code: str, upos: str | None, sentence: str
 ) -> str:
-    """The bare dictionary meaning of a verb card's *front*, or "" to keep the gloss.
+    """The dictionary meaning of a vocab card's *front*, or "" to keep the gloss.
 
-    The transcript gloss is the *conjugated* in-context meaning ("pokazem" →
-    "I will show"). classla gives the lemma + POS, but the English base meaning
-    is a translation only the LLM can produce — re-gloss to the bare dictionary
-    form ("show") to match the existing verb cards. Gloss the card FRONT, in its
-    sentence, not the bare lemma: a Tagalog lemma is a root ("punta"), which is
-    also a Spanish loan meaning "point", and that is the sense the model picked
-    for a "pumunta" card (live, 2026-09-24). "" for anything that is not a verb,
-    with no model, or on an answer that is not a gloss.
+    The transcript gloss is the *in-context* meaning: a verb's conjugation
+    ("pokazem" → "I will show"), a noun's number (Cebuano babaye → "girls" from
+    a plural line), or a neighbour's meaning (uban → "let's accompany" from
+    "Mag-uban ta", tunatale-jm3d). A card wants the dictionary sense, which only
+    the LLM can produce; the sentence still picks WHICH sense. Gloss the card
+    FRONT, in its sentence, not the bare lemma: a Tagalog lemma is a root
+    ("punta"), which is also a Spanish loan meaning "point", and that is the
+    sense the model picked for a "pumunta" card (live, 2026-09-24). "" with no
+    model, or on an answer that is not a gloss.
     """
     llm_client = app_state.llm(request)
-    if upos != "VERB" or llm_client is None:
+    if llm_client is None:
         return ""
     return await generate_word_gloss(
         llm_client, surface=surface, lemma=front, source_lang=language_code, pos=upos, sentence=sentence
@@ -3283,13 +3285,22 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
         headword = body.surface.casefold()
     front = format_vocab_headword(headword, upos, lang) if card_type == "vocab" else lemma
 
-    # A verb's card takes its dictionary meaning, not the conjugated gloss.
-    translation = (
-        await _verb_dictionary_gloss(
-            request, surface=body.surface, front=front, language_code=lang, upos=upos, sentence=body.sentence
+    # A vocab card takes its dictionary meaning, not the lesson's in-context
+    # gloss. A cloze keeps its gloss: it names a grammatical role, and the
+    # curated ones (og, si) must not be re-glossed away.
+    translation = body.translation
+    if card_type == "vocab":
+        translation = (
+            await _dictionary_gloss(
+                request, surface=body.surface, front=front, language_code=lang, upos=upos, sentence=body.sentence
+            )
+            or translation
         )
-        or body.translation
-    )
+        # A listed pronoun's gloss is the pronoun table's (kami is "we (not
+        # including you)", not "we"), under the same tag gate as the pronoun veto:
+        # a listed word the tagger read as something else is not that pronoun.
+        if upos in (None, "", "PRON"):
+            translation = pronoun_gloss(lemma, lang) or translation
 
     # A cloze shows its sentence, so it carries the sentence's English (Anki's
     # Back Extra). Before tunatale-0ycs this endpoint dropped it, and every
@@ -3372,7 +3383,7 @@ async def create_sense_card(body: CreateSenseCardRequest, request: Request) -> d
             return _card_response(db, cid, item, lang, was_created=False)
 
     analysis = await _analyze_surface(db, lang, body.sentence, body.surface)
-    regloss = await _verb_dictionary_gloss(
+    regloss = await _dictionary_gloss(
         request,
         surface=body.surface,
         front=first.text,
