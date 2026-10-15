@@ -114,7 +114,11 @@ def contrast_card(
 
     ``None`` when the language cannot drill the root in this pattern: it
     cannot vouch for every form, or nobody has written down what they mean.
+    ``None`` too for a pattern taught as whole sentences: blanking one cell of
+    it is the focus card's job (tunatale-ve4p.9).
     """
+    if pattern.sentences:
+        return None
     ready = drill_root(language_code, root, pattern)
     return card_for(ready, pattern, blank, line=line) if isinstance(ready, DrillRoot) else None
 

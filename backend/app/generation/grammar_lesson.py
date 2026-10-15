@@ -69,7 +69,14 @@ class GrammarPlan:
 
 
 def pattern_title(pattern: AffixPattern) -> str:
-    """``Affix drill: mo- / mi-``, from the pattern's own features."""
+    """``Affix drill: mo- / mi-``, from the pattern's own features.
+
+    A pattern whose affixes do not both come before the root says how each is
+    spelled (``spelled``): Cebuano's object focus is ``-on / gi-``, and "on-"
+    would be a false prefix.
+    """
+    if pattern.spelled:
+        return "Affix drill: " + " / ".join(pattern.spelled)
     return "Affix drill: " + " / ".join(f"{feature.rsplit(':', 1)[-1]}-" for feature in pattern.features)
 
 
@@ -94,7 +101,9 @@ def drill_table(lesson: Lesson) -> dict | None:
                         "root": ready.root,
                         "english": ready.english,
                         "new": new,
-                        "forms": [{"form": form, "english": english} for form, english in ready.cells],
+                        # Only the cells this pattern teaches: a sentence pattern's
+                        # first two are the contrast it stands against.
+                        "forms": [{"form": form, "english": english} for form, english in ready.shown],
                     }
                 )
     return {"pattern": pattern.key, "title": pattern_title(pattern), "labels": list(pattern.labels), "roots": roots}
@@ -172,10 +181,13 @@ def contrast_cards(lesson: Lesson, *, srs_db, store: ContentStore, curriculum_id
 
     A card carries a lesson line when one sentence of a story says its form.
     Reads only; the caller adds what it can afford.
+
+    A pattern taught as whole sentences (Cebuano gi- / -on) makes no card yet:
+    which of its cells to blank is the focus card's question (tunatale-ve4p.9).
     """
     recorded = (lesson.generation_metadata or {}).get("affix_drill")
     pattern = find_pattern(lesson.language_code, recorded["pattern"]) if recorded else None
-    if pattern is None:
+    if pattern is None or pattern.sentences:
         return []
     drillable = _understood(lesson.language_code, pattern, srs_db)
     story = [line for line in dict.fromkeys(_story_lines(store, curriculum_id)) if line[1]]
@@ -238,15 +250,23 @@ def plan_grammar_lesson(
     stories = _stories(store, curriculum_id)
     story = [line for lesson in stories for line in lesson_lines(lesson)]
     heard = {_fold(word) for text, _ in story for word in _WORD.findall(text)}
-    met = {root: sum(_fold(form) in heard for form, _ in found[root].cells) for root in understood}
+    met = {root: sum(_fold(form) in heard for form in found[root].forms) for root in understood}
 
     must_model = [root for root in understood if not found[root].transparent]
     by_met = sorted((root for root in understood if found[root].transparent), key=lambda root: -met[root])
     room = max(0, MODELLED - len(must_model))
     roots, new_roots = (*must_model, *by_met[:room]), tuple(by_met[room:])
 
-    forms = tuple(form for root in (*roots, *new_roots) for form, _ in found[root].cells)
+    forms = tuple(form for root in (*roots, *new_roots) for form in found[root].forms)
     drilled = {_fold(form) for form in forms}
+    # What a line has to say to end the drill: a sentence pattern's first two
+    # cells are only the contrast it stands against, so a story saying
+    # ``mikaon`` has not used this pattern at all.
+    said = (
+        {_fold(form) for root in (*roots, *new_roots) for form in found[root].forms[found[root].contrast :]}
+        if pattern.sentences
+        else drilled
+    )
     admitted: set[str] = set()
     for lesson in stories:
         admitted |= admitted_lines(lesson, srs_db=srs_db, lemmatizer=lemmatizer, taught=drilled)
@@ -255,7 +275,7 @@ def plan_grammar_lesson(
         for text, english in dict.fromkeys(story)
         if english
         and not _SECOND_SENTENCE.search(text.strip())
-        and any(_fold(word) in drilled for word in _WORD.findall(text))
+        and any(_fold(word) in said for word in _WORD.findall(text))
         and text in admitted
     ]
     lines = tuple(sorted(usable, key=lambda line: len(line[0].split()))[:MAX_LINES])

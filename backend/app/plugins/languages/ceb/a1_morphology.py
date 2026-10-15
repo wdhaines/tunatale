@@ -32,6 +32,7 @@ from app.plugins.languages.ceb.affix_patterns import (
     pattern_glosses,
     pattern_lines,
     pattern_roots,
+    pattern_sentences,
 )
 from app.plugins.languages.ceb.focus_sentences import irregular_forms
 from app.srs.a1_morphology import A1Morphology
@@ -119,4 +120,5 @@ CEBUANO_A1_MORPHOLOGY = A1Morphology(
     pattern_glosses=pattern_glosses,
     pattern_roots=pattern_roots,
     pattern_lines=pattern_lines,
+    pattern_sentences=pattern_sentences,
 )
