@@ -74,6 +74,17 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     # the lessons gloss padulong ("Asa ka padulong?", where are you going).
     "from": frozenset({"from"}),
     "toward": frozenset({"toward", "towards", "heading", "headed", "going", "bound"}),
+    # Distance from the people talking. The guard only confirms the sense
+    # (a thing word says "this"/"that", a place word "here"/"there"); which of
+    # the four distances is the word's own entry in spatial.json.
+    "this_both": frozenset({"this"}),
+    "this_mine": frozenset({"this"}),
+    "that_yours": frozenset({"that"}),
+    "that_far": frozenset({"that", "yonder"}),
+    "here_both": frozenset({"here"}),
+    "here_mine": frozenset({"here"}),
+    "there_yours": frozenset({"there"}),
+    "there_far": frozenset({"there", "yonder"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")

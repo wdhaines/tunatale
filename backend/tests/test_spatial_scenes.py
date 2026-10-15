@@ -85,6 +85,19 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     # No block: the house was rejected because ball-beside-a-house is `outdoors`.
     "from": (0, True, True),
     "toward": (0, True, True),
+    # Cebuano's four distances (Wolff: kini "near speaker and person spoken to",
+    # kiri "near speaker but not near hearer", kana "near hearer", kadto "far
+    # from speaker and hearer"; dinhi/diri/diha/didto for places). The user chose
+    # floor zones for "my area" and "your area" and kept all four (2026-10-14).
+    # A THING is the ball; a PLACE is the flag, so no ball.
+    "this_both": (0, True, False),
+    "this_mine": (0, True, False),
+    "that_yours": (0, True, False),
+    "that_far": (0, True, False),
+    "here_both": (0, False, False),
+    "here_mine": (0, False, False),
+    "there_yours": (0, False, False),
+    "there_far": (0, False, False),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -98,6 +111,9 @@ _MEASURED: dict[tuple[str, str], float] = {
     ("accent", "bg"): 4.46,
     ("accent", "box-fill"): 4.06,
 }
+
+DEIXIS_THINGS = ("this_both", "this_mine", "that_yours", "that_far")
+DEIXIS_PLACES = ("here_both", "here_mine", "there_yours", "there_far")
 
 #: The pairs whose render must fail the other's predicate. The reason the
 #: oracle table exists at all: two neighbours that both satisfy one predicate
@@ -171,6 +187,14 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("right", "toward"),
     ("from", "out"),
     ("out", "from"),
+    # The four distances against each other, for a thing and for a place, and
+    # a thing against the place at the same distance.
+    *((a, b) for a in DEIXIS_THINGS for b in DEIXIS_THINGS if a != b),
+    *((a, b) for a in DEIXIS_PLACES for b in DEIXIS_PLACES if a != b),
+    *zip(DEIXIS_THINGS, DEIXIS_PLACES, strict=True),
+    *zip(DEIXIS_PLACES, DEIXIS_THINGS, strict=True),
+    ("there_far", "toward"),
+    ("toward", "there_far"),
 )
 
 
@@ -233,6 +257,7 @@ class Picture(NamedTuple):
     poles: list[Arrow]  # the reference marker's pole, standing on a step or the ground
     pennants: int
     trails: list[Arrow]  # a dotted path: the way travelled, or the way still to go
+    zones: dict[str, tuple[float, float]]  # "mine"/"yours" -> (centre x, half-width) on the floor
 
 
 def _root(svg: bytes) -> ET.Element:
@@ -308,6 +333,12 @@ def _parse(svg: bytes) -> Picture:
         poles=_lines(svg, "pole"),
         pennants=len(_by_class(svg, "pennant")),
         trails=[_arrow_of(el) for el in _by_class(svg, "trail") if el.get("stroke-dasharray")],
+        zones={
+            owner: (float(el.get("cx")), float(el.get("rx")))
+            for el in _by_class(svg, "zone")
+            for owner in ("mine", "yours")
+            if owner in _classes(el)
+        },
     )
 
 
@@ -834,6 +865,47 @@ def _is_toward(p: Picture) -> bool:
     return at and ball_at_tail and short_of_flag and _trail_spans(p, *sorted((arrow.x2, pole.x1)))
 
 
+def _where(p: Picture) -> tuple[str, str] | None:
+    """Where the one object stands against the two floor zones: ("in"|"out", "in"|"out")
+    for my zone and your zone, or None when it straddles an edge or is missing.
+
+    The object is the ball (a thing) or the flag's pole (a place), never both.
+    Two zones are required, overlapping, mine to the left under the speaker.
+    """
+    if set(p.zones) != {"mine", "yours"} or p.blocks or p.arrow is not None:
+        return None
+    if (p.ball is None) == (len(p.poles) != 1):
+        return None
+    if p.ball is not None:
+        lo, hi = p.ball.cx - p.ball.r, p.ball.cx + p.ball.r
+        if not _on_ground(p):
+            return None
+    else:
+        pole = p.poles[0]
+        if not _touches(max(pole.y1, pole.y2), p.ground):
+            return None
+        lo = hi = pole.x1
+    (mine_c, mine_r), (yours_c, yours_r) = p.zones["mine"], p.zones["yours"]
+    if not (mine_c < yours_c and mine_c + mine_r > yours_c - yours_r):
+        return None
+    sides = []
+    for c, r in ((mine_c, mine_r), (yours_c, yours_r)):
+        if c - r + _CLEAR <= lo and hi <= c + r - _CLEAR:
+            sides.append("in")
+        elif hi + _CLEAR < c - r or lo - _CLEAR > c + r:
+            sides.append("out")
+        else:
+            return None
+    return sides[0], sides[1]
+
+
+def _deixis(thing: bool, mine: str, yours: str) -> Callable[[Picture], bool]:
+    def predicate(p: Picture) -> bool:
+        return (p.ball is not None) is thing and _where(p) == (mine, yours)
+
+    return predicate
+
+
 _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "up": _is_up,
     "down": _is_down,
@@ -864,6 +936,14 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "last": _is_last,
     "from": _is_from,
     "toward": _is_toward,
+    "this_both": _deixis(True, "in", "in"),
+    "this_mine": _deixis(True, "in", "out"),
+    "that_yours": _deixis(True, "out", "in"),
+    "that_far": _deixis(True, "out", "out"),
+    "here_both": _deixis(False, "in", "in"),
+    "here_mine": _deixis(False, "in", "out"),
+    "there_yours": _deixis(False, "out", "in"),
+    "there_far": _deixis(False, "out", "out"),
 }
 
 
@@ -871,7 +951,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Twenty-nine ids, and the renderer refuses everything outside this list."""
+    """Thirty-seven ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -902,6 +982,14 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "last",
         "from",
         "toward",
+        "this_both",
+        "this_mine",
+        "that_yours",
+        "that_far",
+        "here_both",
+        "here_mine",
+        "there_yours",
+        "there_far",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)
