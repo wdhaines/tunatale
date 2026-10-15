@@ -70,10 +70,12 @@ def test_every_listed_word_is_its_surfaces_default(table, surface, upos, lemma):
 
 @pytest.mark.parametrize("surface", ["wala", "kini", "ka"])
 def test_words_that_are_vocab_cards_keep_a_content_upos(table, surface):
-    """Both learners' decks hold wala and kini as vocab cards; a function-word
-    UPOS would route them to clozes and orphan the cards. ``ka`` keeps PRON too:
-    it IS a pronoun, and it reaches the cloze route through function_words.json's
-    ``include`` list (the user, 2026-09-28), not through a mislabelled UPOS."""
+    """Both learners' decks hold wala and kini as vocab cards. Cebuano's cloze
+    route no longer reads UPOS at all (function_words.json's ``pos`` is empty
+    since 2026-10-14), but a closed-class default would still misreport them to
+    everything else that reads the tag. ``ka`` keeps PRON too: it IS a pronoun,
+    and it reaches the cloze route through the ``include`` list (the user,
+    2026-09-28)."""
     default = next(r for r in table.readings(surface) if r.is_default)
     assert default.upos not in {"ADP", "DET", "CCONJ", "SCONJ", "PART"}
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.models.language import Language
 from app.srs.function_words import (
     _ending_blank_split,
@@ -831,6 +833,44 @@ class TestNorwegianFunctionWords:
         assert is_function_word("v", "sl") is True
         assert is_function_word("i", "sl") is False  # "i" is Norwegian, not a Slovene function word
         assert is_clozes_only_verb("biti", "sl") is True
+
+
+class TestAustronesianIncludeOnly:
+    """Cebuano and Tagalog route to a cloze by the curated ``include`` list alone.
+
+    Their lemma tables carry Wiktionary's UPOS, which tags productive roots as
+    closed-class: Cebuano ``gikan`` (from; mogikan "depart", gigikanan "origin")
+    is ADP, ``uban`` (with; mouban) is ADP, ``duha`` (two) is DET. A root that
+    takes affixes and can be pictured is a vocab card (the user, 2026-10-14), so
+    a tag must not make it a cloze. The UPOS values below are the tables' own
+    default readings.
+    """
+
+    @pytest.mark.parametrize("language_code", ["ceb", "tl"])
+    def test_pos_route_is_off(self, language_code):
+        pos, _, _, _ = _load_function_word_config(language_code)
+        assert pos == frozenset()
+
+    @pytest.mark.parametrize(
+        ("word", "language_code", "upos"),
+        [
+            ("gikan", "ceb", "ADP"),
+            ("padulong", "ceb", "ADP"),
+            ("uban", "ceb", "ADP"),
+            ("duha", "ceb", "DET"),
+            ("mula", "tl", "ADP"),
+            ("galing", "tl", "ADP"),
+        ],
+    )
+    def test_a_tagged_root_is_vocab(self, word, language_code, upos):
+        assert is_function_word(word, language_code, upos=upos) is False
+
+    @pytest.mark.parametrize(
+        ("word", "language_code", "upos"),
+        [("kay", "ceb", "CCONJ"), ("o", "ceb", "CCONJ"), ("at", "tl", "CCONJ"), ("o", "tl", "PART")],
+    )
+    def test_a_listed_conjunction_stays_a_cloze(self, word, language_code, upos):
+        assert is_function_word(word, language_code, upos=upos) is True
 
 
 class TestFixedGloss:
