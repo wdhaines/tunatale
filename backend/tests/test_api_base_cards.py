@@ -757,3 +757,99 @@ class TestCreateBaseCard:
         assert coll.syntactic_unit.lemma == "trøtt"
         assert coll.syntactic_unit.translation == "tired"
         assert api_app_state.get_collocation_by_guid(compute_guid("trø", "no", "")) is None
+
+
+def _stub_word(monkeypatch, surface: str, lemma: str, upos: str) -> None:
+    """Force the create-base-card lemmatizer to tag *surface* with *upos*."""
+    import app.api.srs as srs_mod
+
+    stub = StubLemmatizer()
+    stub.set_analysis(surface, lemma, upos=upos)
+    monkeypatch.setattr(srs_mod, "get_lemmatizer", lambda code: stub)
+
+
+async def _add(word: str, sentence: str, translation: str, language_code: str = "ceb") -> dict:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/srs/items/base",
+            json={
+                "surface": word,
+                "lemma": word,
+                "sentence": sentence,
+                "language_code": language_code,
+                "translation": translation,
+            },
+        )
+    assert resp.status_code == 200
+    return resp.json()["item"]
+
+
+class TestDictionaryGloss:
+    """Every vocab card gets its dictionary sense, not the lesson's in-context gloss.
+
+    The lesson gloss is deliberately contextual (glossing.py::_GLOSS_PROMPT), and
+    the add-card path copied it: Cebuano babaye became "girls" from a plural line
+    and uban "let's accompany" from "Mag-uban ta" (the user, 2026-10-14). Verbs
+    were already re-glossed; now every vocab card is.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _mock_audio(self, monkeypatch: pytest.MonkeyPatch):
+        import app.api.srs as srs_mod
+
+        monkeypatch.setattr(srs_mod, "synthesize_cloze_audios", AsyncMock())
+
+    async def test_a_noun_card_takes_the_dictionary_sense(self, api_app_state, monkeypatch):
+        _stub_word(monkeypatch, "babaye", "babaye", "NOUN")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "woman"
+        app.state.llm = mock_llm
+        sentence = "Daghan ang mga babaye sa merkado."
+
+        item = await _add("babaye", sentence, "girls")
+
+        assert item["translation"] == "woman"
+        prompt = mock_llm.complete.await_args_list[0].kwargs["prompt"]
+        assert prompt.startswith("babaye (NOUN)")
+        assert sentence in prompt
+
+    async def test_a_function_word_cloze_keeps_its_gloss(self, api_app_state, monkeypatch):
+        """A cloze's gloss names a grammatical role; a dictionary gloss would undo the curated ones."""
+        _stub_word(monkeypatch, "sa", "sa", "ADP")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "in"
+        app.state.llm = mock_llm
+
+        item = await _add("sa", "Moadto ko sa merkado.", "to (location marker)")
+
+        assert item["card_type"] == "cloze"
+        assert item["translation"] == "to (location marker)"
+
+    async def test_a_pronoun_card_takes_its_table_gloss(self, api_app_state, monkeypatch):
+        _stub_word(monkeypatch, "kami", "kami", "PRON")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "we"
+        app.state.llm = mock_llm
+
+        item = await _add("kami", "Moadto kami sa simbahan.", "we")
+
+        assert item["translation"] == "we (not including you)"
+
+    async def test_a_pronoun_word_tagged_otherwise_keeps_the_dictionary_sense(self, api_app_state, monkeypatch):
+        """The same tag gate as the pronoun veto: a listed word read as something
+        else (kami has a NOUN reading in the table) is not that pronoun here."""
+        _stub_word(monkeypatch, "kami", "kami", "NOUN")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "cassava cake"
+        app.state.llm = mock_llm
+
+        item = await _add("kami", "Nikaon siya og kami karon.", "cassava cake")
+
+        assert item["translation"] == "cassava cake"
+
+    async def test_no_llm_keeps_the_lesson_gloss(self, api_app_state, monkeypatch):
+        _stub_word(monkeypatch, "babaye", "babaye", "NOUN")
+
+        item = await _add("babaye", "Daghan ang mga babaye.", "girls")
+
+        assert item["translation"] == "girls"

@@ -42,6 +42,7 @@ from app.cards.pronoun_picture import (
     is_pronoun_word,
     load_picture_only,
     load_pronoun_words,
+    pronoun_gloss,
     pronoun_picture,
 )
 from app.cards.pronoun_scenes import PRONOUN_CONCEPTS, render_pronoun_svg
@@ -148,8 +149,8 @@ _CLOSES: tuple[tuple[str, str, str], ...] = (
 #: to begin with and claiming otherwise would be a false assertion.
 _ENCLITICS: tuple[tuple[str, str, str], ...] = (
     ("ka", "ceb", "your/yours — and it is in function_words.json's include list, so listing it would be dead data"),
-    ("ko", "ceb", "his/her — the free form `niya` carries the picture"),
-    ("mo", "ceb", "my/our — the free forms `nako`/`namo` carry the picture"),
+    ("ko", "ceb", "I / my, by me (Wolff: nominative AND genitive) — the free forms `ako`/`nako` carry the pictures"),
+    ("mo", "ceb", "you (plural) / your, by you (one person) — the free forms `kamo`/`nimo` carry the pictures"),
     ("akin", "tl", "also the oblique 'to me'"),
     ("iyo", "tl", "also the oblique 'to you'"),
 )
@@ -724,3 +725,45 @@ class TestFunctionWordVeto:
         # The contrast that makes the gate a decision, not an accident: spatial
         # words were vetoed unconditionally (hvj0) and still are.
         assert not is_function_word("under", "no", upos="ADP")
+
+
+class TestCuratedGlosses:
+    """A pronoun card's gloss comes from the language's own table, not the lesson.
+
+    The reader's add-card path copied the lesson's in-context gloss, so Cebuano
+    kami/mi/ta all reached the deck as "we" and nimo as "you (singular)" (the
+    user, 2026-10-14: "Exclusive we... so many grammar glosses to fix"). The
+    glosses live per language because a neutral label cannot carry Cebuano's
+    genitive "by me" without mislabelling Slovene "moj".
+    """
+
+    @pytest.mark.parametrize(
+        ("word", "gloss"),
+        [
+            ("kami", "we (not including you)"),
+            ("mi", "we (not including you)"),
+            ("ta", "we (including you)"),
+            ("nimo", "your; by you (one person)"),
+            ("Kami", "we (not including you)"),
+        ],
+    )
+    def test_cebuano_words_have_their_gloss(self, word, gloss) -> None:
+        assert pronoun_gloss(word, "ceb") == gloss
+
+    def test_a_homograph_has_none(self) -> None:
+        """kita is also the root of "see", so a fixed gloss would overwrite that sense."""
+        assert pronoun_gloss("kita", "ceb") is None
+
+    def test_a_language_without_glosses_has_none(self) -> None:
+        assert pronoun_gloss("du", "no") is None
+        assert pronoun_gloss("kami", "zz") is None
+
+    @pytest.mark.parametrize("code", LANGS)
+    def test_every_gloss_belongs_to_a_listed_word_and_still_draws(self, code) -> None:
+        """A gloss for a word the table does not list is dead data; one the gloss
+        guard rejects would trade the drawing for a photo."""
+        words = _words(code)
+        glosses = json.loads(get_pronouns_path(code).read_text(encoding="utf-8")).get("glosses", {})
+        for word, gloss in glosses.items():
+            assert word in words, f"{code}: {word} has a gloss but no concept"
+            assert gloss_matches(words[word], gloss), f"{code}: {word} {gloss!r} would not draw {words[word]}"

@@ -99,6 +99,16 @@ class TestGenerateWordGloss:
         assert "without" in sp and "to" in sp  # bare-form instruction
 
     @pytest.mark.asyncio
+    async def test_base_card_gloss_asks_for_a_singular_noun(self):
+        """A card's gloss is the dictionary sense: Cebuano babaye reached the deck
+        as "girls" because a lesson line was plural (2026-10-14)."""
+        mock_client = AsyncMock()
+        mock_client.complete.return_value = "woman"
+
+        await generate_word_gloss(mock_client, surface="babaye", lemma="babaye", source_lang="ceb", pos="NOUN")
+        assert "singular" in mock_client.complete.call_args.kwargs["system_prompt"].lower()
+
+    @pytest.mark.asyncio
     async def test_base_card_gloss_includes_pos_for_disambiguation(self):
         """A base-card gloss threads the POS so an ambiguous lemma is disambiguated.
 

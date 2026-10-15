@@ -157,6 +157,26 @@ def load_picture_only(language_code: str) -> dict[str, tuple[tuple[str, str | No
     }
 
 
+@cache
+def _load_glosses(language_code: str) -> dict[str, str]:
+    path = get_pronouns_path(language_code)
+    if path is None or not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {str(word).casefold(): gloss for word, gloss in data.get("glosses", {}).items()}
+
+
+def pronoun_gloss(text: str, language_code: str) -> str | None:
+    """The card gloss the pronoun table gives *text*, or ``None`` when it gives none.
+
+    Written per language in ``pronouns.json`` (``glosses``), because the lesson's
+    in-context gloss is the wrong thing for a card: Cebuano kami, mi and ta all
+    reached the deck as "we" (tunatale-jm3d). A homograph such as Cebuano
+    ``kita`` ("we" and "see") has no entry, so its other sense keeps its gloss.
+    """
+    return _load_glosses(language_code).get(text.strip().casefold())
+
+
 def is_pronoun_word(text: str, language_code: str) -> bool:
     """True if *text* is one of *language_code*'s drawn pronoun words.
 
