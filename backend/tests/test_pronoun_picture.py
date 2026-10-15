@@ -103,6 +103,11 @@ _TABLES: dict[str, dict[str, str]] = {
         # carry the inclusive-we picture (the user, 2026-09-29).
         "ta": "we_incl",
         "kami": "we_excl",
+        # The short form of `kami`, on the same footing as `ta` (the user,
+        # 2026-10-14: "Why does mi not have an svg?"). Wolff: kami's short
+        # form in a position other than the predicate. Its card had got a
+        # Pixabay photo of "we".
+        "mi": "we_excl",
         "kamo": "you_many",
         "sila": "they_many",
         "nako": "i_poss",
@@ -395,6 +400,7 @@ class TestDispatch:
             ("kami", "tl", "we, but not you", "we_excl"),
             ("kita", "ceb", "we, including you", "we_incl"),
             ("ta", "ceb", "we", "we_incl"),
+            ("mi", "ceb", "we", "we_excl"),
             ("sila", "ceb", "they", "they_many"),
             ("AKO", "ceb", "I", "i"),
             # The possessives, in both languages. `niya` and `siya` are the pair
