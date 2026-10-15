@@ -1243,6 +1243,93 @@ describe("Tooltip", () => {
       expect(tt.className).not.toContain("tt-below");
     });
 
+    /* bd tunatale-dmw4: on a phone, opening More… could leave the popover cut
+     * off (Cebuano lesson 5, the first "ko"). The flip and the clamp were
+     * measured when the popover opened, short; expanding it made it taller and
+     * wider, and neither placement ran again. */
+    function moreProps() {
+      return {
+        translation: "my",
+        word: makeWordToken({ is_due: true, srs_item_id: 5 }),
+        childText: "ko",
+        ratings: { onRate: vi.fn() },
+        actions: { onUntrack: vi.fn(), onSetState: vi.fn() },
+      };
+    }
+
+    it("flips below when More… makes the popover too tall for the room above", async () => {
+      let ttHeight = 91;
+      const anchorTop = 200;
+      const { container, getByRole } = render(TooltipTest, { props: moreProps() });
+      const tt = container.querySelector<HTMLElement>(".tt")!;
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      tt.getBoundingClientRect = () =>
+        ({
+          left: 100,
+          right: 300,
+          top: anchorTop - ttHeight,
+          bottom: anchorTop,
+          width: 200,
+          height: ttHeight,
+          x: 100,
+          y: anchorTop - ttHeight,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      wrap.getBoundingClientRect = () =>
+        ({
+          left: 100,
+          right: 300,
+          top: anchorTop,
+          bottom: anchorTop + 18,
+          width: 200,
+          height: 18,
+          x: 100,
+          y: anchorTop,
+          toJSON: () => ({}),
+        }) as DOMRect;
+
+      await fireEvent.pointerEnter(wrap);
+      await tick();
+      expect(tt.className).not.toContain("tt-below");
+
+      ttHeight = 260; // the utilities are in: 192px of room above is no longer enough
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      await tick();
+      expect(tt.className).toContain("tt-below");
+    });
+
+    it("clamps again when More… makes the popover wider", async () => {
+      let natural = { left: 100, right: 300 };
+      const { container, getByRole } = render(TooltipTest, { props: moreProps() });
+      const tt = container.querySelector<HTMLElement>(".tt")!;
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      tt.getBoundingClientRect = () => {
+        const applied = Number(/\+ (-?[\d.]+)px/.exec(tt.style.transform)?.[1] ?? 0);
+        const left = natural.left + applied;
+        const right = natural.right + applied;
+        return {
+          left,
+          right,
+          top: 0,
+          bottom: 20,
+          width: right - left,
+          height: 20,
+          x: left,
+          y: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+
+      await fireEvent.pointerEnter(wrap);
+      await tick();
+      expect(tt.style.transform).toBe("translateX(calc(-50% + 0px))");
+
+      natural = { left: 800, right: 1100 }; // jsdom's 1024px viewport: maxRight 1016
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      await tick();
+      expect(tt.style.transform).toBe("translateX(calc(-50% + -84px))");
+    });
+
     it("clears the flip when the popover is dismissed", async () => {
       const { tt, container } = openAt(8, 91);
       const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
