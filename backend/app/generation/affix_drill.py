@@ -96,6 +96,16 @@ class DrillRoot:
         """The forms themselves: a word pattern's cells ARE its forms."""
         return self._forms or tuple(form for form, _ in self.cells)
 
+    def only(self, cells: tuple[int, ...]) -> DrillRoot:
+        """This root drilled in *cells* alone, in that order: one half of a split pattern."""
+        return replace(
+            self,
+            cells=tuple(self.cells[i] for i in cells),
+            _forms=tuple(self.forms[i] for i in cells),
+            stressed=tuple(self.stressed[i] for i in cells) if self.stressed else (),
+            contrast=sum(i < self.contrast for i in cells),
+        )
+
     @property
     def shown(self) -> tuple[tuple[str, str], ...]:
         """The cells this pattern teaches: a sentence pattern's first two are only for contrast."""
@@ -304,6 +314,7 @@ def build_affix_drill(
     new_roots: list[str] | None = None,
     lines: list[tuple[str, str]] | None = None,
     note: tuple[str, ...] = (),
+    cells: tuple[int, ...] = (),
 ) -> AffixDrill:
     """The drill script for *pattern*.
 
@@ -312,6 +323,9 @@ def build_affix_drill(
     narrator says about the pattern's forms, once, straight after the first
     root has been modelled: its sentences speak of "the first" and "the
     second", which are then the two forms the learner has just heard.
+
+    *cells*, when given, are the only cells of each root drilled: one of the
+    pattern's ``halves``.
     """
     drill = AffixDrill()
 
@@ -322,7 +336,7 @@ def build_affix_drill(
             if isinstance(found, str):
                 drill.dropped.append((root, found))
             else:
-                kept.append(found)
+                kept.append(found.only(cells) if cells else found)
         return kept
 
     modelled = usable(roots)
