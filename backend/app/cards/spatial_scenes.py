@@ -97,6 +97,19 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     # the house draft lost because a ball beside a house is already `outdoors`.
     "from",
     "toward",
+    # Distance from the people talking, which Cebuano marks four ways (Wolff):
+    # near you and me (kini / dinhi), near me but not you (kiri / diri), near
+    # you (kana / diha), far from us both (kadto / didto). A THING word draws the
+    # ball, a PLACE word the flag. The user chose floor zones over bare
+    # positions from mockups and kept all four distances (2026-10-14).
+    "this_both",
+    "this_mine",
+    "that_yours",
+    "that_far",
+    "here_both",
+    "here_mine",
+    "there_yours",
+    "there_far",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -561,6 +574,52 @@ def _middle() -> list[str]:
     return [_block(_CX - _BLOCK_W / 2, _BLOCK_TALL_Y, _BLOCK_W, _BLOCK_TALL_H, band=band_top)]
 
 
+# ── Near me, near you, far from us both ──────────────────────────────────────
+# The pronoun pictures' speaker (with the speech bubble) and listener, both pale
+# because neither is the referent, each standing in a dashed floor zone: "my
+# area" and "your area". The zones overlap between them, and that overlap is
+# "near you and me". The object is the ball for a thing, a short flag for a
+# place, so a learner can tell "this" from "here" at the same distance.
+
+_SPEAKER_X = 75.0
+_LISTENER_X = 145.0
+_ZONE_RX = 56.0
+_ZONE_RY = 13.0
+_DEIXIS_BALL_R = 16.0
+#: Where the object stands for each distance. Inside a zone means wholly inside
+#: it; outside means wholly clear of it, so no object sits on a zone's edge.
+_DEIXIS_X = {"both": 110.0, "mine": 40.0, "yours": 178.0, "far": 234.0}
+#: The pronoun pictures stand people on a ground two units higher than this one.
+_PEOPLE_DY = 2.0
+
+
+def _people() -> str:
+    """Speaker and listener, as the pronoun pictures draw them, on this ground."""
+    # Imported here: pronoun_scenes takes its outline and accent colours from
+    # this module, so a module-level import would be circular.
+    from app.cards.pronoun_scenes import _bubble, _person
+
+    cast = _person(_SPEAKER_X, False) + _person(_LISTENER_X, False) + _bubble(_SPEAKER_X)
+    return f'<g class="figures" transform="translate(0 {_n(_PEOPLE_DY)})">{cast}</g>'
+
+
+def _zones() -> str:
+    return "".join(
+        f'<ellipse class="zone {owner}" cx="{_n(cx)}" cy="{_G}" rx="{_n(_ZONE_RX)}" ry="{_n(_ZONE_RY)}" '
+        f'fill="none" stroke="{_BOX_STROKE}" stroke-width="3" stroke-dasharray="7 6"/>'
+        for owner, cx in (("mine", _SPEAKER_X), ("yours", _LISTENER_X))
+    )
+
+
+def _deixis(where: str, thing: bool) -> list[str]:
+    x = _DEIXIS_X[where]
+    if thing:
+        obj = f'<circle class="ball" cx="{_n(x)}" cy="{_n(_G - _DEIXIS_BALL_R)}" r="{_n(_DEIXIS_BALL_R)}" fill="{_DOT_FILL}"/>'
+    else:
+        obj = _flag(x, height=62.0, pennant_w=22.0, pennant_h=18.0)
+    return [_zones(), _people(), obj]
+
+
 # ── A place in a line ────────────────────────────────────────────────────────
 # `first` and `last` name a position in an ORDER, which one box cannot show. So
 # the box is repeated: three of them queue on the ground with the ball, and an
@@ -601,15 +660,15 @@ _PENNANT_W = 38.0
 _PENNANT_H = 26.0
 
 
-def _flag(x: float) -> str:
+def _flag(x: float, height: float = _FLAG_H, pennant_w: float = _PENNANT_W, pennant_h: float = _PENNANT_H) -> str:
     """The place: a pole standing on the ground and a pennant in the accent."""
-    top = _G - _FLAG_H
+    top = _G - height
     return (
         '<g class="marker">'
         f'<line class="pole" x1="{_n(x)}" y1="{_G}" x2="{_n(x)}" y2="{_n(top)}" stroke="{_BOX_STROKE}" '
         'stroke-width="5" stroke-linecap="round"/>'
-        f'<polygon class="pennant" points="{_n(x)},{_n(top)} {_n(x + _PENNANT_W)},{_n(top + _PENNANT_H / 2)} '
-        f'{_n(x)},{_n(top + _PENNANT_H)}" fill="{_ACCENT}"/>'
+        f'<polygon class="pennant" points="{_n(x)},{_n(top)} {_n(x + pennant_w)},{_n(top + pennant_h / 2)} '
+        f'{_n(x)},{_n(top + pennant_h)}" fill="{_ACCENT}"/>'
         "</g>"
     )
 
@@ -675,6 +734,14 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "last": _last,
     "from": _from,
     "toward": _toward,
+    "this_both": lambda: _deixis("both", thing=True),
+    "this_mine": lambda: _deixis("mine", thing=True),
+    "that_yours": lambda: _deixis("yours", thing=True),
+    "that_far": lambda: _deixis("far", thing=True),
+    "here_both": lambda: _deixis("both", thing=False),
+    "here_mine": lambda: _deixis("mine", thing=False),
+    "there_yours": lambda: _deixis("yours", thing=False),
+    "there_far": lambda: _deixis("far", thing=False),
 }
 
 

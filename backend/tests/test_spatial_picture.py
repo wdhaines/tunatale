@@ -115,6 +115,15 @@ class TestGlossGuard:
             ("from", "from"),
             ("toward", "going"),
             ("toward", "towards; heading to"),
+            # Cebuano's four distances, on the glosses the deck carries.
+            ("this_both", "this (near you and me)"),
+            ("this_mine", "this (near me, not you)"),
+            ("that_yours", "that (near you)"),
+            ("that_far", "that (far from us both)"),
+            ("here_both", "here"),
+            ("here_mine", "here (near me, not you)"),
+            ("there_yours", "there (near you)"),
+            ("there_far", "over there"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -135,6 +144,8 @@ class TestGlossGuard:
             ("first", "fir"),
             ("from", "frome"),
             ("toward", "tow"),
+            ("this_both", "thistle"),
+            ("there_far", "therefore"),
         ],
     )
     def test_a_gloss_that_does_not_name_the_relation_refuses(self, concept, gloss) -> None:
@@ -195,6 +206,16 @@ class TestDispatch:
             # "it's about pictureability"); drawn with a flag for the place.
             ("gikan", "ceb", "come from", "from"),
             ("padulong", "ceb", "going", "toward"),
+            # Four distances (the user, 2026-10-14: "Kini could be a good svg?",
+            # then "Keep kiri/diri").
+            ("kini", "ceb", "this (near you and me)", "this_both"),
+            ("kiri", "ceb", "this (near me, not you)", "this_mine"),
+            ("kana", "ceb", "that (near you)", "that_yours"),
+            ("kadto", "ceb", "that (far from us both)", "that_far"),
+            ("dinhi", "ceb", "here", "here_both"),
+            ("diri", "ceb", "here (near me, not you)", "here_mine"),
+            ("diha", "ceb", "there (near you)", "there_yours"),
+            ("didto", "ceb", "over there", "there_far"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
