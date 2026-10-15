@@ -58,7 +58,15 @@ async def _render(tmp_path, lesson: Lesson, planner, locale: str, section_idx: i
     fake_audio = _make_wav_bytes()
 
     async def fake_synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ):
         calls.append(
             {"text": text, "voice_id": voice_id, "phonemes": phonemes, "speak_locale": speak_locale, "line": line}

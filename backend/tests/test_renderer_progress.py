@@ -52,7 +52,16 @@ class FakeTTS:
         self.released = asyncio.Event()
 
     async def synthesize(
-        self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        self,
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ) -> None:
         self.requested.append(text)
         if text in self.blocked:

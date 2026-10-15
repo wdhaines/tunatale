@@ -55,7 +55,13 @@ def test_exposure_counts_verbs_affixes_and_the_unexplained():
 
 
 def test_a_root_met_in_both_cells_of_a_pattern_is_a_pair():
-    assert _exposure().pairs == {"mo-mi": [], "mag-nag": ["ampo", "dala", "lakaw"], "ma-na": [], "maka-naka": []}
+    assert _exposure().pairs == {
+        "mo-mi": [],
+        "mag-nag": ["ampo", "dala", "lakaw"],
+        "ma-na": [],
+        "maka-naka": [],
+        "on-gi": [],
+    }
 
 
 def test_the_target_is_three_roots_paired_in_one_pattern():

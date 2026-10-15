@@ -25,7 +25,13 @@ import gzip
 from functools import cache
 from pathlib import Path
 
-from app.srs.a1_morphology import AffixPattern
+from app.plugins.languages.ceb.focus_sentences import (
+    DOERS,
+    focus_roots,
+    focus_row,
+    focus_sentence,
+)
+from app.srs.a1_morphology import AffixPattern, PatternSentences
 
 COUNTS_PATH = Path(__file__).parent / "data" / "cebuano_affix_counts.tsv.gz"
 GLOSSES_PATH = Path(__file__).parent / "data" / "affix_glosses.tsv"
@@ -83,6 +89,17 @@ PATTERNS: tuple[AffixPattern, ...] = (
             "The second is for something you managed to do, or got the chance to do.",
         ),
     ),
+    AffixPattern(
+        "on-gi",
+        ("verb:on", "verb:gi"),
+        labels=_CELLS,
+        notes=(
+            "When it is the thing you mean, the verb takes -on or gi-, and the thing takes ang.",
+            "Gi- is for what has begun. -on is for what has not begun yet.",
+        ),
+        sentences=True,
+        spelled=("-on", "gi-"),
+    ),
 )
 
 # Whole lines for the jobs of the unreal form that an English tense gets
@@ -112,7 +129,9 @@ _LINES: dict[str, tuple[tuple[str, str], ...]] = {
 # or, for a durative, "will be" and its -ing.
 _UNREAL_ENGLISH: dict[str, tuple[str, ...]] = {"maka-naka": ("can {verb}",)}
 _ASPECT_ENGLISH = ("will {verb}", "will be {verb}ing")
-PATTERN_AFFIXES: tuple[str, ...] = tuple(f.removeprefix("verb:") for p in PATTERNS for f in p.features)
+PATTERN_AFFIXES: tuple[str, ...] = tuple(
+    f.removeprefix("verb:") for p in PATTERNS if not p.sentences for f in p.features
+)
 
 
 def spell(root: str, affix: str) -> str:
@@ -139,6 +158,8 @@ def pattern_forms(
     root: str, pattern: AffixPattern, *, counts: dict[tuple[str, str], int] | None = None
 ) -> tuple[str, ...] | None:
     """*root* spelled across *pattern*, or ``None`` unless native news uses every form."""
+    if pattern.sentences:
+        return None
     table = load_affix_counts(COUNTS_PATH) if counts is None else counts
     root = root.casefold()
     affixes = [feature.removeprefix("verb:") for feature in pattern.features]
@@ -170,6 +191,8 @@ def load_affix_glosses(path: Path) -> dict[tuple[str, str], tuple[str, tuple[str
 
 def pattern_glosses(root: str, pattern: AffixPattern) -> tuple[str, tuple[str, ...]] | None:
     """The hand-written English for *root* in *pattern*, or ``None`` when there is none."""
+    if pattern.sentences:
+        return None
     return load_affix_glosses(GLOSSES_PATH).get((root.casefold(), pattern.key))
 
 
@@ -184,7 +207,11 @@ def pattern_lines(root: str, pattern: AffixPattern) -> tuple[tuple[str, str], ..
     accompany" would be a line about something else. An -ing that is not the
     verb plus "ing" (coming, sitting) loses the lines rather than gaining a
     wrong one.
+
+    A sentence pattern has none: its cells are already whole lines.
     """
+    if pattern.sentences:
+        return ()
     forms, glosses = pattern_forms(root, pattern), pattern_glosses(root, pattern)
     if forms is None or glosses is None:
         return ()
@@ -198,6 +225,36 @@ def pattern_lines(root: str, pattern: AffixPattern) -> tuple[tuple[str, str], ..
     )
 
 
+def pattern_sentences(root: str, pattern: AffixPattern) -> PatternSentences | None:
+    """The checked sentences *root* can be drilled in, or ``None``.
+
+    ``None`` unless *pattern* is taught as sentences and somebody has written
+    the root's row. The doer alternates down the table so both are drilled;
+    the object is the row's first. The first two cells are the actor forms
+    the learner already has (``contrast``), said whole; the last two are the
+    pattern's own.
+    """
+    if not pattern.sentences:
+        return None
+    row = focus_row(root)
+    if row is None:
+        return None
+    roots = focus_roots()
+    doer = DOERS[roots.index(row.root) % 2]
+    obj = row.objects[0]
+    cells = tuple(focus_sentence(row, i, doer, obj) for i in range(4))
+    return PatternSentences(
+        english=row.english,
+        forms=row.forms,
+        cells=tuple((cell.text, cell.english) for cell in cells),
+        stressed=tuple(cell.stressed for cell in cells),
+        contrast=2,
+        regular=row.forms[2] == row.root + "on",
+    )
+
+
 def pattern_roots(pattern: AffixPattern) -> tuple[str, ...]:
     """The roots worded for *pattern*, in the gloss table's own order."""
+    if pattern.sentences:
+        return focus_roots()
     return tuple(root for root, key in load_affix_glosses(GLOSSES_PATH) if key == pattern.key)

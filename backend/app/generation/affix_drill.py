@@ -36,7 +36,7 @@ carries it into a lesson are the renderer's and the lesson model's business.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from app.generation.section_builder import build_word_breakdown_spans
@@ -49,6 +49,7 @@ MIN_ROOTS = 2
 _NO_PATTERNS = "the language registers no affix patterns"
 _NO_FORMS = "native news does not use every form"
 _NO_ENGLISH = "no checked English for this root in this pattern"
+_NO_SENTENCES = "no checked sentences for this root"
 _LISTEN = "Listen and repeat."
 
 
@@ -58,13 +59,18 @@ class DrillStep:
     ``answer`` follows the pause a prompt leaves.
 
     A piece of a built-up word carries the word and its syllable span, as a
-    Key Phrases piece does, so it is voiced from the word's reading."""
+    Key Phrases piece does, so it is voiced from the word's reading.
+
+    ``stressed`` is the focus, as a span of ``text``: what the narrator says
+    with the weight on it in a sentence drill, and ``None`` everywhere else.
+    """
 
     kind: Literal["model", "prompt", "answer"]
     text: str
     language_code: str
     source_word: str | None = None
     span: tuple[int, int] | None = None
+    stressed: tuple[int, int] | None = None
 
 
 @dataclass
@@ -78,6 +84,22 @@ class DrillRoot:
     root: str
     english: str
     cells: tuple[tuple[str, str], ...]  # (form, its English), in the pattern's order
+    # The forms themselves, one per cell. A word pattern's cells ARE its forms,
+    # so it leaves this empty and ``forms`` reads it off the cells.
+    _forms: tuple[str, ...] = field(default=(), repr=False, compare=False)
+    stressed: tuple[tuple[int, int], ...] = ()  # per cell, the focus as a span of its English
+    contrast: int = 0  # how many leading cells are the pattern before this one's own
+    regular: bool = True  # whether every form is one a rule could build
+
+    @property
+    def forms(self) -> tuple[str, ...]:
+        """The forms themselves: a word pattern's cells ARE its forms."""
+        return self._forms or tuple(form for form, _ in self.cells)
+
+    @property
+    def shown(self) -> tuple[tuple[str, str], ...]:
+        """The cells this pattern teaches: a sentence pattern's first two are only for contrast."""
+        return self.cells[self.contrast :]
 
     @property
     def transparent(self) -> bool:
@@ -87,7 +109,11 @@ class DrillRoot:
         knows the root can be asked for a form nobody modelled. ``uban`` is
         "accompany" and ``mouban`` "will go along": that one has to be shown
         first, because nothing in the prompt leads to it.
+
+        A root no rule spells (``imnon`` from ``inom``) is never transparent.
         """
+        if not self.regular:
+            return False
         root = self.english.split()
         return any(
             english.split()[i : i + len(root)] == root for _, english in self.cells for i in range(len(english.split()))
@@ -97,6 +123,21 @@ class DrillRoot:
 def drill_root(language_code: str, root: str, pattern: AffixPattern) -> DrillRoot | str:
     """*root* ready to drill in *pattern*, or the reason it cannot be."""
     bundle = get_a1_morphology(language_code)
+    if pattern.sentences:
+        if bundle is None or bundle.pattern_sentences is None:
+            return _NO_PATTERNS
+        sentences = bundle.pattern_sentences(root, pattern)
+        if sentences is None:
+            return _NO_SENTENCES
+        return DrillRoot(
+            root,
+            sentences.english,
+            sentences.cells,
+            sentences.forms,
+            sentences.stressed,
+            sentences.contrast,
+            sentences.regular,
+        )
     if bundle is None or bundle.pattern_forms is None or bundle.pattern_glosses is None:
         return _NO_PATTERNS
     forms = bundle.pattern_forms(root, pattern)
@@ -129,6 +170,28 @@ def _round(asks: list[tuple[str, str]], language_code: str) -> list[DrillStep]:
 
 def _named(found: DrillRoot, language_code: str) -> list[DrillStep]:
     return [DrillStep("model", found.english, "en"), DrillStep("model", found.root, language_code)]
+
+
+_ASKED = 'How do you say "'
+
+
+def _focused(step: DrillStep, focus: dict[str, tuple[int, int]]) -> DrillStep:
+    """*step* carrying the focus of its text, when its text says a cell's English.
+
+    The bare English model step and a bare prompt say the sentence whole, so
+    the cell's own span stands on them; the round's first prompt wraps the
+    English in ``How do you say "…"`` and the span moves past the frame.
+    """
+    if step.language_code != "en":
+        return step
+    shift = 0
+    span = focus.get(step.text)
+    if span is None and step.text.startswith(_ASKED) and step.text.endswith('"?'):
+        shift = len(_ASKED)
+        span = focus.get(f"{step.text[len(_ASKED) : -2]}.")
+    if span is not None:
+        return replace(step, stressed=(span[0] + shift, span[1] + shift))
+    return step
 
 
 @dataclass
@@ -197,7 +260,9 @@ def _taught(english: str, text: str, language_code: str, built: _Built) -> list[
     return [DrillStep("model", english, "en"), *steps]
 
 
-def _mixed(found: list[DrillRoot], language_code: str, rng: random.Random) -> list[DrillStep]:
+def _mixed(
+    found: list[DrillRoot], language_code: str, rng: random.Random, *, sentence: bool = False
+) -> list[DrillStep]:
     """One round asking every form of every root in *found* once, in an order drawn from *rng*.
 
     One lap of the roots per cell. Each lap takes the roots in an order of its
@@ -206,6 +271,10 @@ def _mixed(found: list[DrillRoot], language_code: str, rng: random.Random) -> li
     is drawn per root, so the tense does not follow from the position either.
     A single root has nobody to stand between its forms and is asked them in
     a row.
+
+    *sentence* asks a cell's English as it stands: a sentence brings its own
+    full stop, and "I'll drink water.." would be read oddly. A word cell's
+    English gets one added.
     """
     cells = {root.root: rng.sample(root.cells, len(root.cells)) for root in found}
     asks: list[tuple[str, str]] = []
@@ -216,7 +285,7 @@ def _mixed(found: list[DrillRoot], language_code: str, rng: random.Random) -> li
             lap.append(lap.pop(0))
         for root in lap:
             form, english = cells[root.root].pop()
-            asks.append((f"{english}.", form))
+            asks.append((english if sentence else f"{english}.", form))
         last = lap[-1]
     return _round(asks, language_code)
 
@@ -259,8 +328,15 @@ def build_affix_drill(
     built = _Built(language_code)
     for i, found in enumerate(modelled):
         drill.steps += _named(found, language_code)
-        for form, english in found.cells:
-            taught = _taught(english, form, language_code, built)
+        for cell, (form, english) in enumerate(found.cells):
+            # The cells before ``contrast`` are a pattern the learner already
+            # has: said whole, because there is nothing on it to build. The
+            # rest are new and built up the Key Phrases way.
+            taught = (
+                [DrillStep("model", english, "en"), DrillStep("model", form, language_code)]
+                if cell < found.contrast
+                else _taught(english, form, language_code, built)
+            )
             built.add(taught, root=found.root)
             drill.steps += taught
         if i == 0:
@@ -268,13 +344,13 @@ def build_affix_drill(
     # Seeded by a string, which Python hashes itself: the interpreter's hash
     # salt does not reach it, so the order survives a restart.
     rng = random.Random(repr((pattern.key, roots, new_roots, lines)))
-    drill.steps += _mixed(modelled, language_code, rng)
+    drill.steps += _mixed(modelled, language_code, rng, sentence=pattern.sentences)
     unmodelled = usable(new_roots or [])
     if unmodelled:
         for found in unmodelled:
             drill.steps += _named(found, language_code)
-        drill.steps += _mixed(unmodelled, language_code, rng)
-    drill.steps += _mixed([*modelled, *unmodelled], language_code, rng)
+        drill.steps += _mixed(unmodelled, language_code, rng, sentence=pattern.sentences)
+    drill.steps += _mixed([*modelled, *unmodelled], language_code, rng, sentence=pattern.sentences)
     if lines:
         drill.steps.append(DrillStep("model", _LISTEN, "en"))
         for text, english in lines:
@@ -282,4 +358,11 @@ def build_affix_drill(
             built.add(taught)
             drill.steps += taught
         drill.steps += _round([(english, text) for text, english in lines], language_code)
+    if pattern.sentences:
+        focus = {
+            english: span
+            for root in (*modelled, *unmodelled)
+            for (_, english), span in zip(root.cells, root.stressed, strict=True)
+        }
+        drill.steps = [_focused(step, focus) for step in drill.steps]
     return drill

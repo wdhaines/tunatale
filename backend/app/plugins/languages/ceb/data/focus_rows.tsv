@@ -1,0 +1,25 @@
+# Cebuano object focus (stage 6, tunatale-ve4p.32). Hand-written; NOT checked by a native speaker.
+# root<TAB>English<TAB>English past<TAB>mo-<TAB>mi-<TAB>-on<TAB>gi-<TAB>objects (noun=its English when it is not the one meant; ...)
+#
+# Each row makes four sentences per doer, one per cell (focus_sentences.focus_sentence):
+#   Moinom ko og tubig.   I'll drink water.        actor focus, not begun
+#   Miinom ko og tubig.   I drank water.           actor focus, begun
+#   Imnon ko ang tubig.   I'll drink the water.    object focus, not begun
+#   Giinom ko ang tubig.  I drank the water.       object focus, begun
+# Wolff, under -un_1: "Palitun ku ang bábuy, I will buy the pig. Gipalit ku ang bábuy, I bought the pig."
+#
+# Checked 2026-10-15 against Wolff, A Dictionary of Cebuano Visayan (1972; Gutenberg #40074). Every root
+# is class a, which takes the direct passive: inum [A; a2] drink · káun [A2S3S; a] eat · dala [A; a2]
+# take, bring, carry · tan-aw [A; ab2] see, look at. Every form is counted in native news as spelled
+# (cebuano_focus_counts.tsv for -on and gi-, cebuano_affix_counts.tsv.gz for mo- and mi-).
+#
+# The -on column is written down because spell() cannot make it: imnon, kan-on (Wolff kan-un) and dad-on
+# (Wolff dad-un, also dalhun) drop or change a vowel. kan-on is also the noun "cooked rice", so it is
+# never an object of kaon.
+# Left out: hulat (its actor forms are mag-/nag- only), luto (lutoon 8, lutuon 13), sulat (sulaton 2),
+# lakaw and adto (motion: no object to focus).
+# tan-aw is "look at", not the "watch" of its mo-mi row: the owner's nouns are a house and a vehicle.
+inom	drink	drank	moinom	miinom	imnon	giinom	tubig=water; kape=coffee; gatas=milk
+kaon	eat	ate	mokaon	mikaon	kan-on	gikaon	pan=bread; pagkaon=food; isda=fish
+dala	bring	brought	modala	midala	dad-on	gidala	pagkaon=food; pan=bread; kape=coffee
+tan-aw	look at	looked at	motan-aw	mitan-aw	tan-awon	gitan-aw	balay=a house; sakyanan=a vehicle

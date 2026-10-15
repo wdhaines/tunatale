@@ -44,6 +44,7 @@ def test_the_patterns_are_the_teaching_order():
         ("mag-nag", ("verb:mag", "verb:nag")),
         ("ma-na", ("verb:ma", "verb:na")),
         ("maka-naka", ("verb:maka", "verb:naka")),
+        ("on-gi", ("verb:on", "verb:gi")),
     ]
     assert PATTERN_AFFIXES == ("mo", "mi", "mag", "nag", "ma", "na", "maka", "naka")
     assert [p.key for p in PATTERNS if p.review_only] == ["ma-na"]
@@ -309,19 +310,22 @@ def test_every_pattern_names_its_two_cells_by_whether_the_thing_has_begun():
         "mag-nag": ("not begun", "begun"),
         "ma-na": ("not begun", "begun"),
         "maka-naka": ("not begun", "begun"),
+        "on-gi": ("not begun", "begun"),
     }
 
 
 def test_every_pattern_says_what_its_two_forms_are_for():
     """Two sentences the narrator says once the first root has been modelled, so
     'the first' and 'the second' are forms the learner has just heard. No
-    sentence names a tense."""
-    for pattern in PATTERNS:
+    sentence names a tense. A pattern taught as whole sentences words its two
+    notes in its own way instead."""
+    worded = [pattern for pattern in PATTERNS if not pattern.sentences]
+    for pattern in worded:
         first, second = pattern.notes
         assert first.startswith("The first is for ")
         assert second.startswith("The second is for ")
         assert not any(word in f"{first} {second}".casefold() for word in ("past", "future", "tense"))
-    assert len({pattern.notes for pattern in PATTERNS}) == len(PATTERNS)
+    assert len({pattern.notes for pattern in worded}) == len(worded)
     # The other job of the unreal form, which an English future hides.
     assert "usually" in _BY_KEY["mo-mi"].notes[0]
 

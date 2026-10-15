@@ -199,6 +199,7 @@ class _BlockingTTS:
         speak_locale=None,
         enunciation=None,
         line=False,
+        stressed=None,
     ) -> None:
         self.started += 1
         if text == self._failing:

@@ -285,7 +285,15 @@ async def test_the_lesson_title_gets_the_narrators_english_gain(tmp_path):
     """
 
     async def fake_synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ):
         output_path.write_bytes(_make_wav_bytes(duration_ms=200, marker=0.5 if text == "Title" else 0.0))
 
@@ -317,7 +325,15 @@ async def _locales(tmp_path, phrases: list[Phrase]) -> dict[str, str | None]:
     seen: dict[str, str | None] = {}
 
     async def fake_synthesize(
-        text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ):
         seen[text] = speak_locale
         output_path.write_bytes(_make_wav_bytes())

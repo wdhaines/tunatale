@@ -24,7 +24,16 @@ class _RecordingTTS:
         self.calls: list[dict] = []
 
     async def synthesize(
-        self, text, voice_id, output_path, rate="+0%", phonemes=None, speak_locale=None, enunciation=None, line=False
+        self,
+        text,
+        voice_id,
+        output_path,
+        rate="+0%",
+        phonemes=None,
+        speak_locale=None,
+        enunciation=None,
+        line=False,
+        stressed=None,
     ) -> None:
         self.calls.append(
             {

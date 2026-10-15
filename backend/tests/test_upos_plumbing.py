@@ -877,6 +877,7 @@ class TestRendererPassesUpos:
                 speak_locale=None,
                 enunciation=None,
                 line=False,
+                stressed=None,
             ):
                 import io
                 import struct

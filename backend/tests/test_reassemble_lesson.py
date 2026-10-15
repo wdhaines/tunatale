@@ -54,6 +54,7 @@ class _CountingTTS:
         output_path: Path,
         rate: str = "+0%",
         phonemes: Mapping[str, str] | None = None,
+        stressed=None,
     ) -> None:
         self.calls.append(text)
         self.call_count += 1

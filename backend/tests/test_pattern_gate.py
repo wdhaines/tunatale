@@ -28,7 +28,8 @@ from app.generation.pattern_gate import next_pattern, progress
 from app.languages import get_a1_morphology
 from app.models.lesson import Lesson
 from app.models.srs_item import Direction, RevlogRow
-from app.srs.contrast_card import contrast_card
+from app.models.syntactic_unit import SyntacticUnit
+from app.srs.contrast_card import contrast_card, pair_key
 from app.storage.store import ContentStore
 from tests._helpers.localtz import local_timezone
 
@@ -91,6 +92,45 @@ def _graded(srs_db, pattern: str, root: str, blank: int, *grades: tuple[int, int
 def _passed_first_review(srs_db, pattern: str, roots: list[tuple[str, int]]) -> None:
     for root, blank in roots:
         _graded(srs_db, pattern, root, blank, (_LEARN, _GOOD), (_LEARN, _GOOD), (_REVIEW, _GOOD))
+
+
+_ON_GI_FOUR = [("inom", "giinom"), ("kaon", "gikaon"), ("dala", "gidala"), ("tan-aw", "gitan-aw")]
+
+
+def _passed_focus(srs_db, cards: list[tuple[str, str]]) -> None:
+    """Four object-focus clozes ``(root, form)``, each passing its first review like a contrast card.
+
+    ``contrast_card`` makes no card for the sentence pattern yet
+    (tunatale-ve4p.33), so the gate counts the plain cloze the focus card will
+    be (tunatale-ve4p.9) — same ``morph:`` key, one distinct form each.
+    """
+    for root, form in cards:
+        unit = SyntacticUnit(
+            text=form,
+            translation=form,
+            word_count=1,
+            difficulty=1,
+            source="test",
+            lemma=root,
+            disambig_key=pair_key("verb:gi"),
+            card_type="cloze",
+        )
+        srs_db.add_collocation(unit, language_code="ceb")
+        collocation_id = srs_db.get_collocation_id_by_guid(srs_db.get_collocation(form).guid)
+        for kind, button in ((_LEARN, _GOOD), (_LEARN, _GOOD), (_REVIEW, _GOOD)):
+            srs_db.append_revlog(
+                RevlogRow(
+                    id=next(_ms),
+                    collocation_id=collocation_id,
+                    direction=Direction.PRODUCTION,
+                    button_chosen=button,
+                    interval=1,
+                    last_interval=0,
+                    factor=2500,
+                    taken_millis=5000,
+                    review_kind=kind,
+                )
+            )
 
 
 _MO_MI_FOUR = [("uban", 1), ("inom", 0), ("adto", 1), ("anhi", 0)]
@@ -272,6 +312,8 @@ def test_with_every_pattern_passed_the_one_heard_longest_ago_comes_round(srs_db,
     _passed_first_review(srs_db, "mag-nag", _MAG_NAG_FOUR)
     _heard(srs_db, store, "maka-naka", _at(19), _at(21))
     _passed_first_review(srs_db, "maka-naka", _MAKA_NAKA_FOUR)
+    _heard(srs_db, store, "on-gi", _at(25), _at(27))
+    _passed_focus(srs_db, _ON_GI_FOUR)
     assert _key(srs_db, store) == "ma-na"
 
     _heard(srs_db, store, "ma-na", _at(23))

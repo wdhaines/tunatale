@@ -512,7 +512,19 @@ def build_affix_drill_section(drill: AffixDrill, *, narrator_voice: str, l2_voic
     for step in drill.steps:
         if step.language_code == "en":
             role = DRILL_PROMPT_ROLE if step.kind == "prompt" else "narrator"
-            phrases.append(Phrase(text=step.text, voice_id=narrator_voice, language_code="en", role=role))
+            # The step's focus travels with its English: what the narrator is
+            # asked to stress is a span of that step's own text, and only the
+            # narrator's English is ever stressed (a target-language form keeps
+            # the None the dataclass starts with).
+            phrases.append(
+                Phrase(
+                    text=step.text,
+                    voice_id=narrator_voice,
+                    language_code="en",
+                    role=role,
+                    stressed=step.stressed,
+                )
+            )
         else:
             phrases.append(
                 Phrase(

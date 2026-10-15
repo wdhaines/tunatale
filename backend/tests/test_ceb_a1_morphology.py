@@ -66,6 +66,11 @@ from app.srs.lemmatizer import TokenAnalysis
         ("niadto", "adto", "mi"),
         ("Nilakaw", "lakaw", "mi"),
         ("nianhi", "anhi", "mi"),
+        # Syncope is read only where the checked object-focus table spells it
+        # (ceb/data/focus_rows.tsv, tunatale-ve4p.32), never guessed.
+        ("imnon", "inom", "on"),
+        ("kan-on", "kaon", "on"),
+        ("dad-on", "dala", "on"),
     ],
 )
 def test_affix_of_recovers_the_a1_affix(surface, root, affix):
@@ -80,7 +85,7 @@ def test_affix_of_recovers_the_a1_affix(surface, root, affix):
         ("nakahibalo", "hibalo"),  # naka-: ability, not A1
         ("kuhaa", "kuha"),  # -a imperative: not A1
         ("paglakaw", "lakaw"),  # pag-: not A1
-        ("imnon", "inom"),  # syncope: the root is not a substring; no guess
+        ("putlon", "putol"),  # syncope no checked row lists: the root is not a substring; no guess
         ("gilakaw", "hatag"),  # a different root
         ("niini", "kini"),  # a pronoun that happens to begin ni-
         ("nila", "nila"),  # ...and one that is its own lemma

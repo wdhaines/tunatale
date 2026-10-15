@@ -55,6 +55,19 @@ def test_a_language_without_patterns_cannot_drill():
     assert drill_root("no", "gå", _MAG_NAG) == "the language registers no affix patterns"
 
 
+def test_a_language_with_no_sentence_builder_cannot_drill_a_sentence_pattern():
+    """Norwegian registers a bundle but no ``pattern_sentences``; only Cebuano
+    has checked rows to teach object focus from."""
+    assert drill_root("no", "gå", _PATTERNS["on-gi"]) == "the language registers no affix patterns"
+
+
+def test_a_word_pattern_has_no_sentences():
+    """``pattern_sentences`` answers ``None`` for a pattern taught as cells,
+    so ``drill_root`` stays on the word-drill branch."""
+    cebuano = get_a1_morphology("ceb")
+    assert cebuano.pattern_sentences("tulog", _MAG_NAG) is None
+
+
 def _rounds(drill) -> list[list[str]]:
     """The answers of each asking round, in the order asked. A round opens on the question."""
     rounds: list[list[str]] = []

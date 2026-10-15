@@ -557,6 +557,7 @@ class GeminiTTSService:
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
         line: bool = False,
+        stressed: tuple[int, int] | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Google Cloud TTS.
 
@@ -585,6 +586,10 @@ class GeminiTTSService:
                 line's reading, punctuation kept, and no pause is asked for.
                 A reading with a word missing is not sent: one warning, and a
                 plain render under the plain cache key.
+            stressed: Accepted and IGNORED, silently. Gemini voices here read
+                the target language, which is never stressed: the stressed words
+                are the narrator's English, so there is nothing to mark up and
+                nothing to branch on.
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)

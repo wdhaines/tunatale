@@ -53,6 +53,7 @@ class TTSService(Protocol):
         speak_locale: str | None = None,
         enunciation: Enunciation | None = None,
         line: bool = False,
+        stressed: tuple[int, int] | None = None,
     ) -> None:
         """Synthesize *text*, optionally wrapping known tokens in ``<phoneme>``.
 
@@ -80,6 +81,13 @@ class TTSService(Protocol):
         sounds, which has to know a line from a drill phrase to put the reading
         together; one that marks up tokens does exactly what *phonemes* already
         asks and ignores it. ``False`` must change nothing.
+
+        *stressed* is a ``(start, end)`` span of *text* whose words the narrator
+        says with the focus marked on them. It is markup over *text*, never part
+        of it, so an adapter that emits it escapes *text* either way. ``None``
+        must behave identically to a provider without the capability, cache key
+        included; a provider whose voices never speak the stressed language
+        accepts and ignores it.
         """
         ...
 

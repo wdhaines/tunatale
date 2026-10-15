@@ -116,7 +116,7 @@ def pattern_block(language_code: str, pattern: AffixPattern, *, srs_db=None) -> 
     """
     understood = set(understood_roots(language_code, pattern, srs_db)) if srs_db is not None else set()
     asked = sorted(_worded(language_code, pattern), key=lambda root: root.root not in understood)[:ASKED]
-    rows = [f"- {root.root}: " + ", ".join(f"{form} ({english})" for form, english in root.cells) for root in asked]
+    rows = [f"- {root.root}: " + ", ".join(f"{form} ({english})" for form, english in root.shown) for root in asked]
     title = pattern_title(pattern).removeprefix("Affix drill: ")
     return (
         f"**Verb Pattern for This Lesson: {title}**\n"
@@ -160,6 +160,12 @@ def add_closing_drill(
     picks the wrong form (tunatale-ve4p.25). They are the drill's to teach, so
     no deck is asked about their words. *introduce* has the narrator say what
     the pattern's forms are for; whether it did is recorded with the drill.
+
+    A pattern taught as whole sentences (Cebuano gi- / -on) needs no story of
+    its own: a story seldom says it unasked, so after the roots it did say, in
+    the order it first said them, the roots the learner understands and that
+    are not transparent join the drill. Its lines are the story's own, and only
+    one that says a cell of the pattern itself.
     """
     if lesson.kind != "thematic" or any(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections):
         return
@@ -170,18 +176,30 @@ def add_closing_drill(
 
     used: list[tuple[bool, int, DrillRoot]] = []
     for root in _worded(language.code, pattern):
-        said = [first_said[_fold(form)] for form, _ in root.cells if _fold(form) in first_said]
+        said = [first_said[_fold(form)] for form in root.forms if _fold(form) in first_said]
         if said:
-            used.append((len(said) < len(root.cells), min(said), root))
-    drilled = [root for *_, root in sorted(used, key=lambda entry: entry[:2])[:DRILLED]]
-    if len(drilled) < MIN_ROOTS:
-        return
+            used.append((len(said) < len(root.forms), min(said), root))
     said = {root.root for *_, root in used}
     understood = _understood(language.code, pattern, srs_db) if srs_db is not None else {}
+    if pattern.sentences:
+        # A story seldom says gi- or -on unasked, and the sentences need no
+        # story: a focus day whose story missed the pattern drills it anyway,
+        # so the roots it did not say join the ones it did, understood and not
+        # transparent, in the table's order.
+        told = [root for *_, root in sorted(used, key=lambda entry: entry[1])]
+        joined = [root for name, root in understood.items() if not root.transparent and name not in said]
+        drilled = list(dict.fromkeys([*told, *joined]))[:DRILLED]
+    else:
+        drilled = [root for *_, root in sorted(used, key=lambda entry: entry[:2])[:DRILLED]]
+    if len(drilled) < MIN_ROOTS:
+        return
     unsaid = [name for name, root in understood.items() if root.transparent and name not in said]
     new_roots = random.Random(f"{lesson.title}:{pattern.key}").sample(unsaid, min(NEW, len(unsaid)))
 
-    forms = {_fold(form) for root in drilled for form, _ in root.cells}
+    forms = {_fold(form) for root in drilled for form in root.forms}
+    # What a line has to say to end the drill: a sentence pattern's first two
+    # cells are only the contrast it stands against.
+    shown = {_fold(form) for root in drilled for form in root.forms[root.contrast :]}
     taught = forms | {_fold(word) for key_phrase in lesson.key_phrases for word in _WORD.findall(key_phrase.phrase)}
     admitted = admitted_lines(lesson, srs_db=srs_db, lemmatizer=lemmatizer, taught=taught)
     whole = [
@@ -189,7 +207,7 @@ def add_closing_drill(
         for line in story
         if line[1]
         and not _SECOND_SENTENCE.search(line[0].strip())
-        and any(_fold(word) in forms for word in _WORD.findall(line[0]))
+        and any(_fold(word) in shown for word in _WORD.findall(line[0]))
         and line[0] in admitted
     ]
     roots = [root.root for root in drilled]

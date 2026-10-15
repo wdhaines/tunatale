@@ -37,6 +37,10 @@ class AffixPattern:
     because the learner brings it with them (Cebuano ma- / na-, which a
     Tagalog speaker already has). It passes the pace gate on a drill alone
     (``app.generation.pattern_gate``).
+
+    ``sentences`` is True for patterns taught as whole sentences rather than
+    as isolated word forms. ``spelled`` names how each feature's affix appears
+    in a title (empty means ``"<affix>-"`` as today).
     """
 
     key: str
@@ -44,6 +48,20 @@ class AffixPattern:
     labels: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     review_only: bool = False
+    sentences: bool = False
+    spelled: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PatternSentences:
+    """The checked sentences for a root in a sentence-taught pattern."""
+
+    english: str
+    forms: tuple[str, ...]
+    cells: tuple[tuple[str, str], ...]
+    stressed: tuple[tuple[int, int], ...]
+    contrast: int
+    regular: bool
 
 
 @dataclass(frozen=True)
@@ -80,3 +98,4 @@ class A1Morphology:
     # Whole lines that show a root's forms doing what a gloss cannot say, each
     # ``(line, its English)``: empty for a root the language has none for.
     pattern_lines: Callable[[str, AffixPattern], tuple[tuple[str, str], ...]] | None = None
+    pattern_sentences: Callable[[str, AffixPattern], PatternSentences | None] | None = None
