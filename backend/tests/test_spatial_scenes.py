@@ -80,6 +80,11 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     # them for which way the line faces. The arrow is the line's, not the ball's.
     "first": (3, True, True),
     "last": (3, True, True),
+    # Movement relative to a PLACE, which a flag stands for (Cebuano gikan "from"
+    # and padulong "toward"; the user chose the flag over a house, 2026-10-14).
+    # No block: the house was rejected because ball-beside-a-house is `outdoors`.
+    "from": (0, True, True),
+    "toward": (0, True, True),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -156,6 +161,16 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("first", "beside"),
     ("last", "beside"),
     ("first", "out"),
+    # from / toward share their flag, trail, arrow and ball and differ in which
+    # end of the arrow the flag is at; `right` is the same arrow with no place.
+    ("from", "toward"),
+    ("toward", "from"),
+    ("from", "right"),
+    ("right", "from"),
+    ("toward", "right"),
+    ("right", "toward"),
+    ("from", "out"),
+    ("out", "from"),
 )
 
 
@@ -215,8 +230,9 @@ class Picture(NamedTuple):
     roofs: int  # a house's roof over its body
     rails: list[Arrow]  # a ladder's two uprights
     rungs: list[Arrow]
-    poles: list[Arrow]  # the reference marker's pole, standing on a step
+    poles: list[Arrow]  # the reference marker's pole, standing on a step or the ground
     pennants: int
+    trails: list[Arrow]  # a dotted path: the way travelled, or the way still to go
 
 
 def _root(svg: bytes) -> ET.Element:
@@ -291,6 +307,7 @@ def _parse(svg: bytes) -> Picture:
         rungs=_lines(svg, "rung"),
         poles=_lines(svg, "pole"),
         pennants=len(_by_class(svg, "pennant")),
+        trails=[_arrow_of(el) for el in _by_class(svg, "trail") if el.get("stroke-dasharray")],
     )
 
 
@@ -362,7 +379,7 @@ def _side_gap(block: Box, ball: Ball) -> float:
 
 def _is_up(p: Picture) -> bool:
     """A vertical arrow rising to the ball, long enough to read as a direction."""
-    if p.blocks or p.ball is None or p.arrow is None:
+    if p.blocks or p.poles or p.ball is None or p.arrow is None:
         return False
     ball, arrow = p.ball, p.arrow
     return (
@@ -376,7 +393,7 @@ def _is_up(p: Picture) -> bool:
 
 def _is_down(p: Picture) -> bool:
     """The mirror of :func:`_is_up`; the ball is off the ground, heading for it."""
-    if p.blocks or p.ball is None or p.arrow is None:
+    if p.blocks or p.poles or p.ball is None or p.arrow is None:
         return False
     ball, arrow = p.ball, p.arrow
     return (
@@ -390,7 +407,7 @@ def _is_down(p: Picture) -> bool:
 
 
 def _is_left(p: Picture) -> bool:
-    if p.blocks or p.ball is None or p.arrow is None:
+    if p.blocks or p.poles or p.ball is None or p.arrow is None:
         return False
     ball, arrow = p.ball, p.arrow
     return (
@@ -403,7 +420,7 @@ def _is_left(p: Picture) -> bool:
 
 
 def _is_right(p: Picture) -> bool:
-    if p.blocks or p.ball is None or p.arrow is None:
+    if p.blocks or p.poles or p.ball is None or p.arrow is None:
         return False
     ball, arrow = p.ball, p.arrow
     return (
@@ -768,6 +785,55 @@ def _is_last(p: Picture) -> bool:
     return position is not None and position < 0
 
 
+def _flag_on_the_ground(p: Picture) -> Arrow | None:
+    """A flag standing on the ground as the only reference, the ball on the ground
+    beside it, and one horizontal arrow long enough to read as a movement."""
+    ball, arrow = p.ball, p.arrow
+    if p.blocks or p.boundaries or ball is None or arrow is None or len(p.poles) != 1 or p.pennants != 1:
+        return None
+    pole = p.poles[0]
+    standing = abs(pole.x1 - pole.x2) <= _TOUCH and _touches(max(pole.y1, pole.y2), p.ground)
+    moving = abs(_dy(arrow)) <= _TOUCH and _length(arrow) >= 3 * ball.r
+    return pole if standing and moving and _on_ground(p) else None
+
+
+def _trail_spans(p: Picture, left: float, right: float) -> bool:
+    """One dotted trail on the ground, lying inside the gap from ``left`` to ``right``."""
+    if len(p.trails) != 1:
+        return False
+    trail = p.trails[0]
+    lo, hi = sorted((trail.x1, trail.x2))
+    return abs(_dy(trail)) <= _TOUCH and left - _TOUCH <= lo < hi <= right + _TOUCH and _length(trail) >= p.ball.r
+
+
+def _is_from(p: Picture) -> bool:
+    """Moving AWAY from the place: the arrow leaves the flag, the ball at its tip,
+    and the trail runs back from the arrow's tail to the flag (the way travelled)."""
+    pole = _flag_on_the_ground(p)
+    if pole is None:
+        return False
+    ball, arrow = p.ball, p.arrow
+    away = _dx(arrow) * (ball.cx - pole.x1) > 0
+    tail_at_flag = abs(arrow.x1 - pole.x1) < abs(arrow.x2 - pole.x1)
+    ball_at_tip = math.hypot(ball.cx - arrow.x2, ball.cy - arrow.y2) <= 2 * ball.r and abs(ball.cx - pole.x1) > abs(
+        arrow.x2 - pole.x1
+    )
+    return away and tail_at_flag and ball_at_tip and _trail_spans(p, *sorted((pole.x1, arrow.x1)))
+
+
+def _is_toward(p: Picture) -> bool:
+    """Heading FOR the place: the ball at the arrow's tail, the tip pointing at the
+    flag and stopping short of it, the trail filling the way still to go."""
+    pole = _flag_on_the_ground(p)
+    if pole is None:
+        return False
+    ball, arrow = p.ball, p.arrow
+    at = _dx(arrow) * (pole.x1 - ball.cx) > 0
+    ball_at_tail = math.hypot(ball.cx - arrow.x1, ball.cy - arrow.y1) <= 2 * ball.r
+    short_of_flag = abs(pole.x1 - arrow.x2) > _CLEAR and abs(arrow.x2 - ball.cx) < abs(pole.x1 - ball.cx)
+    return at and ball_at_tail and short_of_flag and _trail_spans(p, *sorted((arrow.x2, pole.x1)))
+
+
 _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "up": _is_up,
     "down": _is_down,
@@ -796,6 +862,8 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "middle": _is_middle,
     "first": _is_first,
     "last": _is_last,
+    "from": _is_from,
+    "toward": _is_toward,
 }
 
 
@@ -803,7 +871,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Twenty-seven ids, and the renderer refuses everything outside this list."""
+    """Twenty-nine ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -832,6 +900,8 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "middle",
         "first",
         "last",
+        "from",
+        "toward",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)
@@ -898,7 +968,7 @@ def test_every_block_rests_on_the_ground_except_the_table(concept: str) -> None:
             assert _touches(block.y + block.h, picture.ground)
 
 
-@pytest.mark.parametrize("concept", ["out", "under", "between", "beside", "first", "last"])
+@pytest.mark.parametrize("concept", ["out", "under", "between", "beside", "first", "last", "from", "toward"])
 def test_a_ball_on_the_ground_touches_it(concept: str) -> None:
     """Rests on the ground rather than hovering near it — and that is what
     separates these four from the concepts whose ball is up in the air."""
@@ -1060,6 +1130,13 @@ def _roles(concept: str) -> dict[str, str]:
     boundaries = _by_class(svg, "boundary")
     if boundaries and "box-stroke" not in roles:
         roles["box-stroke"] = boundaries[0].get("stroke")
+    # A flag picture has no box: its pole and trail carry the structural colour.
+    structural = {el.get("stroke") for el in _by_class(svg, "pole")} | {
+        el.get("stroke") for el in _by_class(svg, "trail")
+    }
+    if structural and "box-stroke" not in roles:
+        assert len(structural) == 1, f"{concept} draws its pole and trail in different colours: {structural}"
+        roles["box-stroke"] = structural.pop()
     balls = _by_class(svg, "ball")
     if balls:
         roles["ball"] = balls[0].get("fill")

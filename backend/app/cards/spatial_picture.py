@@ -70,6 +70,10 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     # verb "to last" is a different word's gloss, and that word is not listed.
     "first": frozenset({"first", "firstly"}),
     "last": frozenset({"last", "latest", "final", "lastly"}),
+    # Movement relative to a place. "going" is in `toward` because that is how
+    # the lessons gloss padulong ("Asa ka padulong?", where are you going).
+    "from": frozenset({"from"}),
+    "toward": frozenset({"toward", "towards", "heading", "headed", "going", "bound"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")
