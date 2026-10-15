@@ -33,6 +33,7 @@ from app.plugins.languages.ceb.affix_patterns import (
     pattern_lines,
     pattern_roots,
 )
+from app.plugins.languages.ceb.focus_sentences import irregular_forms
 from app.srs.a1_morphology import A1Morphology
 from app.srs.function_words import _default_format_morphology_hint
 from app.srs.lemmatizer import TokenAnalysis
@@ -75,6 +76,10 @@ def affix_of(surface: str, root: str) -> str | None:
     r = root.casefold().replace("-", "")
     if not r or s == r:
         return None
+    # The -on forms that drop a vowel (imnon, kan-on, dad-on): no rule spells
+    # them, so the checked object-focus table lists them (tunatale-ve4p.32).
+    if (irregular := irregular_forms().get((s, r))) is not None:
+        return irregular
     if s.startswith("gi") and s.endswith("an") and s[2:-2] in _stems(r):
         return "gi-an"
     for suffix in _SUFFIXES:
