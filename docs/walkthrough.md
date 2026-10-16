@@ -3552,12 +3552,18 @@ sed -n '/^def drawn_picture/,$p' backend/app/cards/drawn_picture.py
 ```
 
 ```output
-def drawn_picture(text: str, language_code: str, gloss: str) -> NumberPicture | None:
-    """The drawn picture for *text*, or ``None`` to take the route it was on."""
+def drawn_picture(text: str, language_code: str, gloss: str, disambig: str = "") -> NumberPicture | None:
+    """The drawn picture for *text*, or ``None`` to take the route it was on.
+
+    *disambig* is the card's ``disambig_key``. Only a pronoun reads it, to pick a
+    word's second sense (Cebuano ``ko`` "my" beside ``ko`` "I", tunatale-37c1),
+    so every caller holding a card passes it: a caller that dropped it would draw
+    the owner card with the subject's picture.
+    """
     return (
         number_picture(text, language_code)
         or spatial_picture(text, language_code, gloss)
-        or pronoun_picture(text, language_code, gloss)
+        or pronoun_picture(text, language_code, gloss, disambig)
         or calendar_picture(text, language_code, gloss)
     )
 ```
@@ -3566,7 +3572,7 @@ def drawn_picture(text: str, language_code: str, gloss: str) -> NumberPicture | 
 |---|---|---|
 | Numbers | `number_scenes.py` / `number_picture.py` | A native cardinal is a heap of dots (13 is a rod and three dots). The Spanish-derived numbers of Tagalog and Cebuano are used as hours and prices, so 1 to 12 draw a clock and 13 up draw the coins and bills |
 | Spatial words | `spatial_scenes.py` / `spatial_picture.py` | A box and a ball in the relation the word names. Each word gets its own picture, including the going/being split (`inn` versus `inni`) |
-| Pronouns | `pronoun_scenes.py` / `pronoun_picture.py` | A conversation with the referent filled; possessives are the same scene plus a carried bag (and are gendered where the language is: min, mi, mitt) |
+| Pronouns | `pronoun_scenes.py` / `pronoun_picture.py` | A conversation with the referent filled; possessives are the same scene plus a carried bag (and are gendered where the language is: min, mi, mitt). A word can also carry a sentence with itself blanked, drawn under the scene, which names its slot: Cebuano `ko` and `ako` share a referent and differ only in where they may stand (`frames`/`word_frames` in the plugin's `pronouns.json`). A word with two senses (`ko` "I" and "my") is two notes, the second keyed by `disambig_key` (`senses`) |
 | Calendar | `calendar_scenes.py` / `calendar_picture.py` | A month is a 4 by 3 grid with its number lit; a weekday is one of seven columns |
 
 The vocabularies are data facets of the language plugin (`numbers_path`, `spatial_path`, `pronouns_path`, `calendar_path`, each a JSON file in the plugin's `data/`), so adding a language adds JSON, not code. Three guards keep the dispatcher honest:

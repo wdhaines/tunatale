@@ -25,11 +25,17 @@ from app.cards.pronoun_picture import pronoun_picture
 from app.cards.spatial_picture import spatial_picture
 
 
-def drawn_picture(text: str, language_code: str, gloss: str) -> NumberPicture | None:
-    """The drawn picture for *text*, or ``None`` to take the route it was on."""
+def drawn_picture(text: str, language_code: str, gloss: str, disambig: str = "") -> NumberPicture | None:
+    """The drawn picture for *text*, or ``None`` to take the route it was on.
+
+    *disambig* is the card's ``disambig_key``. Only a pronoun reads it, to pick a
+    word's second sense (Cebuano ``ko`` "my" beside ``ko`` "I", tunatale-37c1),
+    so every caller holding a card passes it: a caller that dropped it would draw
+    the owner card with the subject's picture.
+    """
     return (
         number_picture(text, language_code)
         or spatial_picture(text, language_code, gloss)
-        or pronoun_picture(text, language_code, gloss)
+        or pronoun_picture(text, language_code, gloss, disambig)
         or calendar_picture(text, language_code, gloss)
     )

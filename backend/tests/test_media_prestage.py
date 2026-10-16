@@ -39,6 +39,7 @@ from hashlib import sha256
 import pytest
 
 from app.cards.media.prestage import IMAGE_REPAIR_LIMIT, prestage_production_images
+from app.cards.pronoun_picture import pronoun_picture
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
@@ -83,10 +84,12 @@ def _add_word(
     note_id: int,
     card_id: int,
     state: SRSState = SRSState.REVIEW,
+    disambig: str = "noun",
+    language_code: str = LANG,
 ) -> int:
     """Seed a word whose recognition has graduated and which has no production."""
     unit = SyntacticUnit(
-        text=word, translation=english, word_count=1, difficulty=1, source="anki", frequency=0, disambig_key="noun"
+        text=word, translation=english, word_count=1, difficulty=1, source="anki", frequency=0, disambig_key=disambig
     )
     directions = {
         Direction.RECOGNITION: DirectionState(
@@ -98,7 +101,7 @@ def _add_word(
             last_review=datetime.fromisoformat("2026-08-01T12:00:00+00:00"),
         )
     }
-    return db.upsert_by_guid(unit, LANG, directions, anki_note_id=note_id)
+    return db.upsert_by_guid(unit, language_code, directions, anki_note_id=note_id)
 
 
 def _add_repair_word(
@@ -568,6 +571,28 @@ class TestSpatialWords:
 
         assert media_fn.calls == []
         assert (report.rendered_number, report.skipped_function_word) == (0, 1)
+
+
+class TestPronounSenses:
+    """A pronoun's second sense is drawn from its key (tunatale-37c1)."""
+
+    async def test_the_owner_mo_gets_the_owner_picture(self, db) -> None:
+        media_fn = _MediaFn()
+        owner = _add_word(
+            db,
+            "mo",
+            "your; by you (one person)",
+            note_id=1000,
+            card_id=10000,
+            disambig="genitive",
+            language_code="ceb",
+        )
+
+        report = await prestage_production_images(db, media_fn, language_code="ceb", limit=10)
+
+        assert (media_fn.calls, report.rendered_number) == ([], 1)
+        assert db.get_image_filename(owner) == pronoun_picture("mo", "ceb", "your", "genitive").filename
+        assert db.get_image_filename(owner).startswith("pronoun_you_one_poss_")
 
 
 class TestNumberWords:

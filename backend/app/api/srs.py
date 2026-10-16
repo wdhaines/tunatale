@@ -346,6 +346,7 @@ async def _generate_add_time_media(
         source_sentence=unit.source_sentence or "",
         grammar=unit.grammar or "",
         used_image_urls=used_image_urls,
+        disambig=unit.disambig_key or "",
     )
 
 

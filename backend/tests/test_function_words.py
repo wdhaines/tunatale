@@ -897,8 +897,13 @@ class TestFixedGloss:
         joined to its verb (moadto). The gloss pass said "will" for "matulog ba mo
         karong gabii?" (tunatale-krt3). It shortens two words (Bunye & Yap's
         glossary: "short form of kamo or nimo"; Wolff, ikaw: "mu short for nímu"),
-        so the gloss names both (tunatale-7jl1 §3, the owner 2026-10-16)."""
-        assert fixed_gloss("mo", "ceb") == "you (plural); your (one person)"
+        so the gloss names both (tunatale-7jl1 §3, the owner 2026-10-16). Since
+        tunatale-37c1 mo is a picture card, so the gloss lives in the pronoun
+        table, which the story pass consults right after this one."""
+        from app.cards.pronoun_picture import pronoun_gloss
+
+        assert fixed_gloss("mo", "ceb") is None
+        assert pronoun_gloss("mo", "ceb") == "you (plural); your (one person)"
 
     def test_word_without_a_curated_gloss_returns_none(self):
         assert fixed_gloss("ug", "ceb") is None

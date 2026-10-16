@@ -158,6 +158,46 @@ def load_picture_only(language_code: str) -> dict[str, tuple[tuple[str, str | No
 
 
 @cache
+def _load_data(language_code: str) -> dict:
+    path = get_pronouns_path(language_code)
+    if path is None or not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@cache
+def load_frames(language_code: str) -> dict[str, str]:
+    """Each word's sentence, by word: the slot its own sense stands in (tunatale-37c1).
+
+    ``word_frames`` names a sentence in ``frames`` for each word that has one, so
+    a slot's sentence is written once and is the same on every card of that slot
+    — which is what keeps it from being a clue to the word. Empty for a language
+    that registers none, which is every language but Cebuano.
+    """
+    data = _load_data(language_code)
+    sentences = data.get("frames", {})
+    return {str(word).casefold(): sentences[name] for word, name in data.get("word_frames", {}).items()}
+
+
+@cache
+def load_senses(language_code: str) -> dict[tuple[str, str], tuple[str, str, str]]:
+    """Each word's second senses: ``(word, disambig_key)`` to ``(concept, sentence, gloss)``.
+
+    A Cebuano short form can be a subject and an owner (``ko`` "I" and "my"), and
+    one picture cannot be both, so the second sense is a note of its own whose
+    ``disambig_key`` names it. Any other key — empty, or a word class a deck put
+    in the field — is the word's own sense from ``words``.
+    """
+    data = _load_data(language_code)
+    sentences = data.get("frames", {})
+    return {
+        (str(word).casefold(), str(key)): (str(sense["concept"]), sentences[sense["frame"]], str(sense["gloss"]))
+        for word, senses in data.get("senses", {}).items()
+        for key, sense in senses.items()
+    }
+
+
+@cache
 def _load_glosses(language_code: str) -> dict[str, str]:
     path = get_pronouns_path(language_code)
     if path is None or not path.exists():
@@ -166,15 +206,20 @@ def _load_glosses(language_code: str) -> dict[str, str]:
     return {str(word).casefold(): gloss for word, gloss in data.get("glosses", {}).items()}
 
 
-def pronoun_gloss(text: str, language_code: str) -> str | None:
+def pronoun_gloss(text: str, language_code: str, disambig: str = "") -> str | None:
     """The card gloss the pronoun table gives *text*, or ``None`` when it gives none.
 
     Written per language in ``pronouns.json`` (``glosses``), because the lesson's
     in-context gloss is the wrong thing for a card: Cebuano kami, mi and ta all
     reached the deck as "we" (tunatale-jm3d). A homograph such as Cebuano
     ``kita`` ("we" and "see") has no entry, so its other sense keeps its gloss.
+    A second sense (:func:`load_senses`) carries its own.
     """
-    return _load_glosses(language_code).get(text.strip().casefold())
+    key = text.strip().casefold()
+    sense = load_senses(language_code).get((key, disambig.strip()))
+    if sense is not None:
+        return sense[2]
+    return _load_glosses(language_code).get(key)
 
 
 def is_pronoun_word(text: str, language_code: str) -> bool:
@@ -191,7 +236,7 @@ def gloss_matches(concept: str, gloss: str) -> bool:
     return bool(_CONCEPT_GLOSSES[concept] & {w.casefold() for w in _WORD.findall(gloss)})
 
 
-def pronoun_picture(text: str, language_code: str, gloss: str) -> NumberPicture | None:
+def pronoun_picture(text: str, language_code: str, gloss: str, disambig: str = "") -> NumberPicture | None:
     """The drawn picture for pronoun word *text*, or ``None``.
 
     ``None`` means "take the route you were already on": not a pronoun word, or
@@ -202,13 +247,21 @@ def pronoun_picture(text: str, language_code: str, gloss: str) -> NumberPicture 
     picture the card's gloss asks for and no picture at all when the gloss asks
     for neither — and the gender mark the concept is drawn with comes from the
     spec, so the file name carries it and two words never collide on one card.
+
+    *disambig* is the card's ``disambig_key``, which selects a word's second sense
+    when :func:`load_senses` lists one; the word's own sense is drawn with its
+    sentence from :func:`load_frames`, if it has one.
     """
     key = text.strip().casefold()
-    concept = load_pronoun_words(language_code).get(key)
+    sense = load_senses(language_code).get((key, disambig.strip()))
+    if sense is not None:
+        concept, frame, _ = sense
+    else:
+        concept, frame = load_pronoun_words(language_code).get(key), load_frames(language_code).get(key)
     if concept is not None:
         if not gloss_matches(concept, gloss):
             return None
-        svg = render_pronoun_svg(concept)
+        svg = render_pronoun_svg(concept, frame=frame)
         return NumberPicture(f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)
     for candidate, owned in load_picture_only(language_code).get(key, ()):
         if not gloss_matches(candidate, gloss):

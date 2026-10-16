@@ -293,7 +293,7 @@ async def prestage_production_images(
         # draw — not a number or spatial word, excluded, zero, too large, or a
         # spatial homograph whose gloss names its other sense — so those words
         # fall through to exactly the routing they had before.
-        picture = drawn_picture(unit.text, language_code, unit.translation)
+        picture = drawn_picture(unit.text, language_code, unit.translation, unit.disambig_key)
         if picture is not None:
             store_tt_media(db, cand.collocation_id, "image", picture.filename, picture.svg)
             if repair:
