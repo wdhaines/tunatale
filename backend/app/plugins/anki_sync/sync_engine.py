@@ -1924,7 +1924,11 @@ class AnkiSync:
             # promoted through the pre-stage got the counting picture. Stored
             # before the fetch so `_media_fn` is asked for audio alone and spends
             # no image query on a word whose picture is already known.
-            picture = drawn_picture(word, self._language_code, english) if existing_image is None else None
+            picture = (
+                drawn_picture(word, self._language_code, english, item.syntactic_unit.disambig_key or "")
+                if existing_image is None
+                else None
+            )
             if picture is not None:
                 _store_tt_media(self._db, coll_id, "image", picture.filename, picture.svg)
                 existing_image = picture.filename
@@ -2217,7 +2221,7 @@ class AnkiSync:
             # The picture is DRAWN by `prestage_production_images`, never here —
             # this phase makes no network call and now makes no drawing either,
             # so its contract is unchanged: it mints from what is already staged.
-            is_drawn = drawn_picture(unit.text, self._language_code, unit.translation) is not None
+            is_drawn = drawn_picture(unit.text, self._language_code, unit.translation, unit.disambig_key) is not None
             if not is_drawn and is_function_word(unit.text, self._language_code, upos=material.upos):
                 # Closed-class words route to a cloze without spending a fetch: a
                 # photo of "til" is noise, and minting a card with a meaningless

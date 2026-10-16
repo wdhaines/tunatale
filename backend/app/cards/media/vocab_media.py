@@ -167,6 +167,7 @@ async def generate_vocab_media(
     source_sentence: str = "",
     grammar: str = "",
     used_image_urls: set[str] | None = None,
+    disambig: str = "",
     _query_fn: Any = None,
     _fetch_fn: Any = None,
 ) -> dict[str, str]:
@@ -194,7 +195,7 @@ async def generate_vocab_media(
     # hvj0): a counting picture, a clock, a peso amount, or a box and a ball —
     # right by construction. Stored
     # first so the fetch below is asked for audio alone ("" skips the image).
-    picture = drawn_picture(word, language_code, english)
+    picture = drawn_picture(word, language_code, english, disambig)
     if picture is not None:
         store_tt_media(db, coll_id, "image", picture.filename, picture.svg)
         stored["image"] = picture.filename

@@ -2114,6 +2114,33 @@ class TestCreateNewDrawsNumbers:
         assert fields["Image"] == f'<img src="{picture.filename}">'
         assert media_kwargs[0]["skip_image"] is True
 
+    async def test_a_pronouns_two_senses_mint_with_their_own_pictures(self):
+        """tunatale-37c1: Cebuano ``mo`` is two notes, the subject (own key) and the
+        owner (key ``genitive``). Each mints with its own drawing and sentence,
+        and the key reaches the note's DisambigKey field so the pair keeps two guids."""
+        from app.cards.pronoun_picture import pronoun_picture
+
+        db = _make_db()
+        for key, gloss in (("", "you (plural); your (one person)"), ("genitive", "your; by you (one person)")):
+            unit = SyntacticUnit(
+                text="mo", translation=gloss, word_count=1, difficulty=1, source="user", disambig_key=key
+            )
+            db.add_collocation(unit, language_code="ceb")
+
+        async def media(word, english, *, used_image_urls, **kwargs):
+            return MediaResult(audio_bytes=b"AUD", audio_source="tts", image_status="skipped")
+
+        writer = FakeCreateWriter()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code="ceb").sync_create_new(
+            deck_name="0. Cebuano", model_name="Cebuano Vocabulary", _media_fn=media
+        )
+
+        minted = {c[3]["DisambigKey"]: c[3]["Image"] for c in writer.calls if c[0] == "create_note"}
+        assert minted == {
+            "": f'<img src="{pronoun_picture("mo", "ceb", "you (plural)").filename}">',
+            "genitive": f'<img src="{pronoun_picture("mo", "ceb", "your", "genitive").filename}">',
+        }
+
     async def test_an_ordinary_word_still_asks_the_media_fn_for_an_image(self):
         """The control: `skip_image` is never sent for a word that is not a number."""
         db = _make_db()

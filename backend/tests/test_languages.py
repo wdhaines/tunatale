@@ -845,11 +845,11 @@ class TestCebuanoRegistration:
         # with no Cebuano analyzer the POS list is inert, so they need naming.
         for word in ("pero", "para"):
             assert is_function_word(word, "ceb", upos=None) is True, word
-        # "ka", the enclitic "you": never sentence-initial, so it is drilled in a
-        # sentence (the user, 2026-09-28). Its free form "ikaw" stays a picture card.
-        assert is_function_word("ka", "ceb", upos=None) is True
-        # "ko", the enclitic "my / I" (free forms nako, ako), on the same rule.
-        assert is_function_word("ko", "ceb", upos=None) is True
+        # "ka" and "ko" were clozes from 2026-09-28 until tunatale-37c1 (the owner,
+        # 2026-10-16): a cloze could not say which pronoun its blank wanted, so
+        # they are picture cards whose drawn sentence names the short-form slot.
+        assert is_function_word("ka", "ceb", upos=None) is False
+        assert is_function_word("ko", "ceb", upos=None) is False
         assert is_function_word("nako", "ceb", upos=None) is False
         assert is_function_word("ikaw", "ceb", upos=None) is False
         # Tagalog's markers are not Cebuano function words, and content words never are.

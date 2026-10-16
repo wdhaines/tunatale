@@ -51,6 +51,7 @@ class Redraw(NamedTuple):
     new_filename: str
     linked: bool  # has an Anki note, so the next sync must push the new picture
     gloss: str  # the card's English, which a spatial word's picture is checked against
+    disambig: str = ""  # the card's disambig_key, which picks a pronoun's second sense
 
 
 def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
@@ -61,7 +62,8 @@ def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
         unit = item.syntactic_unit
         if unit.card_type == "cloze":
             continue
-        picture = drawn_picture(unit.text, language_code, unit.translation)
+        disambig = unit.disambig_key or ""
+        picture = drawn_picture(unit.text, language_code, unit.translation, disambig)
         if picture is None:
             continue
         current = db.get_image_filename(coll_id)
@@ -75,12 +77,20 @@ def plan_redraws(db: Any, language_code: str) -> list[Redraw]:
         if (
             current is None
             and spatial_picture(unit.text, language_code, unit.translation) is None
-            and pronoun_picture(unit.text, language_code, unit.translation) is None
+            and pronoun_picture(unit.text, language_code, unit.translation, disambig) is None
             and calendar_picture(unit.text, language_code, unit.translation) is None
         ):
             continue
         plan.append(
-            Redraw(coll_id, unit.text, current, picture.filename, item.anki_note_id is not None, unit.translation)
+            Redraw(
+                coll_id,
+                unit.text,
+                current,
+                picture.filename,
+                item.anki_note_id is not None,
+                unit.translation,
+                disambig,
+            )
         )
     return plan
 
@@ -89,7 +99,7 @@ def apply_redraws(db: Any, plan: list[Redraw], language_code: str) -> None:
     """Store each planned drawing and flag the push. The old file stays on disk
     (tunatale-ja9q: the media dir is shared by DBs this call cannot see)."""
     for redraw in plan:
-        picture = drawn_picture(redraw.text, language_code, redraw.gloss)
+        picture = drawn_picture(redraw.text, language_code, redraw.gloss, redraw.disambig)
         vocab_media._drop_image_rows(db, redraw.collocation_id, "image")
         vocab_media.store_tt_media(db, redraw.collocation_id, "image", picture.filename, picture.svg)
         if redraw.linked:

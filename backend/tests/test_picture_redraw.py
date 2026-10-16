@@ -11,6 +11,7 @@ from app.cards.number_picture import number_picture
 from app.cards.picture_redraw import apply_redraws, plan_redraws
 from app.cards.pronoun_picture import pronoun_picture
 from app.cards.spatial_picture import spatial_picture
+from app.common.guid import compute_guid
 from app.models.srs_item import Direction
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
@@ -25,14 +26,21 @@ def _card(
     card_type="vocab",
     translation="t",
     lang="ceb",
+    disambig="",
 ) -> int:
     db.add_collocation(
         SyntacticUnit(
-            text=text, translation=translation, word_count=1, difficulty=1, source="corpus", card_type=card_type
+            text=text,
+            translation=translation,
+            word_count=1,
+            difficulty=1,
+            source="corpus",
+            card_type=card_type,
+            disambig_key=disambig,
         ),
         lang,
     )
-    item = db.get_collocation(text)
+    item = db.get_collocation_by_guid(compute_guid(text, lang, disambig))
     coll_id = db.get_collocation_id_by_guid(item.guid)
     if note_id is not None:
         db.set_anki_ids(item.guid, note_id, {Direction.RECOGNITION: note_id * 10})
@@ -208,3 +216,31 @@ def test_a_repair_never_deletes_a_photo_another_db_still_shows(tmp_path) -> None
 
     assert ceb.get_image_filename(ceb.get_collocation_id_by_guid(ceb.get_collocation("kilid").guid)) != "img_side.jpg"
     assert shared.exists()
+
+
+def test_a_short_pronoun_gets_its_sentence_and_a_second_sense_its_own_picture() -> None:
+    """tunatale-37c1: the live ta card holds the bare we-incl scene, mo holds none,
+    and the owner "mo" is a second note keyed `genitive`. The repair must give
+    each its own sentence-bearing picture, and must read the key to do it: a
+    repair that dropped it would draw the owner card as "you (plural)" and then,
+    on the next run, plan the swap back again.
+    """
+    db = SRSDatabase(":memory:")
+    ta = _card(db, "ta", image="pronoun_we_incl_953517ca.svg", translation="we")  # the live bare scene
+    mo = _card(db, "mo", image=None, translation="you (plural); your (one person)")
+    mo_owner = _card(db, "mo", image=None, translation="your; by you (one person)", note_id=7002, disambig="genitive")
+
+    plan = plan_redraws(db, "ceb")
+
+    by_id = {r.collocation_id: r.new_filename for r in plan}
+    assert by_id == {
+        ta: pronoun_picture("ta", "ceb", "we").filename,
+        mo: pronoun_picture("mo", "ceb", "you (plural)").filename,
+        mo_owner: pronoun_picture("mo", "ceb", "your", "genitive").filename,
+    }
+    assert by_id[mo_owner].startswith("pronoun_you_one_poss_")
+
+    apply_redraws(db, plan, "ceb")
+
+    assert db.get_image_filename(mo_owner) == by_id[mo_owner]
+    assert plan_redraws(db, "ceb") == []

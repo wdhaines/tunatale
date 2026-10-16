@@ -2017,3 +2017,90 @@ def test_the_checker_rejects_a_lit_referent_carrying_one_bag_of_a_plural() -> No
     assert len([f for f in after.figures if f.lit]) == 3, "only a bag is missing, not a referent"
     survivors = [_own_bag(mutated, bag) for bag in after.bags]
     assert survivors[:2] == [front, own[2]], "the two left over are still a correctly placed pair"
+
+
+# ── A sentence under the scene (tunatale-37c1) ──────────────────────────────
+# A short pronoun's card shows the scene AND a sentence with the pronoun blanked,
+# because two words can share one referent and differ only in the SLOT they fill
+# (Cebuano `ako` "I" said alone vs `ko` "I" inside a clause). The scene names the
+# person; the sentence names the slot. It is drawn into the SVG rather than added
+# to the Image field's HTML, so the field stays the bare ``<img src>`` every sync
+# path writes and reads back.
+
+
+def _frame_text(svg: bytes) -> ET.Element:
+    texts = [el for el in _root(svg).iter() if el.tag == f"{_SVG}text"]
+    assert len(texts) == 1, "one sentence"
+    return texts[0]
+
+
+def test_no_sentence_leaves_every_render_byte_for_byte_as_it_was() -> None:
+    """Every deck that has no sentences keeps its pictures, and so its file names.
+
+    A changed byte would rename every pronoun picture in every language and the
+    redraw repair would then rewrite every card's Image field to no purpose.
+    """
+    for concept in PRONOUN_CONCEPTS:
+        assert render_pronoun_svg(concept, frame=None) == render_pronoun_svg(concept)
+
+
+@pytest.mark.parametrize("concept", ["you_many", "i_poss", "we_excl"])
+def test_a_sentence_is_drawn_below_the_unchanged_scene(concept: str) -> None:
+    plain = render_pronoun_svg(concept)
+    framed = render_pronoun_svg(concept, frame="Moadto ___ sa merkado.")
+    _, _, w0, h0 = (float(v) for v in _root(plain).get("viewBox").split())
+    _, _, w1, h1 = (float(v) for v in _root(framed).get("viewBox").split())
+    assert w1 == w0, "same width, so the card does not rescale the scene"
+    assert h1 > h0, "the sentence gets its own band"
+    assert _root(framed).get("height") == _n_str(h1)
+    # The scene itself is untouched: the same group, the same figures.
+    group = next(el for el in _root(framed).iter() if el.tag == f"{_SVG}g" and el.get("transform"))
+    plain_group = next(el for el in _root(plain).iter() if el.tag == f"{_SVG}g" and el.get("transform"))
+    assert ET.tostring(group) == ET.tostring(plain_group)
+    text = _frame_text(framed)
+    assert float(text.get("y")) > h0, "below the scene, not over it"
+    assert float(text.get("y")) < h1
+    assert float(text.get("x")) == w1 / 2
+    assert text.get("text-anchor") == "middle"
+    # The background covers the band too, so the card shows no seam.
+    ground = next(el for el in _root(framed) if el.tag == f"{_SVG}rect")
+    assert float(ground.get("height")) == h1
+
+
+def _n_str(value: float) -> str:
+    return str(int(value)) if value == int(value) else str(value)
+
+
+@pytest.mark.parametrize(
+    ("frame", "before", "after"),
+    [
+        ("Moadto ___ sa merkado.", "Moadto ", " sa merkado."),
+        ("Asa ang bag ___?", "Asa ang bag ", "?"),
+        ("___ ra.", "", " ra."),
+    ],
+)
+def test_the_sentence_reads_as_written_with_one_blank(frame: str, before: str, after: str) -> None:
+    content = "".join(_frame_text(render_pronoun_svg("i", frame=frame)).itertext())
+    match = re.fullmatch(r"(.*?)(_{3,})(.*)", content)
+    assert match is not None, f"no blank in {content!r}"
+    assert (match.group(1), match.group(3)) == (before, after)
+    assert "_" not in match.group(1) + match.group(3), "exactly one blank"
+
+
+def test_markup_in_a_sentence_is_text_not_markup() -> None:
+    svg = render_pronoun_svg("i", frame="A & <b> ___")
+    assert "".join(_frame_text(svg).itertext()).startswith("A & <b> ")
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "Moadto ko sa merkado.",  # no blank: the card would show the answer's slot filled
+        "___ ug ___",  # two blanks: which one is the word?
+        "",
+        "Moadto ___ sa merkado ug sa simbahan karong buntag.",  # wider than the card
+    ],
+)
+def test_a_sentence_that_cannot_be_drawn_is_refused(frame: str) -> None:
+    with pytest.raises(ValueError, match="frame"):
+        render_pronoun_svg("i", frame=frame)

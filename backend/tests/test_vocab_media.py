@@ -724,3 +724,29 @@ async def test_a_spatial_homograph_glossed_with_its_other_sense_is_searched_for(
         db, 7, "wala", "none", llm=object(), pixabay_key="k", language_code="ceb", _query_fn=_query, _fetch_fn=_fetch
     )
     assert queried == ["wala"]
+
+
+async def test_a_pronouns_second_sense_is_drawn_from_its_key(media_dir) -> None:
+    """tunatale-37c1: the owner "mo" (key `genitive`) is drawn as "your", not as
+    the subject "you (plural)" its spelling alone would give."""
+    from app.cards.pronoun_picture import pronoun_picture
+
+    db = _FakeDB()
+
+    async def _fetch(*_a, **_k):
+        return MediaResult(audio_bytes=b"AUD", audio_source="tts", image_status="skipped")
+
+    out = await vocab_media.generate_vocab_media(
+        db,
+        7,
+        "mo",
+        "your; by you (one person)",
+        llm=object(),
+        pixabay_key="k",
+        language_code="ceb",
+        disambig="genitive",
+        _fetch_fn=_fetch,
+    )
+
+    assert out["image"] == pronoun_picture("mo", "ceb", "your", "genitive").filename
+    assert out["image"].startswith("pronoun_you_one_poss_")

@@ -21,9 +21,14 @@ pronoun.
 keep working.** A possessive is its nominative scene plus a bag in every lit
 referent's hands (tunatale-uy38), so ``siya`` "he/she" and ``niya`` "his/her" are
 two words pointing at two different pictures — and nothing but the card's English
-gloss says which one a ``niya`` is. The enclitics (``ko``, ``mo``, ``ka``,
-``akin``, ``iyo``) are the other half of that decision and stay out of the
-tables; see :data:`_ENCLITICS`.
+gloss says which one a ``niya`` is. Tagalog's ``akin`` and ``iyo`` stay out of
+the tables; see :data:`_ENCLITICS`.
+
+**Cebuano's short forms carry a sentence** (tunatale-37c1). ``ko``, ``ka``,
+``mo``, ``ta`` and ``mi`` share their long forms' referents, so each card's
+picture adds a sentence with the word blanked, which names the slot; and ``ko``,
+``mo`` and ``ta`` have a second sense, a note of its own keyed ``genitive``.
+See :class:`TestFrames`.
 """
 
 from __future__ import annotations
@@ -40,8 +45,10 @@ from app.cards.pronoun_picture import (
     _spec,
     gloss_matches,
     is_pronoun_word,
+    load_frames,
     load_picture_only,
     load_pronoun_words,
+    load_senses,
     pronoun_gloss,
     pronoun_picture,
 )
@@ -99,10 +106,14 @@ _TABLES: dict[str, dict[str, str]] = {
         "ikaw": "you_one",
         "siya": "third_one",
         "kita": "we_incl",
-        # The short form of `kita`, listed although ko/mo/ka are not: in the
-        # user's deck `kita` is glossed 'see', so `ta` is the only card that can
-        # carry the inclusive-we picture (the user, 2026-09-29).
+        # The short forms are picture cards with a sentence (tunatale-37c1, the
+        # user 2026-10-16): the drawing names the person and the sentence names
+        # the short-form slot. `ta` was first listed alone because `kita` is
+        # glossed 'see' in the user's deck (2026-09-29).
         "ta": "we_incl",
+        "ko": "i",
+        "ka": "you_one",
+        "mo": "you_many",
         "kami": "we_excl",
         # The short form of `kami`, on the same footing as `ta` (the user,
         # 2026-10-14: "Why does mi not have an svg?"). Wolff: kami's short
@@ -118,6 +129,47 @@ _TABLES: dict[str, dict[str, str]] = {
         "nato": "we_incl_poss",
         "ninyo": "you_many_poss",
         "nila": "they_many_poss",
+    },
+}
+
+#: The sentences the owner picked from the mockups (tunatale-37c1, 2026-10-16):
+#: one per SLOT, the same on every card of that slot, so the sentence can never
+#: give the word away and only the drawing says which person is meant.
+#: SUBJECT: Wolff Dict. mu- "Muadtu ku didtu ugmà"; Bunye & Yap L12 "Asa ka
+#: muadto? Sa merkado." OWNER: the pattern of Wolff "Anak ko", "Pápa mu"; the
+#: owner accepted the sentence. PREDICATE: a predicate pronoun must be long
+#: (Wolff course 3 B 4); Wolff Dict. kita "Kita ra giyud way láin".
+_SUBJECT = "Moadto ___ sa merkado."
+_OWNER = "Asa ang bag ___?"
+_PREDICATE = "___ ra."
+
+#: Each word's own (default) sense's sentence. The long genitives nako/nimo/nato
+#: have none on purpose: no slot takes the long genitive and refuses the short
+#: one, so a sentence could not tell them apart — the bare picture does, by the
+#: rule "no sentence, say the full word".
+_FRAMES: dict[str, dict[str, str]] = {
+    "ceb": {
+        "ko": _SUBJECT,
+        "ka": _SUBJECT,
+        "mo": _SUBJECT,
+        "ta": _SUBJECT,
+        "mi": _SUBJECT,
+        "ako": _PREDICATE,
+        "ikaw": _PREDICATE,
+        "kita": _PREDICATE,
+        "kami": _PREDICATE,
+        "kamo": _PREDICATE,
+    },
+}
+
+#: A word's SECOND sense, a note of its own keyed by ``disambig_key``: Cebuano
+#: ko, mo and ta are each a subject AND an owner (Wolff: ku "{2} gen.: = nákù";
+#: mu_2 "see ikaw"; nátù "short form: ta"), and one picture cannot show both.
+_SENSES: dict[str, dict[tuple[str, str], tuple[str, str, str]]] = {
+    "ceb": {
+        ("ko", "genitive"): ("i_poss", _OWNER, "my; by me"),
+        ("mo", "genitive"): ("you_one_poss", _OWNER, "your; by you (one person)"),
+        ("ta", "genitive"): ("we_incl_poss", _OWNER, "our (including you); by us"),
     },
 }
 
@@ -147,10 +199,10 @@ _CLOSES: tuple[tuple[str, str, str], ...] = (
 #: rather than through ``_CLOSES``, which asserts they are function words: in
 #: ceb and tl ``pos`` carries no ``PRON``, so ``ko`` was never on the cloze route
 #: to begin with and claiming otherwise would be a false assertion.
+#: Cebuano's ko/ka/mo left this list on 2026-10-16 (tunatale-37c1): a picture
+#: plus a sentence tells the short form from its free form, which a picture alone
+#: could not, and the cloze they had been could not say which person was meant.
 _ENCLITICS: tuple[tuple[str, str, str], ...] = (
-    ("ka", "ceb", "your/yours — and it is in function_words.json's include list, so listing it would be dead data"),
-    ("ko", "ceb", "I / my, by me (Wolff: nominative AND genitive) — the free forms `ako`/`nako` carry the pictures"),
-    ("mo", "ceb", "you (plural) / your, by you (one person) — the free forms `kamo`/`nimo` carry the pictures"),
     ("akin", "tl", "also the oblique 'to me'"),
     ("iyo", "tl", "also the oblique 'to you'"),
 )
@@ -425,7 +477,7 @@ class TestDispatch:
     def test_a_pronoun_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
         picture = pronoun_picture(word, code, gloss)
         assert picture is not None
-        svg = render_pronoun_svg(concept)
+        svg = render_pronoun_svg(concept, frame=_FRAMES.get(code, {}).get(word.casefold()))
         assert picture.svg == svg
         assert picture.filename == f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg"
 
@@ -742,7 +794,10 @@ class TestCuratedGlosses:
         [
             ("kami", "we (not including you)"),
             ("mi", "we (not including you)"),
-            ("ta", "we (including you)"),
+            ("ta", "we (including you); our (including you)"),
+            ("ko", "I; my, by me"),
+            ("ka", "you (one person)"),
+            ("mo", "you (plural); your (one person)"),
             ("nimo", "your; by you (one person)"),
             ("Kami", "we (not including you)"),
         ],
@@ -767,3 +822,83 @@ class TestCuratedGlosses:
         for word, gloss in glosses.items():
             assert word in words, f"{code}: {word} has a gloss but no concept"
             assert gloss_matches(words[word], gloss), f"{code}: {word} {gloss!r} would not draw {words[word]}"
+
+
+class TestFrames:
+    """A short form's picture carries a sentence that names its slot (tunatale-37c1).
+
+    Cebuano ``ko`` and ``ako`` both point at the speaker; what differs is where
+    the word may stand. So the drawing (who) gets a sentence (where), and the
+    sentence is the same for every card of a slot, which is what keeps it from
+    being a clue to the word.
+    """
+
+    @pytest.mark.parametrize("code", LANGS)
+    def test_the_sentences_are_the_ones_the_owner_chose(self, code) -> None:
+        assert load_frames(code) == _FRAMES.get(code, {})
+
+    @pytest.mark.parametrize("code", LANGS)
+    def test_the_second_senses_are_the_ones_the_owner_chose(self, code) -> None:
+        assert load_senses(code) == _SENSES.get(code, {})
+
+    @pytest.mark.parametrize(("key", "sense"), list(_SENSES["ceb"].items()))
+    def test_a_second_sense_is_drawn_by_its_key(self, key, sense) -> None:
+        word, disambig = key
+        concept, frame, gloss = sense
+        picture = pronoun_picture(word, "ceb", gloss, disambig)
+        svg = render_pronoun_svg(concept, frame=frame)
+        assert picture is not None
+        assert picture.svg == svg
+        assert picture.filename == f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg"
+
+    @pytest.mark.parametrize(("key", "sense"), list(_SENSES["ceb"].items()))
+    def test_a_second_sense_has_its_own_gloss(self, key, sense) -> None:
+        word, disambig = key
+        assert pronoun_gloss(word, "ceb", disambig) == sense[2]
+
+    def test_a_second_sense_keeps_the_gloss_guard(self) -> None:
+        """A genitive note whose gloss says "you" is not confirmed as "your"."""
+        assert pronoun_picture("mo", "ceb", "you (plural)", "genitive") is None
+
+    @pytest.mark.parametrize("disambig", ["", "PRON", "  ", "NOUN"])
+    def test_any_other_key_is_the_words_own_sense(self, disambig) -> None:
+        """Only a listed key changes the sense. A word class the deck put in the
+        field, or nothing, draws the word's own picture."""
+        picture = pronoun_picture("ko", "ceb", "I; my, by me", disambig)
+        assert picture is not None
+        assert picture.svg == render_pronoun_svg("i", frame=_SUBJECT)
+        assert pronoun_gloss("ko", "ceb", disambig) == "I; my, by me"
+
+    def test_the_key_is_stripped_like_the_word(self) -> None:
+        assert pronoun_picture("Mo ", "ceb", "your", " genitive ") == pronoun_picture("mo", "ceb", "your", "genitive")
+
+    def test_one_person_three_words_three_pictures(self) -> None:
+        """ako, ko and nako all point at the speaker; the card must still say which word it wants."""
+        files = {
+            pronoun_picture("ako", "ceb", "I").filename,
+            pronoun_picture("ko", "ceb", "I").filename,
+            pronoun_picture("ko", "ceb", "my", "genitive").filename,
+            pronoun_picture("nako", "ceb", "my").filename,
+        }
+        assert len(files) == 4
+
+    @pytest.mark.parametrize("code", LANGS)
+    def test_the_sentence_data_is_all_reachable_and_drawable(self, code) -> None:
+        """Every named sentence exists, every framed word is a listed word, and
+        every second sense draws: a typo here would otherwise surface at the mint
+        as a card with no picture."""
+        data = json.loads(get_pronouns_path(code).read_text(encoding="utf-8"))
+        words = data.get("words", {})
+        sentences = data.get("frames", {})
+        for word, name in data.get("word_frames", {}).items():
+            assert word in words, f"{code}: {word} has a sentence but no concept"
+            render_pronoun_svg(words[word], frame=sentences[name])
+        for word, senses in data.get("senses", {}).items():
+            assert word in words, f"{code}: {word} has a second sense but no first"
+            for sense in senses.values():
+                assert gloss_matches(sense["concept"], sense["gloss"]), f"{code}: {word} {sense}"
+                render_pronoun_svg(sense["concept"], frame=sentences[sense["frame"]])
+        used = set(data.get("word_frames", {}).values()) | {
+            sense["frame"] for senses in data.get("senses", {}).values() for sense in senses.values()
+        }
+        assert used == set(sentences), f"{code}: a sentence nobody uses, or one used but missing"
