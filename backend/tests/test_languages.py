@@ -801,6 +801,36 @@ class TestCebuanoRegistration:
         assert '"Palit ko og isda" is an error' in notes
         assert "Mopalit ko og isda" in notes
 
+    @pytest.mark.parametrize(
+        ("short", "long"), [("di", "dili"), ("gyud", "gyud"), ("nya", "unya"), ("sad", "usab"), ("pud", "pud")]
+    )
+    def test_the_style_guide_asks_for_the_everyday_short_forms(self, short, long):
+        """Lessons are speech, and in speech the short form is the normal one
+        (Wolff, Beginning Cebuano 3 F 1: "the short form is most common in rapid
+        speech"; the owner, 2026-10-16: "Let's follow Wolff's style advice"). Every
+        short form the guide asks for must already read as its word in the lemma
+        table, or a lesson would teach a form no card can match."""
+        from app.languages import get_lemma_table_path, get_style_notes
+        from app.srs.lemma_table import TableLemmatizer
+
+        notes = get_style_notes("ceb")
+        assert "Write the everyday spoken forms" in notes
+        assert f'"{short}"' in notes
+        table = TableLemmatizer("ceb", get_lemma_table_path("ceb"))
+        try:
+            assert next(r for r in table.readings(short) if r.is_default).lemma == long
+        finally:
+            table.close()
+
+    def test_the_style_guide_keeps_the_long_pronoun_where_cebuano_requires_it(self):
+        """A pronoun that IS the predicate must be long (Wolff 3 B 4), and so must a
+        fronted one (Tanangkingsing ch. 4): the short-form rule must say so."""
+        from app.languages import get_style_notes
+
+        notes = get_style_notes("ceb")
+        assert "Kinsa? — Ako." in notes
+        assert "Ako ang mobayad." in notes
+
     def test_the_story_prompt_carries_the_style_guide(self):
         from app.generation.prompts import build_story_system_prompt
 

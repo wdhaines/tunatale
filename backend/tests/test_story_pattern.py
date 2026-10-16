@@ -198,13 +198,17 @@ def _fingerprint(code: str, strategy: str, **kwargs) -> str:
     [
         ("sl", "WIDER", "1a4db6536708be24"),
         ("no", "DEEPER", "0d965d4571180cd8"),
-        ("ceb", "WIDER", "dd5bde475e52c2cc"),
-        ("ceb", "DEEPER", "982ae2e86704c1db"),
+        ("ceb", "WIDER", "7c620668755e39bc"),
+        ("ceb", "DEEPER", "92e6b5c600dce2a3"),
         ("tl", "WIDER", "9238bf15b1a03090"),
     ],
 )
 def test_a_prompt_with_no_pattern_is_byte_identical_to_before(code, strategy, recorded):
-    """Measured on main at 4e1d381, before the block existed. Every cassette is keyed on these bytes."""
+    """Measured on main at 4e1d381, before the block existed. Every cassette is keyed on these bytes.
+
+    The two ceb values were re-measured 2026-10-16 when style.md gained the
+    everyday-short-forms rule (the owner's call); no cassette was recorded
+    against the Cebuano story prompt, so none went stale."""
     assert _fingerprint(code, strategy) == recorded
 
 

@@ -48,6 +48,19 @@ Yes is "oo" to anyone; there is no "opo".
 - Commands may use the bare root or "palihug": "Lingkod, Nong." "Palihug hulat kadiyot."
 - Pronoun order: the short actor pronoun follows the verb: "Mokaon ko", "Miadto sila".
 
+**Write the everyday spoken forms.** A lesson is speech, and in speech the short form is the
+normal one; the long form belongs to writing and careful speech. In dialogue write:
+- "di" for "dili": "Di ko kahibalo." (I don't know)
+- "gyud", never "gayud": "Lami gyud!" (really delicious)
+- "nya" for "unya" (later; and then): "Mokaon ta nya." (We'll eat later)
+- "sad" or "pud" for "usab" (also): "Ako sad." "Maayo pud."
+- the short pronouns right after the first word of the clause: "Moadto ko", "Asa ta?",
+  "Gusto ka?", "Taga-asa mo?"
+Keep the LONG form where Cebuano requires it:
+- a pronoun that IS the predicate, or the whole answer: "Ako ang mobayad." "Kinsa? — Ako."
+- a pronoun put first for emphasis: "Ako, di ko gusto."
+- a bare "Dili." as a one-word answer.
+
 **The linker is "nga"** between a modifier and what it modifies ("bugnaw nga tubig", "maayo nga
 tawo"). After a vowel it is often contracted to "-ng" in set phrases: "Maayong buntag",
 "Maayong gabii". Counting uses "ka": "usa ka tasa", "duha ka tiket".
