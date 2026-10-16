@@ -197,6 +197,16 @@ def load_senses(language_code: str) -> dict[tuple[str, str], tuple[str, str, str
     }
 
 
+def is_second_sense(text: str, language_code: str, disambig: str) -> bool:
+    """True if the card ``(text, disambig)`` is a word's second sense (:func:`load_senses`).
+
+    Its recognition front is the same bare word as the first sense's, whose gloss
+    names both senses, so the second note's recognition card is a duplicate and
+    starts suspended (the owner's R2, tunatale-ocv3).
+    """
+    return (text.strip().casefold(), disambig.strip()) in load_senses(language_code)
+
+
 @cache
 def _load_glosses(language_code: str) -> dict[str, str]:
     path = get_pronouns_path(language_code)
