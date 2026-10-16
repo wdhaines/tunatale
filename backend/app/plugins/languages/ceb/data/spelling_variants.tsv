@@ -14,3 +14,9 @@ puwede	pwede	Spanish puede; Tagalog-style spelling
 mesa	lamesa	Spanish la mesa, article fused; mesa is understood but rarer
 igsoon	igsuon	o/u spelling; igsuon 1330 vs igsoon 290 (the user, 2026-10-01)
 sayis	sais	Spanish seis; sais 93 vs sayis 9; numbers.json and style.md say sais (the user, 2026-10-03)
+di	dili	short form (tunatale-7jl1 §1, the owner 2026-10-16); Wolff dílì "short form: dì"; dili 30084 vs di 16159
+jud	gyud	short form; Wolff gayud "short forms: dyud, giyud", jud = today's spelling of dyud; gyud 10453 vs jud 598
+gayud	gyud	long form of gyud; main is the one speech uses (gyud 10453 vs gayud 2074); gyud is the cloze card
+nya	unya	short form; Wolff unyà "short forms: unyà, nyà"; unya 4896 vs nya 276
+sad	usab	short form; Wolff usab "short forms: sab and sad" (sab -> usab is in closed_class.tsv)
+pod	pud	o/u spelling of the same word; pud 1811 vs pod 1401, and pud is the cloze card. NOT short usab: Wolff pud = upud

@@ -98,3 +98,19 @@ def test_an_affixed_verb_wiktionary_also_heads_as_a_noun_defaults_to_its_root(ta
     readings = {(r.upos, r.lemma, r.is_default) for r in table.readings(surface)}
     assert ("VERB", root, True) in readings
     assert ("NOUN", surface, False) in readings
+
+
+@pytest.mark.parametrize(
+    ("surface", "host"),
+    [("unsay", "unsa"), ("kinsay", "kinsa"), ("koy", "ko"), ("naay", "naa"), ("walay", "wala"), ("siyay", "siya")],
+)
+def test_a_word_carrying_the_y_particle_reads_as_its_host(table, surface, host):
+    """``-y`` is its own particle, not part of the word (Wolff's Dictionary,
+    headword y: the subject marker after a predicate, "Unsay ímung gibúhat?", and
+    "there is (isn't) any" after náa/walà, "Walay táwu"; Wolff's course 3 B 5).
+    So ``unsay`` is unsa + y and must reach the unsa card: on the live deck it had
+    become a card of its own, "what is" (the owner, 2026-10-16: "Why do I still
+    have unsay?"). Same UPOS as the host's default, so it behaves like the host."""
+    host_default = next(r for r in table.readings(host) if r.is_default)
+    defaults = [(r.upos, r.lemma) for r in table.readings(surface) if r.is_default]
+    assert defaults == [(host_default.upos, host)]
