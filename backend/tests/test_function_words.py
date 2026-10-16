@@ -892,6 +892,14 @@ class TestFixedGloss:
     def test_case_insensitive(self):
         assert fixed_gloss("Og", "ceb") == "a / some (object marker)"
 
+    def test_cebuano_mo_is_the_pronoun_not_the_prefix(self):
+        """A free-standing ``mo`` is always the pronoun: the mo- prefix is written
+        joined to its verb (moadto). The gloss pass said "will" for "matulog ba mo
+        karong gabii?" (tunatale-krt3). It shortens two words (Bunye & Yap's
+        glossary: "short form of kamo or nimo"; Wolff, ikaw: "mu short for nímu"),
+        so the gloss names both (tunatale-7jl1 §3, the owner 2026-10-16)."""
+        assert fixed_gloss("mo", "ceb") == "you (plural); your (one person)"
+
     def test_word_without_a_curated_gloss_returns_none(self):
         assert fixed_gloss("ug", "ceb") is None
 

@@ -116,3 +116,33 @@ def test_six_reads_as_sais(table, surface):
     (cebuano_frequency.tsv.gz), so ``sais`` is the main spelling."""
     default = next(r for r in table.readings(surface) if r.is_default)
     assert (default.upos, default.lemma) == ("NUM", "sais")
+
+
+@pytest.mark.parametrize(
+    ("surface", "lemma"),
+    [
+        ("di", "dili"),
+        ("jud", "gyud"),
+        ("gayud", "gyud"),
+        ("nya", "unya"),
+        ("sab", "usab"),
+        ("sad", "usab"),
+        ("pod", "pud"),
+    ],
+)
+def test_short_forms_read_as_the_word_they_shorten(table, surface, lemma):
+    """One word, two spellings (tunatale-7jl1 §1, the owner 2026-10-16), so a
+    lesson's ``di`` reaches the ``dili`` card instead of reading as unknown.
+    Wolff's Dictionary: dílì "short form: dì"; gayud "short forms: dyud, giyud"
+    (``jud`` is today's spelling of dyud); unyà "short forms: unyà, nyà"; usab
+    "short forms: sab and sad". ``pud`` heads its own pair because it is not short
+    usab: Wolff ``pud = upud``, "as a predicate modifier: = usab"."""
+    readings = table.readings(surface)
+    assert {r.lemma for r in readings} == {lemma}
+    assert sum(r.is_default for r in readings) == 1
+
+
+@pytest.mark.parametrize("surface", ["pud", "gyud", "usab", "dili", "unya"])
+def test_the_main_spellings_keep_themselves(table, surface):
+    default = next(r for r in table.readings(surface) if r.is_default)
+    assert default.lemma == surface
