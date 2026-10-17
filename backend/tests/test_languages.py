@@ -121,6 +121,31 @@ class TestCardSurfaceVariants:
         # Trailing separator must not yield an empty surface.
         assert card_surface_variants("no", "mot, imot,") == ["mot", "imot"]
 
+    # Cebuano (tunatale-0iri, the owner 2026-10-16): the short form goes on the
+    # card front, 'dili, di'. Unlike Norwegian, the parts must be a LISTED pair
+    # (spelling_variants.tsv): a phrase card of two one-word parts ('Oo, salamat')
+    # would otherwise be read as two spellings and take over 'salamat'.
+
+    def test_cebuano_variant_separator_is_comma(self):
+        assert get_variant_separator("ceb") == ","
+
+    def test_cebuano_short_form_front_splits(self):
+        assert card_surface_variants("ceb", "dili, di") == ["dili", "di"]
+        assert card_surface_variants("ceb", "unya, nya") == ["unya", "nya"]
+
+    def test_cebuano_listed_spelling_pair_splits_in_either_order(self):
+        assert card_surface_variants("ceb", "puwede, pwede") == ["puwede", "pwede"]
+        assert card_surface_variants("ceb", "Pwede, puwede") == ["Pwede", "puwede"]
+
+    def test_cebuano_phrase_of_one_word_parts_is_not_a_variant_list(self):
+        assert card_surface_variants("ceb", "Oo, salamat") == ["Oo, salamat"]
+
+    def test_cebuano_two_listed_words_of_different_words_are_not_one_word(self):
+        assert card_surface_variants("ceb", "dili, nya") == ["dili, nya"]
+
+    def test_cebuano_single_word_returns_itself(self):
+        assert card_surface_variants("ceb", "dili") == ["dili"]
+
     def test_unknown_code_has_no_morphology_profile(self):
         assert get_morphology_profile("zz") is None
 

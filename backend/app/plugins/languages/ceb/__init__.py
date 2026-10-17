@@ -1,5 +1,6 @@
 """Cebuano language plugin."""
 
+from functools import cache
 from pathlib import Path
 
 from app.cards.field_map import NotetypeProfile
@@ -14,6 +15,19 @@ from app.plugins.languages.ceb.take_check import take_check_config
 
 _DATA = Path(__file__).parent / "data"
 _style_notes = (_DATA / "style.md").read_text(encoding="utf-8").strip()
+
+
+@cache
+def _spelling_variants() -> dict[str, str]:
+    """``spelling_variants.tsv`` as variant -> main, casefolded (the card-front guard)."""
+    pairs = {}
+    for line in (_DATA / "spelling_variants.tsv").read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#") or line.startswith("variant\t"):
+            continue
+        variant, main = line.split("\t")[:2]
+        pairs[variant.strip().casefold()] = main.strip().casefold()
+    return pairs
+
 
 register(
     "ceb",
@@ -138,6 +152,11 @@ register(
         # per-word map would wrap every word in <phoneme> and change audio
         # nobody has listened to.
         ipa_for_drill_phrases=True,
+        # The short form goes on the card front, 'dili, di' (tunatale-0iri, the
+        # owner 2026-10-16: short forms "seem quite common"; Wolff course 3 F 1:
+        # most common in rapid speech). Only a listed pair is read as one word.
+        variant_separator=",",
+        variant_pairs_fn=_spelling_variants,
         # Enunciated lines carry the whole line's reading (tunatale-tyfk, the
         # user's ear, 2026-10-06): the voice is asked to pause after each word
         # and told how the line sounds, in one request. Per-word requests

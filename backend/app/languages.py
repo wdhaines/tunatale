@@ -268,6 +268,13 @@ class LanguageConfig:
     # ``None`` (the default) means the language has no such convention, so a card
     # front is always a single surface form. See ``card_surface_variants``.
     variant_separator: str | None = None
+    # Function returning the language's listed spellings of one word, each mapped
+    # to its main spelling (Cebuano ``di`` -> ``dili``, ``puwede`` -> ``pwede``).
+    # When registered, a separator-delimited front is a variant list ONLY if all
+    # its parts are spellings of one word: 'Oo, salamat' is a phrase, not two
+    # spellings. ``None`` (the default) keeps the bare rule, every part a single
+    # token, which Norwegian relies on (its deck's pairs are not listed anywhere).
+    variant_pairs_fn: Callable[[], Mapping[str, str]] | None = None
     # Infinitive-marker word prepended to a VERB headword when minting a TT vocab
     # card ("å" + lemma → "å lyve", matching the convention already used across
     # the user's Anki collection). None (the default) means the language has no
@@ -858,8 +865,9 @@ def get_variant_separator(code: str) -> str | None:
     """The character separating alternate spellings on *code*'s card fronts, or
     ``None`` when the language has no multi-spelling convention.
 
-    Unknown codes → ``None``. Norwegian uses ``","`` (``mot, imot``); every other
-    wired language returns ``None``, so ``card_surface_variants`` is a no-op there.
+    Unknown codes → ``None``. Norwegian uses ``","`` (``mot, imot``) and so does
+    Cebuano (``dili, di``, with its listed pairs as a guard); every other wired
+    language returns ``None``, so ``card_surface_variants`` is a no-op there.
     """
     return _facet(code, "variant_separator", None)
 
@@ -1014,9 +1022,20 @@ def card_surface_variants(code: str, text: str) -> list[str]:
         return [text]
     parts = [p.strip() for p in text.split(sep)]
     parts = [p for p in parts if p]
-    if len(parts) > 1 and all(len(p.split()) == 1 for p in parts):
+    if len(parts) > 1 and all(len(p.split()) == 1 for p in parts) and _one_listed_word(code, parts):
         return parts
     return [text]
+
+
+def _one_listed_word(code: str, parts: list[str]) -> bool:
+    """True when *code* lists no spelling pairs, or every part spells the same word."""
+    pairs_fn = _facet(code, "variant_pairs_fn", None)
+    if pairs_fn is None:
+        return True
+    pairs = pairs_fn()
+    known = set(pairs) | set(pairs.values())
+    folded = [p.casefold() for p in parts]
+    return all(p in known for p in folded) and len({pairs.get(p, p) for p in folded}) == 1
 
 
 def get_morphology_profile(code: str) -> str | None:
