@@ -2362,3 +2362,105 @@ class TestCreateNewDefersMeteredAudio:
 
         assert "audio" not in media_kwargs[0]
         assert fields["Audio"] == "[sound:tts_gabii.mp3]"
+
+
+# ── A second sense mints with its recognition card suspended (tunatale-ocv3) ──
+#
+# The owner's R2 (tunatale-37c1): a word with a second sense is two notes, and
+# both recognition fronts are the bare word, so the second note's recognition
+# card is suspended and the first note's gloss names both senses. On 2026-10-16
+# that was done by hand for the three live notes; these pin it as automatic.
+
+_CEB_DECK = "0. Cebuano"
+_CEB_VOCAB_MID = 1000004
+_CEB_DECK_ID = 88888
+
+
+def _make_cebuano_collection_conn():
+    """Collection with a Cebuano deck and the Cebuano Vocabulary notetype."""
+    from app.cards.vocab_notetype import CEBUANO_VOCAB
+
+    conn = _make_dual_collection_conn()
+    conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_CEB_DECK_ID, _CEB_DECK))
+    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_CEB_VOCAB_MID, CEBUANO_VOCAB.name))
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(_CEB_VOCAB_MID, i, name) for i, name in enumerate(CEBUANO_VOCAB.field_names)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(_CEB_VOCAB_MID, 0, "Recognition"), (_CEB_VOCAB_MID, 1, "Production")],
+    )
+    conn.commit()
+    return conn
+
+
+def _add_sense(db: SRSDatabase, text: str, gloss: str, key: str, language_code: str = "ceb") -> int:
+    from app.common.guid import compute_guid
+
+    unit = SyntacticUnit(text=text, translation=gloss, word_count=1, difficulty=1, source="user", disambig_key=key)
+    db.add_collocation(unit, language_code=language_code)
+    return db.get_collocation_id_by_guid(compute_guid(text, language_code, key))
+
+
+def _states(db: SRSDatabase, coll_id: int) -> dict[str, str]:
+    with db._get_conn() as conn:
+        rows = conn.execute(
+            "SELECT direction, state FROM collocation_directions WHERE collocation_id = ?", (coll_id,)
+        ).fetchall()
+    return {r["direction"]: r["state"] for r in rows}
+
+
+class TestSecondSenseMintsSuspended:
+    def test_the_second_senses_recognition_starts_suspended(self):
+        db = _make_db()
+        subject = _add_sense(db, "ko", "I; my, by me", "")
+        owner = _add_sense(db, "ko", "my; by me", "genitive")
+
+        assert _states(db, owner) == {"recognition": "suspended", "production": "new"}
+        assert _states(db, subject) == {"recognition": "new", "production": "new"}  # the control
+
+    def test_a_key_the_table_does_not_list_is_an_ordinary_card(self):
+        """Read off the table: a word class in DisambigKey, or a language with no
+        senses, is not a second sense."""
+        db = _make_db()
+        noun = _add_sense(db, "ko", "a thing", "noun")
+        norwegian = _add_sense(db, "løfte", "a promise", "noun", language_code="no")
+
+        assert _states(db, noun) == {"recognition": "new", "production": "new"}
+        assert _states(db, norwegian) == {"recognition": "new", "production": "new"}
+
+    def test_adding_it_again_leaves_an_unsuspended_card_alone(self):
+        """Only a new row starts suspended: the owner may un-suspend it."""
+        db = _make_db()
+        owner = _add_sense(db, "ta", "our (including you); by us", "genitive")
+        db.set_suspended(owner, False, Direction.RECOGNITION)
+
+        _add_sense(db, "ta", "our (including you); by us", "genitive")
+
+        assert _states(db, owner)["recognition"] == "new"
+
+    async def test_the_mint_and_push_suspend_it_in_anki(self):
+        """Through the real writer: sync_create_new mints both notes, and the
+        sync_push that run_full_sync runs next carries ``queue = -1``."""
+        db = _make_db()
+        subject = _add_sense(db, "mo", "you (plural); your (one person)", "")
+        owner = _add_sense(db, "mo", "your; by you (one person)", "genitive")
+        conn = _make_cebuano_collection_conn()
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb")
+
+        report = await sync.sync_create_new(deck_name=_CEB_DECK, model_name="Cebuano Vocabulary")
+        assert report.created == 2
+        sync.sync_push()
+
+        def anki_cards(coll_id: int) -> dict[int, tuple[int, int, int]]:
+            nid = db.get_collocation_by_id(coll_id)[1].anki_note_id
+            rows = conn.execute("SELECT ord, type, queue, usn FROM cards WHERE nid = ?", (nid,)).fetchall()
+            return {r["ord"]: (r["type"], r["queue"], r["usn"]) for r in rows}
+
+        assert anki_cards(owner) == {0: (0, -1, -1), 1: (0, 0, -1)}
+        assert anki_cards(subject) == {0: (0, 0, -1), 1: (0, 0, -1)}  # the control
+        owner_item = db.get_collocation_by_id(owner)[1]
+        assert owner_item.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
+        assert owner_item.directions[Direction.RECOGNITION].dirty_fsrs is False
+        assert owner_item.directions[Direction.PRODUCTION].state == SRSState.NEW

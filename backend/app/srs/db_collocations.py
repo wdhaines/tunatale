@@ -8,6 +8,7 @@ upsert_by_guid — the card-adding contract entry point (see
 
 import sqlite3
 
+from app.cards.pronoun_picture import is_second_sense
 from app.common.guid import compute_guid
 from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -32,7 +33,11 @@ class DbCollocationsMixin:
     def add_collocation(self, unit: SyntacticUnit, language_code: str | None = None) -> bool:
         """Insert a new collocation; if it already exists, backfill an empty translation.
 
-        New rows get both recognition and production direction rows (defaults).
+        New rows get both recognition and production direction rows (defaults),
+        except that a new vocab row which is a word's second sense
+        (:func:`is_second_sense`) starts its recognition direction SUSPENDED and
+        dirty, so the mint's sync_push carries ``queue = -1`` to Anki: its front is
+        the bare word the first sense already shows (tunatale-ocv3).
         Single-word units without an explicit lemma get lemma = casefolded text
         so that get_collocation_by_lemma_with_id lookups succeed. Empty strings
         count as missing — pre-Phase-F sync paths sometimes wrote empties.
@@ -119,14 +124,20 @@ class DbCollocationsMixin:
             else:
                 directions = [Direction.RECOGNITION, Direction.PRODUCTION]
             today_due_at = due_at_rollover_utc(anki_today()).isoformat()
+            suspended = (
+                {Direction.RECOGNITION}
+                if is_new and unit.card_type == "vocab" and is_second_sense(unit.text, language_code, disambig)
+                else set()
+            )
             for direction in directions:
+                state, dirty = (SRSState.SUSPENDED, 1) if direction in suspended else (SRSState.NEW, 0)
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO collocation_directions
-                        (collocation_id, direction, due_at)
-                    VALUES (?, ?, ?)
+                        (collocation_id, direction, due_at, state, dirty_fsrs)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (coll_id, direction.value, today_due_at),
+                    (coll_id, direction.value, today_due_at, state.value, dirty),
                 )
             self._commit(conn)
         return is_new
