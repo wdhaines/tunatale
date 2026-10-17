@@ -45,6 +45,7 @@ from app.cards.pronoun_picture import (
     _spec,
     gloss_matches,
     is_pronoun_word,
+    is_second_sense,
     load_frames,
     load_picture_only,
     load_pronoun_words,
@@ -105,11 +106,11 @@ _TABLES: dict[str, dict[str, str]] = {
         "ako": "i",
         "ikaw": "you_one",
         "siya": "third_one",
-        "kita": "we_incl",
+        # NOT `kita`: its own sense is the verb 'see' (the user's live card), so
+        # its pronoun sense is a second sense below (tunatale-z4ya).
         # The short forms are picture cards with a sentence (tunatale-37c1, the
         # user 2026-10-16): the drawing names the person and the sentence names
-        # the short-form slot. `ta` was first listed alone because `kita` is
-        # glossed 'see' in the user's deck (2026-09-29).
+        # the short-form slot.
         "ta": "we_incl",
         "ko": "i",
         "ka": "you_one",
@@ -156,7 +157,6 @@ _FRAMES: dict[str, dict[str, str]] = {
         "mi": _SUBJECT,
         "ako": _PREDICATE,
         "ikaw": _PREDICATE,
-        "kita": _PREDICATE,
         "kami": _PREDICATE,
         "kamo": _PREDICATE,
     },
@@ -165,13 +165,20 @@ _FRAMES: dict[str, dict[str, str]] = {
 #: A word's SECOND sense, a note of its own keyed by ``disambig_key``: Cebuano
 #: ko, mo and ta are each a subject AND an owner (Wolff: ku "{2} gen.: = nákù";
 #: mu_2 "see ikaw"; nátù "short form: ta"), and one picture cannot show both.
+#: ``kita`` is the inclusive 'we' beside its own sense, the verb 'see' (Wolff
+#: kita vs kítà; the owner, tunatale-7jl1 §3), keyed ``pronoun``.
 _SENSES: dict[str, dict[tuple[str, str], tuple[str, str, str]]] = {
     "ceb": {
         ("ko", "genitive"): ("i_poss", _OWNER, "my; by me"),
         ("mo", "genitive"): ("you_one_poss", _OWNER, "your; by you (one person)"),
         ("ta", "genitive"): ("we_incl_poss", _OWNER, "our (including you); by us"),
+        ("kita", "pronoun"): ("we_incl", _PREDICATE, "we (including you)"),
     },
 }
+
+#: Second senses whose word's OWN sense is not a pronoun, so the word is not in
+#: ``words``: the first note is the verb card, not a picture card.
+_FIRST_SENSE_NOT_A_PRONOUN = {("ceb", "kita")}
 
 #: The words deliberately left as clozes (ORACLE 3's "NOT listed"), and why.
 #: The object forms are the case the cloze route is FOR, and ``mi``/``ti``/``vi``
@@ -451,7 +458,6 @@ class TestDispatch:
             ("ako", "tl", "I", "i"),
             ("siya", "tl", "he or she", "third_one"),
             ("kami", "tl", "we, but not you", "we_excl"),
-            ("kita", "ceb", "we, including you", "we_incl"),
             ("ta", "ceb", "we", "we_incl"),
             ("mi", "ceb", "we", "we_excl"),
             ("sila", "ceb", "they", "they_many"),
@@ -487,6 +493,9 @@ class TestDispatch:
             ("den", "no", "that"),  # a homograph of `it`, glossed as its other sense
             ("de", "no", "the"),
             ("kita", "ceb", "see"),
+            # The R2 gloss on the verb card names both senses (tunatale-z4ya), and
+            # its own sense must still not draw the pronoun: kita is not in `words`.
+            ("kita", "ceb", "see; we (including you)"),
             ("jeg", "no", ""),  # no gloss: cannot confirm the sense, so no picture
             ("hus", "no", "house"),  # not a pronoun at all
             ("det", "no", "it"),  # polysemous, deliberately not listed
@@ -894,7 +903,9 @@ class TestFrames:
             assert word in words, f"{code}: {word} has a sentence but no concept"
             render_pronoun_svg(words[word], frame=sentences[name])
         for word, senses in data.get("senses", {}).items():
-            assert word in words, f"{code}: {word} has a second sense but no first"
+            assert word in words or (code, word) in _FIRST_SENSE_NOT_A_PRONOUN, (
+                f"{code}: {word} has a second sense but no first"
+            )
             for sense in senses.values():
                 assert gloss_matches(sense["concept"], sense["gloss"]), f"{code}: {word} {sense}"
                 render_pronoun_svg(sense["concept"], frame=sentences[sense["frame"]])
@@ -902,3 +913,20 @@ class TestFrames:
             sense["frame"] for senses in data.get("senses", {}).values() for sense in senses.values()
         }
         assert used == set(sentences), f"{code}: a sentence nobody uses, or one used but missing"
+
+
+class TestKitaIsAVerbWithAPronounSense:
+    """tunatale-z4ya: the live kita card is the verb 'see'; 'we (including you)'
+    is its second sense, so its recognition card starts suspended (ocv3)."""
+
+    def test_the_pronoun_sense_is_a_second_sense(self) -> None:
+        assert is_second_sense("kita", "ceb", "pronoun")
+        assert not is_second_sense("kita", "ceb", "")
+
+    def test_the_verb_is_not_a_pronoun_word_and_not_a_function_word(self) -> None:
+        """Out of `words`, kita must not fall onto the cloze route instead."""
+        from app.srs.function_words import is_function_word
+
+        assert not is_pronoun_word("kita", "ceb")
+        assert not is_function_word("kita", "ceb", upos="PRON")
+        assert not is_function_word("kita", "ceb")

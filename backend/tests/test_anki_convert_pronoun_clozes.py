@@ -132,6 +132,17 @@ class TestPlanNewCards:
             units = plan_new_cards(conn, LANG)
         assert {(u.text, u.disambig_key) for u in units} == {("mo", "genitive")}
 
+    def test_kitas_pronoun_sense_is_planned_beside_the_verb_card(self) -> None:
+        """tunatale-z4ya: kita's first card is the verb 'see', and that is enough
+        of a first sense for the inclusive 'we' to be planned beside it."""
+        db = SRSDatabase(":memory:")
+        _add(db, "kita", translation="see")
+        with db._get_conn() as conn:
+            units = plan_new_cards(conn, LANG)
+            glosses = gloss_updates(conn, LANG)
+        assert {(u.text, u.disambig_key, u.translation) for u in units} == {("kita", "pronoun", "we (including you)")}
+        assert glosses == [], "the verb card's gloss is not the pronoun table's to write"
+
     def test_a_second_run_plans_nothing(self) -> None:
         db, ids = _deck()
         with db._get_conn() as conn:
