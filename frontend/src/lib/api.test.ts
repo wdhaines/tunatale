@@ -298,7 +298,10 @@ describe("TunaTaleAPI", () => {
     it("getReviewSessionRenderStatus GETs the session's render-status path", async () => {
       // The page polls this on mount so it can pick up a render that outlived a
       // previous visit. A plain GET, returning whether a render is in flight.
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ rendering: false })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ rendering: false, state: "idle", error: null })),
+      );
 
       const result = await api.getReviewSessionRenderStatus("sess-1");
 

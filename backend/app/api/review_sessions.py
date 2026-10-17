@@ -176,6 +176,7 @@ async def _generate_and_store(
             renderer=app_state.renderer(request),
             audio_dir=app_state.audio_dir(request),
             renders_in_flight=app_state.review_renders(request.app),
+            render_failures=app_state.review_render_failures(request.app),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
@@ -313,6 +314,7 @@ async def _import_and_store(body: CreateReviewSessionFromPasteRequest, request: 
             renderer=app_state.renderer(request),
             audio_dir=app_state.audio_dir(request),
             renders_in_flight=app_state.review_renders(request.app),
+            render_failures=app_state.review_render_failures(request.app),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
@@ -511,6 +513,7 @@ async def import_review_session(session_id: str, body: ImportReviewSessionReques
             renderer=app_state.renderer(request),
             audio_dir=app_state.audio_dir(request),
             renders_in_flight=app_state.review_renders(request.app),
+            render_failures=app_state.review_render_failures(request.app),
         ),
         srs_db=srs_db,
         lemmatizer_kwargs=_injected_lemmatizer(request),
@@ -590,6 +593,8 @@ async def render_review_session(session_id: str, request: Request):
     if session_id in renders:
         raise HTTPException(status_code=409, detail="A render is already in progress for this session")
     renders.add(session_id)
+    failures = app_state.review_render_failures(request.app)
+    failures.pop(session_id, None)
 
     try:
         return await render_lesson_audio(
@@ -600,6 +605,7 @@ async def render_review_session(session_id: str, request: Request):
             lesson=lesson,
         )
     except RuntimeError as e:
+        failures[session_id] = str(e)
         raise HTTPException(status_code=503, detail=str(e)) from e
     finally:
         renders.discard(session_id)
@@ -652,7 +658,10 @@ async def get_review_session_render_status(session_id: str, request: Request):
     store = request.state.content_store
     if store.get_review_session_row(session_id) is None:
         raise HTTPException(status_code=404, detail="Review session not found")
-    return {"rendering": session_id in app_state.review_renders(request.app)}
+    if session_id in app_state.review_renders(request.app):
+        return {"rendering": True, "state": "rendering", "error": None}
+    error = app_state.review_render_failures(request.app).get(session_id)
+    return {"rendering": False, "state": "failed" if error is not None else "idle", "error": error}
 
 
 @router.post(

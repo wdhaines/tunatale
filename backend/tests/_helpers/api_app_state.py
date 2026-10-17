@@ -19,6 +19,7 @@ def _clean_app_state():
         "srs_db",
         "pipeline",
         "review_renders",
+        "review_render_failures",
         # Injected by the _injected_lemmatizer seam. Absent from this list until
         # 2026-09-14, so a test that installed a lemmatizer double leaked it into
         # every later test FILE: _injected_lemmatizer returns {} ("resolve for

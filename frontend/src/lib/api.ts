@@ -867,7 +867,9 @@ export class TunaTaleAPI {
   // Why this exists: the render outlives the page. Navigating away aborts the
   // fetch but not the work, and a render left in flight must be picked back up
   // when the page is returned to — this is what the page polls on mount.
-  async getReviewSessionRenderStatus(id: string): Promise<{ rendering: boolean }> {
+  async getReviewSessionRenderStatus(
+    id: string,
+  ): Promise<components["schemas"]["ReviewSessionRenderStatusResponse"]> {
     return this.request(`/api/review-sessions/${id}/render-status`);
   }
 

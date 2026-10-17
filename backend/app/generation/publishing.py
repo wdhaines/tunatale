@@ -208,6 +208,7 @@ class ReviewSessionTarget:
         renderer,
         audio_dir,
         renders_in_flight: set[str],
+        render_failures: dict[str, str],
     ) -> None:
         self._store = store
         self._language_code = language_code
@@ -216,6 +217,7 @@ class ReviewSessionTarget:
         self._renderer = renderer
         self._audio_dir = audio_dir
         self._renders_in_flight = renders_in_flight
+        self._render_failures = render_failures
 
     def prepare(self, lesson: Lesson, *, srs_db, lemmatizer) -> None:
         """Nothing: a review session belongs to no curriculum day and has no pattern."""
@@ -252,6 +254,7 @@ class ReviewSessionTarget:
                     session_id=content_id,
                     lesson=lesson,
                     renders_in_flight=self._renders_in_flight,
+                    render_failures=self._render_failures,
                 )
             )
         )
@@ -265,14 +268,18 @@ async def _render_session_audio(
     session_id: str,
     lesson: Lesson,
     renders_in_flight: set[str],
+    render_failures: dict[str, str],
 ) -> None:
     """Render one session's audio in the background, guarded by the in-flight set.
 
     The session id is dropped in a ``finally`` so a render that finishes OR
     fails releases the session — the same guarantee the manual render route
-    makes, so one failed auto-render cannot wedge the render-status poll.
+    makes, so one failed auto-render cannot wedge the render-status poll. A
+    failure is recorded in *render_failures* for that poll to report, and the
+    next render clears it, as the manual route does (tunatale-lekk).
     """
     renders_in_flight.add(session_id)
+    render_failures.pop(session_id, None)
     try:
         await render_lesson_audio(
             store=store,
@@ -281,7 +288,8 @@ async def _render_session_audio(
             lesson_id=session_id,
             lesson=lesson,
         )
-    except Exception:
+    except Exception as e:
+        render_failures[session_id] = str(e)
         _logger.warning("Background render failed for review session %s", session_id, exc_info=True)
     finally:
         renders_in_flight.discard(session_id)

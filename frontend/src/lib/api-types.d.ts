@@ -4287,11 +4287,19 @@ export interface components {
      *
      *     Whether a render is currently in flight for this session — the marker lives
      *     on the server in memory, not in a table, so nothing here survives a restart
-     *     to lie about it.
+     *     to lie about it. ``state`` tells a finished render (``idle``) from a failed
+     *     one, whose ``error`` is kept until the session's next render starts.
      */
     ReviewSessionRenderStatusResponse: {
+      /** Error */
+      error: string | null;
       /** Rendering */
       rendering: boolean;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "idle" | "rendering" | "failed";
     };
     /**
      * ReviewSessionResponse
