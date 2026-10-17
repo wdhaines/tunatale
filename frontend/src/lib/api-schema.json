@@ -4467,15 +4467,37 @@
         "type": "object"
       },
       "ReviewSessionRenderStatusResponse": {
-        "description": "Response of GET /api/review-sessions/{session_id}/render-status.\n\nWhether a render is currently in flight for this session \u2014 the marker lives\non the server in memory, not in a table, so nothing here survives a restart\nto lie about it.",
+        "description": "Response of GET /api/review-sessions/{session_id}/render-status.\n\nWhether a render is currently in flight for this session \u2014 the marker lives\non the server in memory, not in a table, so nothing here survives a restart\nto lie about it. ``state`` tells a finished render (``idle``) from a failed\none, whose ``error`` is kept until the session's next render starts.",
         "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
           "rendering": {
             "title": "Rendering",
             "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "idle",
+              "rendering",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
           }
         },
         "required": [
-          "rendering"
+          "rendering",
+          "state",
+          "error"
         ],
         "title": "ReviewSessionRenderStatusResponse",
         "type": "object"

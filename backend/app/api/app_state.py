@@ -113,6 +113,19 @@ def review_renders(app: Any) -> set[str]:
     return renders
 
 
+def review_render_failures(app: Any) -> dict[str, str]:
+    """Each review session's last render error, until its next render starts.
+
+    Beside ``review_renders`` and in memory for the same reason: without it a
+    render that failed reads exactly like one that finished (tunatale-lekk).
+    """
+    failures = getattr(app.state, "review_render_failures", None)
+    if failures is None:
+        failures = {}
+        app.state.review_render_failures = failures
+    return failures
+
+
 def lesson_renders(app: Any) -> set[str]:
     """The ids of lessons currently re-rendering from the tools menu (tunatale-9paa).
 

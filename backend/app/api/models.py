@@ -1575,10 +1575,13 @@ class ReviewSessionRenderStatusResponse(BaseModel):
 
     Whether a render is currently in flight for this session — the marker lives
     on the server in memory, not in a table, so nothing here survives a restart
-    to lie about it.
+    to lie about it. ``state`` tells a finished render (``idle``) from a failed
+    one, whose ``error`` is kept until the session's next render starts.
     """
 
     rendering: bool
+    state: Literal["idle", "rendering", "failed"]
+    error: str | None
 
 
 class DeleteReviewSessionResponse(BaseModel):

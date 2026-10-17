@@ -90,6 +90,10 @@ const mockGetAudio = vi.mocked(api.getLessonAudio);
 const mockRender = vi.mocked(api.renderReviewSession);
 const mockSessionTranscript = vi.mocked(api.getTranscript);
 const mockRenderStatus = vi.mocked(api.getReviewSessionRenderStatus);
+const renderStatus = (rendering: boolean) =>
+  rendering
+    ? { rendering: true, state: "rendering" as const, error: null }
+    : { rendering: false, state: "idle" as const, error: null };
 
 const TRANSCRIPT = {
   lesson_id: "sess-1",
@@ -258,7 +262,7 @@ beforeEach(() => {
   mockSessionTranscript.mockResolvedValue(TRANSCRIPT);
   // The page's render-status onMount destructures the result, so an unstubbed
   // mock would return undefined and throw on mount in every test.
-  mockRenderStatus.mockResolvedValue({ rendering: false });
+  mockRenderStatus.mockResolvedValue({ rendering: false, state: "idle", error: null });
   // The hands-free hand-off asks for sibling sessions on mount; default to none
   // so every existing test keeps the "no successor" behaviour.
   vi.mocked(api.listReviewSessions).mockResolvedValue([] as never);
@@ -543,7 +547,7 @@ describe("the reader", () => {
   it("returning to a page whose render is still running shows the indicator", async () => {
     // The render outlives the page; a fresh visit must not see a silent button
     // while the work it cannot see is still going.
-    mockRenderStatus.mockResolvedValue({ rendering: true });
+    mockRenderStatus.mockResolvedValue({ rendering: true, state: "rendering", error: null });
     const { findByRole } = render(Page, { props: { data: data() } });
 
     const button = await findByRole("button", { name: /preparing/i });
@@ -558,9 +562,9 @@ describe("the reader", () => {
     vi.useFakeTimers();
     try {
       mockRenderStatus
-        .mockResolvedValueOnce({ rendering: true })
-        .mockResolvedValueOnce({ rendering: true })
-        .mockResolvedValueOnce({ rendering: false });
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
+        .mockResolvedValueOnce({ rendering: false, state: "idle", error: null });
       mockGetAudio.mockResolvedValue({
         audio_id: "a1",
         lesson_id: "sess-1",
@@ -590,8 +594,8 @@ describe("the reader", () => {
     vi.useFakeTimers();
     try {
       mockRenderStatus
-        .mockResolvedValueOnce({ rendering: true })
-        .mockResolvedValueOnce({ rendering: false });
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
+        .mockResolvedValueOnce({ rendering: false, state: "idle", error: null });
       mockGetAudio.mockRejectedValue(new Error("404"));
       const { queryByRole, findByRole } = render(Page, { props: { data: data() } });
 
@@ -615,7 +619,9 @@ describe("the reader", () => {
     try {
       const err = new Error("Review session not found") as Error & { status?: number };
       err.status = 404;
-      mockRenderStatus.mockResolvedValueOnce({ rendering: true }).mockRejectedValue(err);
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
+        .mockRejectedValue(err);
       const { findByRole, queryByText } = render(Page, { props: { data: data() } });
 
       const button = await findByRole("button", { name: /preparing/i });
@@ -629,6 +635,41 @@ describe("the reader", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("a render that failed on the server says so when the poll sees it", async () => {
+    // tunatale-lekk: `rendering: false` alone read a failed render as a finished
+    // one, so the page fetched audio that was never made and showed nothing.
+    vi.useFakeTimers();
+    try {
+      mockRenderStatus
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
+        .mockResolvedValueOnce({ rendering: false, state: "failed", error: "Azure throttled" });
+      const { findByRole, findByText } = render(Page, { props: { data: data() } });
+      await findByRole("button", { name: /preparing/i });
+      mockGetAudio.mockClear();
+
+      await vi.advanceTimersByTimeAsync(2000);
+
+      await findByText(/Azure throttled/);
+      expect(mockGetAudio).not.toHaveBeenCalled();
+      expect(
+        (await findByRole("button", { name: /prepare audio/i })).hasAttribute("disabled"),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returning to a page whose last render failed shows the error", async () => {
+    mockRenderStatus.mockResolvedValue({
+      rendering: false,
+      state: "failed",
+      error: "Azure throttled",
+    });
+    const { findByText } = render(Page, { props: { data: data() } });
+
+    await findByText(/Azure throttled/);
   });
 
   it("a 409 from prepare resumes the indicator instead of reporting an error", async () => {
@@ -659,7 +700,7 @@ describe("the reader", () => {
       // call fails. The initial mount would otherwise swallow the rejection and
       // never begin polling.
       mockRenderStatus
-        .mockResolvedValueOnce({ rendering: true })
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
         .mockRejectedValue(new Error("backend down"));
       const { getByRole, findByText } = render(Page, { props: { data: data() } });
 
@@ -682,7 +723,7 @@ describe("the reader", () => {
       // call fails. The initial mount would otherwise swallow the rejection and
       // never begin polling.
       mockRenderStatus
-        .mockResolvedValueOnce({ rendering: true })
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
         .mockRejectedValue("poll string error");
       const { getByRole, findByText } = render(Page, { props: { data: data() } });
 
@@ -1185,8 +1226,8 @@ describe("deleting the session", () => {
         files_removed: 0,
       } as never);
       mockRenderStatus
-        .mockResolvedValueOnce({ rendering: true })
-        .mockResolvedValue({ rendering: true });
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null })
+        .mockResolvedValue({ rendering: true, state: "rendering", error: null });
       const { getByText } = render(Page, { props: { data: data() } });
 
       // The mount read sees "rendering" and arms the poll.
@@ -1907,7 +1948,7 @@ describe("moving to another session in place", () => {
   });
 
   it("a render running on one session does not show as preparing on the next", async () => {
-    mockRenderStatus.mockImplementation(async (id: string) => ({ rendering: id === "sess-1" }));
+    mockRenderStatus.mockImplementation(async (id: string) => renderStatus(id === "sess-1"));
     const { findByRole, getByRole, rerender } = render(Page, { props: { data: pageData() } });
     expect(await findByRole("button", { name: /preparing/i })).toHaveProperty("disabled", true);
 
@@ -1918,7 +1959,7 @@ describe("moving to another session in place", () => {
   });
 
   it("picks up a render already running on the session it arrives at", async () => {
-    mockRenderStatus.mockImplementation(async (id: string) => ({ rendering: id === "sess-2" }));
+    mockRenderStatus.mockImplementation(async (id: string) => renderStatus(id === "sess-2"));
     const { findByRole, getByRole, rerender } = render(Page, { props: { data: pageData() } });
     await vi.waitFor(() => expect(mockRenderStatus).toHaveBeenCalledWith("sess-1"));
     expect(getByRole("button", { name: /prepare audio/i })).toHaveProperty("disabled", false);
@@ -1952,11 +1993,11 @@ describe("moving to another session in place", () => {
     // chain belonged to no page and polled until the render ended.
     vi.useFakeTimers();
     try {
-      let finishPoll!: (s: { rendering: boolean }) => void;
+      let finishPoll!: (s: ReturnType<typeof renderStatus>) => void;
       mockRenderStatus
-        .mockResolvedValueOnce({ rendering: true }) // sess-1, on mount
+        .mockResolvedValueOnce({ rendering: true, state: "rendering", error: null }) // sess-1, on mount
         .mockReturnValueOnce(new Promise((r) => (finishPoll = r)) as never) // sess-1's first poll
-        .mockResolvedValue({ rendering: false }); // sess-2, and anything after
+        .mockResolvedValue({ rendering: false, state: "idle", error: null }); // sess-2, and anything after
       const { findByRole, rerender } = render(Page, { props: { data: pageData() } });
       await findByRole("button", { name: /preparing/i });
       await vi.advanceTimersByTimeAsync(2000);
@@ -1964,7 +2005,7 @@ describe("moving to another session in place", () => {
 
       await rerender({ data: pageData({ session: sessionB() }) });
       await vi.waitFor(() => expect(mockRenderStatus).toHaveBeenCalledTimes(3));
-      finishPoll({ rendering: true });
+      finishPoll({ rendering: true, state: "rendering", error: null });
       await vi.advanceTimersByTimeAsync(2000);
       await vi.advanceTimersByTimeAsync(2000);
 
@@ -1997,7 +2038,7 @@ describe("moving to another session in place", () => {
     });
 
     it("keeps a render indicator that is still true", async () => {
-      mockRenderStatus.mockResolvedValue({ rendering: true });
+      mockRenderStatus.mockResolvedValue({ rendering: true, state: "rendering", error: null });
       const { findByRole, getByRole, rerender } = render(Page, { props: { data: pageData() } });
       expect(await findByRole("button", { name: /preparing/i })).toHaveProperty("disabled", true);
 

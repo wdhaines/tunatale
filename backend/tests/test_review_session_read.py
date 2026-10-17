@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api import app_state
 from app.api.models import ReviewSessionSourceResponse
 from app.languages import get_language
 from app.main import app
@@ -523,6 +524,94 @@ class TestRenderStatus:
         resp_2 = await self._status("sess-1")
         assert resp_2.status_code == 200
         assert resp_2.json()["rendering"] is False
+
+    # ── a failed render is reported, not just ended (tunatale-lekk) ─────────
+    #
+    # `rendering: false` alone cannot tell "finished" from "failed", so the page
+    # fetched audio that was never made and showed nothing. The failure is kept
+    # in memory beside the in-flight set (same lifetime rule: a restart forgets
+    # both) until the next render of that session starts.
+
+    async def test_idle_when_nothing_has_run(self, renderable):
+        body = (await self._status("sess-1")).json()
+
+        assert (body["state"], body["error"]) == ("idle", None)
+
+    async def test_rendering_while_in_flight(self, renderable):
+        gate = asyncio.Event()
+
+        async def _blocking_render(*args, **kwargs):
+            await gate.wait()
+            return _fake_render(*args, **kwargs)
+
+        app.state.renderer.render = AsyncMock(side_effect=_blocking_render)
+        task = asyncio.create_task(self._render("sess-1"))
+        await asyncio.sleep(0)
+        try:
+            body = (await self._status("sess-1")).json()
+        finally:
+            gate.set()
+            await task
+
+        assert (body["rendering"], body["state"], body["error"]) == (True, "rendering", None)
+
+    async def test_a_failed_render_reports_failed_with_its_error(self, renderable):
+        app.state.renderer.render = AsyncMock(side_effect=RuntimeError("ffmpeg not found"))
+        assert (await self._render("sess-1")).status_code == 503
+
+        body = (await self._status("sess-1")).json()
+
+        assert (body["rendering"], body["state"], body["error"]) == (False, "failed", "ffmpeg not found")
+
+    async def test_the_next_render_clears_the_failure(self, renderable):
+        app.state.renderer.render = AsyncMock(side_effect=RuntimeError("ffmpeg not found"))
+        await self._render("sess-1")
+        app.state.renderer.render = AsyncMock(side_effect=_fake_render)
+
+        assert (await self._render("sess-1")).status_code == 200
+
+        body = (await self._status("sess-1")).json()
+        assert (body["state"], body["error"]) == ("idle", None)
+
+    async def test_the_status_reads_the_shared_failure_record(self, renderable):
+        """The background render (publishing) writes the same record the route reads."""
+        app_state.review_render_failures(app)["sess-1"] = "Azure throttled"
+
+        body = (await self._status("sess-1")).json()
+
+        assert (body["state"], body["error"]) == ("failed", "Azure throttled")
+
+    async def test_a_background_render_failure_is_recorded_and_a_success_clears_it(self, renderable, tmp_path):
+        from app.generation.publishing import _render_session_audio
+
+        failing = AsyncMock()
+        failing.render = AsyncMock(side_effect=RuntimeError("Azure throttled"))
+        in_flight: set[str] = set()
+        failures: dict[str, str] = {}
+        lesson = renderable.get_review_session("sess-1")
+
+        await _render_session_audio(
+            store=renderable,
+            renderer=failing,
+            audio_dir=tmp_path,
+            session_id="sess-1",
+            lesson=lesson,
+            renders_in_flight=in_flight,
+            render_failures=failures,
+        )
+        assert failures == {"sess-1": "Azure throttled"}
+        assert in_flight == set()
+
+        await _render_session_audio(
+            store=renderable,
+            renderer=app.state.renderer,
+            audio_dir=tmp_path,
+            session_id="sess-1",
+            lesson=lesson,
+            renders_in_flight=in_flight,
+            render_failures=failures,
+        )
+        assert failures == {}
 
 
 # ── the transcript comes from the SHARED content route ───────────────────────

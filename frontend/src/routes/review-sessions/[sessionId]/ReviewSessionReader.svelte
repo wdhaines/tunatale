@@ -192,11 +192,14 @@
 	// outlived the page), pick it back up.
 	onMount(async () => {
 		try {
-			const { rendering } = await api.getReviewSessionRenderStatus(data.session.id);
+			const { rendering, error } = await api.getReviewSessionRenderStatus(data.session.id);
 			if (rendering) {
 				preparing = true;
 				pollFailures = 0;
 				pollRenderStatus();
+			} else if (error) {
+				// The last render failed while nobody was looking (tunatale-lekk).
+				renderError = error;
 			}
 		} catch {
 			/* nothing in flight that we can see */
@@ -217,13 +220,18 @@
 		if (gone) return;
 		pollTimer = setTimeout(async () => {
 			try {
-				const { rendering } = await api.getReviewSessionRenderStatus(data.session.id);
+				const { rendering, error } = await api.getReviewSessionRenderStatus(data.session.id);
 				if (rendering) {
 					pollFailures = 0;
 					pollRenderStatus();
 					return;
 				}
 				preparing = false;
+				if (error) {
+					// Failed, not finished: there is no audio to fetch (tunatale-lekk).
+					renderError = error;
+					return;
+				}
 				audio = await api.getLessonAudio(data.session.id).catch(() => null);
 			} catch (e) {
 				const status = (e as Error & { status?: number }).status;
