@@ -46,6 +46,7 @@ from app.plugins.languages.ceb.handbook_spelling import SpellingLexicon, convert
 from app.plugins.languages.ceb.wolff_dictionary import Entry, Form, decode_classes, strip_marks
 
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
+RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
 CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spelling"
 FIELD_NAMES = DICTIONARY_FIELDS
 _POS_NAMES = {"n": "noun", "v": "verb", "a": "adjective"}
@@ -131,6 +132,97 @@ def _words(text: str) -> set[str]:
     return {w[:5] for w in re.findall(r"[a-z]+", strip_marks(text).lower()) if w not in _STOP}
 
 
+# Words that relate to too much to count on their own: WordNet lists "kind"
+# with "like", and Wolff's búut is "want, would like to". A phrase holding one
+# ("get out") still relates.
+LIGHT_WORDS = frozenset(
+    [
+        "like",
+        "get",
+        "give",
+        "make",
+        "do",
+        "have",
+        "go",
+        "take",
+        "put",
+        "come",
+        "set",
+        "let",
+        "way",
+        "thing",
+        "one",
+        "out",
+        "up",
+        "off",
+        "down",
+        "over",
+        "s",
+        "t",
+        "o",
+        "k",
+    ]
+)
+
+
+def english_tokens(text: str) -> list[str]:
+    """The words of an English gloss, lower-cased, stop words out, ``O.K.`` as ``ok``."""
+    text = re.sub(r"\b([a-z])\.([a-z])\.", r"\1\2", strip_marks(text).lower())
+    return [w for w in re.findall(r"[a-z]+", text) if w not in _STOP]
+
+
+def _phrases(text: str) -> set[str]:
+    return {" ".join(t) for part in re.split(r"[;,/()]", text) if (t := english_tokens(part))}
+
+
+@dataclass(frozen=True)
+class EnglishRelations:
+    """English word relations from WordNet (``scripts/build_english_relations.py``).
+
+    ``base``: a word's dictionary form where it differs. ``related``: per word or
+    two-word phrase of Wolff's glosses, its synonyms and the words in a kind-of
+    relation with it. ``defined_by``: per common English word, the words of its
+    WordNet definition that occur in Wolff's glosses.
+    """
+
+    base: dict[str, str]
+    related: dict[str, frozenset[str]]
+    defined_by: dict[str, frozenset[str]]
+
+    @classmethod
+    def empty(cls) -> EnglishRelations:
+        return cls({}, {}, {})
+
+    @classmethod
+    def load(cls, path: Path = RELATIONS_PATH) -> EnglishRelations:
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        return cls(
+            raw["base"],
+            {k: frozenset(v) for k, v in raw["related"].items()},
+            {k: frozenset(v) for k, v in raw["defined_by"].items()},
+        )
+
+    def score(self, english: str, card: set[str], gloss: str) -> tuple[int, int, int]:
+        """(card words in the gloss, card words related to it, card words whose definition it holds)."""
+        gloss_words = _words(gloss)
+        tokens = english_tokens(gloss)
+        units = {t for t in tokens if t not in LIGHT_WORDS} | {
+            f"{a} {b}" for a, b in zip(tokens, tokens[1:], strict=False)
+        }
+        bases = {self.base.get(t, t) for t in tokens if t not in LIGHT_WORDS}
+        related = defined = 0
+        for word in set(english_tokens(english)):
+            if word[:5] in gloss_words:
+                continue
+            forms = {word, self.base.get(word, word)}
+            if forms & bases or any(forms & self.related.get(u, frozenset()) for u in units):
+                related += 1
+            elif (self.defined_by.get(word, frozenset()) - LIGHT_WORDS) & bases:
+                defined += 1
+        return len(card & gloss_words), related, defined
+
+
 class Miss(NamedTuple):
     reason: str  # not-in-dictionary | english-unmatched | ambiguous
     candidates: tuple[str, ...]  # the candidates' Handbook spellings
@@ -160,8 +252,9 @@ class _Hit(NamedTuple):
 
 
 class WolffLexicon:
-    def __init__(self, entries: Sequence[dict]):
+    def __init__(self, entries: Sequence[dict], relations: EnglishRelations | None = None):
         self.entries = list(entries)
+        self.relations = relations if relations is not None else EnglishRelations.empty()
         self._index: dict[str, list[tuple[int, int, str | None]]] = {}
         self._heads: dict[str, list[int]] = {}
         for ei, rec in enumerate(self.entries):
@@ -212,17 +305,28 @@ class WolffLexicon:
         if not hits:
             return Miss("not-in-dictionary", ())
         card = _words(english)
-        scored = [(len(card & _words(" ".join(s["gloss"] for s in self._senses(h)))), h) for h in hits]
+        gloss = {h: [s["gloss"] for s in self._senses(h)] for h in hits}
+        # Tiers, in order: the same words, then a synonym or a kind of it, then
+        # the card word's own definition (tunatale-h0q3.2, the owner: "allow
+        # synonyms or close meanings").
+        scored = [(self.relations.score(english, card, " ".join(gloss[h])), h) for h in hits]
         best = max(n for n, _ in scored)
         spellings = tuple(dict.fromkeys(h.surface for h in hits))
-        if best == 0 and len(hits) == 1:
+        if not any(best) and len(hits) == 1:
             return hits[0]._replace(english_matched=False)  # no homograph to choose between
-        if best == 0:
+        if not any(best):
             return Miss("english-unmatched", spellings)
         top = [h for n, h in scored if n == best]
         roots = [h for h in top if h.form == 0]
         if len(roots) == 1 and all(h.entry == roots[0].entry for h in top):
             top = roots  # a root beats its own derived forms (bátà 'child' over its (→) batà)
+        if len({h.surface for h in top}) > 1:
+            # Still tied: a sense whose gloss IS the card's English (kabáyò
+            # 'horse' over kabayô 'ride, bring s.t. on a horse'). After the root
+            # rule, which it would otherwise overturn (túbig, dûol).
+            whole = {h: len(_phrases(english) & {p for g in gloss[h] for p in _phrases(g)}) for h in top}
+            if most := max(whole.values()):
+                top = [h for h in top if whole[h] == most]
         if len({h.surface for h in top}) > 1:
             return Miss("ambiguous", tuple(dict.fromkeys(h.surface for h in top)))
         return top[0]
@@ -337,4 +441,4 @@ class WolffLexicon:
 def load_lexicon() -> WolffLexicon:
     """The committed lexicon."""
     with gzip.open(LEXICON_PATH, "rt", encoding="utf-8") as fh:
-        return WolffLexicon(json.load(fh)["entries"])
+        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load())

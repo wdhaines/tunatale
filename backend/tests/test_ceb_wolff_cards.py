@@ -19,9 +19,12 @@ import pytest
 
 from app.plugins.languages.ceb.handbook_spelling import build_lexicon
 from app.plugins.languages.ceb.wolff_cards import (
+    LIGHT_WORDS,
     CardFields,
+    EnglishRelations,
     Miss,
     WolffLexicon,
+    english_tokens,
     entry_record,
     letters_key,
     load_lexicon,
@@ -184,3 +187,102 @@ def test_the_committed_lexicon():
     assert f.spelling == "tán-aw"
     assert lex.card_fields("maayo", "good").spelling == "màáyo"
     assert lex.card_fields("tulo", "three").spelling == "tuló"
+
+
+# ── close meanings (the owner, 2026-10-18: "You need to allow synonyms or close meanings") ──
+#
+# The card's English and Wolff's gloss are matched in tiers: the same words
+# first, then WordNet relations (a synonym, or a kind of it either way), then
+# the card word's own definition. A whole-gloss match breaks a tie the root
+# rule leaves. The relations are committed data (english_relations.json.gz);
+# the control is the same lexicon with no relations, where these stay blank.
+
+
+@pytest.fixture(scope="module")
+def committed():
+    return load_lexicon()
+
+
+@pytest.fixture(scope="module")
+def no_relations(committed):
+    return WolffLexicon(committed.entries, relations=EnglishRelations.empty())
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling", "meaning"),
+    [
+        ("bagyo", "storm", "bágyo", "typhoon"),  # a typhoon is a kind of storm
+        ("pusil", "gun", "pusíl", "firearm"),  # synonyms
+        ("igsoon", "sibling", "igsûon", "sa inahan"),  # a brother is a kind of sibling
+        ("pako", "wing", "pakô", "wings"),  # plural
+        ("ngipon", "tooth", "ngípon", "teeth"),  # irregular plural
+        ("ligid", "tire", "ligíd", "wheel"),  # tire: "hoop that covers a wheel"
+        ("uyab", "boyfriend, girlfriend", "uyáb", "girl or boy friend"),
+        ("okay", "okay", "úkay", "O.K."),  # Wolff writes O.K.
+    ],
+)
+def test_a_close_meaning_settles_the_entry(committed, no_relations, word, english, spelling, meaning):
+    assert isinstance(no_relations.match(word, english), Miss)
+    f = committed.card_fields(word, english)
+    assert (f.spelling, f.meaning[: len(meaning)]) == (spelling, meaning)
+
+
+def test_a_light_word_never_relates(committed):
+    # WordNet lists "kind" with "like"; Wolff's búut is "want, would like to".
+    assert committed.match("buotan", "kind; nice") == Miss("english-unmatched", ("bùútan",))
+
+
+def test_a_light_word_never_relates_even_if_the_table_says_so(committed):
+    # The builder keeps light words out of the table; the matcher does not
+    # rely on that.
+    rel = EnglishRelations(base={}, related={"like": frozenset({"kind"})}, defined_by={"nice": frozenset({"like"})})
+    assert isinstance(WolffLexicon(committed.entries, relations=rel).match("buotan", "kind; nice"), Miss)
+
+
+def test_the_same_words_outrank_a_relation(committed):
+    # Relate 'three' to túlò's 'drip': the exact gloss still wins.
+    rel = EnglishRelations(base={}, related={"drip": frozenset({"three"})}, defined_by={})
+    assert WolffLexicon(committed.entries, relations=rel).card_fields("tulo", "three").spelling == "tuló"
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling"),
+    [("kabayo", "horse", "kabáyò"), ("numero", "number", "numeró"), ("ihap", "count", "iháp")],
+)
+def test_a_whole_gloss_breaks_a_tie(committed, word, english, spelling):
+    assert committed.card_fields(word, english).spelling == spelling
+
+
+def test_a_tie_no_whole_gloss_settles_stays_ambiguous(committed):
+    # The pronoun's entry never says 'you'; the linker's and the letter's don't either.
+    assert committed.match("ka", "you (one person)").reason == "ambiguous"
+
+
+@pytest.mark.parametrize(("word", "english", "spelling"), [("tubig", "water", "túbig"), ("duol", "near", "dûol")])
+def test_the_tie_break_comes_after_the_root_rule(committed, word, english, spelling):
+    # Breaking ties by whole gloss before the root rule flipped these three to a
+    # derived form's spelling, measured on the deck.
+    assert committed.card_fields(word, english).spelling == spelling
+
+
+def test_a_modern_sense_wolff_lacks_stays_blank(committed):
+    # limón is 'hard candies' in Wolff; the card's lemon is not there.
+    assert isinstance(committed.match("limon", "lemon"), Miss)
+
+
+def test_english_tokens():
+    assert english_tokens("O.K., I give agreement") == ["ok", "i", "give", "agreement"]
+    assert english_tokens("the Teeth of saws") == ["teeth", "saws"]
+
+
+def test_the_committed_relations():
+    rel = EnglishRelations.load()
+    assert "storm" in rel.related["typhoon"]
+    assert {"brother", "sister"} <= rel.defined_by["sibling"]
+    # One step down only: "person" -> "relative" -> "sibling" is too far.
+    assert "sibling" not in rel.related["person"]
+    assert rel.base["children"] == "child"
+    # WordNet keeps 'teeth' as a word of its own, so it relates instead.
+    assert "tooth" in rel.related["teeth"]
+    assert "wheel" in rel.defined_by["tire"]
+    assert not LIGHT_WORDS & set(rel.related)

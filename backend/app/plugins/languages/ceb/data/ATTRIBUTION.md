@@ -81,3 +81,19 @@ file's sha256 is recorded in the file's own `meta`.
 
 `handbook_course_spellings.tsv` is hand-kept: four words where the owner chose
 the spelling of the respelled course over the dictionary's (2026-10-18).
+
+# Attribution: `english_relations.json.gz`
+
+This committed file is **derived from WordNet 3.0** (Princeton University), read
+through NLTK's WordNet corpus reader. It holds English word links only: a word's
+dictionary form, its synonyms and kind-of relations, and the words of its first
+definitions that also occur in Wolff's glosses. The card matcher uses them to
+match a card's English to a close meaning in Wolff (tunatale-h0q3.2). Built by
+`backend/scripts/build_english_relations.py`.
+
+- **Source:** WordNet 3.0, <https://wordnet.princeton.edu/>
+- **Licence:** the WordNet 3.0 licence, which allows use, copying, modification
+  and distribution for any purpose provided the copyright notice is kept:
+  "WordNet 3.0 Copyright 2006 by Princeton University. All rights reserved."
+- The English word list it is restricted to is wordfreq's top 50,000 English
+  words (wordfreq is already a dependency; its data is CC BY-SA 4.0).
