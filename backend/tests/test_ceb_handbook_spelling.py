@@ -27,7 +27,9 @@ from app.plugins.languages.ceb.handbook_spelling import (
     Loan,
     build_lexicon,
     choose_vowels,
+    convert_text,
     handbook_spelling,
+    load_course_spellings,
     spanish_to_cebuano,
 )
 
@@ -257,3 +259,44 @@ def test_words_without_vowels_and_stray_marks():
     lex = _lex()
     assert handbook_spelling("ng", lex).text == "ng"
     assert handbook_spelling("́bir", lex).text == "bir"
+
+
+# --- where the two books spell one word differently, the course wins (owner, 2026-10-18) -------
+
+
+def test_the_course_spelling_wins_over_the_converted_one():
+    lex = build_lexicon(
+        freq={},
+        entries={},
+        es_words=[],
+        en_sounds=[],
+        english_common=set(),
+        course_spellings={"sígi": "sigé", "unyà": "unyâ"},
+    )
+    assert handbook_spelling("sígi", lex) == ("sigé", "course")
+    assert handbook_spelling("Sígi", lex).text == "Sigé"
+    assert handbook_spelling("unyà", lex).text == "unyâ"
+    assert handbook_spelling("unya", lex).text == "únya"  # that spelling only, not its letters
+
+
+def test_the_committed_course_spellings():
+    table = load_course_spellings()
+    assert table["sígi"] == "sigé"
+    assert table["dúdung"] == "dódong"
+    # every row is a real override: the converter alone would spell it otherwise
+    lex = build_lexicon(freq={}, entries={}, es_words=[], en_sounds=[], english_common=set())
+    for wolff, course in table.items():
+        assert handbook_spelling(wolff, lex).text != course, wolff
+
+
+# --- example sentences ------------------------------------------------------------------------
+
+
+def test_a_sentence_converts_word_by_word_keeping_punctuation(lex):
+    assert convert_text("Maáyu ning libru, tan-aw!", lex) == "Màáyo ning líbro, tán-aw!"
+    assert convert_text("Náa ba dihà ang yáwi?", lex) == "Nâa ba dihâ ang yáwi?"
+
+
+def test_names_mid_sentence_are_left_as_written(lex):
+    # Wolff's examples name people (Piyuks, Hwan); their spelling is not his to respell
+    assert convert_text("Unsay ímung natan-awan ni Piyuks?", lex) == "Únsay ímong natan-awán ni Piyuks?"

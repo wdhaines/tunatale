@@ -34,8 +34,12 @@ import itertools
 import re
 import unicodedata
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cache
+from pathlib import Path
 from typing import NamedTuple
+
+COURSE_SPELLINGS = Path(__file__).parent / "data" / "handbook_course_spellings.tsv"
 
 ACUTE, GRAVE, CIRCUMFLEX, CARON, MACRON = "́", "̀", "̂", "̌", "̄"
 # A mark that makes its vowel the stressed one. Wolff's macron is length, and
@@ -136,6 +140,8 @@ class SpellingLexicon:
     freq: Mapping[str, int]  # news-corpus counts by spelling
     entries: Mapping[str, str]  # Wolff headword, accent-free -> entry text, accent-free lowercase
     loans: Mapping[str, Loan]  # sound key -> loan
+    # Wolff spelling (lowercase NFC) -> the course's spelling, where the two books differ
+    course: Mapping[str, str] = field(default_factory=dict)
 
 
 class HandbookSpelling(NamedTuple):
@@ -192,6 +198,7 @@ def build_lexicon(
     es_words: Sequence[str],
     en_sounds: Iterable[tuple[str, str, int]],
     english_common: Collection[str],
+    course_spellings: Mapping[str, str] | None = None,
 ) -> SpellingLexicon:
     """Assemble the lexicon. ``es_words`` is a frequency-ordered Spanish word list;
     ``en_sounds`` holds (English word, Cebuano sound spelling, frequency rank);
@@ -210,7 +217,18 @@ def build_lexicon(
     for word, template, rank in en_sounds:
         if rank < EN_CAP and len(template) >= 3 and "-" not in template:
             loans.setdefault(sound_key(template), Loan(template, "en", word))
-    return SpellingLexicon(freq=freq, entries=entries, loans=loans)
+    return SpellingLexicon(freq=freq, entries=entries, loans=loans, course=dict(course_spellings or {}))
+
+
+@cache
+def load_course_spellings() -> dict[str, str]:
+    """The committed table of words where the course's spelling wins."""
+    out = {}
+    for line in COURSE_SPELLINGS.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#"):
+            wolff, course, _note = line.split("\t")
+            out[unicodedata.normalize("NFC", wolff)] = unicodedata.normalize("NFC", course)
+    return out
 
 
 # --- vowels: e/o ------------------------------------------------------------------------------
@@ -382,6 +400,9 @@ def _stress_and_glottals(low: list[str], marks: list[set[str]]) -> tuple[int | N
 def handbook_spelling(token: str, lex: SpellingLexicon) -> HandbookSpelling:
     """One word in Wolff's dictionary spelling -> its Handbook spelling."""
     token = token.split("_")[0]  # Wolff's homograph number (mísa_1)
+    course = lex.course.get(unicodedata.normalize("NFC", token.lower()))
+    if course:
+        return HandbookSpelling(course[0].upper() + course[1:] if token[:1].isupper() else course, "course")
     plain = strip_accents(token).lower()
     if plain in WHOLE_WORDS:
         new = WHOLE_WORDS[plain]
@@ -405,3 +426,22 @@ def handbook_spelling(token: str, lex: SpellingLexicon) -> HandbookSpelling:
             mark = GRAVE
         out.append(unicodedata.normalize("NFC", n + mark))
     return HandbookSpelling("".join(out), how)
+
+
+_WORD = re.compile(r"[^\W\d_][\w\u0300-\u036f\-]*")
+
+
+def convert_text(text: str, lex: SpellingLexicon) -> str:
+    """A Cebuano sentence in Wolff's spelling -> Handbook spelling, word by word.
+    A capitalized word after the first is taken for a name and left as written."""
+    out, last = [], 0
+    nfd = unicodedata.normalize("NFD", text)
+    for i, m in enumerate(_WORD.finditer(nfd)):
+        word = unicodedata.normalize("NFC", m.group())
+        out.append(unicodedata.normalize("NFC", nfd[last : m.start()]))
+        sentence_start = i == 0 or re.search(r"[.?!]\s*$", nfd[: m.start()]) is not None
+        name = word[:1].isupper() and not sentence_start
+        out.append(word if name else handbook_spelling(word, lex).text)
+        last = m.end()
+    out.append(unicodedata.normalize("NFC", nfd[last:]))
+    return "".join(out)

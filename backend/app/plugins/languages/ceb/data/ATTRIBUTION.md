@@ -64,3 +64,20 @@ root/affix/count triples only — no text from the source.
 
 The licence is the one stated above (ODC-By v1.0, and Common Crawl's Terms of
 Use); this section is the attribution it requires for this file.
+
+# Attribution: `wolff_lexicon.json.gz`
+
+This committed file is **derived from John U. Wolff, *A Dictionary of Cebuano
+Visayan* (Cornell University / Linguistic Society of the Philippines, 1972)**, as
+transcribed by Project Gutenberg (eBook #40074). It holds every entry paragraph
+verbatim, parsed into senses and sub-entries, with each form and one example per
+sense respelled to the Handbook spelling. Built by
+`backend/scripts/build_cebuano_wolff_lexicon.py` (tunatale-h0q3.2); the source
+file's sha256 is recorded in the file's own `meta`.
+
+- **Source:** Project Gutenberg, <https://www.gutenberg.org/ebooks/40074>
+- **Licence:** public domain. The dictionary's notice places it in the public
+  domain since 1982; Project Gutenberg distributes it as such.
+
+`handbook_course_spellings.tsv` is hand-kept: four words where the owner chose
+the spelling of the respelled course over the dictionary's (2026-10-18).
