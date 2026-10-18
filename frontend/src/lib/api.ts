@@ -550,9 +550,11 @@ export interface SRSItemDetail {
 export interface BackField {
   label: string;
   html: string;
-  // "summary" → always visible; "details" → collapsed disclosure; "deep" → its
-  // own nested disclosure (the verbose dictionary entry).
-  tier: "summary" | "details" | "deep";
+  // "headword" → under the word wherever the card shows it (the Cebuano
+  // Handbook spelling); "summary" → always visible on the answer; "details" →
+  // collapsed disclosure; "deep" → its own nested disclosure (the verbose
+  // dictionary entry).
+  tier: "headword" | "summary" | "details" | "deep";
 }
 
 export interface SRSItemsPage {

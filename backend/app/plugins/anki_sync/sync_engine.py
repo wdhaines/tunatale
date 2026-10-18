@@ -24,7 +24,7 @@ from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants, cloze_answer_spelling, get_tts_voice
+from app.languages import card_surface_variants, cloze_answer_spelling, dictionary_note_fields, get_tts_voice
 from app.llm.cloze_quality import UNJUDGED, carries_a_blank
 from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
@@ -2022,7 +2022,11 @@ class AnkiSync:
 
             # The L2 word lives in the mint notetype's sort field (ord 0) — "Slovene"
             # for Slovene Vocabulary, "Norwegian" for Norwegian Vocabulary.
+            # A language with a dictionary adds its layers (Cebuano: Wolff,
+            # tunatale-h0q3.2). Fields the notetype lacks are dropped by
+            # create_note, so this is safe before the notetype is migrated.
             fields = {
+                **dictionary_note_fields(self._language_code, word, english),
                 mint_l2_field: word,
                 "English": english,
                 "Audio": audio_tag,

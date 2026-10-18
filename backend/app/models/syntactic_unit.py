@@ -6,11 +6,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal
 
-# Where a rich back-of-card field is shown on the drill card's answer side.
-#   "summary" — always visible inline (e.g. IPA, a one-line meaning)
+# Where a rich back-of-card field is shown on the drill card.
+#   "headword" — under the word itself, wherever the card shows the word (the
+#                Cebuano Handbook spelling: front of recognition, back of production)
+#   "summary" — always visible inline on the answer (e.g. IPA, a one-line meaning)
 #   "details" — inside a collapsed "Details" disclosure (inflections, examples…)
 #   "deep"    — its own nested disclosure, opened on demand (the big dictionary entry)
-BackFieldTier = Literal["summary", "details", "deep"]
+BackFieldTier = Literal["headword", "summary", "details", "deep"]
 
 
 @dataclass(frozen=True)

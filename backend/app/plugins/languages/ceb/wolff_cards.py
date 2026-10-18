@@ -41,12 +41,13 @@ from functools import cache
 from pathlib import Path
 from typing import NamedTuple
 
+from app.cards.vocab_notetype import DICTIONARY_FIELDS
 from app.plugins.languages.ceb.handbook_spelling import SpellingLexicon, convert_text, handbook_spelling
 from app.plugins.languages.ceb.wolff_dictionary import Entry, Form, decode_classes, strip_marks
 
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spelling"
-FIELD_NAMES = ("Spelling", "Meaning", "Verb", "Details", "Dictionary entry")
+FIELD_NAMES = DICTIONARY_FIELDS
 _POS_NAMES = {"n": "noun", "v": "verb", "a": "adjective"}
 _MEANING_SENSES = 6
 _RELATED = 12
@@ -262,7 +263,10 @@ class WolffLexicon:
         rec = self.entries[hit.entry]
         form = rec["forms"][hit.form]
         out: list[str] = []
-        if hit.via is not None:
+        # A pointer is a short form ('náa = anáa') only when what it points at
+        # is spelled differently. 'maáyu see áyu' lands on the sub-entry màáyo,
+        # the card's own spelling, which the root line below already shows.
+        if hit.via is not None and form["hb"] != hit.surface:
             out.append(f"<div>Short form of <b>{html.escape(form['hb'] or '')}</b></div>")
         if hit.form != 0 and rec["forms"][0]["hb"]:
             root = rec["forms"][0]

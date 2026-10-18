@@ -1128,6 +1128,78 @@ describe("DrillCard", () => {
       expect(container.querySelector("details.extra-deep")).toBeNull();
     });
 
+    describe("headword tier (the Cebuano Handbook spelling, tunatale-h0q3.2)", () => {
+      const withSpelling = (overrides = {}) =>
+        makeSRSItemDetail({
+          text: "maayo",
+          translation: "good",
+          card_type: "vocab",
+          image_url: null,
+          extras: [
+            { label: "Spelling", html: "màáyo", tier: "headword" },
+            { label: "Meaning", html: "nice, good, well", tier: "summary" },
+          ],
+          ...overrides,
+        });
+
+      it("sits under the word on the recognition front, before reveal", async () => {
+        const onRate = vi.fn().mockResolvedValue(undefined);
+        const { container } = render(DrillCard, {
+          item: withSpelling(),
+          direction: "recognition",
+          onRate,
+        });
+        const word = container.querySelector(".prompt .main-text");
+        expect(word?.textContent).toBe("maayo");
+        expect(word?.nextElementSibling?.classList.contains("headword-extra")).toBe(true);
+        expect(word?.nextElementSibling?.textContent).toBe("màáyo");
+        // The back's own tiers are still hidden.
+        expect(container.textContent).not.toContain("nice, good, well");
+      });
+
+      it("shows once on the recognition back, and never inside the reference panel", async () => {
+        const onRate = vi.fn().mockResolvedValue(undefined);
+        const { findByRole, container } = render(DrillCard, {
+          item: withSpelling(),
+          direction: "recognition",
+          onRate,
+        });
+        await fireEvent.click(await findByRole("button", { name: "Show" }));
+        expect(container.querySelectorAll(".headword-extra")).toHaveLength(1);
+        expect(container.querySelector(".extras")?.textContent).not.toContain("màáyo");
+        expect(container.querySelector(".extras-summary")?.textContent).toContain(
+          "nice, good, well",
+        );
+      });
+
+      it("is hidden on the production front and sits under the word on its back", async () => {
+        const onRate = vi.fn().mockResolvedValue(undefined);
+        const { findByRole, container } = render(DrillCard, {
+          item: withSpelling(),
+          direction: "production",
+          onRate,
+        });
+        expect(container.querySelector(".headword-extra")).toBeNull();
+        await fireEvent.click(await findByRole("button", { name: "Show" }));
+        const word = container.querySelector(".answer .answer-text.slovene");
+        expect(word?.textContent).toBe("maayo");
+        expect(word?.nextElementSibling?.textContent).toBe("màáyo");
+        expect(container.querySelectorAll(".headword-extra")).toHaveLength(1);
+      });
+
+      it("is not shown on a cloze, whose word is the blank", async () => {
+        const onRate = vi.fn().mockResolvedValue(undefined);
+        const item = withSpelling({ card_type: "cloze", source_sentence: "{{c1::maayo}} ka" });
+        const { findByRole, container } = render(DrillCard, {
+          item,
+          direction: "production",
+          onRate,
+        });
+        await fireEvent.click(await findByRole("button", { name: "Show" }));
+        expect(container.querySelector(".headword-extra")).toBeNull();
+      });
+    });
+
     it("renders nothing extra when the item has no extras (undefined)", async () => {
       const onRate = vi.fn().mockResolvedValue(undefined);
       const item = makeSRSItemDetail({ text: "være" });

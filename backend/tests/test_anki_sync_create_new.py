@@ -2464,3 +2464,81 @@ class TestSecondSenseMintsSuspended:
         assert owner_item.directions[Direction.RECOGNITION].state == SRSState.SUSPENDED
         assert owner_item.directions[Direction.RECOGNITION].dirty_fsrs is False
         assert owner_item.directions[Direction.PRODUCTION].state == SRSState.NEW
+
+
+# ── Cebuano: a minted card carries Wolff's layers (tunatale-h0q3.2) ─────────
+
+_CEB_DECK = "0. Cebuano"
+_CEB_VOCAB_MID = 1000005
+_CEB_DECK_ID = 77779
+
+
+def _make_cebuano_collection_conn(*, dictionary: bool = True):
+    """The Cebuano deck + its vocab notetype, with or without the dictionary fields."""
+    import dataclasses
+
+    from app.cards.vocab_notetype import CEBUANO_VOCAB
+
+    vocab = CEBUANO_VOCAB if dictionary else dataclasses.replace(CEBUANO_VOCAB, dictionary=False)
+    conn = _make_dual_collection_conn()
+    conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_CEB_DECK_ID, _CEB_DECK))
+    conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_CEB_VOCAB_MID, vocab.name))
+    conn.executemany(
+        "INSERT INTO fields VALUES (?, ?, ?, x'')",
+        [(_CEB_VOCAB_MID, i, name) for i, name in enumerate(vocab.field_names)],
+    )
+    conn.executemany(
+        "INSERT INTO templates VALUES (?, ?, ?, 0, 0, x'')",
+        [(_CEB_VOCAB_MID, 0, "Recognition"), (_CEB_VOCAB_MID, 1, "Production")],
+    )
+    conn.commit()
+    return conn
+
+
+def _ceb_note_fields(conn) -> dict[str, str]:
+    names = [r[0] for r in conn.execute("SELECT name FROM fields WHERE ntid=? ORDER BY ord", (_CEB_VOCAB_MID,))]
+    flds = conn.execute("SELECT flds FROM notes WHERE mid=?", (_CEB_VOCAB_MID,)).fetchone()[0]
+    return dict(zip(names, flds.split("\x1f"), strict=True))
+
+
+class TestSyncCreateNewCebuanoDictionary:
+    async def test_a_minted_note_carries_the_spelling_and_the_layers(self):
+        from app.languages import dictionary_note_fields
+
+        db = _make_db()
+        _add_item(db, "maayo", "good")
+        conn = _make_cebuano_collection_conn()
+        report = await AnkiSync(
+            db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb"
+        ).sync_create_new(deck_name=_CEB_DECK, model_name="Cebuano Vocabulary")
+        assert report.created == 1
+
+        fields = _ceb_note_fields(conn)
+        assert fields["Cebuano"] == "maayo"  # the word itself stays plain: it is the card's identity
+        assert fields["Spelling"] == "màáyo"
+        expected = dictionary_note_fields("ceb", "maayo", "good")
+        assert {k: fields[k] for k in expected} == expected
+        assert fields["Details"] and fields["Dictionary entry"]
+
+    async def test_a_word_wolff_does_not_settle_is_minted_without_layers(self):
+        db = _make_db()
+        _add_item(db, "xyzzy", "nothing at all")
+        conn = _make_cebuano_collection_conn()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb").sync_create_new(
+            deck_name=_CEB_DECK, model_name="Cebuano Vocabulary"
+        )
+        fields = _ceb_note_fields(conn)
+        assert fields["Cebuano"] == "xyzzy"
+        assert all(fields[k] == "" for k in ("Spelling", "Meaning", "Verb", "Details", "Dictionary entry"))
+
+    async def test_a_notetype_not_yet_migrated_still_mints(self):
+        # Until add_dictionary_fields runs on the live deck, the five values
+        # have nowhere to go; the note is minted with the seven fields it has.
+        db = _make_db()
+        _add_item(db, "maayo", "good")
+        conn = _make_cebuano_collection_conn(dictionary=False)
+        report = await AnkiSync(
+            db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb"
+        ).sync_create_new(deck_name=_CEB_DECK, model_name="Cebuano Vocabulary")
+        assert report.created == 1
+        assert list(_ceb_note_fields(conn))[-1] == "DisambigKey"

@@ -105,6 +105,9 @@ def test_a_sub_entry_word_shows_its_root(lexicon):
     assert f.spelling == "màáyo"
     assert f.meaning.startswith("nice, good, well")
     assert "From the root <b>áyo</b>" in f.details
+    # 'maáyu see áyu' points at a sub-entry, not at a fuller spelling: the card
+    # must not call màáyo a short form of itself.
+    assert "Short form" not in f.details
 
 
 def test_the_card_front_may_carry_its_short_form(lexicon):
