@@ -1,0 +1,13 @@
+# Words the dictionary and the respelled course spell differently, where the course wins (owner,
+# 2026-10-18: "The course looks better to me"). Hand-kept, from scripts/wolff_handbook_oracle.py's
+# disagreements after each was checked to be the same word, not one sharing its letters (tâas
+# 'upstairs' is Wolff's táas, not taas 'tall'). Words the course spells both ways (Doktór and
+# Dóktor, Indáy and Índay, Draybér and dráyber) are left to the converter, which gives one of them.
+# A stress the dictionary marks with an arrow on a derived form (samukan (←) -> samókan) is not
+# listed here: the entry carries it.
+#
+# wolff	course	note
+sígi	sigé	O.K., go ahead
+unyà	unyâ	later on
+lahug	lahúg	place name (the course's word table)
+dúdung	dódong	name, as Wolff's English writes it (the course's word table)

@@ -119,4 +119,6 @@ def test_public_method_count_pinned() -> None:
     # +get_listens / +get_collocation_ids_by_disambig_key (the affix pace gate:
     #  on which study days a pattern's drill was heard, and which contrast cards
     #  are its cells — tunatale-ve4p.26)
-    assert count == 142
+    # +list_vocab_for_extras / +set_extras (a learner with no Anki gets the
+    #  dictionary layers written into TT directly — tunatale-h0q3.2)
+    assert count == 144

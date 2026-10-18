@@ -3,7 +3,7 @@
 from functools import cache
 from pathlib import Path
 
-from app.cards.field_map import NotetypeProfile
+from app.cards.field_map import BackFieldSpec, NotetypeProfile
 from app.cards.vocab_notetype import CEBUANO_VOCAB
 from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
@@ -27,6 +27,14 @@ def _spelling_variants() -> dict[str, str]:
         variant, main = line.split("\t")[:2]
         pairs[variant.strip().casefold()] = main.strip().casefold()
     return pairs
+
+
+def _wolff_note_fields(word: str, english: str) -> dict[str, str]:
+    """Wolff's layers for a card, by note field name; ``{}`` when the entry is not settled."""
+    from app.plugins.languages.ceb.wolff_cards import Miss, load_lexicon
+
+    fields = load_lexicon().card_fields(word, english)
+    return {} if isinstance(fields, Miss) else fields.as_note_fields()
 
 
 register(
@@ -126,9 +134,25 @@ register(
         # notetype, so name its fields instead.
         notetype_profiles={
             CEBUANO_VOCAB.name: NotetypeProfile(
-                l2=CEBUANO_VOCAB.l2_field, translation="English", disambig="DisambigKey"
+                l2=CEBUANO_VOCAB.l2_field,
+                translation="English",
+                disambig="DisambigKey",
+                # Wolff's dictionary in layers, as the owner chose it from the
+                # mockup (layout A with layers, tunatale-h0q3.2): the Handbook
+                # spelling under the word, Meaning and the verb's affixes always
+                # on the back, the rest behind Details, the entry innermost.
+                back_fields=(
+                    BackFieldSpec("Spelling", "Spelling", "headword"),
+                    BackFieldSpec("Meaning", "Meaning", "summary"),
+                    BackFieldSpec("Verb", "Verb", "summary"),
+                    BackFieldSpec("Details", "Details", "details"),
+                    BackFieldSpec("Dictionary entry", "Dictionary entry", "deep"),
+                ),
             ),
         },
+        # The same fields on a card TT mints, filled from Wolff when the card's
+        # English settles the entry.
+        dictionary_fields_fn=_wolff_note_fields,
         # The style guide's first job is keeping Tagalog OUT: close kin, and
         # dominant in training data (tunatale-u8nz.4). All three data files are
         # orchestrator-drafted and not yet native-checked (tunatale-u8nz.9).

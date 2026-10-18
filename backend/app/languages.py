@@ -275,6 +275,12 @@ class LanguageConfig:
     # spellings. ``None`` (the default) keeps the bare rule, every part a single
     # token, which Norwegian relies on (its deck's pairs are not listed anywhere).
     variant_pairs_fn: Callable[[], Mapping[str, str]] | None = None
+    # Function giving a minted vocab card's dictionary fields from its word and
+    # English, keyed by Anki note field name (``vocab_notetype.DICTIONARY_FIELDS``:
+    # Cebuano fills them from Wolff's dictionary, tunatale-h0q3.2). An empty
+    # mapping means the dictionary does not settle the word, and the card is
+    # minted without them. ``None`` (the default): the language has no dictionary.
+    dictionary_fields_fn: Callable[[str, str], Mapping[str, str]] | None = None
     # Infinitive-marker word prepended to a VERB headword when minting a TT vocab
     # card ("å" + lemma → "å lyve", matching the convention already used across
     # the user's Anki collection). None (the default) means the language has no
@@ -745,6 +751,17 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     callers fall back to the deck-discovered notetype.
     """
     return _facet(code, "vocab_notetype", None)
+
+
+def dictionary_note_fields(code: str, word: str, english: str) -> dict[str, str]:
+    """The dictionary fields a minted *code* card for *word* / *english* carries.
+
+    Keyed by Anki note field name. Empty for a language with no dictionary and
+    for a word its dictionary does not settle — a card is then minted without
+    them, never with a guess.
+    """
+    fn = _facet(code, "dictionary_fields_fn", None)
+    return dict(fn(word, english)) if fn is not None else {}
 
 
 def get_l2_css_class(code: str) -> str:

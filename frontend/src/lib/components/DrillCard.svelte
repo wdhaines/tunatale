@@ -36,6 +36,9 @@
 	// Rich back-of-card fields, grouped by where they render on the answer:
 	// summary inline, details inside one collapsed disclosure, deep (the verbose
 	// dictionary entry) behind its own nested disclosure.
+	// The headword tier sits under the word itself, wherever the card shows the
+	// word (the Cebuano Handbook spelling, tunatale-h0q3.2), not in the panel.
+	const headwordExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'headword'));
 	const summaryExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'summary'));
 	const detailExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'details'));
 	const deepExtras = $derived((item.extras ?? []).filter((e) => e.tier === 'deep'));
@@ -167,6 +170,12 @@
 <!-- A focus card's side: the bold runs are served with the card, never stored. -->
 {#snippet runs(parts: FocusRun[])}{#each parts as part, i (i)}{#if part.bold}<b>{part.text}</b>{:else}{part.text}{/if}{/each}{/snippet}
 
+{#snippet underHeadword()}
+	{#each headwordExtras as e (e.label)}
+		<div class="headword-extra slovene">{@html e.html}</div>
+	{/each}
+{/snippet}
+
 {#snippet backExtras()}
 	{#if summaryExtras.length > 0 || detailExtras.length > 0 || deepExtras.length > 0}
 		<div class="extras">
@@ -205,6 +214,7 @@
 				<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 			{/if}
 			<p class="main-text slovene">{headword}{posLabel}</p>
+			{@render underHeadword()}
 			<!-- Two cards with one spelling: the sentence this one was met in says
 			     which is being asked, without answering it (bd tunatale-p7ak). -->
 			{#if item.context_sentence}
@@ -291,6 +301,7 @@
 						<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
 					{/if}
 					<p class="answer-text slovene">{headword}{posLabel}</p>
+					{@render underHeadword()}
 				{/if}
 				<!-- A contrast card's grid already says both, above: the English of
 				     the form is its row label and the root line is its heading.
@@ -368,6 +379,13 @@
 		font-size: 1.5rem;
 		font-weight: bold;
 		overflow-wrap: anywhere;
+	}
+	/* Directly under the word, a step down from it: it is the same word,
+	   spelled to show stress and glottal stops. */
+	.headword-extra {
+		font-size: 1.15rem;
+		color: var(--color-text);
+		margin: -0.25rem 0 0.5rem;
 	}
 	.context-sentence {
 		font-size: 1rem;

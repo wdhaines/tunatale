@@ -7,12 +7,13 @@ upsert_by_guid — the card-adding contract entry point (see
 """
 
 import sqlite3
+from typing import NamedTuple
 
 from app.cards.pronoun_picture import is_second_sense
 from app.common.guid import compute_guid
 from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
-from app.models.syntactic_unit import SyntacticUnit, serialize_extras
+from app.models.syntactic_unit import BackField, SyntacticUnit, deserialize_extras, serialize_extras
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 
 
@@ -25,6 +26,16 @@ def _derived_lemma(language_code: str, text: str, word_count: int) -> str | None
     if word_count == 1 and len(card_surface_variants(language_code, text)) == 1:
         return text.casefold()
     return None
+
+
+class ExtrasRow(NamedTuple):
+    """A vocab card's identity and stored extras, for a TT-side extras backfill."""
+
+    id: int
+    text: str
+    translation: str
+    extras: tuple[BackField, ...]
+    anki_note_id: int | None
 
 
 class DbCollocationsMixin:
@@ -167,6 +178,28 @@ class DbCollocationsMixin:
                 updated += cursor.rowcount
             self._commit(conn)
         return updated
+
+    def list_vocab_for_extras(self, language_code: str) -> list[ExtrasRow]:
+        """Every vocab card of *language_code*, with its extras (tunatale-h0q3.2)."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, text, translation, extras, anki_note_id FROM collocations "
+                "WHERE language_code = ? AND card_type = 'vocab' ORDER BY id",
+                (language_code,),
+            ).fetchall()
+        return [
+            ExtrasRow(r["id"], r["text"], r["translation"], deserialize_extras(r["extras"]), r["anki_note_id"])
+            for r in rows
+        ]
+
+    def set_extras(self, collocation_id: int, extras: tuple[BackField, ...]) -> None:
+        """Replace a card's extras. Only for a deck with no Anki: on a linked card the pull owns them."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET extras = ?, updated_at = datetime('now') WHERE id = ?",
+                (serialize_extras(extras), collocation_id),
+            )
+            self._commit(conn)
 
     def get_collocation(self, text: str) -> SRSItem | None:
         with self._get_conn() as conn:

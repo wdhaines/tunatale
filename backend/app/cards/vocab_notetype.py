@@ -26,6 +26,36 @@ from app.srs.anki_mirror.protobuf_wire import encode_tag, encode_varint, encode_
 # differs between languages; the rest are identical so the write path is uniform.
 _TAIL_FIELDS: tuple[str, ...] = ("English", "Audio", "Image", "Grammar", "Note", "DisambigKey")
 
+# A dictionary's layers on the card (tunatale-h0q3.2), appended AFTER the shared
+# roster so a notetype minted before them gains them by
+# ``anki_sync.add_dictionary_fields`` without moving a field. Spelling sits under
+# the word (front and back); Meaning and Verb are always on the back; Details,
+# and inside it the verbatim entry, open on demand, as on the Norwegian cards.
+DICTIONARY_FIELDS: tuple[str, ...] = ("Spelling", "Meaning", "Verb", "Details", "Dictionary entry")
+
+#: Under the word, only when the note has a spelling.
+SPELLING_BLOCK = '{{#Spelling}}<div class="spelling">{{Spelling}}</div>{{/Spelling}}'
+
+#: The end of each back. The entry is always present on a matched note, so it
+#: gates the disclosure; Details is then never empty in practice.
+DICTIONARY_BLOCK = (
+    '{{#Meaning}}<div class="meaning">{{Meaning}}</div>{{/Meaning}}'
+    '{{#Verb}}<div class="verb">{{Verb}}</div>{{/Verb}}'
+    '{{#Dictionary entry}}<details class="dict"><summary>Details</summary>{{Details}}'
+    '<details class="dict"><summary>Dictionary entry</summary>{{Dictionary entry}}</details>'
+    "</details>{{/Dictionary entry}}"
+)
+
+DICTIONARY_CSS = (
+    ".spelling { font-size: 22px; color: #333; margin-top: 2px; }\n"
+    ".meaning { font-size: 18px; margin-top: 8px; }\n"
+    ".verb    { font-size: 15px; color: #555; }\n"
+    "details.dict { text-align: left; font-size: 16px; margin-top: 8px; }\n"
+    "details.dict summary { color: #36c; cursor: pointer; }\n"
+    ".wolff-pos, .wolff-h { font-size: 13px; font-weight: bold; color: #555; margin-top: 6px; }\n"
+    ".wolff-cite { font-size: 13px; color: #777; }\n"
+)
+
 
 @dataclass(frozen=True)
 class VocabNotetype:
@@ -34,17 +64,24 @@ class VocabNotetype:
     name: str
     l2_field: str  # field ord 0 — the L2 word + the note's sort field
     l2_css_class: str  # CSS class wrapping the L2 word in the card templates
+    dictionary: bool = False  # carries DICTIONARY_FIELDS and their template blocks
 
     @property
     def field_names(self) -> tuple[str, ...]:
         """Field names in ord order (L2 first = sort field)."""
-        return (self.l2_field, *_TAIL_FIELDS)
+        return (self.l2_field, *_TAIL_FIELDS, *(DICTIONARY_FIELDS if self.dictionary else ()))
+
+    @property
+    def word_div(self) -> str:
+        """The L2 word as both templates write it; the spelling goes right after it."""
+        return f'<div class="{self.l2_css_class}">{{{{{self.l2_field}}}}}</div>'
 
 
 SLOVENE_VOCAB = VocabNotetype(name="Slovene Vocabulary", l2_field="Slovene", l2_css_class="slovene")
 NORWEGIAN_VOCAB = VocabNotetype(name="Norwegian Vocabulary", l2_field="Norwegian", l2_css_class="norwegian")
 TAGALOG_VOCAB = VocabNotetype(name="Tagalog Vocabulary", l2_field="Tagalog", l2_css_class="tagalog")
-CEBUANO_VOCAB = VocabNotetype(name="Cebuano Vocabulary", l2_field="Cebuano", l2_css_class="cebuano")
+# Wolff's dictionary in Handbook spelling (tunatale-h0q3.2).
+CEBUANO_VOCAB = VocabNotetype(name="Cebuano Vocabulary", l2_field="Cebuano", l2_css_class="cebuano", dictionary=True)
 
 
 # ── Card templates + CSS (parametrised by the L2 field/class) ─────────────
@@ -96,6 +133,25 @@ def _production_afmt(l2_field: str, l2_class: str) -> str:
     )
 
 
+def with_dictionary(vocab: VocabNotetype, qfmt: str, afmt: str, *, recognition: bool) -> tuple[str, str]:
+    """One template's text with the dictionary blocks added.
+
+    The spelling goes under the word where the word is written: the recognition
+    front (its back repeats it through ``{{FrontSide}}``) and the production
+    back. Both backs end with the layers. Raises ``ValueError`` unless the side
+    that shows the word writes it exactly once, so a hand-edited template is
+    refused rather than guessed at.
+    """
+    word = vocab.word_div
+    side = qfmt if recognition else afmt
+    if side.count(word) != 1:
+        raise ValueError(f"template does not write the word as {word!r} exactly once — refusing to guess its layout")
+    side = side.replace(word, word + SPELLING_BLOCK)
+    if recognition:
+        return side, afmt + DICTIONARY_BLOCK
+    return qfmt, side + DICTIONARY_BLOCK
+
+
 # ── Protobuf config builders (minimal, integrity-check-safe) ──────────────
 #
 # Anki stores notetype/field/template definitions as serialized protobuf in the
@@ -140,9 +196,10 @@ def create_vocab_notetype(conn, vocab: VocabNotetype, mid: int, now_ts: int) -> 
     ``col.mod`` bump (a notetype insert is a schema change — see
     ``.claude/rules/anki-sync.md``). Rows carry ``usn = -1``.
     """
+    css = _css(vocab.l2_css_class) + (DICTIONARY_CSS if vocab.dictionary else "")
     conn.execute(
         "INSERT INTO notetypes (id, name, mtime_secs, usn, config) VALUES (?, ?, ?, -1, ?)",
-        (mid, vocab.name, now_ts, build_notetype_config(_css(vocab.l2_css_class))),
+        (mid, vocab.name, now_ts, build_notetype_config(css)),
     )
     for ord_, name in enumerate(vocab.field_names):
         conn.execute(
@@ -154,6 +211,8 @@ def create_vocab_notetype(conn, vocab: VocabNotetype, mid: int, now_ts: int) -> 
         ("Production", _production_qfmt(), _production_afmt(vocab.l2_field, vocab.l2_css_class)),
     ]
     for ord_, (tname, qfmt, afmt) in enumerate(templates):
+        if vocab.dictionary:
+            qfmt, afmt = with_dictionary(vocab, qfmt, afmt, recognition=ord_ == 0)
         conn.execute(
             "INSERT INTO templates (ntid, ord, name, mtime_secs, usn, config) VALUES (?, ?, ?, ?, -1, ?)",
             (mid, ord_, tname, now_ts, build_template_config(qfmt, afmt)),
