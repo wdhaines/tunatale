@@ -202,3 +202,38 @@ class TestRun:
 
         monkeypatch.setattr(mod, "settings", _FakeSettings())
         assert run(language_code="ceb").updates == 3
+
+
+class TestRefresh:
+    """--refresh rewrites a dictionary field whose value is no longer what the
+    dictionary gives (tunatale-h0q3.21: 75 live spelling lines in Wolff's letters
+    instead of the card's). Every change is listed, old -> new, in the dry run."""
+
+    def test_refresh_rewrites_a_field_that_differs(self):
+        conn = _make_conn()
+        plan = plan_backfill(conn, CEBUANO_VOCAB, "ceb", refresh=True)
+        tan_aw = next(u for u in plan.updates if u.note_id == 3)
+        assert tan_aw.fields["Spelling"] == dictionary_note_fields("ceb", "tan-aw", "to look")["Spelling"]
+        assert tan_aw.old["Spelling"] == "tán-aw (sic)"
+
+    def test_refresh_leaves_equal_fields_alone(self):
+        conn = _make_conn()
+        apply_backfill(conn, plan_backfill(conn, CEBUANO_VOCAB, "ceb"), now_ms=NOW_MS)
+        again = plan_backfill(conn, CEBUANO_VOCAB, "ceb", refresh=True)
+        assert [u.note_id for u in again.updates] == [3]  # only the hand-set Spelling differs
+        assert set(again.updates[0].fields) == {"Spelling"}
+
+    def test_refresh_never_blanks_a_field(self):
+        conn = _make_conn()
+        conn.execute("UPDATE notes SET flds = ? WHERE id = 2", (_flds(Cebuano="xyzzy", English="?", Meaning="kept"),))
+        plan = plan_backfill(conn, CEBUANO_VOCAB, "ceb", refresh=True)
+        assert 2 not in [u.note_id for u in plan.updates]
+
+    def test_run_refresh_lists_each_change(self, tmp_path, capsys):
+        db_path = _build_collection_file(tmp_path)
+        run(language_code="ceb", anki_collection_path=db_path, anki_backup_dir=tmp_path / "1", apply=True)
+        capsys.readouterr()
+        result = run(language_code="ceb", anki_collection_path=db_path, anki_backup_dir=tmp_path / "2", refresh=True)
+        out = capsys.readouterr().out
+        assert result.updates == 1
+        assert "tan-aw\tSpelling: tán-aw (sic) -> " in out

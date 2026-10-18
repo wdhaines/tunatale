@@ -9,8 +9,9 @@ minted one carry the same thing.
 - **Dry run by default.** It prints what would be filled and lists the words
   the dictionary does not settle (tab-separated word and English), for the
   owner. ``--apply`` writes.
-- **Never overwrites.** Only an empty field is filled; one that holds anything
-  (a hand correction) is left as it is.
+- **Never overwrites** unless ``--refresh``: then a field the dictionary now gives
+  differently is rewritten, and the dry run lists each one, old -> new, for review
+  first (a hand correction would show up there).
 - **Data-only.** Touched notes get ``usn = -1`` and ``mod = now``, and
   ``col.mod`` is bumped; ``col.scm`` and ``col.usn`` are not touched
   (``.claude/rules/anki-sync.md``), so an ordinary sync carries it. Field 0 is
@@ -44,7 +45,8 @@ class Update:
     note_id: int
     word: str
     english: str
-    fields: dict[str, str]  # only the empty fields this fills
+    fields: dict[str, str]  # only the fields this writes
+    old: dict[str, str] = field(default_factory=dict)  # what --refresh replaces
 
 
 @dataclass(frozen=True)
@@ -69,8 +71,13 @@ class Result:
     already_filled: int
 
 
-def plan_backfill(conn: sqlite3.Connection, vocab: VocabNotetype, language_code: str) -> Plan:
-    """What filling *vocab*'s notes in *conn* would write. Reads only."""
+def plan_backfill(conn: sqlite3.Connection, vocab: VocabNotetype, language_code: str, *, refresh: bool = False) -> Plan:
+    """What filling *vocab*'s notes in *conn* would write. Reads only.
+
+    With *refresh*, a field that holds something other than what the dictionary
+    now gives is rewritten too, with the old value kept for the report. A value
+    the dictionary leaves empty never blanks a field.
+    """
     row = conn.execute("SELECT id FROM notetypes WHERE name = ?", (vocab.name,)).fetchone()
     if row is None:
         raise ValueError(f"Notetype {vocab.name!r} not found in notetypes table")
@@ -88,9 +95,14 @@ def plan_backfill(conn: sqlite3.Connection, vocab: VocabNotetype, language_code:
         if not found:
             plan.misses.append(Miss(nid, word, english))
             continue
-        fill = {k: v for k, v in found.items() if v and not by_name.get(k, "").strip()}
+        fill = {
+            k: v
+            for k, v in found.items()
+            if v and (not by_name.get(k, "").strip() or (refresh and by_name.get(k, "") != v))
+        }
         if fill:
-            plan.updates.append(Update(nid, word, english, fill))
+            old = {k: by_name[k] for k in fill if by_name.get(k, "").strip()}
+            plan.updates.append(Update(nid, word, english, fill, old))
         else:
             plan.already_filled += 1
     return plan
@@ -122,6 +134,7 @@ def run(
     anki_collection_path: Path | None = None,
     anki_backup_dir: Path | None = None,
     apply: bool = False,
+    refresh: bool = False,
 ) -> Result:
     """Plan (and with *apply*, write) the backfill for *language_code*'s vocab notes."""
     vocab = get_vocab_notetype(language_code)
@@ -133,7 +146,7 @@ def run(
         anki_backup_dir = settings.anki_backup_dir
 
     with safe_open(anki_collection_path, backup_dir=anki_backup_dir, mode="rw" if apply else "ro") as ctx:
-        plan = plan_backfill(ctx.conn, vocab, language_code)
+        plan = plan_backfill(ctx.conn, vocab, language_code, refresh=refresh)
         if apply:
             apply_backfill(ctx.conn, plan)
 
@@ -146,6 +159,10 @@ def run(
     )
     for miss in plan.misses:
         print(f"  {miss.word}\t{miss.english}", flush=True)
+    for update in (u for u in plan.updates if u.old):
+        # Spelling is the line under the word: show it; the long fields by name
+        changes = [f"{n}: {update.old[n]} -> {update.fields[n]}" if n == "Spelling" else n for n in update.old]
+        print(f"  {update.word}\t{'; '.join(changes)}", flush=True)
     return Result(len(plan.updates), len(plan.misses), plan.already_filled)
 
 
@@ -153,8 +170,11 @@ def _cli() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser(description="Fill the dictionary fields on existing vocab notes (data-only)")
     parser.add_argument("--language", required=True, help="Language code whose vocab notes to fill (e.g. ceb)")
     parser.add_argument("--apply", action="store_true", help="Write; without it this is a dry run")
+    parser.add_argument(
+        "--refresh", action="store_true", help="Also rewrite fields the dictionary now gives differently"
+    )
     args = parser.parse_args()
-    run(language_code=args.language, apply=args.apply)
+    run(language_code=args.language, apply=args.apply, refresh=args.refresh)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -24,10 +24,12 @@ from app.plugins.languages.ceb.wolff_cards import (
     EnglishRelations,
     Miss,
     WolffLexicon,
+    add_attested,
     english_tokens,
     entry_record,
     letters_key,
     load_lexicon,
+    onto_card,
 )
 from app.plugins.languages.ceb.wolff_dictionary import parse_entry, strip_marks
 
@@ -44,7 +46,9 @@ def lexicon():
         en_sounds=[],
         english_common=set(),
     )
-    return WolffLexicon([entry_record(e, spelling) for e in entries])
+    records = [entry_record(e, spelling) for e in entries]
+    add_attested(entries, records, spelling)
+    return WolffLexicon(records)
 
 
 def test_a_record_carries_the_handbook_spelling_and_the_paragraph(lexicon):
@@ -213,12 +217,12 @@ def no_relations(committed):
     [
         ("bagyo", "storm", "bágyo", "typhoon"),  # a typhoon is a kind of storm
         ("pusil", "gun", "pusíl", "firearm"),  # synonyms
-        ("igsoon", "sibling", "igsûon", "sa inahan"),  # a brother is a kind of sibling
+        ("igsoon", "sibling", "igsôon", "sa inahan"),  # a brother is a kind of sibling; the card writes oo
         ("pako", "wing", "pakô", "wings"),  # plural
         ("ngipon", "tooth", "ngípon", "teeth"),  # irregular plural
         ("ligid", "tire", "ligíd", "wheel"),  # tire: "hoop that covers a wheel"
         ("uyab", "boyfriend, girlfriend", "uyáb", "girl or boy friend"),
-        ("okay", "okay", "úkay", "O.K."),  # Wolff writes O.K.
+        ("okay", "okay", "ókay", "O.K."),  # Wolff writes O.K. (and úkay; the card writes o)
     ],
 )
 def test_a_close_meaning_settles_the_entry(committed, no_relations, word, english, spelling, meaning):
@@ -286,3 +290,109 @@ def test_the_committed_relations():
     assert "tooth" in rel.related["teeth"]
     assert "wheel" in rel.defined_by["tire"]
     assert not LIGHT_WORDS & set(rel.related)
+
+
+# ── the course's letters, Wolff's marks (tunatale-h0q3.21) ──────────────────
+#
+# The card word is the course spelling, and 75 of the 662 live spelling lines
+# had other letters: Wolff writes Spanish loans with i/u (Martes -> Mártis).
+# The line keeps the card's letters and carries Wolff's stress, glottal and
+# hyphen (a glottal stop after a consonant) onto them.
+
+
+@pytest.mark.parametrize(
+    ("card", "surface", "expected"),
+    [
+        ("lamesa", "lamísa", "lamésa"),
+        ("Martes", "Mártis", "Mártes"),
+        ("oras", "úras", "óras"),
+        ("kauban", "kàóban", "kàúban"),  # the glottal and the stress both land
+        ("siyudad", "syudád", "siyudád"),  # the card's glide spelling
+        ("uyog", "úy-og", "úy-og"),  # Wolff's hyphen is a glottal stop: kept
+        ("ting-init", "tinginít", "ting-inít"),  # the card's own hyphen: kept
+        ("maayo", "màáyo", "màáyo"),
+        ("Kumusta", "kumústa", "Kumústa"),
+    ],
+)
+def test_the_line_keeps_the_cards_letters_and_wolffs_marks(card, surface, expected):
+    assert onto_card(card, surface) == expected
+
+
+def test_a_word_too_different_keeps_wolffs_spelling():
+    assert onto_card("xyzzy", "bátà") == "bátà"
+
+
+def test_a_stress_that_cannot_be_placed_keeps_wolffs_spelling():
+    # 'bta' has no vowel for bátà's stress to sit on
+    assert onto_card("bta", "bátà") == "bátà"
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling"),
+    [
+        ("lamesa", "table", "lamésa"),
+        ("Martes", "Tuesday", "Mártes"),
+        ("tulo", "three", "tuló"),
+        ("bata", "child", "bátà"),
+    ],
+)
+def test_a_cards_spelling_uses_its_own_letters(committed, word, english, spelling):
+    assert committed.card_fields(word, english).spelling == spelling
+
+
+def test_the_short_form_front_uses_its_first_spelling(committed):
+    assert committed.card_fields("dili, di", "no; not").spelling == "dílì"
+
+
+# ── words Wolff prints but does not list (tunatale-h0q3.21) ────────────────
+#
+# 32 of the 79 cards with no entry are words Wolff prints in full, accented,
+# in his examples (mainit -> maínit under ínit). The card takes that printed
+# spelling; Meaning stays empty, because the example is under the ROOT's sense.
+
+
+def test_a_word_printed_in_an_example_takes_that_spelling(lexicon):
+    f = lexicon.card_fields("madawat", "be accepted")
+    assert f.spelling == "madáwat"
+    assert (f.meaning, f.verb) == ("", "")
+    assert "<b>tán-aw</b>" in f.details  # the entry it is printed in
+    assert "acceptable" in f.details  # and the example itself
+    assert f.dictionary_entry.startswith('<div class="wolff-cite">') and "Mutan-aw kug sini" in f.dictionary_entry
+
+
+def test_a_listed_word_is_never_also_attested(lexicon):
+    listed = {letters_key(f["wolff"]) for r in lexicon.entries for f in r["forms"] if f["wolff"]}
+    listed |= {letters_key(h) for r in lexicon.entries for h in r["heads"]}
+    attested = {letters_key(strip_marks(a[0])) for r in lexicon.entries for a in r.get("attested", [])}
+    assert attested and not attested & listed
+
+
+def _attested_only(*spellings: tuple[str, int]) -> WolffLexicon:
+    rec = {
+        "id": "x",
+        "heads": ["x"],
+        "text": "x n thing.",
+        "forms": [{"label": "x", "wolff": "x", "hb": "x", "short": [], "xref": None, "senses": []}],
+        "attested": [[hb, n, "Ex.", "Example."] for hb, n in spellings],
+    }
+    return WolffLexicon([rec])
+
+
+def test_the_printed_spelling_needs_nine_in_ten_attestations():
+    assert _attested_only(("kinabúhì", 9), ("kinabúhi", 1)).card_fields("kinabuhi", "life").spelling == "kinabúhì"
+    assert _attested_only(("kinabúhì", 5), ("kinabúhi", 5)).match("kinabuhi", "life") == Miss(
+        "ambiguous", ("kinabúhì", "kinabúhi")
+    )
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling"),
+    [
+        ("mainit", "warm", "màínit"),
+        ("tindahan", "store", "tindáhan"),
+        ("kinabuhi", "life", "kinabúhì"),
+        ("serado", "closed", "serádo"),  # Wolff's sirádu, in the card's letters
+    ],
+)
+def test_the_committed_lexicon_has_the_printed_words(committed, word, english, spelling):
+    assert committed.card_fields(word, english).spelling == spelling

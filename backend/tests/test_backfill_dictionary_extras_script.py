@@ -78,3 +78,15 @@ def test_refuses_a_language_without_a_dictionary(db_path, capsys):
 def test_refuses_a_missing_db(tmp_path, capsys):
     assert main(["--db", str(tmp_path / "nope.db"), "--language", "ceb"]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+def test_refresh_replaces_layers_that_differ_and_keeps_other_extras(db_path, capsys):
+    assert main(["--db", str(db_path), "--language", "ceb", "--apply"]) == 0
+    assert main(["--db", str(db_path), "--language", "ceb", "--apply", "--refresh"]) == 0
+    out = capsys.readouterr().out
+    assert "refreshed 1" in out  # tulo's hand-set layer
+    assert _extras(db_path, "tulo") == dictionary_extras("ceb", "tulo", "three")
+    assert _extras(db_path, "tan-aw") == (
+        BackField("Note", "n", "details"),
+        *dictionary_extras("ceb", "tan-aw", "to look"),
+    )
