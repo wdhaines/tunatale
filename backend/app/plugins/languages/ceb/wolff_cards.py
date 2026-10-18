@@ -195,6 +195,10 @@ def onto_card(card: str, surface: str) -> str:
     return result if marks(result) == marks(surface) else surface
 
 
+def _is_affix(word: str) -> bool:
+    return word.startswith("-") or word.endswith("-")
+
+
 def _words(text: str) -> set[str]:
     return {w[:5] for w in re.findall(r"[a-z]+", strip_marks(text).lower()) if w not in _STOP}
 
@@ -350,13 +354,20 @@ class WolffLexicon:
     def _resolve(self, ei: int, fi: int, word_key: str) -> tuple[int, int] | None:
         """Follow a form's '= x' / 'see x' / 'short for x' to the form it points at."""
         xref = self.entries[ei]["forms"][fi]["xref"]
-        if not xref or self.entries[ei]["forms"][fi]["senses"]:
+        # A short form means what its full form means, even when it has usage
+        # notes of its own ('ka short for ikaw'); other pointers with senses stand.
+        if not xref or (self.entries[ei]["forms"][fi]["senses"] and xref[0] != "short for"):
             return None
         target = strip_marks(re.split(r"[ ,]", xref[1])[0]).lower().split("_")[0]
         for tei in self._heads.get(target, []):
             forms = self.entries[tei]["forms"]
             inside = [i for i, f in enumerate(forms) if f["wolff"] and letters_key(f["wolff"]) == word_key]
-            return tei, (inside[0] if xref[0] == "see" and inside else 0)
+            tfi = inside[0] if xref[0] == "see" and inside else 0
+            # A short form with notes of its own keeps them when the full form has
+            # none to give ('mu short for nímu', where nímu is itself a pointer).
+            if self.entries[ei]["forms"][fi]["senses"] and not forms[tfi]["senses"]:
+                return None
+            return tei, tfi
         return None
 
     def _hits(self, word: str) -> list[_Hit]:
@@ -364,6 +375,8 @@ class WolffLexicon:
         hits: dict[tuple[int, int], _Hit] = {}
         for ei, fi, short_hb in self._index.get(key, []):
             surface = short_hb or self.entries[ei]["forms"][fi]["hb"]
+            if _is_affix(surface) and not _is_affix(word):
+                continue  # the prefix ka- is not the word ka (letters_key drops hyphens)
             via = None
             target = self._resolve(ei, fi, key)
             if target is not None:
@@ -495,13 +508,15 @@ class WolffLexicon:
         if related:
             items = "".join(f"<li><b>{html.escape(w)}</b> {html.escape(g)}</li>" for w, g in related)
             out.append('<div class="wolff-h">Related words</div><ul>' + items + "</ul>")
-        others = [h for h in self._hits(cebuano.split(",")[0].strip()) if (h.entry, h.form) != (hit.entry, hit.form)]
+        others = [
+            (h.surface, gloss)
+            for h in self._hits(cebuano.split(",")[0].strip())
+            if (h.entry, h.form) != (hit.entry, hit.form)
+            # a pointer whose target gives no gloss has nothing to tell apart
+            and (gloss := next((s["gloss"] for s in self._senses(h) if s["gloss"]), ""))
+        ]
         if others:
-            items = "".join(
-                f"<li><b>{html.escape(h.surface)}</b> "
-                f"{html.escape(next((s['gloss'] for s in self._senses(h) if s['gloss']), ''))}</li>"
-                for h in others
-            )
+            items = "".join(f"<li><b>{html.escape(w)}</b> {html.escape(g)}</li>" for w, g in others)
             out.append('<div class="wolff-h">Not to be confused with</div><ul>' + items + "</ul>")
         return "".join(out)
 
