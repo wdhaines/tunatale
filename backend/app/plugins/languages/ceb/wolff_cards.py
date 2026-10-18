@@ -31,10 +31,13 @@ under a word is worse than none.
 
 from __future__ import annotations
 
+import difflib
 import gzip
 import html
 import json
 import re
+import unicodedata
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
@@ -117,6 +120,39 @@ def entry_record(entry: Entry, lex: SpellingLexicon) -> dict:
     }
 
 
+_TOKEN = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")
+
+
+def add_attested(entries: Sequence[Entry], records: Sequence[dict], lex: SpellingLexicon) -> None:
+    """Record, under each entry, the accented words its examples print that no entry lists.
+
+    Wolff gives a regular derived word only as an affix label, or not at all
+    (mainit = ma- + ínit), but prints it in full in his examples (maínit). That
+    printed spelling is the attestation a card can take (tunatale-h0q3.21).
+    Stored as ``[handbook spelling, count, example in Handbook spelling, its English]``.
+    """
+    listed = set()
+    for rec in records:
+        listed |= {letters_key(h) for h in rec["heads"]}
+        for f in rec["forms"]:
+            listed |= {letters_key(f["wolff"])} if f["wolff"] else set()
+            listed |= {letters_key(w) for w, _ in f["short"]}
+    for entry, rec in zip(entries, records, strict=True):
+        found: dict[str, list] = {}
+        for form in [entry.root, *entry.subs]:
+            for ex in (ex for sense in form.senses for ex in sense.examples):
+                for tok in _TOKEN.findall(ex.ceb):
+                    if tok == strip_marks(tok) or letters_key(tok) in listed:
+                        continue
+                    hb = handbook_spelling(tok.lower(), lex).text
+                    if hb in found:
+                        found[hb][0] += 1
+                    else:
+                        found[hb] = [1, convert_text(ex.ceb, lex), ex.en]
+        if found:
+            rec["attested"] = [[hb, *rest] for hb, rest in found.items()]
+
+
 # --- reading it -------------------------------------------------------------------------------
 
 
@@ -126,6 +162,37 @@ def letters_key(word: str) -> str:
     w = w.replace("e", "i").replace("o", "u")
     # Wolff writes one consonant + y/w as Cy, Cw (§3.24: syudad); cards write siyudad
     return re.sub(r"(?<=[^aiu])(?:iy|uw)(?=[aiu])", lambda m: m.group()[1], w)
+
+
+_EO = str.maketrans("eo", "iu")
+_MARKS = frozenset("\u0300\u0301\u0302")  # grave (glottal), acute (stress), circumflex (both)
+
+
+def onto_card(card: str, surface: str) -> str:
+    """The card word's own letters, with *surface*'s stress, glottal and hyphen marks.
+
+    The card word is the course spelling, which wins over Wolff's letters
+    (tunatale-h0q3.21: Martes, not Mártis). Letters align with e = i and o = u;
+    a hyphen in *surface* the card lacks is a glottal stop and is carried over.
+    When the words are too different, or a mark would be lost, *surface* stands.
+    """
+    chars = [unicodedata.normalize("NFD", c) for c in unicodedata.normalize("NFC", surface)]
+    bare = "".join(c[0] for c in chars)
+    a, b = card.lower().translate(_EO), bare.lower().translate(_EO)
+    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    if matcher.ratio() < 0.75:
+        return surface
+    out = []
+    for op, i1, i2, j1, j2 in matcher.get_opcodes():
+        if op == "equal":
+            out += [card[i] + chars[j][1:] for i, j in zip(range(i1, i2), range(j1, j2), strict=True)]
+        elif op == "insert":
+            out += ["-"] if bare[j1:j2] == "-" else []
+        else:  # the card's own letters where the two differ
+            out += list(card[i1:i2])
+    result = unicodedata.normalize("NFC", "".join(out))
+    marks = lambda w: sorted(m for m in unicodedata.normalize("NFD", w) if m in _MARKS)  # noqa: E731
+    return result if marks(result) == marks(surface) else surface
 
 
 def _words(text: str) -> set[str]:
@@ -243,6 +310,16 @@ class CardFields:
         )
 
 
+class Attested(NamedTuple):
+    """A word no entry lists, spelled as Wolff prints it in an example of *entry*."""
+
+    entry: int
+    surface: str
+    example: str  # in Handbook spelling
+    translation: str
+    via: None = None
+
+
 class _Hit(NamedTuple):
     entry: int
     form: int
@@ -255,6 +332,10 @@ class WolffLexicon:
     def __init__(self, entries: Sequence[dict], relations: EnglishRelations | None = None):
         self.entries = list(entries)
         self.relations = relations if relations is not None else EnglishRelations.empty()
+        self._attested: dict[str, list[tuple[int, str, int, str, str]]] = {}
+        for ei, rec in enumerate(self.entries):
+            for hb, n, example, translation in rec.get("attested", ()):
+                self._attested.setdefault(letters_key(hb), []).append((ei, hb, n, example, translation))
         self._index: dict[str, list[tuple[int, int, str | None]]] = {}
         self._heads: dict[str, list[int]] = {}
         for ei, rec in enumerate(self.entries):
@@ -299,11 +380,25 @@ class WolffLexicon:
     def _senses(self, hit: _Hit) -> list[dict]:
         return [s for s in self.entries[hit.entry]["forms"][hit.form]["senses"] if not s["phrase"]]
 
-    def match(self, cebuano: str, english: str) -> _Hit | Miss:
+    def _printed(self, word: str) -> Attested | Miss:
+        """The spelling Wolff prints, when at least nine in ten of his printings agree."""
+        found = self._attested[letters_key(word)]
+        counts = Counter()
+        for _, hb, n, _, _ in found:
+            counts[hb] += n
+        hb, top = counts.most_common(1)[0]
+        if top < 0.9 * counts.total():
+            return Miss("ambiguous", tuple(counts))
+        ei, _, _, example, translation = max((x for x in found if x[1] == hb), key=lambda x: x[2])
+        return Attested(ei, hb, example, translation)
+
+    def match(self, cebuano: str, english: str) -> _Hit | Attested | Miss:
         word = cebuano.split(",")[0].strip()
         hits = self._hits(word) if word and " " not in word else []
         if not hits:
-            return Miss("not-in-dictionary", ())
+            return (
+                self._printed(word) if word and letters_key(word) in self._attested else Miss("not-in-dictionary", ())
+            )
         card = _words(english)
         gloss = {h: [s["gloss"] for s in self._senses(h)] for h in hits}
         # Tiers, in order: the same words, then a synonym or a kind of it, then
@@ -335,8 +430,20 @@ class WolffLexicon:
         hit = self.match(cebuano, english)
         if isinstance(hit, Miss):
             return hit
+        if isinstance(hit, Attested):
+            root = self.entries[hit.entry]["forms"][0]["hb"] or self.entries[hit.entry]["heads"][0]
+            return CardFields(
+                spelling=onto_card(cebuano.split(",")[0].strip(), hit.surface),
+                meaning="",
+                verb="",
+                details=(
+                    f"<div>Not listed in Wolff: spelled as he prints it, in the entry for <b>{html.escape(root)}</b>.</div>"
+                    f'<div class="wolff-ex"><i>{html.escape(hit.example)}</i> {html.escape(hit.translation)}</div>'
+                ),
+                dictionary_entry=self._dictionary_entry(hit),
+            )
         return CardFields(
-            spelling=hit.surface,
+            spelling=onto_card(cebuano.split(",")[0].strip(), hit.surface),
             meaning=self._meaning(hit),
             verb=self._verb(hit, _words(english)),
             details=self._details(hit, cebuano),

@@ -26,7 +26,7 @@ import json
 from pathlib import Path
 
 from app.plugins.languages.ceb.handbook_spelling import load_course_spellings
-from app.plugins.languages.ceb.wolff_cards import LEXICON_PATH, Miss, WolffLexicon, entry_record
+from app.plugins.languages.ceb.wolff_cards import LEXICON_PATH, Miss, WolffLexicon, add_attested, entry_record
 from app.plugins.languages.ceb.wolff_dictionary import parse_entry
 from scripts.wolff_handbook_oracle import (
     DEFAULT_DICTIONARY,
@@ -52,7 +52,10 @@ def build(dictionary_text: str, en_sounds: Path) -> list[dict]:
     english = set(wordfreq.top_n_list("en", 30000))
     lex = load_lexicon(Dictionary(paragraphs, english), en_sounds)
     lex = lex.__class__(freq=lex.freq, entries=lex.entries, loans=lex.loans, course=load_course_spellings())
-    return [entry_record(parse_entry(p), lex) for p in paragraphs]
+    entries = [parse_entry(p) for p in paragraphs]
+    records = [entry_record(e, lex) for e in entries]
+    add_attested(entries, records, lex)  # words Wolff prints but does not list (tunatale-h0q3.21)
+    return records
 
 
 def deck_words() -> list[tuple[str, str]]:
