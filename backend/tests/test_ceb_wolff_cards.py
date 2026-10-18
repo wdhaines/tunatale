@@ -13,6 +13,7 @@ The entries are real paragraphs (``tests/data/wolff_entries.json``, PG #40074).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -257,9 +258,15 @@ def test_a_whole_gloss_breaks_a_tie(committed, word, english, spelling):
     assert committed.card_fields(word, english).spelling == spelling
 
 
-def test_a_tie_no_whole_gloss_settles_stays_ambiguous(committed):
-    # The pronoun's entry never says 'you'; the linker's and the letter's don't either.
-    assert committed.match("ka", "you (one person)").reason == "ambiguous"
+def test_a_tie_no_whole_gloss_settles_stays_ambiguous():
+    # Two spellings whose glosses both hold 'child', neither as the whole gloss.
+    def rec(head, hb, gloss):
+        sense = {"pos": "n", "n": None, "cls": None, "gloss": gloss, "phrase": None, "ex": None}
+        form = {"label": head, "wolff": head, "hb": hb, "short": [], "xref": None, "senses": [sense]}
+        return {"id": head, "heads": [head], "text": f"{head} n {gloss}.", "forms": [form]}
+
+    lex = WolffLexicon([rec("báta", "báta", "small child here"), rec("batá", "batá", "child over there")])
+    assert lex.match("bata", "child") == Miss("ambiguous", ("báta", "batá"))
 
 
 @pytest.mark.parametrize(("word", "english", "spelling"), [("tubig", "water", "túbig"), ("duol", "near", "dûol")])
@@ -396,3 +403,35 @@ def test_the_printed_spelling_needs_nine_in_ten_attestations():
 )
 def test_the_committed_lexicon_has_the_printed_words(committed, word, english, spelling):
     assert committed.card_fields(word, english).spelling == spelling
+
+
+# ── 'ka' (the owner, 2026-10-18: "Ka being missing from the dictionary is sus") ──
+#
+# Two faults left the everyday 'you' blank. The prefix ka- matched the card
+# word ka, because letters_key drops hyphens. And Wolff's "ka short for ikaw"
+# was not followed to ikáw, because the sub-entry carries usage notes of its
+# own, so 'you (singular)' was never compared with the card's English.
+
+
+def test_ka_is_ikaw_s_short_form(committed):
+    f = committed.card_fields("ka", "you (one person)")
+    assert f.spelling == "ka"
+    assert f.meaning.startswith("you (singular)")
+    assert "Short form of <b>ikáw</b>" in f.details
+
+
+def test_an_affix_matches_only_a_card_word_with_the_hyphen(committed):
+    assert all(not h.surface.endswith("-") for h in committed._hits("ka"))
+    assert any(h.surface == "ka-" for h in committed._hits("ka-"))
+
+
+def test_a_short_form_keeps_its_notes_when_the_full_form_has_none(committed):
+    # 'duy short for uduy': uduy gives no senses, so following it would throw
+    # away duy's own note ('or unduy') and leave a hit with nothing to match on
+    assert all(committed._senses(h) for h in committed._hits("duy"))
+
+
+def test_a_homograph_with_no_gloss_is_not_listed(committed):
+    # 'mu see ámù' lands on an entry with no senses: an empty line told nothing apart
+    for english in ("you (plural); your (one person)", "your; by you (one person)"):
+        assert not re.search(r"<b>[^<]*</b> </li>", committed.card_fields("mo", english).details)
