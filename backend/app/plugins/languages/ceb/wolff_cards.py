@@ -195,6 +195,27 @@ def onto_card(card: str, surface: str) -> str:
     return result if marks(result) == marks(surface) else surface
 
 
+#: How many pointers in a row :meth:`WolffLexicon._resolve` follows.
+_POINTER_HOPS = 2
+#: A gloss that is only Wolff's case label ('gen.', 'gen. form', 'preposed gen.',
+#: 'gen.: = nákù'), which :meth:`WolffLexicon._senses` reads as the pronoun's
+#: possessive. Group 1 is the label, group 2 the word it points at.
+_CASE_LABEL = re.compile(r"((?:preposed )?gen\.(?: form)?)(?::\s*=\s*(\S+?))?\.?")
+#: An English personal pronoun's possessive and the agent Wolff pairs with it.
+_PRONOUN_CASES = {
+    "i": ("my", "me"),
+    "me": ("my", "me"),
+    "we": ("our", "us"),
+    "us": ("our", "us"),
+    "you": ("your", "you"),
+    "he": ("his", "him"),
+    "him": ("his", "him"),
+    "she": ("her", "her"),
+    "they": ("their", "them"),
+    "them": ("their", "them"),
+}
+
+
 def _is_affix(word: str) -> bool:
     return word.startswith("-") or word.endswith("-")
 
@@ -351,7 +372,7 @@ class WolffLexicon:
                 for wolff, hb in f["short"]:
                     self._index.setdefault(letters_key(wolff), []).append((ei, fi, hb))
 
-    def _resolve(self, ei: int, fi: int, word_key: str) -> tuple[int, int] | None:
+    def _resolve(self, ei: int, fi: int, word_key: str, depth: int = 0) -> tuple[int, int] | None:
         """Follow a form's '= x' / 'see x' / 'short for x' to the form it points at."""
         xref = self.entries[ei]["forms"][fi]["xref"]
         # A short form means what its full form means, even when it has usage
@@ -363,6 +384,15 @@ class WolffLexicon:
             forms = self.entries[tei]["forms"]
             inside = [i for i, f in enumerate(forms) if f["wolff"] and letters_key(f["wolff"]) == word_key]
             tfi = inside[0] if xref[0] == "see" and inside else 0
+            # A pointer to a bare pointer goes one step further: 'mu short for
+            # nímu' lands on 'nímu see ikaw', and the senses are in ikaw's nímu.
+            if (
+                not forms[tfi]["senses"]
+                and forms[tfi]["xref"]
+                and depth < _POINTER_HOPS
+                and (further := self._resolve(tei, tfi, letters_key(target), depth + 1)) is not None
+            ):
+                return further
             # A short form with notes of its own keeps them when the full form has
             # none to give ('mu short for nímu', where nímu is itself a pointer).
             if self.entries[ei]["forms"][fi]["senses"] and not forms[tfi]["senses"]:
@@ -391,7 +421,37 @@ class WolffLexicon:
         return list(hits.values())
 
     def _senses(self, hit: _Hit) -> list[dict]:
-        return [s for s in self.entries[hit.entry]["forms"][hit.form]["senses"] if not s["phrase"]]
+        senses = [s for s in self.entries[hit.entry]["forms"][hit.form]["senses"] if not s["phrase"]]
+        genitive = self._genitive(hit.entry)
+        if genitive is None:
+            return senses
+        out = []
+        for s in senses:
+            m = _CASE_LABEL.fullmatch(s["gloss"])
+            if m:
+                pointer = f" (= {m.group(2)})" if m.group(2) else ""
+                s = {**s, "gloss": f"{m.group(1)}: {genitive}{pointer}"}
+            out.append(s)
+        return out
+
+    def _genitive(self, ei: int) -> str | None:
+        """'our, by us' for an entry whose root is a personal pronoun ('we, us'), else None.
+
+        Wolff glosses a possessive with its case label alone ('átù {1} gen.'),
+        and his genitive is the possessive and the agent: nákù "gen.: my, by me".
+        """
+        root = self.entries[ei]["forms"][0]
+        first = next((s["gloss"] for s in root["senses"] if s["gloss"]), "")
+        cases = []
+        for word in re.findall(r"[a-z]+", first.lower()):
+            if word not in _PRONOUN_CASES:
+                break
+            cases.append(_PRONOUN_CASES[word])
+        if not cases:
+            return None
+        owners = list(dict.fromkeys(o for o, _ in cases))
+        agents = list(dict.fromkeys(a for _, a in cases))
+        return f"{', '.join(owners)}, by {' or '.join(agents)}"
 
     def _printed(self, word: str) -> Attested | Miss:
         """The spelling Wolff prints, when at least nine in ten of his printings agree."""

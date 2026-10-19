@@ -339,3 +339,28 @@ def test_more_class_codes(code, affixes):
 def test_the_reason_subjects():
     assert dict(decode_classes("c5"))["i-/gi-"] == "the reason for it"
     assert dict(decode_classes("b3"))["-an/gi-an"] == "the reason for it"
+
+
+def test_a_sub_entry_head_may_carry_wolffs_accents():
+    # The owner, 2026-10-18: ato's card showed kita's nominative 'we, us'. Wolff
+    # prints the possessives as run-in heads inside the pronoun's paragraph
+    # ('átù {1} gen.' inside kita), and a head with an accent was not a head.
+    e = parse_entry("kita {1} we, us. Kita ra, Just us. átù {1} gen. Ang átung balay, Our house. {2} ours.")
+    subs = {s.label: s for s in e.subs}
+    assert list(subs) == ["átù"]
+    assert subs["átù"].form == "átù"
+    assert [s.gloss for s in subs["átù"].senses] == ["gen.", "ours"]
+    assert [s.gloss for s in e.root.senses] == ["we, us"]
+
+
+def test_a_capitalised_accented_word_is_not_a_head():
+    # An example sentence starts with a capital; only a lower-case word heads a sub-entry.
+    e = parse_entry("aku I, me. Ákù {1} nà, That is mine.")
+    assert e.subs == []
+
+
+def test_preposed_starts_a_sub_entry():
+    # 'íla, iláha preposed gen.: their' inside sila carries no {n} and no part of speech.
+    e = parse_entry("sila they. Muadtu sila. íla, iláha preposed gen.: their, by them. Ang ílang amahan, Their father.")
+    assert [(f.label, f.form) for f in e.subs] == [("íla, iláha", "íla")]
+    assert e.subs[0].senses[0].gloss == "preposed gen.: their, by them"
