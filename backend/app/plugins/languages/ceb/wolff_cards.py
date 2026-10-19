@@ -466,6 +466,16 @@ class WolffLexicon:
         return Attested(ei, hb, example, translation)
 
     def match(self, cebuano: str, english: str) -> _Hit | Attested | Miss:
+        # A gloss naming two senses leads with the card's own ('I; my, mine' is
+        # ako's subject card, R2), and matched whole the second can outscore it.
+        first = english.split(";")[0]
+        if first != english:
+            hit = self._match(cebuano, first)
+            if isinstance(hit, _Hit) and hit.english_matched:
+                return hit
+        return self._match(cebuano, english)
+
+    def _match(self, cebuano: str, english: str) -> _Hit | Attested | Miss:
         word = cebuano.split(",")[0].strip()
         hits = self._hits(word) if word and " " not in word else []
         if not hits:
