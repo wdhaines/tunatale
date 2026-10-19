@@ -85,6 +85,9 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "here_mine": frozenset({"here"}),
     "there_yours": frozenset({"there"}),
     "there_far": frozenset({"there", "yonder"}),
+    # Being there: the lessons gloss nia "is here (near you and me)".
+    "is_here_both": frozenset({"here"}),
+    "is_there_far": frozenset({"there", "yonder"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")

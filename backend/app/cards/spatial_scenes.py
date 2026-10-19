@@ -110,6 +110,12 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     "here_mine",
     "there_yours",
     "there_far",
+    # BEING there, Cebuano's existential (Wolff: nía "is here, where you and I
+    # are", túa "is there, far away"): someone present, drawn as a lit person at
+    # that distance, which is neither the thing (ball) nor the place (flag) the
+    # eight above draw (the user, 2026-10-18).
+    "is_here_both",
+    "is_there_far",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -603,6 +609,13 @@ def _people() -> str:
     return f'<g class="figures" transform="translate(0 {_n(_PEOPLE_DY)})">{cast}</g>'
 
 
+def _present(x: float) -> str:
+    """Someone who IS at *x*: a lit person, the way the pronoun pictures fill a referent."""
+    from app.cards.pronoun_scenes import _person
+
+    return f'<g class="present" transform="translate(0 {_n(_PEOPLE_DY)})">{_person(x, True)}</g>'
+
+
 def _zones() -> str:
     return "".join(
         f'<ellipse class="zone {owner}" cx="{_n(cx)}" cy="{_G}" rx="{_n(_ZONE_RX)}" ry="{_n(_ZONE_RY)}" '
@@ -611,9 +624,11 @@ def _zones() -> str:
     )
 
 
-def _deixis(where: str, thing: bool) -> list[str]:
+def _deixis(where: str, thing: bool, present: bool = False) -> list[str]:
     x = _DEIXIS_X[where]
-    if thing:
+    if present:
+        obj = _present(x)
+    elif thing:
         obj = f'<circle class="ball" cx="{_n(x)}" cy="{_n(_G - _DEIXIS_BALL_R)}" r="{_n(_DEIXIS_BALL_R)}" fill="{_DOT_FILL}"/>'
     else:
         obj = _flag(x, height=62.0, pennant_w=22.0, pennant_h=18.0)
@@ -742,6 +757,8 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "here_mine": lambda: _deixis("mine", thing=False),
     "there_yours": lambda: _deixis("yours", thing=False),
     "there_far": lambda: _deixis("far", thing=False),
+    "is_here_both": lambda: _deixis("both", thing=False, present=True),
+    "is_there_far": lambda: _deixis("far", thing=False, present=True),
 }
 
 

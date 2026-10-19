@@ -124,6 +124,9 @@ class TestGlossGuard:
             ("here_mine", "here (near me, not you)"),
             ("there_yours", "there (near you)"),
             ("there_far", "over there"),
+            # Someone present, on the Wolff 1 lesson's gloss for nia.
+            ("is_here_both", "is here (near you and me)"),
+            ("is_there_far", "is there (far from us both)"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -146,6 +149,8 @@ class TestGlossGuard:
             ("toward", "tow"),
             ("this_both", "thistle"),
             ("there_far", "therefore"),
+            ("is_here_both", "where"),
+            ("is_there_far", "gone"),
         ],
     )
     def test_a_gloss_that_does_not_name_the_relation_refuses(self, concept, gloss) -> None:
@@ -216,6 +221,11 @@ class TestDispatch:
             ("diri", "ceb", "here (near me, not you)", "here_mine"),
             ("diha", "ceb", "there (near you)", "there_yours"),
             ("didto", "ceb", "over there", "there_far"),
+            # The existential short forms (Wolff nía = anía, túa = atúa): someone
+            # IS there. The long forms are not listed: two words on one picture.
+            ("nia", "ceb", "is here (near you and me)", "is_here_both"),
+            ("Nia", "ceb", "is here", "is_here_both"),
+            ("tua", "ceb", "is there (far)", "is_there_far"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:

@@ -25,6 +25,7 @@ indistinguishable by the oracle meant to tell them apart.
 from __future__ import annotations
 
 import math
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from typing import NamedTuple
@@ -98,6 +99,12 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     "here_mine": (0, False, False),
     "there_yours": (0, False, False),
     "there_far": (0, False, False),
+    # BEING there, the existential (Wolff: nía = anía "is here, where you and
+    # I are"; túa = atúa "is there, far away"; the user, 2026-10-18: "Nia also
+    # seems like a good svg candidate"). Someone present: a lit person at the
+    # distance, which is neither the thing (ball) nor the place (flag).
+    "is_here_both": (0, False, False),
+    "is_there_far": (0, False, False),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -114,6 +121,7 @@ _MEASURED: dict[tuple[str, str], float] = {
 
 DEIXIS_THINGS = ("this_both", "this_mine", "that_yours", "that_far")
 DEIXIS_PLACES = ("here_both", "here_mine", "there_yours", "there_far")
+DEIXIS_PRESENT = ("is_here_both", "is_there_far")
 
 #: The pairs whose render must fail the other's predicate. The reason the
 #: oracle table exists at all: two neighbours that both satisfy one predicate
@@ -195,6 +203,18 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     *zip(DEIXIS_PLACES, DEIXIS_THINGS, strict=True),
     ("there_far", "toward"),
     ("toward", "there_far"),
+    # Someone present against the thing and the place at the same distance, and
+    # the two presences against each other.
+    ("is_here_both", "here_both"),
+    ("here_both", "is_here_both"),
+    ("is_here_both", "this_both"),
+    ("this_both", "is_here_both"),
+    ("is_there_far", "there_far"),
+    ("there_far", "is_there_far"),
+    ("is_there_far", "that_far"),
+    ("that_far", "is_there_far"),
+    ("is_here_both", "is_there_far"),
+    ("is_there_far", "is_here_both"),
 )
 
 
@@ -231,6 +251,15 @@ class Highlight(NamedTuple):
     h: float
 
 
+class Present(NamedTuple):
+    """A lit person: head centre x, half-width, where the feet stand, and the fill."""
+
+    cx: float
+    half: float
+    feet: float
+    fill: str
+
+
 class Picture(NamedTuple):
     """One render, read into the numbers the predicates talk about.
 
@@ -258,6 +287,7 @@ class Picture(NamedTuple):
     pennants: int
     trails: list[Arrow]  # a dotted path: the way travelled, or the way still to go
     zones: dict[str, tuple[float, float]]  # "mine"/"yours" -> (centre x, half-width) on the floor
+    presents: list[Present]  # a lit person standing somewhere: someone who IS there
 
 
 def _root(svg: bytes) -> ET.Element:
@@ -307,6 +337,15 @@ def _painted(root: ET.Element) -> list[str]:
     return order
 
 
+def _present_of(el: ET.Element) -> Present:
+    """A ``present`` group: its head circle and the body path's foot, moved by the group's translate."""
+    dy = float(re.fullmatch(r"translate\(0 ([-\d.]+)\)", el.get("transform", "translate(0 0)")).group(1))
+    head = el.find(f"{_SVG}circle")
+    body = el.find(f"{_SVG}path")
+    feet = float(re.match(r"M[-\d.]+ ([-\d.]+)", body.get("d")).group(1)) + dy
+    return Present(float(head.get("cx")), float(head.get("r")), feet, head.get("fill"))
+
+
 def _parse(svg: bytes) -> Picture:
     root = _root(svg)
     _, _, width, height = _viewbox(root)
@@ -339,6 +378,7 @@ def _parse(svg: bytes) -> Picture:
             for owner in ("mine", "yours")
             if owner in _classes(el)
         },
+        presents=[_present_of(el) for el in _by_class(svg, "present")],
     )
 
 
@@ -869,17 +909,23 @@ def _where(p: Picture) -> tuple[str, str] | None:
     """Where the one object stands against the two floor zones: ("in"|"out", "in"|"out")
     for my zone and your zone, or None when it straddles an edge or is missing.
 
-    The object is the ball (a thing) or the flag's pole (a place), never both.
-    Two zones are required, overlapping, mine to the left under the speaker.
+    The object is the ball (a thing), the flag's pole (a place) or a lit
+    person (someone who is there), exactly one of them. Two zones are required,
+    overlapping, mine to the left under the speaker.
     """
     if set(p.zones) != {"mine", "yours"} or p.blocks or p.arrow is not None:
         return None
-    if (p.ball is None) == (len(p.poles) != 1):
+    if (p.ball is not None) + len(p.poles) + len(p.presents) != 1:
         return None
     if p.ball is not None:
         lo, hi = p.ball.cx - p.ball.r, p.ball.cx + p.ball.r
         if not _on_ground(p):
             return None
+    elif p.presents:
+        person = p.presents[0]
+        if not _touches(person.feet, p.ground):
+            return None
+        lo, hi = person.cx - person.half, person.cx + person.half
     else:
         pole = p.poles[0]
         if not _touches(max(pole.y1, pole.y2), p.ground):
@@ -899,9 +945,12 @@ def _where(p: Picture) -> tuple[str, str] | None:
     return sides[0], sides[1]
 
 
-def _deixis(thing: bool, mine: str, yours: str) -> Callable[[Picture], bool]:
+def _deixis(kind: str, mine: str, yours: str) -> Callable[[Picture], bool]:
+    """*kind* is the object: "thing" (the ball), "place" (the flag) or "present" (a lit person)."""
+
     def predicate(p: Picture) -> bool:
-        return (p.ball is not None) is thing and _where(p) == (mine, yours)
+        drawn = "thing" if p.ball is not None else "present" if p.presents else "place"
+        return drawn == kind and _where(p) == (mine, yours)
 
     return predicate
 
@@ -936,14 +985,16 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "last": _is_last,
     "from": _is_from,
     "toward": _is_toward,
-    "this_both": _deixis(True, "in", "in"),
-    "this_mine": _deixis(True, "in", "out"),
-    "that_yours": _deixis(True, "out", "in"),
-    "that_far": _deixis(True, "out", "out"),
-    "here_both": _deixis(False, "in", "in"),
-    "here_mine": _deixis(False, "in", "out"),
-    "there_yours": _deixis(False, "out", "in"),
-    "there_far": _deixis(False, "out", "out"),
+    "this_both": _deixis("thing", "in", "in"),
+    "this_mine": _deixis("thing", "in", "out"),
+    "that_yours": _deixis("thing", "out", "in"),
+    "that_far": _deixis("thing", "out", "out"),
+    "here_both": _deixis("place", "in", "in"),
+    "here_mine": _deixis("place", "in", "out"),
+    "there_yours": _deixis("place", "out", "in"),
+    "there_far": _deixis("place", "out", "out"),
+    "is_here_both": _deixis("present", "in", "in"),
+    "is_there_far": _deixis("present", "out", "out"),
 }
 
 
@@ -951,7 +1002,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Thirty-seven ids, and the renderer refuses everything outside this list."""
+    """Thirty-nine ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -990,6 +1041,8 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "here_mine",
         "there_yours",
         "there_far",
+        "is_here_both",
+        "is_there_far",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)
@@ -1228,6 +1281,9 @@ def _roles(concept: str) -> dict[str, str]:
     balls = _by_class(svg, "ball")
     if balls:
         roles["ball"] = balls[0].get("fill")
+    # A lit person is filled in the ball's colour: the one thing the word is about.
+    for el in _by_class(svg, "present"):
+        roles["ball"] = _present_of(el).fill
     accents = {el.get("stroke") for el in _by_class(svg, "shaft")} | {el.get("fill") for el in _by_class(svg, "head")}
     accents |= {el.get("fill") for el in _by_class(svg, "highlight")}
     accents |= {el.get("fill") for el in _by_class(svg, "pennant")}
@@ -1309,3 +1365,15 @@ def test_only_in_draws_an_open_container(concept: str) -> None:
     else:
         assert picture.rims == []
         assert all(el.get("stroke") != "none" for el in _by_class(render_spatial_svg(concept), "box-body"))
+
+
+@pytest.mark.parametrize("concept", DEIXIS_PRESENT)
+def test_someone_present_is_lit_and_the_people_talking_are_not(concept: str) -> None:
+    """The lit person is the referent; the speaker and listener stay pale, as in
+    every other distance picture, so only one figure says "this one is here"."""
+    picture = _parse(render_spatial_svg(concept))
+    assert len(picture.presents) == 1
+    assert picture.presents[0].fill == _by_class(render_spatial_svg("this_both"), "ball")[0].get("fill")
+    figures = _by_class(render_spatial_svg(concept), "figures")
+    assert len(figures) == 1
+    assert picture.presents[0].fill not in {el.get("fill") for el in figures[0].iter() if el.tag == f"{_SVG}circle"}
