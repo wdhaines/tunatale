@@ -121,6 +121,8 @@ class TestPlanNewCards:
             ("ko", "genitive", "my; by me"),
             ("mo", "genitive", "your; by you (one person)"),
             ("ta", "genitive", "our (including you); by us"),
+            # The preposed 'my' (2026-10-18): ako's second sense, beside the deck's ako.
+            ("ako", "possessive", "my, mine; by me"),
         }
         assert all(u.card_type == "vocab" and u.lemma == u.text for u in units)
 
@@ -159,15 +161,17 @@ class TestGlossUpdates:
     def test_a_subject_card_with_a_second_sense_takes_the_both_senses_gloss(self) -> None:
         db, ids = _deck()
         ta = db.get_collocation_id_by_guid(compute_guid("ta", LANG, ""))
+        ako = db.get_collocation_id_by_guid(compute_guid("ako", LANG, ""))
         with db._get_conn() as conn:
             assert gloss_updates(conn, LANG) == [
-                (ta, "ta", "we (including you)", "we (including you); our (including you)")
+                (ako, "ako", "I", "I; my, mine"),
+                (ta, "ta", "we (including you)", "we (including you); our (including you)"),
             ]
 
     def test_a_word_without_a_second_sense_is_left_to_the_owner(self) -> None:
-        """ako's gloss is the owner's business: only the R2 words are brought in line."""
+        """ikaw's gloss is the owner's business: only the R2 words are brought in line."""
         db = SRSDatabase(":memory:")
-        _add(db, "ako", translation="me")
+        _add(db, "ikaw", translation="you")
         with db._get_conn() as conn:
             assert gloss_updates(conn, LANG) == []
 

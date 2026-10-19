@@ -130,6 +130,17 @@ _TABLES: dict[str, dict[str, str]] = {
         "nato": "we_incl_poss",
         "ninyo": "you_many_poss",
         "nila": "they_many_poss",
+        # The PREPOSED possessives (the user, 2026-10-18: "Why is ato not an
+        # svg?"; Wolff 1 has "Unsa may ato?"). Wolff: átù "{1} gen. Ang átung
+        # balay, Our house"; ákù, ímu, íya, ámù, inyu, íla the same for each
+        # person. Same concept as the postposed nato/niya; the sentence below is
+        # what tells them apart.
+        "ato": "we_incl_poss",
+        "imo": "you_one_poss",
+        "iya": "third_one_poss",
+        "amo": "we_excl_poss",
+        "inyo": "you_many_poss",
+        "ila": "they_many_poss",
     },
 }
 
@@ -143,6 +154,12 @@ _TABLES: dict[str, dict[str, str]] = {
 _SUBJECT = "Moadto ___ sa merkado."
 _OWNER = "Asa ang bag ___?"
 _PREDICATE = "___ ra."
+#: OWN: the preposed possessive as the predicate, "this bag is ours" (Wolff ákù
+#: "{2} be mine. Ákù nà, That is mine"; ímu "Ákù ni, ímu nà, This belongs to me.
+#: That one is yours"; inyu "Inyu ba ni?"). Only the preposed form stands
+#: there: a postposed nato or a short ta cannot start the clause. The user
+#: accepted the sentence (2026-10-18).
+_OWN = "___ kining bag."
 
 #: Each word's own (default) sense's sentence. The long genitives nako/nimo/nato
 #: have none on purpose: no slot takes the long genitive and refuses the short
@@ -159,6 +176,12 @@ _FRAMES: dict[str, dict[str, str]] = {
         "ikaw": _PREDICATE,
         "kami": _PREDICATE,
         "kamo": _PREDICATE,
+        "ato": _OWN,
+        "imo": _OWN,
+        "iya": _OWN,
+        "amo": _OWN,
+        "inyo": _OWN,
+        "ila": _OWN,
     },
 }
 
@@ -173,6 +196,9 @@ _SENSES: dict[str, dict[tuple[str, str], tuple[str, str, str]]] = {
         ("mo", "genitive"): ("you_one_poss", _OWNER, "your; by you (one person)"),
         ("ta", "genitive"): ("we_incl_poss", _OWNER, "our (including you); by us"),
         ("kita", "pronoun"): ("we_incl", _PREDICATE, "we (including you)"),
+        # `ako` is "I" and, preposed, "my" (Wolff aku: ákù "{1} preposed gen.:
+        # me, my. Ákung anak, My child"), so the possessive is a second note.
+        ("ako", "possessive"): ("i_poss", _OWN, "my, mine; by me"),
     },
 }
 
@@ -472,6 +498,14 @@ class TestDispatch:
             ("namo", "ceb", "our", "we_excl_poss"),
             ("nato", "ceb", "our, including you", "we_incl_poss"),
             ("ninyo", "ceb", "yours", "you_many_poss"),
+            # The preposed possessives, on the glosses they reach a card with:
+            # the Wolff 1 lesson's own gloss for ato, and the live inyo card's.
+            ("ato", "ceb", "ours (yours and mine)", "we_incl_poss"),
+            ("imo", "ceb", "your", "you_one_poss"),
+            ("iya", "ceb", "his", "third_one_poss"),
+            ("amo", "ceb", "our (not including you)", "we_excl_poss"),
+            ("inyo", "ceb", "your (plural); your place", "you_many_poss"),
+            ("ila", "ceb", "their", "they_many_poss"),
             ("niya", "tl", "his", "third_one_poss"),
             ("namin", "tl", "our", "we_excl_poss"),
             ("natin", "tl", "our, including you", "we_incl_poss"),
@@ -511,6 +545,13 @@ class TestDispatch:
             ("ka", "ceb", "your"),
             ("akin", "tl", "my"),
             ("iyo", "tl", "your"),
+            # The preposed possessives' homographs (Wolff): amù "monkey" and the
+            # loan amo "boss", iyà the title for an older woman, ila "identify".
+            ("amo", "ceb", "boss"),
+            ("amo", "ceb", "monkey"),
+            ("iya", "ceb", "aunt"),
+            ("ila", "ceb", "identify, recognize"),
+            ("ato", "ceb", "we"),
         ],
     )
     def test_anything_else_is_left_on_its_route(self, word, code, gloss) -> None:
@@ -809,14 +850,23 @@ class TestCuratedGlosses:
             ("mo", "you (plural); your (one person)"),
             ("nimo", "your; by you (one person)"),
             ("Kami", "we (not including you)"),
+            ("ato", "our, ours (including you); by us"),
+            ("imo", "your, yours (one person); by you"),
+            ("inyo", "your, yours (plural); by you"),
+            ("ila", "their, theirs; by them"),
+            # ako's own card shows the bare word, so it names both senses (R2).
+            ("ako", "I; my, mine"),
         ],
     )
     def test_cebuano_words_have_their_gloss(self, word, gloss) -> None:
         assert pronoun_gloss(word, "ceb") == gloss
 
-    def test_a_homograph_has_none(self) -> None:
-        """kita is also the root of "see", so a fixed gloss would overwrite that sense."""
-        assert pronoun_gloss("kita", "ceb") is None
+    @pytest.mark.parametrize("word", ["kita", "amo", "iya"])
+    def test_a_homograph_has_none(self, word) -> None:
+        """kita is also the root of "see", amo is also the loan "boss" and iya the
+        title for an older woman: a fixed gloss would overwrite that sense in every
+        lesson, where the curated gloss replaces the in-context one unconditionally."""
+        assert pronoun_gloss(word, "ceb") is None
 
     def test_a_language_without_glosses_has_none(self) -> None:
         assert pronoun_gloss("du", "no") is None
@@ -888,8 +938,22 @@ class TestFrames:
             pronoun_picture("ko", "ceb", "I").filename,
             pronoun_picture("ko", "ceb", "my", "genitive").filename,
             pronoun_picture("nako", "ceb", "my").filename,
+            pronoun_picture("ako", "ceb", "my", "possessive").filename,
         }
-        assert len(files) == 4
+        assert len(files) == 5
+
+    @pytest.mark.parametrize(
+        ("preposed", "postposed", "short"),
+        [("ato", "nato", "ta"), ("imo", "nimo", "mo"), ("iya", "niya", None), ("ila", "nila", None)],
+    )
+    def test_a_preposed_possessive_is_not_its_postposed_partner(self, preposed, postposed, short) -> None:
+        """Same owner, same bag: only the sentence says the word stands first."""
+        gloss = "our; your; his; their"
+        files = {pronoun_picture(preposed, "ceb", gloss).filename, pronoun_picture(postposed, "ceb", gloss).filename}
+        if short is not None:
+            files.add(pronoun_picture(short, "ceb", gloss, "genitive").filename)
+        assert None not in files
+        assert len(files) == (3 if short else 2)
 
     @pytest.mark.parametrize("code", LANGS)
     def test_the_sentence_data_is_all_reachable_and_drawable(self, code) -> None:
