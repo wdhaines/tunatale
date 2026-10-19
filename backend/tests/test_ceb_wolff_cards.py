@@ -435,3 +435,142 @@ def test_a_homograph_with_no_gloss_is_not_listed(committed):
     # 'mu see ámù' lands on an entry with no senses: an empty line told nothing apart
     for english in ("you (plural); your (one person)", "your; by you (one person)"):
         assert not re.search(r"<b>[^<]*</b> </li>", committed.card_fields("mo", english).details)
+
+
+# The possessives are run-in heads inside their pronoun's paragraph ('átù {1}
+# gen.' inside kita). Heads with an accent were not split off, so 'átù see kita'
+# landed on kita's whole root and ato's card read "we, us (nominative)" (the
+# owner, 2026-10-18).
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling", "meaning"),
+    [
+        ("ato", "our, ours (including you); by us", "átò", "gen.: our, by us"),
+        ("imo", "your, yours (one person); by you", "ímo", "preposed gen.: your, by you"),
+        ("ila", "their, theirs; by them", "íla", "preposed gen.: their, by them"),
+        ("ako", "my, mine; by me", "ákò", "preposed gen.: me, my"),
+    ],
+)
+def test_a_preposed_possessive_reads_its_own_sub_entry(committed, word, english, spelling, meaning):
+    f = committed.card_fields(word, english)
+    assert (f.spelling, f.meaning.split("; ")[0]) == (spelling, meaning)
+    assert "nominative" not in f.meaning and not f.meaning.startswith(("we, us", "you (singular)", "they", "I, me"))
+
+
+def test_the_pronoun_itself_keeps_its_own_meaning(committed):
+    assert committed.card_fields("kita", "we (including you)").meaning.startswith("we, us (including person addressed")
+    assert committed.card_fields("ako", "I").meaning.startswith("I, me")
+
+
+# Wolff glosses a possessive with its case label alone ('átù {1} gen.') and
+# leaves the English to the examples. His genitive is "my, by me" (nákù), so a
+# bare label on a personal pronoun's entry reads as that pronoun's possessive
+# and agent, for matching and on the card.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "meaning"),
+    [
+        ("nato", "our (including you); by us", "gen. form: our, by us"),
+        # 'mu short for nímu' lands on 'nímu see ikaw', a pointer; the senses are ikaw's nímu
+        ("mo", "your; by you (one person)", "gen. form: your, by you"),
+        ("ko", "my; by me", "gen.: my, by me (= nákù)"),
+    ],
+)
+def test_a_bare_case_label_reads_as_the_pronouns_possessive(committed, word, english, meaning):
+    assert meaning in committed.card_fields(word, english).meaning.split("; ")
+
+
+def test_a_case_label_on_a_word_that_is_not_a_pronoun_is_left_alone():
+    entries = [
+        {
+            "id": "balay",
+            "heads": ["balay"],
+            "forms": [
+                {
+                    "label": "balay",
+                    "wolff": "balay",
+                    "hb": "baláy",
+                    "short": [],
+                    "xref": None,
+                    "senses": [
+                        {"pos": "n", "n": None, "cls": None, "gloss": "house", "phrase": None, "ex": None},
+                        {"pos": None, "n": None, "cls": None, "gloss": "gen.", "phrase": None, "ex": None},
+                    ],
+                },
+            ],
+            "text": "balay n house. gen.",
+        }
+    ]
+    lex = WolffLexicon(entries)
+    assert lex.card_fields("balay", "house").meaning == "house; gen."
+
+
+def test_the_third_person_reads_both_genders():
+    lex = WolffLexicon(
+        [
+            {
+                "id": "siya",
+                "heads": ["siya"],
+                "forms": [
+                    {
+                        "label": "siya",
+                        "wolff": "siya",
+                        "hb": "siyá",
+                        "short": [],
+                        "xref": None,
+                        "senses": [
+                            {"pos": None, "n": None, "cls": None, "gloss": "he, she", "phrase": None, "ex": None}
+                        ],
+                    },
+                    {
+                        "label": "íya",
+                        "wolff": "íya",
+                        "hb": "íya",
+                        "short": [],
+                        "xref": None,
+                        "senses": [
+                            {"pos": None, "n": "1", "cls": None, "gloss": "preposed gen.", "phrase": None, "ex": None}
+                        ],
+                    },
+                ],
+                "text": "siya he, she. íya {1} preposed gen.",
+            }
+        ]
+    )
+    assert lex.card_fields("iya", "his").meaning == "preposed gen.: his, her, by him or her"
+
+
+def _form(label, hb, xref=None, glosses=()):
+    senses = [{"pos": None, "n": None, "cls": None, "gloss": g, "phrase": None, "ex": None} for g in glosses]
+    return {"label": label, "wolff": label, "hb": hb, "short": [], "xref": xref, "senses": senses}
+
+
+def test_a_short_form_keeps_its_notes_when_the_pointer_chain_ends_empty():
+    # 'duy short for uduy', and uduy is a head that gives no senses and points
+    # nowhere further: duy's own note is all there is to show.
+    lex = WolffLexicon(
+        [
+            {
+                "id": "duy",
+                "heads": ["duy"],
+                "forms": [_form("duy", "duy", ["short for", "uduy"], ["or unduy"])],
+                "text": "",
+            },
+            {"id": "uduy", "heads": ["uduy"], "forms": [_form("uduy", "údoy")], "text": ""},
+        ]
+    )
+    assert lex.card_fields("duy", "or unduy").meaning == "or unduy"
+
+
+def test_a_pointer_chain_stops_after_two_hops():
+    # a see b, b see c, c see d: following past _POINTER_HOPS would loop on a cycle.
+    lex = WolffLexicon(
+        [
+            {"id": w, "heads": [w], "forms": [_form(w, w, ["see", nxt])], "text": ""}
+            for w, nxt in (("aa", "bb"), ("bb", "cc"), ("cc", "aa"))
+        ]
+    )
+    fields = lex.card_fields("aa", "anything")  # returns rather than recursing forever
+    assert fields.meaning == ""

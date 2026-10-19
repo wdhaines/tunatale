@@ -392,7 +392,12 @@ def _senses(text: str) -> tuple[list[Sense], list[str], tuple[str, str] | None]:
 
 # --- sub-entries ------------------------------------------------------------------------------
 
-_LABEL = r"(?:\((?:→|←)\)|-?[a-zN]+(?:-[a-zN]*)*-?(?:\((?:→|←)\))?)"
+#: A head's letters: lower case, with the marks Wolff prints on them. Accented
+#: heads are the run-in possessives ('átù {1} gen.' inside kita), which an ASCII
+#: class read as kita's own senses (the owner, 2026-10-18). Never upper case: an
+#: example sentence starts with a capital.
+_HEAD_LETTERS = "a-zàáâèéìíîòóôùúûāǎēīǐōūǔñN"
+_LABEL = rf"(?:\((?:→|←)\)|-?[{_HEAD_LETTERS}]+(?:-[{_HEAD_LETTERS}]*)*-?(?:\((?:→|←)\))?)"
 _LABEL_LIST = rf"{_LABEL}(?:(?:, |/){_LABEL})*"
 
 
@@ -409,7 +414,9 @@ def _head_at(tokens: list[str], i: int) -> int:
         return n
     words = [w for w in re.split(r",\s*", label)]
     cebuano = all(re.fullmatch(r"[a-z][a-z\-]*[a-z]", strip_marks(w)) for w in words)
-    if cebuano and (nxt in POS_LABELS or nxt.startswith("{") or nxt == "short"):
+    # 'preposed' heads a possessive with neither a sense number nor a part of
+    # speech ('íla, iláha preposed gen.: their' inside sila).
+    if cebuano and (nxt in POS_LABELS or nxt.startswith("{") or nxt in ("short", "preposed")):
         return n
     return 0
 
