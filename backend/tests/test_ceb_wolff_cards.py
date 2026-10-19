@@ -164,7 +164,10 @@ def test_fields_by_anki_field_name(lexicon):
 
 
 def test_two_homographs_the_english_fits_equally_are_ambiguous(lexicon):
-    assert lexicon.card_fields("tulo", "three; drop") == Miss("ambiguous", ("tuló", "túlò"))
+    # One sense naming both. Split by ';' the first sense would lead instead (see
+    # test_the_first_sense_of_a_two_sense_gloss_leads).
+    assert lexicon.card_fields("tulo", "three, drop") == Miss("ambiguous", ("tuló", "túlò"))
+    assert lexicon.card_fields("tulo", "three; drop").spelling == "tuló"
 
 
 def test_a_pointer_found_after_its_target_still_shows_both_paragraphs(lexicon):
@@ -574,3 +577,28 @@ def test_a_pointer_chain_stops_after_two_hops():
     )
     fields = lex.card_fields("aa", "anything")  # returns rather than recursing forever
     assert fields.meaning == ""
+
+
+# A card gloss naming two senses ('I; my, mine') leads with the card's own: the
+# subject card of a pronoun with a second-sense note names both because its
+# recognition side shows the bare word (R2). Matched whole, the second sense can
+# outscore the first, and on 2026-10-19 the refresh would have spelled ako 'I'
+# as ákò with "preposed gen." The first sense is tried alone first.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling", "meaning"),
+    [
+        ("ako", "I; my, mine", "akó", "I, me"),
+        ("mo", "you (plural); your (one person)", "mo", "you (plural)"),
+        ("kita", "see; we (including you)", "kítà", "see"),  # the verb card is the verb
+    ],
+)
+def test_the_first_sense_of_a_two_sense_gloss_leads(committed, word, english, spelling, meaning):
+    f = committed.card_fields(word, english)
+    assert (f.spelling, f.meaning.split("; ")[0]) == (spelling, meaning)
+
+
+def test_a_first_sense_that_settles_nothing_falls_back_to_the_whole_gloss(committed):
+    # 'gen.: my, by me' answers the second sense; 'xyzzy' alone settles nothing
+    assert committed.card_fields("ko", "xyzzy; my, by me").meaning == committed.card_fields("ko", "my, by me").meaning
