@@ -9,6 +9,7 @@ upsert_by_guid — the card-adding contract entry point (see
 import sqlite3
 from typing import NamedTuple
 
+from app.cards.dictionary_extras import dictionary_extras
 from app.cards.pronoun_picture import is_second_sense
 from app.common.guid import compute_guid
 from app.languages import card_surface_variants
@@ -49,6 +50,10 @@ class DbCollocationsMixin:
         (:func:`is_second_sense`) starts its recognition direction SUSPENDED and
         dirty, so the mint's sync_push carries ``queue = -1`` to Anki: its front is
         the bare word the first sense already shows (tunatale-ocv3).
+        A new vocab row with no extras of its own gets the language's dictionary
+        layers (:func:`dictionary_extras`) here, at creation, rather than waiting
+        for the mint and the pull (the owner) or a backfill (a learner with no
+        Anki): the mint writes the same note fields, so the pull's extras equal these.
         Single-word units without an explicit lemma get lemma = casefolded text
         so that get_collocation_by_lemma_with_id lookups succeed. Empty strings
         count as missing — pre-Phase-F sync paths sometimes wrote empties.
@@ -84,6 +89,9 @@ class DbCollocationsMixin:
                 ).fetchone()
             if existing is None:
                 is_new = True
+                extras = unit.extras
+                if not extras and unit.card_type == "vocab":
+                    extras = dictionary_extras(language_code, unit.text, unit.translation)
                 conn.execute(
                     """
                     INSERT INTO collocations
@@ -104,7 +112,7 @@ class DbCollocationsMixin:
                         guid,
                         disambig,
                         unit.article,
-                        serialize_extras(unit.extras),
+                        serialize_extras(extras),
                         unit.grammar,
                         unit.note,
                         unit.source_sentence,

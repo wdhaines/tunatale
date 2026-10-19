@@ -58,7 +58,8 @@ class TestDatabase:
     def test_lists_the_languages_vocab_cards_only(self):
         rows = self._db().list_vocab_for_extras("ceb")
         assert sorted((r.text, r.translation) for r in rows) == [("maayo", "good"), ("xyzzy", "?")]
-        assert all(r.extras == () and r.anki_note_id is None for r in rows)
+        assert {r.text: r.extras for r in rows} == {"maayo": dictionary_extras("ceb", "maayo", "good"), "xyzzy": ()}
+        assert all(r.anki_note_id is None for r in rows)
 
     def test_set_extras_replaces_the_stored_extras(self):
         db = self._db()
@@ -67,3 +68,52 @@ class TestDatabase:
         db.set_extras(row.id, extras)
         assert db.get_collocation("maayo").syntactic_unit.extras == extras
         assert next(r for r in db.list_vocab_for_extras("ceb") if r.text == "maayo").extras == extras
+
+
+class TestAtCreation:
+    """A new card carries its layers from the moment it is added (the user, 2026-10-18:
+    "It's weird that the dictionary lookup runs on sync, not on create").
+
+    Before, the owner's card waited for the sync that minted its Anki note and
+    the pull that read the fields back, and the no-Anki learner's waited for
+    scripts/backfill_dictionary_extras.py. The mint writes the same fields
+    (``dictionary_note_fields``), so the pull later replaces these extras with
+    equal ones.
+    """
+
+    @staticmethod
+    def _add(db: SRSDatabase, text: str, translation: str, lang: str = "ceb", **kw) -> SyntacticUnit:
+        unit = SyntacticUnit(text=text, translation=translation, word_count=1, difficulty=1, source="user", **kw)
+        db.add_collocation(unit, language_code=lang)
+        return db.get_collocation(text).syntactic_unit
+
+    def test_a_new_vocab_card_has_its_layers(self):
+        db = SRSDatabase(":memory:")
+        unit = self._add(db, "lami", "delicious")
+        assert unit.extras == dictionary_extras("ceb", "lami", "delicious")
+        assert unit.extras[0] == BackField("Spelling", "lamî", "headword")
+        assert unit.extras == _pulled("lami", "delicious"), "the pull would make the same extras"
+
+    def test_a_cloze_gets_none(self):
+        """A cloze note has no dictionary fields, so the pull would give it none either."""
+        assert self._add(SRSDatabase(":memory:"), "nga", "that (linker)", card_type="cloze").extras == ()
+
+    def test_extras_the_caller_brings_are_kept(self):
+        mine = (BackField("Note", "from the caller", "summary"),)
+        assert self._add(SRSDatabase(":memory:"), "lami", "delicious", extras=mine).extras == mine
+
+    def test_a_language_without_a_dictionary_gets_none(self):
+        assert self._add(SRSDatabase(":memory:"), "hus", "house", lang="no").extras == ()
+
+    def test_a_word_wolff_does_not_settle_gets_none(self):
+        assert self._add(SRSDatabase(":memory:"), "xyzzy", "nothing").extras == ()
+
+    def test_an_existing_card_is_not_rewritten(self):
+        """Adding a card that exists only backfills an empty gloss; its extras stay
+        whatever the pull or the owner made them."""
+        db = SRSDatabase(":memory:")
+        self._add(db, "lami", "delicious")
+        row = next(r for r in db.list_vocab_for_extras("ceb") if r.text == "lami")
+        kept = (BackField("Spelling", "edited", "headword"),)
+        db.set_extras(row.id, kept)
+        assert self._add(db, "lami", "tasty").extras == kept

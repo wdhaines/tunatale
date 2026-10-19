@@ -20,6 +20,8 @@ def db_path(tmp_path):
     path.parent.mkdir(parents=True)
     db = SRSDatabase(str(path))
     db.add_collocation(_unit("maayo", "good"), language_code="ceb")
+    # A card from before the layers were filled at creation: the case this script is for.
+    db.set_extras(db.get_collocation_id_by_guid(db.get_collocation("maayo").guid), ())
     db.add_collocation(_unit("xyzzy", "nothing"), language_code="ceb")
     # Already carries a layer (a hand fix, or a previous run): left alone.
     db.add_collocation(_unit("tulo", "three", extras=(BackField("Spelling", "tuló (hand)", "headword"),)), "ceb")
