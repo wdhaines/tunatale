@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-async def generate_tts_audio(text: str, voice: str | None = None) -> bytes | None:
+async def generate_tts_audio(
+    text: str, voice: str | None = None, phonemes: Mapping[str, str] | None = None
+) -> bytes | None:
     """Generate TTS audio for *text*. Returns MP3 bytes, or None on error.
+
+    *phonemes* is the per-word reading, passed through to the adapter as a
+    lesson's drill step passes it (``synth_plan.word_readings``).
 
     Returning None rather than raising is the callers' contract (media pipeline
     and cloze backfill both treat None as "no audio for this item"), but the
@@ -42,7 +48,7 @@ async def generate_tts_audio(text: str, voice: str | None = None) -> bytes | Non
     try:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "tts.mp3"
-            await get_tts_service().synthesize(text, voice, out, speak_locale=speak_locale)
+            await get_tts_service().synthesize(text, voice, out, phonemes=phonemes, speak_locale=speak_locale)
             data = out.read_bytes() if out.exists() else b""
         return data or None
     except Exception as exc:

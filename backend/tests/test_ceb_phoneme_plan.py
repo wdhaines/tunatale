@@ -42,7 +42,7 @@ def planner() -> SpelledPhonemePlanner:
         ("inyong", (1, 2), "ˈjoŋ"),
         ("akong", (0, 1), "ˈʔa"),
         ("akong", (1, 2), "ˈkoŋ"),
-        ("pamilya", (0, 3), "pa.mil.ja"),
+        ("pamilya", (0, 3), "pa.ˈmil.ja"),  # Wolff pamílya
         ("pamilya", (1, 2), "ˈmil"),
         ("pamilya", (1, 3), "mil.ja"),
         ("pahasubo", (2, 4), "su.bo"),
@@ -50,7 +50,7 @@ def planner() -> SpelledPhonemePlanner:
         # The hyphen rows are what the Cebuano ``"-"`` entry buys: without it
         # ``kanus-a`` would come out ``kanusa``, and the final syllable would
         # open on a glottal stop the spelling never mentions.
-        ("kanus-a", (0, 3), "ka.nus.ʔa"),
+        ("kanus-a", (0, 3), "ka.ˈnus.ʔa"),  # Wolff kanús-a
         ("kanus-a", (2, 3), "ˈʔa"),
         # The source word carries the question mark the lesson wrote; the
         # stripping takes it off, and the pieces come back the same as for the
@@ -160,14 +160,15 @@ def test_a_word_without_an_override_is_still_spelled(planner):
     [
         # "ilubong ugma", the phrase the user heard as "ilubong uglak" — the row
         # this method exists for. A vowel-initial first syllable opens on a
-        # glottal stop; more than one syllable carries no stress mark.
+        # glottal stop; more than one syllable carries Wolff's stress when he
+        # settles it (úgma) and none when he does not list the word (ilubong).
         ("ilubong", "ʔi.lu.boŋ"),
-        ("ugma", "ʔuɡ.ma"),
+        ("ugma", "ˈʔuɡ.ma"),
         # One syllable: the lone-syllable stress mark, and the glottal onset.
         ("ang", "ˈʔaŋ"),
         # The lesson's punctuation is stripped, and a consonant-initial word has
         # no glottal onset to write.
-        ("lubong?", "lu.boŋ"),
+        ("lubong?", "lu.ˈboŋ"),
         # The override still applies: it is keyed on a span covering the whole
         # word, which is exactly what this is.
         ("mga", "maˈŋa"),
@@ -239,3 +240,54 @@ def test_a_name_the_spelling_misreads_has_its_line_reading(planner, name, expect
 def test_a_line_word_with_nothing_to_read_gets_no_ipa(planner, word):
     """A bare stress mark is not a reading; the caller refuses the whole line."""
     assert planner.plan_line_word(word) is None
+
+
+# ---------------------------------------------------------------------------
+# Stress from Wolff, and sais (the owner's A/B, 2026-10-19)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        # The two the owner heard stressed wrong: Wolff lubóng, simbahán.
+        ("lubong", "lu.ˈboŋ"),
+        ("simbahan", "sim.ba.ˈhan"),
+        ("semana", "sɛ.ˈma.na"),  # semána
+        ("away", "ˈʔa.waj"),  # áway
+        ("Lubong?", "lu.ˈboŋ"),  # the lesson's case and punctuation
+    ],
+)
+def test_a_word_in_wolff_carries_his_stress(planner, word, expected):
+    assert planner.plan_word(word) == expected
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("balay", "ba.laj"),  # baláy and bálay: two words, no way to choose
+        ("tubig", "tu.biɡ"),  # tubíg and túbig
+        ("miinom", "mi.ʔi.nom"),  # not a headword
+    ],
+)
+def test_a_word_wolff_cannot_settle_stays_unmarked(planner, word, expected):
+    assert planner.plan_word(word) == expected
+
+
+def test_sais_is_wolffs_sayis(planner):
+    """Six is spelled sais and said as Wolff's sayís: no glottal stop between
+    a and i, which is what the letter rules give (/sa.ʔis/)."""
+    assert planner.plan_word("sais") == "sa.ˈjis"
+
+
+def test_a_line_word_is_left_as_the_owner_heard_it(planner):
+    """Stress was heard on lone words; a line's request stays the one chosen by ear."""
+    assert planner.plan_line_word("simbahan") == "sim.ba.han"
+    assert planner.plan_line_word("simbahan", run_together=True) == "simbahan"
+
+
+def test_a_spelling_that_says_nothing_is_passed_over(planner):
+    """dyos has one syllable and no mark; aníyo has letters anyo does not. Each
+    is skipped rather than allowed to veto the spelling that does settle it."""
+    assert planner.plan_word("diyos") == "di.ˈjos"  # diyós
+    assert planner.plan_word("anyo") == "ˈʔan.jo"  # ányo

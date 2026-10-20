@@ -68,6 +68,28 @@ def _bare_word(text: str) -> str:
     return _WORD_EDGES.sub("", text.lower())
 
 
+def word_readings(text: str, planner: object | None) -> dict[str, str] | None:
+    """The reading of every word of *text*, keyed by bare word, or ``None``.
+
+    For a planner that can read a WHOLE word (``plan_word``); a lexicon-backed
+    planner has no such method and gets ``None``. One word with nothing to read
+    refuses the whole map, a digit included (its reading is a bare stress mark):
+    a half-read phrase aligns words to the wrong readings, and a wrong reading
+    is worse than a plain render. Shared by a drill step and a card's word, so
+    one word is read one way wherever the voice is told how to say it.
+    """
+    plan_word = getattr(planner, "plan_word", None)
+    if plan_word is None:
+        return None
+    words = text.strip(_SENTENCE_PUNCTUATION).split()
+    if not words:
+        return None
+    planned = [(word, plan_word(word)) for word in words]
+    if any(ipa is None or not ipa.strip("ˈ.") for _, ipa in planned):
+        return None
+    return {_bare_word(word): ipa for word, ipa in planned}
+
+
 @dataclass(frozen=True)
 class SynthRequest:
     """One phrase as the TTS is asked for it: the arguments of ``TTSService.synthesize``."""
@@ -259,16 +281,7 @@ def plan_section(
             return None
         if not get_ipa_for_drill_phrases(language_code):
             return None
-        plan_word = getattr(planner, "plan_word", None)
-        if plan_word is None:
-            return None
-        words = phrase.text.strip(_SENTENCE_PUNCTUATION).split()
-        if not words:
-            return None
-        planned = [(word, plan_word(word)) for word in words]
-        if any(ipa is None for _, ipa in planned):
-            return None
-        return {_bare_word(word): ipa for word, ipa in planned}
+        return word_readings(phrase.text, planner)
 
     # Resolved once per section, and applied only to phrases in the
     # section's own language: a narrator line is English, and declaring it

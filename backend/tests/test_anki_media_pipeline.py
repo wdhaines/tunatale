@@ -37,7 +37,7 @@ def _make_fakes(
     def fake_forvo(word, *, language_code="sl", http_client=None):
         return _forvo_result(forvo_returns)
 
-    async def fake_tts(text, *, voice=None):
+    async def fake_tts(text, *, voice=None, phonemes=None):
         return tts_returns
 
     def fake_search(query, *, api_key, http_client=None, per_page=50):
@@ -253,7 +253,7 @@ class TestLanguageThreading:
         def fake_forvo(word, *, language_code="sl", http_client=None):
             return _forvo_result(None)  # force TTS fallback
 
-        async def recording_tts(text, *, voice=None):
+        async def recording_tts(text, *, voice=None, phonemes=None):
             captured_voice.append(voice)
             return b"tts_mp3"
 
@@ -276,7 +276,7 @@ class TestLanguageThreading:
             captured_lang.append(language_code)
             return _forvo_result(b"forvo_mp3")
 
-        async def fake_tts(text, *, voice=None):
+        async def fake_tts(text, *, voice=None, phonemes=None):
             return None
 
         await fetch_card_media(
@@ -300,7 +300,7 @@ class TestLanguageThreading:
     async def test_explicit_tts_voice_overrides_language_default(self):
         captured_voice: list[str | None] = []
 
-        async def recording_tts(text, *, voice=None):
+        async def recording_tts(text, *, voice=None, phonemes=None):
             captured_voice.append(voice)
             return b"tts_mp3"
 
@@ -1195,3 +1195,51 @@ class TestFetchCardMedia:
         ticks_during = ticks
         task.cancel()
         assert ticks_during >= 3, f"event loop was blocked during the fetch (ticks={ticks_during})"
+
+
+# ── TestCardWordReading ────────────────────────────────────────────────────────
+
+
+class TestCardWordReading:
+    """A Cebuano card word reaches its voice with the word's reading.
+
+    The card voice is told nothing but the letters otherwise, and Cebuano has
+    no letters of its own: 'away' (quarrel) came out as the English word, and
+    'semana' picked up a syllable (the owner's ear, 2026-10-19). The lesson
+    drill has sent this reading since 2026-09-25, and in the owner's A/B the
+    card takes with it were "definitely better".
+    """
+
+    async def _phonemes(self, word: str, language_code: str) -> list:
+        sent: list = []
+
+        async def recording_tts(text, *, voice=None, phonemes=None):
+            sent.append(phonemes)
+            return b"tts_mp3"
+
+        await fetch_card_media(
+            word,
+            "gloss",
+            pixabay_key="key",
+            language_code=language_code,
+            forvo_enabled=False,
+            normalize=False,
+            image_query="",
+            _tts_fn=recording_tts,
+        )
+        return sent
+
+    async def test_a_cebuano_word_is_sent_with_its_reading(self):
+        assert await self._phonemes("lubong", "ceb") == [{"lubong": "lu.ˈboŋ"}]
+
+    async def test_a_cebuano_phrase_is_sent_with_a_reading_per_word(self):
+        assert await self._phonemes("Maayong buntag", "ceb") == [{"maayong": "ma.ʔa.joŋ", "buntag": "ˈbun.taɡ"}]
+
+    async def test_a_phrase_with_a_word_the_planner_cannot_read_is_sent_plain(self):
+        """A half-read phrase aligns words to the wrong readings; plain is better."""
+        assert await self._phonemes("alas 5", "ceb") == [None]
+
+    async def test_a_language_that_did_not_ask_is_sent_plain(self):
+        """Norwegian's card voice is Azure, where a map wraps every word in
+        <phoneme> and would change audio nobody has listened to."""
+        assert await self._phonemes("hotell", "no") == [None]

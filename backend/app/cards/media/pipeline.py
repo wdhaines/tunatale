@@ -10,7 +10,8 @@ from typing import Any, Literal
 
 import anyio
 
-from app.languages import get_tts_voice
+from app.audio.synth_plan import word_readings
+from app.languages import get_ipa_for_card_words, get_phoneme_planner, get_tts_voice
 
 from .choose_llm import choose_image_hit
 from .forvo import ForvoOutcome, ForvoResult, fetch_forvo_pronunciation
@@ -59,6 +60,13 @@ def _has_overlap(hits: list[dict], query: str) -> bool:
     """True if any hit's tags overlap the query tokens (delegates to pixabay._tag_overlap)."""
     tokens = frozenset(query.lower().split())
     return any(_tag_overlap(tokens, hit.get("tags", "")) > 0 for hit in hits)
+
+
+def _card_word_readings(word: str, language_code: str) -> dict[str, str] | None:
+    """The reading a card's word is voiced with, for a language that asked for one."""
+    if not get_ipa_for_card_words(language_code):
+        return None
+    return word_readings(word, get_phoneme_planner(language_code))
 
 
 async def fetch_card_media(
@@ -145,7 +153,7 @@ async def fetch_card_media(
         # Every non-FOUND outcome still falls back to TTS — the card must not be
         # blocked on a nice-to-have. audio_status is what keeps that fallback
         # from being silent.
-        audio = await tts_fn(word, voice=voice)
+        audio = await tts_fn(word, voice=voice, phonemes=_card_word_readings(word, language_code))
         if audio is not None:
             result.audio_source = "tts"
             result.audio_bytes = audio

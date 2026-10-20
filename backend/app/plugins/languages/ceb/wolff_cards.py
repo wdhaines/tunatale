@@ -46,7 +46,7 @@ from typing import NamedTuple
 
 from app.cards.vocab_notetype import DICTIONARY_FIELDS
 from app.plugins.languages.ceb.handbook_spelling import SpellingLexicon, convert_text, handbook_spelling
-from app.plugins.languages.ceb.wolff_dictionary import Entry, Form, decode_classes, strip_marks
+from app.plugins.languages.ceb.wolff_dictionary import Entry, Form, decode_classes, is_affix_label, strip_marks
 
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
@@ -345,6 +345,13 @@ class Attested(NamedTuple):
     via: None = None
 
 
+def _meanings(form: dict) -> list[dict]:
+    """*form*'s senses without the two kinds that are not meanings: the affix a
+    run of senses belongs to ('*lihug pa- {1} please'), and a pointer to another
+    affix's form ('n {1} = -in-')."""
+    return [s for s in form["senses"] if not is_affix_label(s["gloss"].removeprefix("= "))]
+
+
 class _Hit(NamedTuple):
     entry: int
     form: int
@@ -379,7 +386,8 @@ class WolffLexicon:
         # notes of its own ('ka short for ikaw'); other pointers with senses stand.
         if not xref or (self.entries[ei]["forms"][fi]["senses"] and xref[0] != "short for"):
             return None
-        target = strip_marks(re.split(r"[ ,]", xref[1])[0]).lower().split("_")[0]
+        # '*líhug': the star marks a root never said bare, and is no part of its head
+        target = strip_marks(re.split(r"[ ,]", xref[1])[0]).lower().lstrip("*").split("_")[0]
         for tei in self._heads.get(target, []):
             forms = self.entries[tei]["forms"]
             inside = [i for i, f in enumerate(forms) if f["wolff"] and letters_key(f["wolff"]) == word_key]
@@ -420,8 +428,12 @@ class WolffLexicon:
                 hits[(ei, fi)] = _Hit(ei, fi, surface, via)
         return list(hits.values())
 
+    def surfaces(self, word: str) -> list[str]:
+        """Every Handbook spelling, marks and all, that *word* could be in Wolff."""
+        return [h.surface for h in self._hits(word)]
+
     def _senses(self, hit: _Hit) -> list[dict]:
-        senses = [s for s in self.entries[hit.entry]["forms"][hit.form]["senses"] if not s["phrase"]]
+        senses = [s for s in _meanings(self.entries[hit.entry]["forms"][hit.form]) if not s["phrase"]]
         genitive = self._genitive(hit.entry)
         if genitive is None:
             return senses
@@ -560,11 +572,15 @@ class WolffLexicon:
         # A pointer is a short form ('náa = anáa') only when what it points at
         # is spelled differently. 'maáyu see áyu' lands on the sub-entry màáyo,
         # the card's own spelling, which the root line below already shows.
-        if hit.via is not None and form["hb"] != hit.surface:
+        # 'palíhug see *líhug' lands on a root never said bare: that is where the
+        # word comes from, not what it is short for ('ta see kita' is short for).
+        pointer = self.entries[hit.via[0]]["forms"][hit.via[1]]["xref"] if hit.via is not None else None
+        to_root = pointer is not None and pointer[1].startswith("*")  # a short-form list has no pointer
+        if hit.via is not None and form["hb"] != hit.surface and not to_root:
             out.append(f"<div>Short form of <b>{html.escape(form['hb'] or '')}</b></div>")
-        if hit.form != 0 and rec["forms"][0]["hb"]:
+        if (hit.form != 0 or to_root) and rec["forms"][0]["hb"]:
             root = rec["forms"][0]
-            gloss = next((s["gloss"] for s in root["senses"] if s["gloss"]), "")
+            gloss = next((s["gloss"] for s in _meanings(root) if s["gloss"]), "")
             out.append(f"<div>From the root <b>{html.escape(root['hb'])}</b> {html.escape(gloss)}</div>")
         out.append(self._sense_list(form))
         subjects = self._subjects(form)
@@ -599,7 +615,7 @@ class WolffLexicon:
                 out.append(f'<div class="wolff-pos">{html.escape(label)}</div><ol>' + "".join(items) + "</ol>")
                 items.clear()
 
-        for s in form["senses"]:
+        for s in _meanings(form):
             if s["pos"] != pos:
                 flush()
                 pos = s["pos"]

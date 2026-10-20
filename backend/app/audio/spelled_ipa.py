@@ -54,6 +54,7 @@ class SpelledPhonemePlanner:
         whole_word_ipa: Mapping[str, str] | None = None,
         line_word_ipa: Mapping[str, str] | None = None,
         syllable_break: str = "",
+        stress: Callable[[str], int | None] | None = None,
     ) -> None:
         """
         Args:
@@ -76,6 +77,11 @@ class SpelledPhonemePlanner:
                 or more, ``"."`` for a language that wants them shown. Empty
                 runs them together. Neither override table is touched by it: a
                 reading written by hand is returned as written.
+            stress: the stressed syllable of a WHOLE word, as an index into the
+                pieces ``syllabify`` cuts it into, or ``None`` when the plugin
+                cannot say. Asked with the bare lowercase word; a mark opens
+                that syllable. A chunk of a word is never stressed this way:
+                the stress belongs to the word, not to a piece of it.
         """
         self._letter_ipa = letter_ipa
         self._digraph_ipa = digraph_ipa
@@ -84,6 +90,7 @@ class SpelledPhonemePlanner:
         self._whole_word_ipa = dict(whole_word_ipa or {})
         self._line_word_ipa = dict(line_word_ipa or {})
         self._syllable_break = syllable_break
+        self._stress = stress or (lambda word: None)
 
     def _spell(self, syllable: str) -> str:
         """The IPA of one syllable, written out. Never called on an empty piece
@@ -118,20 +125,28 @@ class SpelledPhonemePlanner:
         *upos* is accepted and ignored. It picks among a whole word's REAL
         readings, and there are none here to pick between.
         """
-        return self._plan(source_word, span, chunk_text, self._syllable_break)
+        return self._plan(source_word, span, chunk_text, self._syllable_break, stressed=True)
 
-    def _plan(self, source_word: str, span: tuple[int, int], chunk_text: str | None, syllable_break: str) -> str | None:
-        """:meth:`plan_chunk`, with what is written between syllables named by the caller."""
+    def _plan(
+        self, source_word: str, span: tuple[int, int], chunk_text: str | None, syllable_break: str, *, stressed: bool
+    ) -> str | None:
+        """:meth:`plan_chunk`, with what is written between syllables, and whether a
+        whole word carries the plugin's stress, named by the caller."""
         pieces = [p.lower() for p in self._syllabify(_bare(source_word))]
         start, stop = span
         if not 0 <= start < stop <= len(pieces) or not all(pieces):
             return None
         if chunk_text is not None and _bare(chunk_text).lower() != "".join(pieces[start:stop]):
             return None
-        if (start, stop) == (0, len(pieces)) and (override := self._whole_word_ipa.get("".join(pieces))) is not None:
+        whole = (start, stop) == (0, len(pieces))
+        if whole and (override := self._whole_word_ipa.get("".join(pieces))) is not None:
             return override
-        spelled = syllable_break.join(self._spell(p) for p in pieces[start:stop])
-        return "ˈ" + spelled if stop - start == 1 else spelled
+        if stop - start == 1:
+            return "ˈ" + self._spell(pieces[start])
+        stress = self._stress("".join(pieces)) if whole and stressed else None
+        return syllable_break.join(
+            "ˈ" * (i == stress) + self._spell(p) for i, p in enumerate(pieces[start:stop], start)
+        )
 
     def plan_word(self, word: str) -> str | None:
         """The IPA of the WHOLE *word*, or ``None`` for plain synthesis.
@@ -163,6 +178,9 @@ class SpelledPhonemePlanner:
           backwards.
         * ``line_word_ipa`` is consulted first, for the words a line contains
           and a drill mostly does not: names.
+        * The plugin's stress is left out. A line's reading is the request the
+          owner chose by ear, word for word; stress was heard on lone words
+          only (2026-10-19), and a line keeps what was heard until it is.
 
         *run_together* leaves the syllable break out of the reading, for a line
         whose caller wants its words whole (an Enunciated line: see
@@ -175,10 +193,8 @@ class SpelledPhonemePlanner:
         fixed = self._line_word_ipa.get(_bare(word).lower())
         if fixed is not None:
             return fixed
-        if run_together:
-            ipa = self._plan(word, (0, len(self._syllabify(_bare(word)))), None, "")
-        else:
-            ipa = self.plan_word(word)
+        syllable_break = "" if run_together else self._syllable_break
+        ipa = self._plan(word, (0, len(self._syllabify(_bare(word)))), None, syllable_break, stressed=False)
         if ipa is None:
             return None
         return ipa.removeprefix("ˈ") or None

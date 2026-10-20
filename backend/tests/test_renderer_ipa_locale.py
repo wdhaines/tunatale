@@ -25,6 +25,7 @@ from app.generation.affix_drill import build_affix_drill
 from app.generation.section_builder import build_affix_drill_section
 from app.languages import (
     get_a1_morphology,
+    get_ipa_for_card_words,
     get_ipa_for_drill_phrases,
     get_ipa_for_enunciated_lines,
     get_ipa_for_natural_lines,
@@ -134,12 +135,12 @@ async def test_a_cebuano_drill_fragment_reaches_the_voice_as_ipa(tmp_path):
     # read too (tunatale-ve4p.21): see the lone-word test below.
     assert calls[0]["phonemes"] == {"inyong": "ʔin.joŋ"}
     assert calls[1]["phonemes"] == {"yong": "ˈjoŋ"}
-    assert calls[2]["phonemes"] == {"yong": "ˈjoŋ", "mao": "ma.ʔo"}
+    assert calls[2]["phonemes"] == {"yong": "ˈjoŋ", "mao": "ma.ˈʔo"}  # Wolff maó
     assert calls[3]["phonemes"] is None
 
 
 _PHRASE = "ilubong ugma"
-_PHRASE_IPAS = {"ilubong": "ʔi.lu.boŋ", "ugma": "ʔuɡ.ma"}
+_PHRASE_IPAS = {"ilubong": "ʔi.lu.boŋ", "ugma": "ˈʔuɡ.ma"}
 
 
 async def test_a_multi_word_drill_step_is_spoken_from_the_ipa_of_its_words(tmp_path):
@@ -407,3 +408,13 @@ def test_only_cebuano_asks_for_a_reading_on_natural_speed_lines():
     assert get_ipa_for_natural_lines("tl") is False
     assert get_ipa_for_natural_lines("no") is False
     assert get_ipa_for_natural_lines("zz") is False
+
+
+def test_only_cebuano_asks_for_a_reading_on_card_words():
+    """Read plain, its card voice said "away" as English and "semana" as
+    "kasemana" (the owner's A/B, 2026-10-19). The Azure card voices would wrap
+    every word in <phoneme>, so they stay plain."""
+    assert get_ipa_for_card_words("ceb") is True
+    assert get_ipa_for_card_words("tl") is False
+    assert get_ipa_for_card_words("no") is False
+    assert get_ipa_for_card_words("zz") is False

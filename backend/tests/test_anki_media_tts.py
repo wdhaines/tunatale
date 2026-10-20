@@ -109,3 +109,11 @@ class TestSpeakLocaleOnTheDefaultVoice:
 async def test_default_voice_uses_settings_language():
     voice = get_tts_voice(settings.target_language)
     assert voice == "sl-SI-PetraNeural"
+
+
+@respx.mock
+async def test_a_reading_reaches_the_voice(azure):
+    """The card pipeline's reading is forwarded to the adapter, not dropped."""
+    route = respx.post(SYNTH_URL).mock(return_value=httpx.Response(200, content=b"x"))
+    await generate_tts_audio("voda", voice="sl-SI-RokNeural", phonemes={"voda": "ˈvɔda"})
+    assert 'ph="ˈvɔda"' in route.calls[0].request.content.decode()

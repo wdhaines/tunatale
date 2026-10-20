@@ -602,3 +602,40 @@ def test_the_first_sense_of_a_two_sense_gloss_leads(committed, word, english, sp
 def test_a_first_sense_that_settles_nothing_falls_back_to_the_whole_gloss(committed):
     # 'gen.: my, by me' answers the second sense; 'xyzzy' alone settles nothing
     assert committed.card_fields("ko", "xyzzy; my, by me").meaning == committed.card_fields("ko", "my, by me").meaning
+
+
+# ── palihug (the owner, 2026-10-19: "palihug isn't getting a good definition") ──
+#
+# Wolff's entry is "palíhug see *líhug". The star marks a root that is never
+# said bare, and the pointer kept it, so it looked for a head '*lihug' and the
+# card got no Meaning. Under the root, his senses open on the affix they belong
+# to ('pa-') and point at another affix's form ('= -in-'): neither is a meaning.
+
+
+def test_a_pointer_to_a_starred_root_is_followed(committed):
+    f = committed.card_fields("palihug", "please")
+    assert f.meaning.startswith("please; work bee")
+    assert "pa-" not in f.meaning.split("; ") and "= -in-" not in f.meaning
+
+
+def test_a_see_pointer_to_a_root_names_the_root_not_a_short_form(committed):
+    details = committed.card_fields("palihug", "please").details
+    assert "Short form" not in details
+    assert "From the root <b>lihóg</b> please" in details
+    assert "<li>pa-</li>" not in details and "= -in-" not in details
+
+
+def test_a_starred_pointer_to_a_sub_entry_reads_as_before(committed):
+    """amahan see *ama: the sub-entry amahán was found directly all along."""
+    f = committed.card_fields("amahan", "father")
+    assert f.meaning.startswith("father")
+    assert "Short form" not in f.details
+    assert "From the root <b>amá</b>" in f.details
+
+
+def test_a_see_pointer_to_a_full_word_is_still_a_short_form(committed):
+    """'ta' points at kita with 'see' too, but kita is a word said bare: ta is
+    short for it, and only a starred root is where a word comes from."""
+    details = committed.card_fields("ta", "we (including you); our (including you)").details
+    assert "Short form of <b>kitá</b>" in details
+    assert "From the root <b>kitá</b>" not in details
