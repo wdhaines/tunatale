@@ -28,6 +28,8 @@ digraph-before-letter, the lone syllable's stress mark — is a core class
 
 from __future__ import annotations
 
+import unicodedata
+
 from app.audio.spelled_ipa import SpelledPhonemePlanner
 from app.generation.syllabify import syllabify_word
 
@@ -73,7 +75,10 @@ _DIGRAPH_IPA = {"ng": "ŋ", "ts": "tʃ"}
 # planner on 2026-09-25, when the letter rules gave "ˈmɡa" for one of the most
 # frequent words in any lesson. Add a word here only with the same evidence:
 # a reading the letters cannot yield, not a preferred variant.
-_WHOLE_WORD_IPA = {"mga": "maˈŋa"}
+#
+# "sais", six, is Wolff's sayís (2026-10-19, the owner: "go with what Wolff
+# says"): the letters give /sa.ʔis/, a glottal stop no speaker says.
+_WHOLE_WORD_IPA = {"mga": "maˈŋa", "sais": "sa.ˈjis"}
 
 # Names the letter rules misread, as said inside a LINE (the Enunciated
 # sections give the voice the whole line's reading; tunatale-tyfk). A borrowed
@@ -101,6 +106,56 @@ _LINE_WORD_IPA = {"jimenez": "himɛnɛs", "paul": "pol", "liza": "lisa"}
 _SYLLABLE_BREAK = "."
 
 
+# Wolff marks a stressed vowel with an acute, or a circumflex where a glottal
+# stop follows it; the grave alone is a glottal stop and no stress.
+_STRESS_MARKS = frozenset("\u0301\u0302")
+
+
+def _letters(word: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", word.lower()) if c.isalpha()).translate(_EO)
+
+
+_EO = str.maketrans("eo", "iu")
+
+
+def _stressed_letter(marked: str) -> int | None:
+    """Which letter of *marked* carries its one stress mark, or ``None``."""
+    letters, stressed = 0, []
+    for c in unicodedata.normalize("NFD", marked):
+        if c in _STRESS_MARKS:
+            stressed.append(letters - 1)
+        elif c.isalpha():
+            letters += 1
+    return stressed[0] if len(stressed) == 1 else None
+
+
+def wolff_stress(word: str) -> int | None:
+    """The stressed syllable of *word* as Wolff prints it, or ``None``.
+
+    Read off his Handbook spelling laid onto the word's own letters
+    (``onto_card``). ``None`` when he lists the word under two stresses
+    (baláy, bálay: there is no telling which is meant) and when the word is
+    not in him. A spelling that says nothing is passed over rather than
+    counted against the others: one with no stress mark (dyos beside diyós),
+    and one whose letters are not the word's (aníyo beside ányo for anyo),
+    where an index into his letters would land on the wrong syllable. Without a
+    stress, the voice falls back on the penult, which is wrong for every
+    final-stressed word: lubóng and simbahán, as the owner heard them read
+    (2026-10-19); with this, the takes were "closer".
+    """
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon, onto_card
+
+    pieces = syllabify_word(word, "ceb")
+    owner = [i for i, piece in enumerate(pieces) for c in piece if c.isalpha()]
+    found = set()
+    for surface in load_lexicon().surfaces(word):
+        marked = onto_card(word, surface)
+        letter = _stressed_letter(marked) if _letters(marked) == _letters(word) else None
+        if letter is not None:
+            found.add(owner[letter])
+    return found.pop() if len(found) == 1 else None
+
+
 def create_phoneme_planner() -> SpelledPhonemePlanner:
     """Zero-arg factory registered on the plugin's ``LanguageConfig``.
 
@@ -117,4 +172,5 @@ def create_phoneme_planner() -> SpelledPhonemePlanner:
         whole_word_ipa=_WHOLE_WORD_IPA,
         line_word_ipa=_LINE_WORD_IPA,
         syllable_break=_SYLLABLE_BREAK,
+        stress=wolff_stress,
     )

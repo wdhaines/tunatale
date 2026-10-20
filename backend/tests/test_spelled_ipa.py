@@ -291,3 +291,56 @@ def test_a_whole_word_override_is_reachable_through_plan_word():
     # The override is keyed on a span covering the whole word, so a caller with
     # no span to pass still reaches it.
     assert p.plan_word("abcd") == "XYZ"
+
+
+# ---------------------------------------------------------------------------
+# Stress the plugin names (Cebuano: Wolff's accent, the owner's A/B 2026-10-19)
+# ---------------------------------------------------------------------------
+
+
+def _stressed(*pieces: str, stress, syllable_break: str = ".", whole_word_ipa=None) -> SpelledPhonemePlanner:
+    return SpelledPhonemePlanner(
+        letter_ipa=_LETTER,
+        digraph_ipa=_DIGRAPH,
+        syllabify=lambda word: list(pieces),
+        syllable_break=syllable_break,
+        whole_word_ipa=whole_word_ipa,
+        stress=stress,
+    )
+
+
+def test_a_whole_word_carries_the_stress_the_plugin_names():
+    """The mark opens the stressed syllable, the dots stay where they were."""
+    assert _stressed("mo", "a", "ko", stress=lambda w: 2).plan_word("moako") == "mo.ʔa.ˈko"
+    assert _stressed("mo", "a", "ko", stress=lambda w: 2).plan_chunk("moako", (0, 3)) == "mo.ʔa.ˈko"
+    assert _stressed("mo", "a", "ko", stress=lambda w: 0).plan_word("moako") == "ˈmo.ʔa.ko"
+
+
+def test_a_part_of_a_word_is_not_stressed():
+    """The stress belongs to the whole word; a chunk of it is read as before."""
+    p = _stressed("mo", "a", "ko", stress=lambda w: 2)
+    assert p.plan_chunk("moako", (1, 3)) == "ʔa.ko"
+    assert p.plan_chunk("moako", (2, 3)) == "ˈko"
+
+
+def test_no_stress_named_leaves_the_reading_unmarked():
+    assert _stressed("mo", "a", "ko", stress=lambda w: None).plan_word("moako") == "mo.ʔa.ko"
+
+
+def test_the_stress_is_asked_about_the_bare_lowercase_word():
+    seen: list[str] = []
+    _stressed("mo", "a", "ko", stress=lambda w: seen.append(w)).plan_word("Moako?")
+    assert seen == ["moako"]
+
+
+def test_a_line_word_carries_no_stress():
+    """A line's reading is the request chosen by ear, word for word; stress was
+    heard on lone words only, so a line keeps what was heard."""
+    p = _stressed("mo", "a", "ko", stress=lambda w: 0)
+    assert p.plan_line_word("moako") == "mo.ʔa.ko"
+    assert p.plan_line_word("moako", run_together=True) == "moʔako"
+
+
+def test_a_whole_word_override_wins_over_the_stress():
+    p = _stressed("mo", "a", "ko", stress=lambda w: 0, whole_word_ipa={"moako": "hand.ˈwritten"})
+    assert p.plan_word("moako") == "hand.ˈwritten"

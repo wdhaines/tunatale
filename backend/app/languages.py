@@ -418,6 +418,15 @@ class LanguageConfig:
     # and stays plain. Same planner requirement as the flag above. See
     # ``get_ipa_for_natural_lines``.
     ipa_for_natural_lines: bool = False
+    # True when a CARD's word audio should reach its voice with the word's
+    # reading, the one a drill step carries. The card voice is otherwise told
+    # only the letters, and Cebuano has none of its own: "away" (quarrel) was
+    # read as the English word and "semana" grew a syllable; with the reading
+    # the takes were "definitely better" (the owner's A/B, 2026-10-19). An
+    # Azure card voice would get every word wrapped in <phoneme>, changing
+    # audio nobody has listened to, so it stays plain. Needs a planner that can
+    # read a whole word (``plan_word``). See ``get_ipa_for_card_words``.
+    ipa_for_card_words: bool = False
     # A multi-word card matches a lesson phrase only on its exact surface form,
     # not on its lemmas (tunatale-w4m7.17). For a language whose lemma table
     # keys every verb form on the root, lemma matching lights up — and grades —
@@ -686,6 +695,14 @@ def get_ipa_for_natural_lines(code: str) -> bool:
     ``False`` for an unknown code, like its siblings above.
     """
     return _facet(code, "ipa_for_natural_lines", False)
+
+
+def get_ipa_for_card_words(code: str) -> bool:
+    """Does *code*'s card word audio reach the voice with the word's reading?
+
+    ``False`` for an unknown code, like its siblings above.
+    """
+    return _facet(code, "ipa_for_card_words", False)
 
 
 def get_phrase_match_exact_form(code: str) -> bool:

@@ -190,6 +190,9 @@ register(
         # ear, 2026-10-12): read plain, this voice says "ugna" for "ugma" now
         # and then, and told the line's reading it did not.
         ipa_for_natural_lines=True,
+        # And a card's word audio (the owner's A/B, 2026-10-19): read plain,
+        # "away" came out English and "semana" as "kasemana".
+        ipa_for_card_words=True,
         # Onset maximization with Cebuano phonotactics (tunatale-u8nz.6): `ng`
         # opens a syllable (pa|nga|lan) and loan clusters do too (es|kwe|la|han),
         # where the generic default cut pan|ga|lan and esk|we|la|han. The
