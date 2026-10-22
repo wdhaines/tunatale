@@ -788,6 +788,44 @@ def test_curated_pronoun_gloss_overrides_the_llm():
     assert glosses["kita"] == "see"
 
 
+def test_a_pronoun_with_a_second_sense_keeps_the_lessons_gloss():
+    """ako is "I" and, preposed, "my": the table's "I; my, mine" names both, so it
+    told the reader less than the lesson's own gloss did on every 'ako' (the
+    user, 2026-10-22: "Use lesson's gloss"). A word with a second sense keeps the
+    pass's in-context gloss; kami, with one sense, still takes the table's."""
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    story = _ceb_story(
+        [
+            {"word": "akong", "translation": "my"},
+            {"word": "ako", "translation": "my"},
+            {"word": "ko", "translation": "I"},
+            {"word": "kami", "translation": "we"},
+        ]
+    )
+    story["scenes"][0]["lines"][0] = {
+        "speaker": "female-1",
+        "text": "Ako kining bag. Moadto ko. Kami ug akong amigo.",
+        "translation": "This bag is mine. I'll go. Us and my friend.",
+    }
+    glosses = build_lesson_from_story(story, language=get_language("ceb")).generation_metadata["token_glosses"]
+    assert glosses["ako"] == "my"
+    assert glosses["ko"] == "I"
+    assert glosses["kami"] == "we (not including you)"
+
+
+def test_a_pronoun_with_a_second_sense_the_llm_skipped_takes_the_tables_gloss():
+    """No in-context gloss to keep: the table's is still better than none."""
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    story = _ceb_story([{"word": "kape", "translation": "coffee"}])
+    story["scenes"][0]["lines"][0]["text"] = "Ako ang kape."
+    glosses = build_lesson_from_story(story, language=get_language("ceb")).generation_metadata["token_glosses"]
+    assert glosses["ako"] == "I; my, mine"
+
+
 def test_curated_function_word_gloss_fills_a_word_the_llm_skipped():
     from app.generation.story import build_lesson_from_story
     from app.languages import get_language

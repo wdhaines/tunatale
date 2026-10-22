@@ -207,6 +207,12 @@ def is_second_sense(text: str, language_code: str, disambig: str) -> bool:
     return (text.strip().casefold(), disambig.strip()) in load_senses(language_code)
 
 
+def has_second_sense(text: str, language_code: str) -> bool:
+    """True if *text* has a second sense (:func:`load_senses`), so no one gloss is its meaning in context."""
+    key = text.strip().casefold()
+    return any(word == key for word, _ in load_senses(language_code))
+
+
 @cache
 def _load_glosses(language_code: str) -> dict[str, str]:
     path = get_pronouns_path(language_code)

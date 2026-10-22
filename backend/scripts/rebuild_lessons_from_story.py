@@ -60,6 +60,9 @@ Usage:
     uv run python scripts/rebuild_lessons_from_story.py --go --day 8 --voices-only
         # stored text, new voices: for a VOICE change heard by ear, where
         # today's builders would also rewrite drifted key-phrase drills
+    uv run python scripts/rebuild_lessons_from_story.py --go --language ceb --sense-glosses
+        # stored lesson, NO render; only the tooltips of words with a second
+        # sense move to the rebuilt gloss (Cebuano 'ako' keeps the lesson's "my")
 """
 
 from __future__ import annotations
@@ -75,6 +78,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.audio.render_service import reassemble_lesson_audio  # noqa: E402
 from app.audio.renderer import build_lesson_renderer  # noqa: E402
 from app.audio.tts_factory import get_tts_service  # noqa: E402
+from app.cards.pronoun_picture import has_second_sense  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.generation.known_buildups import trim_well_known_buildups  # noqa: E402
 from app.generation.story import build_lesson_from_story  # noqa: E402
@@ -175,6 +179,33 @@ def voices_only(stored: Lesson, rebuilt: Lesson) -> tuple[Lesson, list[str]]:
     return replace(stored, sections=sections, narrator_voice=rebuilt.narrator_voice), kept
 
 
+def sense_glosses(stored: Lesson, rebuilt: Lesson, language_code: str) -> Lesson:
+    """The STORED lesson, with *rebuilt*'s tooltip for each word that has a second sense.
+
+    A word with a second sense keeps the lesson's own gloss (the user,
+    2026-10-22), where lessons stored before that hold the pronoun table's (ako
+    "I; my, mine"). Only those words move: on a copy of the live Cebuano DB a
+    whole-map refresh also undid tooltips corrected by hand after import
+    (lungon "coffin" back to the import pass's "altar"). No render: a tooltip is
+    not in the audio.
+    """
+    old = stored.generation_metadata.get("token_glosses", {})
+    new = rebuilt.generation_metadata["token_glosses"]
+    tooltips = {**old, **{k: v for k, v in new.items() if k in old and has_second_sense(k, language_code)}}
+    return replace(stored, generation_metadata={**stored.generation_metadata, "token_glosses": tooltips})
+
+
+def describe_glosses(stored: Lesson, rebuilt: Lesson) -> str:
+    """Every tooltip the refresh would change, old -> new (``None`` = absent)."""
+    old = stored.generation_metadata.get("token_glosses", {})
+    new = rebuilt.generation_metadata["token_glosses"]
+    changed = [
+        f"{k} {old.get(k)!r} -> {new.get(k)!r}" for k in sorted(old.keys() | new.keys()) if old.get(k) != new.get(k)
+    ]
+    noun = "gloss" if len(changed) == 1 else "glosses"
+    return f"{len(changed)} {noun}: " + "; ".join(changed)
+
+
 def describe(stored: Lesson, rebuilt: Lesson) -> str:
     """A one-line summary of what the rebuild would change, for the plan output.
 
@@ -207,9 +238,16 @@ async def main() -> int:
         action="store_true",
         help="keep the stored text and move only the voices (see voices_only)",
     )
+    ap.add_argument(
+        "--sense-glosses",
+        action="store_true",
+        help="keep the stored lesson; refresh only second-sense words' tooltips; never render (see sense_glosses)",
+    )
     args = ap.parse_args()
     if args.dry_run == args.go:
         ap.error("pass exactly one of --dry-run / --go")
+    if args.voices_only and args.sense_glosses:
+        ap.error("--voices-only and --sense-glosses each keep what the other changes; pass one")
 
     code = args.language or settings.target_language
     # resolve_db_path, not settings.database_urls[code]: the latter KeyErrors on a
@@ -240,15 +278,22 @@ async def main() -> int:
         kept: list[str] = []
         if args.voices_only:
             fresh, kept = voices_only(stored, fresh)
+        if args.sense_glosses:
+            fresh = sense_glosses(stored, fresh, code)
         if fresh.to_json() == stored.to_json():
             print(f"  ==  {label} already current; skipped")
             skipped += 1
             continue
-        action = describe(stored, fresh)
+        action = describe_glosses(stored, fresh) if args.sense_glosses else describe(stored, fresh)
         if kept:
             action += f" (kept stored text: {', '.join(kept)})"
         if args.dry_run:
             print(f"  ->  {label} would rebuild: {action}")
+            rebuilt_count += 1
+            continue
+        if args.sense_glosses:
+            store.update_lesson_data(lesson_id, fresh)
+            print(f"  OK  {label} refreshed: {action}")
             rebuilt_count += 1
             continue
         try:

@@ -760,3 +760,144 @@ class TestTheClosingDrill:
         store, language = self._store_with(self._wake([("Maayong gabii.", "Good evening.")]))
         rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None)
         assert "affix_drill" not in rebuilt.generation_metadata
+
+
+# ── --sense-glosses ──────────────────────────────────────────────────────
+#
+# Cebuano, because the pronoun senses table is Cebuano's: 'ako' was stored with
+# the table's "I; my, mine", and a word with a second sense now keeps the
+# lesson's own gloss (the user, 2026-10-22). Measured on a copy of the live ceb
+# DB first: a WHOLE-map refresh would have undone hand-corrected tooltips
+# (lungon "coffin" back to the import pass's "altar"), so only those words move.
+
+
+def _ceb_story() -> dict:
+    return {
+        "title": "Akong bag",
+        "key_phrases": [{"phrase": "Ako ni", "translation": "it's mine"}],
+        "scenes": [
+            {
+                "label": "Sa balay",
+                "lines": [
+                    {"speaker": "female-1", "text": "Ako kining kape.", "translation": "This coffee is mine."},
+                    {"speaker": "male-1", "text": "Moinom ko.", "translation": "I'll drink."},
+                ],
+            }
+        ],
+        "dialogue_glosses": [
+            {"word": w, "translation": t}
+            for w, t in (("ako", "my"), ("kining", "this"), ("kape", "coffee"), ("moinom", "will drink"), ("ko", "I"))
+        ],
+        "morphology_focus": [],
+    }
+
+
+def _seed_ceb_stale(tmp_path: Path) -> ContentStore:
+    """The stored map as the live lessons hold it: the table's gloss on ako, and a
+    tooltip someone corrected by hand after import (kape), which must survive."""
+    language = get_language("ceb")
+    store = ContentStore(str(tmp_path / "content.sqlite"))
+    store.save_curriculum(
+        "cur-ceb",
+        Curriculum(
+            id="cur-ceb",
+            topic="Balay",
+            language_code="ceb",
+            cefr_level="A1",
+            days=[CurriculumDay(day=1, title="T", focus="f", collocations=[], learning_objective="o")],
+        ),
+    )
+    lesson = build_lesson_from_story(_ceb_story(), language=language)
+    metadata = dict(lesson.generation_metadata)
+    metadata["token_glosses"] = {**metadata["token_glosses"], "ako": "I; my, mine", "kape": "coffee (hand-fixed)"}
+    store.save_lesson("ceb-day-1", "cur-ceb", 1, replace(lesson, generation_metadata=metadata))
+    return store
+
+
+def _run_ceb(store: ContentStore, monkeypatch, capsys, *args: str) -> tuple[int, str]:
+    return _run(store, monkeypatch, capsys, "--language", "ceb", *args)
+
+
+def _tooltips(store: ContentStore) -> dict[str, str]:
+    return store.get_lesson("ceb-day-1").generation_metadata["token_glosses"]
+
+
+class TestSenseGlosses:
+    def test_a_word_with_a_second_sense_takes_the_lessons_gloss(self, tmp_path, monkeypatch, capsys):
+        store = _seed_ceb_stale(tmp_path)
+
+        rc, _out = _run_ceb(store, monkeypatch, capsys, "--go", "--sense-glosses")
+
+        assert rc == 0
+        assert _tooltips(store)["ako"] == "my"
+
+    def test_every_other_tooltip_keeps_its_stored_gloss(self, tmp_path, monkeypatch, capsys):
+        store = _seed_ceb_stale(tmp_path)
+
+        _run_ceb(store, monkeypatch, capsys, "--go", "--sense-glosses")
+
+        assert _tooltips(store)["kape"] == "coffee (hand-fixed)"
+
+    def test_the_rest_of_the_blob_is_kept(self, tmp_path, monkeypatch, capsys):
+        store = _seed_ceb_stale(tmp_path)
+        before = store.get_lesson("ceb-day-1")
+
+        _run_ceb(store, monkeypatch, capsys, "--go", "--sense-glosses")
+
+        after = store.get_lesson("ceb-day-1")
+        assert after.sections == before.sections
+        assert {k: v for k, v in after.generation_metadata.items() if k != "token_glosses"} == {
+            k: v for k, v in before.generation_metadata.items() if k != "token_glosses"
+        }
+
+    def test_it_never_renders(self, tmp_path, monkeypatch, capsys):
+        """A tooltip is not in the audio: the renderer stub would raise if reached."""
+        store = _seed_ceb_stale(tmp_path)
+
+        def explode(**kw):
+            raise AssertionError("a tooltip refresh must never render")
+
+        monkeypatch.setattr(rebuild_mod, "reassemble_lesson_audio", explode)
+
+        rc, out = _run_ceb(store, monkeypatch, capsys, "--go", "--sense-glosses")
+
+        assert rc == 0
+        assert "FAILED" not in out
+
+    def test_the_plan_names_each_changed_tooltip_and_nothing_else(self, tmp_path, monkeypatch, capsys):
+        store = _seed_ceb_stale(tmp_path)
+
+        _rc, out = _run_ceb(store, monkeypatch, capsys, "--dry-run", "--sense-glosses")
+
+        assert "1 gloss: ako 'I; my, mine' -> 'my'" in out
+
+    def test_a_second_run_is_already_current(self, tmp_path, monkeypatch, capsys):
+        store = _seed_ceb_stale(tmp_path)
+        _run_ceb(store, monkeypatch, capsys, "--go", "--sense-glosses")
+
+        _rc, out = _run_ceb(store, monkeypatch, capsys, "--dry-run", "--sense-glosses")
+
+        assert "already current" in out
+
+    def test_it_cannot_be_combined_with_voices_only(self, tmp_path, monkeypatch, capsys):
+        store = _seed(tmp_path)
+
+        with pytest.raises(SystemExit):
+            _run(store, monkeypatch, capsys, "--dry-run", "--sense-glosses", "--voices-only")
+        assert "pass one" in capsys.readouterr().err
+
+
+def test_describe_glosses_lists_added_changed_and_removed_keys():
+    stored = build_lesson_from_story(_story(), language=get_language(_LANG))
+    tooltips = {k: v for k, v in stored.generation_metadata["token_glosses"].items() if k != "mye"}
+    fresh = replace(
+        stored,
+        generation_metadata={
+            **stored.generation_metadata,
+            "token_glosses": {**tooltips, "dag": "daytime", "ny": "new"},
+        },
+    )
+
+    assert rebuild_mod.describe_glosses(stored, fresh) == (
+        "3 glosses: dag 'day' -> 'daytime'; mye 'much' -> None; ny None -> 'new'"
+    )
