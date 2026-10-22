@@ -1,0 +1,11 @@
+# Card words Wolff never writes out, pointed at the sub-entry that carries their sense (tunatale-tofg.3).
+# Hand-curated. app/plugins/languages/ceb/wolff_cards.py reads each row ahead of the letter lookup, which
+# would otherwise take whatever entry happens to share the letters.
+#
+# Why: kabalo 'can' is ka- + baló 'know'. Wolff's only kabálo is bálu's 'feeling of shame', so card 841
+# showed shame, with the stress on the wrong syllable. The owner chose this hand row over a general rule
+# (2026-10-23): the decoder finds the root but not which sub-entry has the sense ('can' matches no gloss).
+#
+# Columns: the card's word; its Handbook spelling; Wolff's head; the label of the sub-entry with the sense
+# (as the lexicon stores it, 'hi-/ha-'); the affix the word adds; a sentence for the card, or empty.
+kabalo	kabaló	balu	hi-/ha-	ka-	His example writes the full form kahibaló.
