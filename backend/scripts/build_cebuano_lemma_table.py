@@ -488,6 +488,9 @@ def apply_spelling_variants(rows: Rows, pairs: Iterable[tuple[str, str]]) -> Row
         main_default = next((r for r in out if r[0] == main and r[3] == 1), None)
         if main_default is None:
             raise ValueError(f"spelling variant {variant}: main spelling {main} has no reading in the table")
+        # The variant IS its main word, so its readings as a third word go: the
+        # linker rule read nong (short for manong) as no + ng.
+        out = {r for r in out if r[0] != variant or r[2] in (variant, main)}
         out = {(s, u, main if lem == variant else lem, d) for s, u, lem, d in out}
         if not any(r[0] == variant for r in out):
             out.add((variant, main_default[1], main, 1))

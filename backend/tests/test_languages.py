@@ -132,6 +132,9 @@ class TestCardSurfaceVariants:
     def test_cebuano_short_form_front_splits(self):
         assert card_surface_variants("ceb", "dili, di") == ["dili", "di"]
         assert card_surface_variants("ceb", "unya, nya") == ["unya", "nya"]
+        # one card per short form, full form first (the owner, 2026-10-22)
+        assert card_surface_variants("ceb", "manong, nong") == ["manong", "nong"]
+        assert card_surface_variants("ceb", "inday, day") == ["inday", "day"]
 
     def test_cebuano_listed_spelling_pair_splits_in_either_order(self):
         assert card_surface_variants("ceb", "puwede, pwede") == ["puwede", "pwede"]

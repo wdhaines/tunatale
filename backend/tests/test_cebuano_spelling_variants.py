@@ -46,6 +46,15 @@ def test_a_variant_wiktionary_lacks_gets_the_main_spellings_default_reading():
     assert out == {("lamesa", "NOUN", "lamesa", 1), ("mesa", "NOUN", "lamesa", 1)}
 
 
+def test_a_variants_reading_as_another_word_is_dropped():
+    """``nong`` is short for manong, but the linker rule had also read it as no + ng.
+    A listed variant IS its main word, so a reading of a third word goes (the
+    owner, 2026-10-22: a "no" card minted from "Nong, sa baybayon")."""
+    rows = {("nong", "INTJ", "no", 1), ("manong", "NOUN", "manong", 1), ("no", "INTJ", "no", 1)}
+    out = apply_spelling_variants(rows, [("nong", "manong")])
+    assert out == {("nong", "NOUN", "manong", 1), ("manong", "NOUN", "manong", 1), ("no", "INTJ", "no", 1)}
+
+
 def test_readings_of_other_lemmas_are_untouched():
     rows = {("tawo", "NOUN", "tawo", 1), ("puwede", "ADV", "puwede", 1), ("pwede", "ADV", "pwede", 1)}
     assert ("tawo", "NOUN", "tawo", 1) in apply_spelling_variants(rows, [("puwede", "pwede")])
@@ -128,6 +137,12 @@ def test_six_reads_as_sais(table, surface):
         ("sab", "usab"),
         ("sad", "usab"),
         ("pod", "pud"),
+        # Terms of address (the owner, 2026-10-22: "We really need to handle short
+        # forms. I have day and inday."): Wolff manung "Short form: nung", manang
+        # "short form: nang", inday "short form: day".
+        ("nong", "manong"),
+        ("nang", "manang"),
+        ("day", "inday"),
     ],
 )
 def test_short_forms_read_as_the_word_they_shorten(table, surface, lemma):
@@ -142,7 +157,32 @@ def test_short_forms_read_as_the_word_they_shorten(table, surface, lemma):
     assert sum(r.is_default for r in readings) == 1
 
 
-@pytest.mark.parametrize("surface", ["pud", "gyud", "usab", "dili", "unya"])
+@pytest.mark.parametrize("surface", ["pud", "gyud", "usab", "dili", "unya", "manong", "manang", "inday"])
 def test_the_main_spellings_keep_themselves(table, surface):
     default = next(r for r in table.readings(surface) if r.is_default)
     assert default.lemma == surface
+
+
+@pytest.mark.parametrize(("surface", "full"), [("nong", "manong"), ("nang", "manang")])
+def test_an_address_term_reads_as_its_full_form_not_a_linker_form(table, surface, full):
+    """Nong and Nang are the terms of address (Wolff: manung, manang, "Short form:
+    nung", "short form: nang"). Wiktionary heads neither, so the linker rule read
+    them as no + ng and na + ng, and the reader minted the lesson's "Nong" as a card
+    for "no", glossed "elder", with kunu's dictionary entry ("it is said") on it
+    (the owner, 2026-10-22: "The card for no seems wrong"). Every nong / nang in
+    the owner's lessons is the address term. As a listed short form it reads as
+    its full form, so the lesson reaches the one 'manong, nong' card."""
+    default = next(r for r in table.readings(surface) if r.is_default)
+    assert (default.upos, default.lemma) == ("NOUN", full)
+
+
+def test_the_lesson_line_the_no_card_came_from_reads_manong(table):
+    from app.srs.lemmatizer import lemmatize_surfaces_in_context
+    from app.srs.tokenizer import tokenize
+
+    line = "Nong, sa baybayon, palihug."
+    surfaces = tokenize(line)
+    assert (
+        dict(zip(surfaces, lemmatize_surfaces_in_context(surfaces, line, table, "ceb"), strict=True))["Nong"]
+        == "manong"
+    )
