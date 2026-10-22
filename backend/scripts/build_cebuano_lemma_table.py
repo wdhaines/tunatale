@@ -59,6 +59,24 @@ Rules, in order (see the brief for rationale):
    - Else a generated reading: prefer a root that has a VERB reading over an
      ADJ-only one, then the shorter root, then alphabetical.
    - Linker rows last.
+6b. Wolff roots (tunatale-tofg.3), after the hand list (rule 6): each word of the news corpus that has no
+   row, or whose default reads it as its own VERB or ADJ, is decoded by
+   ``ceb.affixes.analyse`` against Wolff's dictionary. Its best analysis becomes
+   the default, with the word's own reading kept as a non-default, only when:
+   the word has 5+ letters; the affix is one of §6.1's inflections (or ma-un),
+   not a derivation (ka-an: kalibutan 'world'; paN-: pangulo 'president'; pag-:
+   pagtuo 'belief'); the root's entry takes it;
+   Wolff's ROOT block reads the root as a verb or an adjective (táwu 'person'
+   is a noun there, so natawo 'born' stays itself); and exactly one word of the
+   table spells the root, unless the table reads that word as a number (liboan:
+   the -an tens stay words of their own) or a function word (napud is na + the
+   particle pud), with an e only if the word has one
+   (Wolff's i is also the table's e: gibilin is not belen), in 3+ letters; a
+   root the table lacks takes the corpus's commonest spelling of the bare word
+   (moapil: apil), and with no bare word in the corpus, no row. A word
+   + the linker (nakitang) is not decoded. Nouns are never moved: the corpus diff
+   showed that is where decoding goes wrong (barangay as bárang + -ay). The words
+   these gates still get wrong are hand rows in closed_class.tsv (rule 6).
 """
 
 from __future__ import annotations
@@ -75,6 +93,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+
+    from app.plugins.languages.ceb.affixes import Lexicon
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -95,6 +115,7 @@ DEFAULT_SOURCE = _BACKEND / "scripts/local/kaikki/Cebuano.jsonl"
 OUTPUT = _BACKEND / "app/plugins/languages/ceb/data/cebuano_lemmas.tsv.gz"
 BASE_LIST = _BACKEND / "app/plugins/languages/ceb/data/base625.tsv"
 CLOSED_CLASS = _BACKEND / "app/plugins/languages/ceb/data/closed_class.tsv"
+FREQUENCY = _BACKEND / "app/plugins/languages/ceb/data/cebuano_frequency.tsv.gz"
 SPELLING_VARIANTS = _BACKEND / "app/plugins/languages/ceb/data/spelling_variants.tsv"
 
 # base625.tsv's category column → the UPOS a base-list word keeps. Everything
@@ -449,6 +470,73 @@ def apply_closed_class(rows: Rows, entries: Iterable[tuple[str, str, str]]) -> R
     return out
 
 
+def _wolff_root_affixes() -> frozenset[str]:
+    from app.plugins.languages.ceb.affixes import CHART_AFFIXES
+
+    # Not the derivations: ka-an (kalibutan 'world'), and §6.2's paN- (pangulo 'president')
+    # and pag- (pagtuo 'belief'), whose maN-/naN- the generator (rule 3) already covers.
+    return (CHART_AFFIXES - {"ka-an", "paN-", "maN-", "naN-", "pag-"}) | {"ma-+-un"}
+
+
+def apply_wolff_roots(rows: Rows, surfaces: Iterable[str], lex: Lexicon, keep: Iterable[str] = ()) -> Rows:
+    """Rule 6b: root each of *surfaces* that has no row, or reads as its own VERB or ADJ,
+    by Wolff's dictionary (see the module docstring for the gates). *keep* (the
+    hand-listed surfaces) are never touched."""
+    from app.plugins.languages.ceb.affixes import analyse, licensed, wolff_letters
+
+    affixes = _wolff_root_affixes()
+    default = {r[0]: r for r in rows if r[3] == 1}
+    surfaces = list(surfaces)
+    known = set(default) | set(surfaces)
+    # Wolff letters -> the table's words spelled so, when some reading of the word is a
+    # content word (napud is na + pud, only ever a particle) and it is not by default a
+    # number (liboan: the -an tens are words of their own). Wiktionary's default alone
+    # would lose most of Wolff's verb roots: kita 'we' is also 'see', sulod 'inside' also
+    # 'enter', hurot is a DET there and mando only a name.
+    content = {r[0] for r in rows if r[2] == r[0] and r[1] in ("NOUN", "VERB", "ADJ", "ADV", "PRON", "PROPN")}
+    words: dict[str, set[str]] = defaultdict(set)
+    for surface, upos, lemma, _ in default.values():
+        if lemma == surface and upos != "NUM" and surface in content:
+            words[wolff_letters(surface)].add(surface)
+    # A root the table lacks (Wiktionary has no apil 'join') is spelled as the corpus
+    # spells the bare word, its commonest spelling first (*surfaces* come commonest first).
+    # Only when the table has no word so spelled at all: one the gates above exclude
+    # (libo, a number) is not to come back by way of the corpus (libuan).
+    table = {wolff_letters(r[0]) for r in default.values() if r[2] == r[0]}
+    spelled: dict[str, list[str]] = defaultdict(list)
+    for surface in surfaces:
+        spelled[wolff_letters(surface)].append(surface)
+    out: Rows = set(rows)
+    keep = set(keep)
+    for surface in surfaces:
+        own = default.get(surface)
+        if surface in keep or len(surface) < 5 or own and not (own[2] == surface and own[1] in ("VERB", "ADJ")):
+            continue
+        if surface.endswith("ng") and surface[-3] in "aeiou" and surface[:-2] in known:
+            continue  # a word + the linker (nakitang), not a root ending in -ng
+        best = next(iter(analyse(surface, lex)), None)
+        if best is None or best.affix not in affixes or not licensed(best, lex):
+            continue
+        # Wolff's i is also the table's e: bílin is belen as well as bilin, and the word's
+        # own spelling decides (ibilin, bilin). A two-letter root is too easily a stray
+        # syllable (magda as mag- + dá).
+        root = wolff_letters(best.root)
+        lemmas = {w for w in words.get(root, ()) if ("e" in w) == ("e" in surface)}
+        if not lemmas and root not in table:
+            lemmas = {w for w in spelled.get(root, ()) if ("e" in w) == ("e" in surface)}
+            lemmas = set(sorted(lemmas, key=spelled[root].index)[:1])
+        if len(lemmas) != 1 or not lex.root_pos[best.root] & {"v", "a"}:
+            continue
+        if len(wolff_letters(best.root).replace("-", "")) < 3:
+            continue
+        lemma = next(iter(lemmas))
+        if own:
+            out.discard(own)
+            out.add((surface, own[1], own[2], 0))
+        out.add((surface, own[1] if own else "VERB", lemma, 1))
+    return out
+
+
 def load_spelling_variants(path: Path) -> list[tuple[str, str]]:
     """``(variant, main)`` pairs of the hand-kept spelling-variant list.
 
@@ -503,6 +591,8 @@ def build_from_path(
     base_list: Path | None = None,
     closed_class: Path | None = None,
     spelling_variants: Path | None = None,
+    frequency: Path | None = None,
+    wolff: Lexicon | None = None,
 ) -> dict:
     """Build the table from *source* JSONL into *output* ``.tsv.gz``, print the report."""
     sha_hex = _sha256(source)
@@ -574,8 +664,16 @@ def build_from_path(
     # Rule 5: defaults
     rows = assign_defaults(verb_surfaces, nonverb, attested_surfaces, root_form_count, headword_upos, linkers)
     # Rule 6: the hand-curated closed-class list overrides (tunatale-u8nz.21).
-    if closed_class is not None:
-        rows = apply_closed_class(rows, load_closed_class(closed_class))
+    listed = load_closed_class(closed_class) if closed_class is not None else []
+    rows = apply_closed_class(rows, listed)
+    # Rule 6b: the corpus's words Wiktionary leaves unrooted, rooted by Wolff's dictionary.
+    # After the hand list, so a root it adds is a word to root to (bilin: ibilin), and a
+    # word it lists is left alone (natawo).
+    wolff_count = 0
+    if frequency is not None and wolff is not None:
+        before = {r for r in rows if r[3] == 1}
+        rows = apply_wolff_roots(rows, corpus_words(frequency), wolff, keep={s for s, _, _ in listed})
+        wolff_count = len({r for r in rows if r[3] == 1} - before)
     # Rule 7: hand-kept spelling variants read as their main spelling (the user,
     # 2026-09-28: pwede/puwede, lamesa/mesa). Last, so no earlier rule re-splits them.
     if spelling_variants is not None:
@@ -616,6 +714,7 @@ def build_from_path(
         "linker_count": linker_count,
         "base_list_added": base_added,
         "form_of_count": len(form_of),
+        "wolff_roots": wolff_count,
     }
 
     print(f"source: {source} ({sha_hex[:12]})")
@@ -626,9 +725,16 @@ def build_from_path(
     print(f"generated surface→root pairs: {generated_count}")
     print(f"linker rows: {linker_count}")
     print(f"base-list headwords Wiktionary lacks: {base_added}")
+    print(f"corpus words rooted by Wolff's dictionary: {wolff_count}")
     print(f"total rows: {stats['rows']}; distinct surfaces: {stats['surfaces']}; surfaces with >1 lemma: {multi_lemma}")
     print(f"wrote {output} ({stats['size']} bytes)")
     return stats
+
+
+def corpus_words(path: Path) -> list[str]:
+    """The words of the frequency list (``cebuano_frequency.tsv.gz``), commonest first."""
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        return [line.split("\t", 1)[0] for line in fh if not line.startswith("#")]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -637,7 +743,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.source.exists():
         parser.error(f"source extract not found: {args.source}")
-    build_from_path(args.source, OUTPUT, BASE_LIST, CLOSED_CLASS, SPELLING_VARIANTS)
+    from app.plugins.languages.ceb.affixes import lexicon
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon
+
+    wolff = lexicon(load_lexicon().entries)
+    build_from_path(args.source, OUTPUT, BASE_LIST, CLOSED_CLASS, SPELLING_VARIANTS, FREQUENCY, wolff)
     return 0
 
 

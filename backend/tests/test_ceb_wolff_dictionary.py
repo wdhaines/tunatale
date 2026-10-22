@@ -230,6 +230,14 @@ def test_decode_stative_and_mutual_classes():
     assert [a for a, _ in decode_classes("C; c6")] == ["mag-/nag-", "magka-/nagka-", "makig-/nakig-", "i-/gi-"]
 
 
+def test_n_adds_man_to_a_stative_verb_as_to_an_action_verb():
+    """§7.121: 'A symbol BN indicates that paN- may be added to the base with the
+    volitional affix (mu-)', as AN does for class A (§7.11). Wolff's example is pula."""
+    assert ("maN-/naN-", "the one it happens to") in decode_classes("BN")
+    assert ("maN-/naN-", "the one it happens to") in decode_classes("BN; a4")
+    assert "maN-/naN-" not in dict(decode_classes("B16"))
+
+
 def test_decode_local_and_instrumental_subclasses():
     assert decode_classes("b6") == [("-an/gi-an", "where or for whom it is done")]
     assert decode_classes("b8") == [("ma-an/na-an", "who it is done to")]

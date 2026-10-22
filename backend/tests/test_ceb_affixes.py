@@ -23,7 +23,9 @@ from app.plugins.languages.ceb.affixes import (
     decode,
     generate,
     lexicon,
+    licensed,
     strip_marks,
+    wolff_letters,
 )
 
 # (root, affix, the form Wolff writes, the section)
@@ -343,3 +345,31 @@ def test_without_the_english_a_rival_entry_ranks_first(lex, form, english, root)
     ranked = analyse(form, lex)
     assert ranked[0].root != root
     assert root in {a.root for a in ranked}
+
+
+def test_an_equals_entry_takes_and_means_what_its_target_does(lex):
+    """Wolff's lakaw entry is only '= lakat': no class formula, no gloss of its own.
+    Without its target's, milakaw would rank as an unlicensed analysis."""
+    assert lex.takes["lakaw"] >= lex.takes["lakat"] > frozenset()
+    assert "walk" in lex.gloss["lakaw"]
+    assert licensed(analyse("milakaw", lex)[0], lex)
+
+
+def test_analyse_reads_todays_spelling():
+    """Lessons spell o and e where Wolff writes u and i (§3.2: three vowels)."""
+    lex = lexicon([_entry("languy", ("v", "A; a", "swim"))])
+    assert analyse("molangoy", lex) == [Analysis("languy", "mu-", ())]
+    assert wolff_letters("Molángoy") == "mulanguy"
+
+
+def test_the_root_block_says_what_the_root_itself_is():
+    """táwu is a noun at its root (its verbs are sub-entries); bilar is a verb there too."""
+    lex = lexicon([_entry("bilar", ("n", None, "vigil"), ("v", "A; b", "keep a wake"))])
+    assert lex.root_pos["bilar"] == frozenset({"n", "v"})
+
+
+def _entry(head: str, *senses: tuple[str, str | None, str]) -> dict:
+    """A lexicon entry in ``wolff_lexicon.json``'s shape: the root and its (pos, class, gloss) senses."""
+    rows = [{"pos": p, "n": None, "cls": c, "gloss": g, "phrase": None, "ex": None} for p, c, g in senses]
+    form = {"label": head, "wolff": head, "hb": head, "short": [], "xref": None, "senses": rows}
+    return {"id": head, "heads": [head], "forms": [form]}

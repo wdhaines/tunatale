@@ -147,6 +147,12 @@ def strip_marks(word: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", word) if not unicodedata.combining(c)).lower()
 
 
+def wolff_letters(word: str) -> str:
+    """*word* in Wolff's letters: marks stripped, and today's o and e read as the u and i
+    of his three vowels (§3.2), so a lesson's ``molangoy`` meets his ``languy``."""
+    return strip_marks(word).replace("o", "u").replace("e", "i")
+
+
 def _sounds(word: str) -> list[_Sound]:
     out: list[_Sound] = []
     chars = unicodedata.normalize("NFD", word.lower())
@@ -413,6 +419,10 @@ _CELLS: dict[str, frozenset[str]] = {
 }
 
 
+#: Every affix a class formula can license: §6.1's chart, all voices.
+CHART_AFFIXES: frozenset[str] = frozenset().union(*_CELLS.values())
+
+
 def class_affixes(code: str) -> frozenset[str]:
     """The affixes a §7 class formula (``A; a12``) licenses, as this module spells them."""
     from app.plugins.languages.ceb.wolff_dictionary import decode_classes
@@ -438,6 +448,7 @@ class Lexicon(NamedTuple):
     takes: Mapping[str, frozenset[str]]  # root -> the affixes its entry licenses
     gloss: Mapping[str, frozenset[str]]  # root -> its glosses' content words
     size: Mapping[str, tuple[int, int]]  # root -> (sub-entries, characters of gloss and example)
+    root_pos: Mapping[str, frozenset[str]]  # root -> the parts of speech of its root block ('v', 'a', 'n')
 
 
 def lexicon(entries: Iterable[Mapping[str, Any]]) -> Lexicon:
@@ -451,6 +462,8 @@ def lexicon(entries: Iterable[Mapping[str, Any]]) -> Lexicon:
     takes: dict[str, set[str]] = {}
     gloss: dict[str, set[str]] = {}
     size: dict[str, tuple[int, int]] = {}
+    root_pos: dict[str, set[str]] = {}
+    same: list[tuple[str, str]] = []  # (head, target) of an entry that is only '= X' or 'see X'
     for e in entries:
         ok: set[str] = set()
         words: set[str] = set()
@@ -465,21 +478,33 @@ def lexicon(entries: Iterable[Mapping[str, Any]]) -> Lexicon:
                 ok |= class_affixes(sense["cls"]) if sense["cls"] else set()
                 words |= _english_words(sense["gloss"])
                 chars += len(sense["gloss"]) + len(" ".join(sense["ex"] or ()))
+        root = e["forms"][0]
+        if root["xref"] and root["xref"][0] in ("=", "see"):
+            same.extend((h, root["xref"][1]) for h in e["heads"])
         for h in e["heads"]:
+            root_pos.setdefault(h, set()).update(sense["pos"] for sense in root["senses"] if sense["pos"])
             takes.setdefault(h, set()).update(ok)
             gloss.setdefault(h, set()).update(words)
             subs, total = size.get(h, (0, 0))
             size[h] = (subs + len(e["forms"]), total + chars)
+    # A root that is only another's spelling ('lakaw = lakat') takes and means what that one does.
+    for head, target in same:
+        takes[head] |= takes.get(target, set())
+        gloss[head] |= gloss.get(target, set())
+        root_pos[head] |= root_pos.get(target, set())
     return Lexicon(
         roots,
         {k: tuple(sorted(set(v))) for k, v in written.items()},
         {k: frozenset(v) for k, v in takes.items()},
         {k: frozenset(v) for k, v in gloss.items()},
         size,
+        {k: frozenset(v) for k, v in root_pos.items()},
     )
 
 
-def _licensed(a: Analysis, takes: frozenset[str]) -> bool:
+def licensed(a: Analysis, lex: Lexicon) -> bool:
+    """Whether *a*'s root's entry takes its affix: whole (``gi-an``), or piece by piece."""
+    takes = lex.takes[a.root]
     return a.affix in takes or all(piece in takes for piece in a.affix.split("+"))
 
 
@@ -487,12 +512,13 @@ def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
     """*surface*'s analyses, best first.
 
     A headword is itself; a form Wolff writes out (§5.1) is its entry's root, by
-    lookup. Otherwise :func:`decode`, ranked by the meaning (*english*, the
+    lookup. *surface* may be in today's spelling (:func:`wolff_letters`). Otherwise :func:`decode`, ranked by the meaning (*english*, the
     sentence or gloss the word came with, against each root's glosses), then by
     whether the root's entry takes the affix (its class formula and sub-entry
     labels), then by the size of the entry.
     """
-    written = lex.written.get(strip_marks(surface))
+    surface = wolff_letters(surface)
+    written = lex.written.get(surface)
     if written:
         return [Analysis(root, "", ("5.1",)) for root in written]
     words = _english_words(english)
@@ -501,7 +527,7 @@ def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
         subs, chars = lex.size[a.root]
         return (
             -len(lex.gloss[a.root] & words),
-            not _licensed(a, lex.takes[a.root]),
+            not licensed(a, lex),
             a.root.startswith("-") or a.root.endswith("-"),
             -subs,
             -chars,

@@ -298,3 +298,40 @@ def test_the_wiktionary_derived_data_carries_attribution():
     text = (_CEB_DATA / "ATTRIBUTION.md").read_text(encoding="utf-8")
     assert "Wiktionary" in text
     assert "CC BY-SA 4.0" in text
+
+
+# ── Wolff roots (rule 6b, tunatale-tofg.3, 2026-10-23) ──────────────────────────
+#
+# The owner, 2026-10-22: "I have non-roots in my deck new that should have been
+# rooted", and "start with the base form of verbs but can add inflections at will".
+# Each word below was a lesson word or a card in the live decks that day; the
+# roots are the ones the owner chose when repairing the cards by hand.
+
+WOLFF_ROOTED = {
+    "mobilar": "bilar",  # a hand row: not in the news corpus rule 6b reads
+    "moapil": "apil",  # apil is not in Wiktionary: spelled as the corpus spells the bare word
+    "ibilin": "bilin",  # bilin: a hand row (Wiktionary lacks it); the e tells it from belen
+    "nag-istorya": "istorya",
+    "gikapoy": "kapoy",  # was its own ADJ headword
+    "kasabot": "sabot",
+    "mainit": "init",
+    "malipayon": "lipay",  # ma-un
+    "kakita": "kita",
+    "nagtapok": "tapok",
+    "dakpan": "dakop",  # §5.12 syncope
+    "niay": "nia",  # a hand row: nia + y
+    "mahimo": "himo",  # a hand row: an ADV, which rule 6b leaves alone
+}
+
+#: Words that keep themselves: a word of its own, or a live card that is its own word.
+WOLFF_LEFT_ALONE = ["natawo", "babae", "kapehan", "bulawan", "habagatan", "kabalo", "pagkaon", "pangulo"]
+
+
+@pytest.mark.parametrize("surface,root", WOLFF_ROOTED.items())
+def test_a_word_wiktionary_leaves_unrooted_takes_its_wolff_root(real, surface, root):
+    assert real.lemmatize(surface, "ceb") == root
+
+
+@pytest.mark.parametrize("word", WOLFF_LEFT_ALONE)
+def test_a_word_of_its_own_keeps_itself_against_wolffs_root(real, word):
+    assert real.lemmatize(word, "ceb") == word
