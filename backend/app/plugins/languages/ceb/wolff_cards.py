@@ -27,6 +27,10 @@ candidate whose glosses share the most words with the card's English. No
 shared word, or a tie between different spellings, is a :class:`Miss`: the
 card gets nothing and the word goes on the owner's list. A wrong spelling
 under a word is worse than none.
+
+A word Wolff never writes out (kabalo = ka- + baló 'know') can share its
+letters with one he does (kabálo 'shame'). A hand row in ``wolff_decoded.tsv``
+names the sub-entry with its sense, and is read before the letters.
 """
 
 from __future__ import annotations
@@ -50,6 +54,7 @@ from app.plugins.languages.ceb.wolff_dictionary import Entry, Form, decode_class
 
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
+DECODED_PATH = Path(__file__).parent / "data" / "wolff_decoded.tsv"
 CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spelling"
 FIELD_NAMES = DICTIONARY_FIELDS
 _POS_NAMES = {"n": "noun", "v": "verb", "a": "adjective"}
@@ -335,6 +340,22 @@ class CardFields:
         )
 
 
+class Decoded(NamedTuple):
+    """A card word Wolff never writes out, and the sub-entry with its sense (``wolff_decoded.tsv``)."""
+
+    word: str
+    spelling: str  # in Handbook spelling
+    head: str  # Wolff's head, as the lexicon stores it
+    label: str  # the sub-entry's label ('hi-/ha-')
+    affix: str  # what the word adds to the root
+    note: str  # a sentence for the card, or ""
+
+
+def load_decoded(path: Path = DECODED_PATH) -> list[Decoded]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [Decoded(*line.split("\t")) for line in lines if line and not line.startswith("#")]
+
+
 class Attested(NamedTuple):
     """A word no entry lists, spelled as Wolff prints it in an example of *entry*."""
 
@@ -358,12 +379,27 @@ class _Hit(NamedTuple):
     surface: str  # the card word's own Handbook spelling (a short form's, if it came through one)
     via: tuple[int, int] | None  # the pointer it came through ('náa = anáa', a short form)
     english_matched: bool = True  # False: the only candidate, taken on its letters
+    decoded: Decoded | None = None  # came through a hand row, not the letters
 
 
 class WolffLexicon:
-    def __init__(self, entries: Sequence[dict], relations: EnglishRelations | None = None):
+    def __init__(
+        self, entries: Sequence[dict], relations: EnglishRelations | None = None, decoded: Sequence[Decoded] = ()
+    ):
         self.entries = list(entries)
         self.relations = relations if relations is not None else EnglishRelations.empty()
+        self._decoded: dict[str, _Hit] = {}
+        for row in decoded:
+            found = [
+                (ei, fi)
+                for ei, rec in enumerate(self.entries)
+                if row.head in rec["heads"]
+                for fi, f in enumerate(rec["forms"])
+                if f["label"] == row.label
+            ]
+            if len(found) != 1:
+                raise ValueError(f"wolff_decoded: {row.head} {row.label} names {len(found)} sub-entries, not one")
+            self._decoded[letters_key(row.word)] = _Hit(*found[0], row.spelling, None, decoded=row)
         self._attested: dict[str, list[tuple[int, str, int, str, str]]] = {}
         for ei, rec in enumerate(self.entries):
             for hb, n, example, translation in rec.get("attested", ()):
@@ -480,6 +516,8 @@ class WolffLexicon:
     def match(self, cebuano: str, english: str) -> _Hit | Attested | Miss:
         # A gloss naming two senses leads with the card's own ('I; my, mine' is
         # ako's subject card, R2), and matched whole the second can outscore it.
+        if (row := self._decoded.get(letters_key(cebuano.split(",")[0].strip()))) is not None:
+            return row
         first = english.split(";")[0]
         if first != english:
             hit = self._match(cebuano, first)
@@ -569,6 +607,13 @@ class WolffLexicon:
         rec = self.entries[hit.entry]
         form = rec["forms"][hit.form]
         out: list[str] = []
+        if hit.decoded is not None:
+            note = f" {html.escape(hit.decoded.note)}" if hit.decoded.note else ""
+            out.append(
+                f"<div>Not written out in Wolff: <b>{html.escape(hit.decoded.affix)}</b> + "
+                f"<b>{html.escape(rec['forms'][0]['hb'] or '')}</b>. He gives the meaning under "
+                f"<b>{html.escape(form['hb'] or '')}</b>.{note}</div>"
+            )
         # A pointer is a short form ('náa = anáa') only when what it points at
         # is spelled differently. 'maáyu see áyu' lands on the sub-entry màáyo,
         # the card's own spelling, which the root line below already shows.
@@ -649,4 +694,4 @@ class WolffLexicon:
 def load_lexicon() -> WolffLexicon:
     """The committed lexicon."""
     with gzip.open(LEXICON_PATH, "rt", encoding="utf-8") as fh:
-        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load())
+        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load(), load_decoded())

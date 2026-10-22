@@ -22,6 +22,7 @@ from app.plugins.languages.ceb.handbook_spelling import build_lexicon
 from app.plugins.languages.ceb.wolff_cards import (
     LIGHT_WORDS,
     CardFields,
+    Decoded,
     EnglishRelations,
     Miss,
     WolffLexicon,
@@ -29,6 +30,7 @@ from app.plugins.languages.ceb.wolff_cards import (
     english_tokens,
     entry_record,
     letters_key,
+    load_decoded,
     load_lexicon,
     onto_card,
 )
@@ -639,3 +641,47 @@ def test_a_see_pointer_to_a_full_word_is_still_a_short_form(committed):
     details = committed.card_fields("ta", "we (including you); our (including you)").details
     assert "Short form of <b>kitá</b>" in details
     assert "From the root <b>kitá</b>" not in details
+
+
+# ── decoded forms (the owner, 2026-10-23: option A of the kabalo page) ──
+#
+# kabalo 'can' is ka- + baló 'know', a form Wolff never writes out. His only
+# kabálo is bálu's 'feeling of shame', and the lookup took it on its letters
+# alone (card 841). A hand row in wolff_decoded.tsv points the card at the
+# sub-entry that carries the sense: hibaló 'know s.t., how to do s.t.'.
+
+
+def test_a_decoded_form_reads_the_sub_entry_its_hand_row_names(committed):
+    f = committed.card_fields("kabalo", "can")
+    assert f.spelling == "kabaló"
+    assert f.meaning == "know s.t., how to do s.t.; take care of a problem"
+    assert f.verb == "ma-/na-, maka-/naka-, -an/gi-an, i-/gi-"
+    assert f.details.startswith(
+        "<div>Not written out in Wolff: <b>ka-</b> + <b>baló</b>. He gives the meaning under <b>hibaló</b>."
+        " His example writes the full form kahibaló.</div>"
+        "<div>From the root <b>baló</b> I don’t know</div>"
+    )
+    assert "<i>Kahibaló ka bang molangóy?</i> Do you know how to swim?" in f.details
+    # the homograph it was mistaken for is still named, as the one not to confuse it with
+    assert "<li><b>kabálo</b> feeling of shame and hurt for not being given s.t</li>" in f.details
+    assert "<p>balu I don’t know." in f.dictionary_entry and "bálu_2" not in f.dictionary_entry
+
+
+def test_without_its_hand_row_kabalo_reads_the_shame_entry(committed):
+    # the control: the same lexicon with no hand rows is what card 841 showed
+    bare = WolffLexicon(committed.entries, committed.relations, decoded=())
+    f = bare.card_fields("kabalo", "can")
+    assert (f.spelling, f.meaning) == ("kabálo", "feeling of shame and hurt for not being given s.t")
+
+
+def test_every_hand_row_names_a_sub_entry_that_exists(committed):
+    rows = load_decoded()
+    assert rows and all(letters_key(r.word) == letters_key(r.spelling) for r in rows)
+    for r in rows:
+        assert committed.match(r.word, "").decoded == r  # a Miss has no .decoded
+
+
+def test_a_hand_row_naming_a_missing_sub_entry_is_refused(committed):
+    row = Decoded("kabalo", "kabaló", "balu", "no-such-label", "ka-", "")
+    with pytest.raises(ValueError, match="no-such-label"):
+        WolffLexicon(committed.entries, committed.relations, decoded=[row])
