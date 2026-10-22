@@ -285,16 +285,27 @@ def build_cloze_back_extra(
     return "<br><br>".join(parts)
 
 
+_GRAMMAR_SPAN = re.compile(r'(?:<br\s*/?>)*\s*<span class="grammar">.*?</span>\s*(?:<br\s*/?>)*', re.S)
+_EDGE_BREAKS = re.compile(r"^(?:\s*<br\s*/?>)+|(?:<br\s*/?>\s*)+$")
+
+
 def extract_cloze_note(back_extra: str) -> str:
-    """Extract note body from a Cloze note's back_extra (after translation/sentence spans)."""
+    """Extract note body from a Cloze note's back_extra (after translation/sentence spans).
+
+    The grammar span is not the note's: :func:`build_cloze_back_extra` writes it from
+    the ``grammar`` field, so reading it back into the note added one copy of the hint
+    per push-pull round trip (the owner saw it three times on one card, 2026-10-22).
+    """
     back_extra = _strip_sound_tags(back_extra)
     m = _BACK_EXTRA_SENT.match(back_extra)
     if m:
-        return re.sub(r"^(?:<br\s*/?>)+", "", m.group(3).strip()).strip()
-    m = _BACK_EXTRA_TRANS.match(back_extra)
-    if m:
-        return m.group(2).strip()
-    return ""
+        body = m.group(3)
+    elif m := _BACK_EXTRA_TRANS.match(back_extra):
+        body = m.group(2)
+    else:
+        return ""
+    body = _GRAMMAR_SPAN.sub("<br><br>", body)
+    return _EDGE_BREAKS.sub("", body.strip()).strip()
 
 
 def _ms_to_datetime(ms: int | None) -> datetime | None:

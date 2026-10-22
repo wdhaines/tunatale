@@ -3295,3 +3295,51 @@ class TestPullRecencyGuardLayer70:
 
         after = db.get_collocation_by_guid(guid).directions[Direction.RECOGNITION]
         assert after.stability == 8.2442
+
+
+# ── the grammar hint round trip (the owner, 2026-10-22: "Why the triple repetition here?") ──
+#
+# A push builds Back Extra from translation + sentence + note + the grammar field's
+# span; a pull read everything after the spans back into `note`, grammar span
+# included. So each push-pull added one copy of the hint: the Mobilar cloze showed
+# "bilar — mo-: will do (not yet done)" three times (the grammar field, plus two in
+# note after its second push). The grammar span is the grammar FIELD's, so a pull
+# never puts it in the note.
+
+_HINT = "bilar — mo-: will do (not yet done)"
+
+
+@pytest.mark.parametrize(
+    ("label", "back_extra", "expected"),
+    [
+        ("hint_only", f'<i>will keep vigil</i><br><br><span class="grammar">{_HINT}</span>', ""),
+        ("note_then_hint", f'<i>x</i><br><br>some note<br><br><span class="grammar">{_HINT}</span>', "some note"),
+        (
+            "polluted_note_heals",
+            f'<i>x</i><br><br><span class="grammar">{_HINT}</span><br><br><span class="grammar">{_HINT}</span>'
+            f'<br><br><span class="grammar">{_HINT}</span>',
+            "",
+        ),
+        (
+            "with_sentence_and_sound",
+            f'<i>x</i><br><br><span class="st">s</span><br><br>n<br><br><span class="grammar">{_HINT}</span><br><br>[sound:a.mp3]',
+            "n",
+        ),
+    ],
+)
+def test_extract_cloze_note_leaves_the_grammar_hint_to_the_grammar_field(label, back_extra, expected):
+    assert extract_cloze_note(back_extra) == expected
+
+
+@pytest.mark.parametrize("note", ["", "some note"])
+def test_a_cloze_back_extra_is_stable_across_sync_round_trips(note):
+    from app.plugins.anki_sync.sync_common import build_cloze_back_extra
+
+    first = build_cloze_back_extra("will keep vigil", "We'll keep vigil tonight.", note=note, grammar=_HINT)
+    back = first
+    for _ in range(3):
+        back = build_cloze_back_extra(
+            "will keep vigil", "We'll keep vigil tonight.", note=extract_cloze_note(back), grammar=_HINT
+        )
+    assert back == first
+    assert back.count('class="grammar"') == 1
