@@ -70,7 +70,7 @@ def named_pattern(language_code: str, day: CurriculumDay) -> AffixPattern | None
 
 
 def pattern_for_day(
-    curriculum: Curriculum, day: CurriculumDay, *, srs_db=None, store: ContentStore | None = None
+    curriculum: Curriculum, day: CurriculumDay, *, srs_db=None, store: ContentStore | None = None, owner: bool
 ) -> AffixPattern | None:
     """The affix pattern *day*'s story is planned around, or ``None``.
 
@@ -97,7 +97,7 @@ def pattern_for_day(
         return drilled
     if srs_db is None or store is None:
         return bundle.patterns[0]
-    return next_pattern(curriculum.language_code, srs_db=srs_db, store=store)
+    return next_pattern(curriculum.language_code, srs_db=srs_db, store=store, owner=owner)
 
 
 def _worded(language_code: str, pattern: AffixPattern) -> list[DrillRoot]:
@@ -297,6 +297,7 @@ def add_day_drill(
     srs_db,
     lemmatizer: Lemmatizer | None,
     store: ContentStore | None = None,
+    owner: bool,
 ) -> None:
     """Append to *lesson* the closing drill of the pattern its curriculum *day* is planned around. In place.
 
@@ -310,7 +311,9 @@ def add_day_drill(
     tells them; with no store nothing says so.
     """
     planned = next((d for d in curriculum.days if d.day == day), None) if curriculum is not None else None
-    pattern = pattern_for_day(curriculum, planned, srs_db=srs_db, store=store) if planned is not None else None
+    pattern = (
+        pattern_for_day(curriculum, planned, srs_db=srs_db, store=store, owner=owner) if planned is not None else None
+    )
     if pattern is not None:
         half = _half_for_day(store, curriculum, pattern, day) if pattern.halves else None
         told = store is not None and _noted(store, curriculum.id, pattern, day, half)

@@ -385,6 +385,7 @@ class LessonPipeline:
                     review_pressure=curriculum.review_pressure(),
                     content_store=store,
                     curriculum_id=curriculum_id,
+                    owner=user_id is None,
                 )
             except (StoryGenerationError, LLMError) as e:
                 # LLMError: opt-in fallback means complete() now raises a bare 429/HTTP

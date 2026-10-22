@@ -7,13 +7,19 @@ from app.storage.store import ContentStore
 
 
 def serialize_lesson(
-    lesson_id: str, lesson: Lesson, *, day: int | None = None, srs_db=None, store: ContentStore | None = None
+    lesson_id: str,
+    lesson: Lesson,
+    *,
+    day: int | None = None,
+    srs_db=None,
+    store: ContentStore | None = None,
+    owner: bool,
 ) -> dict:
     """Build the standard lesson response dict shared by ``get_lesson`` and ``get_lesson_by_day``.
 
     With the learner's *srs_db* and *store*, a lesson's drill also carries how
     far the learner is with its pattern (``pattern_gate.Progress.summary``),
-    read at fetch time.
+    read at fetch time. *owner*: whether they are the owner's (``pattern_gate.progress``).
     """
     result: dict = {
         "id": lesson_id,
@@ -47,6 +53,6 @@ def serialize_lesson(
     if drill is not None:
         if srs_db is not None and store is not None:
             pattern = find_pattern(lesson.language_code, drill["pattern"])
-            drill["progress"] = progress(pattern, srs_db=srs_db, store=store).summary()
+            drill["progress"] = progress(pattern, srs_db=srs_db, store=store, owner=owner).summary()
         result["drill"] = drill
     return result

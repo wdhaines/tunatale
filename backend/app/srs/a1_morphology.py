@@ -33,9 +33,10 @@ class AffixPattern:
     ``features`` order. Both are the language's to word, and both are empty for
     a pattern that has neither.
 
-    ``review_only`` marks a pattern the curriculum reviews rather than teaches,
-    because the learner brings it with them (Cebuano ma- / na-, which a
-    Tagalog speaker already has). It passes the pace gate on a drill alone
+    ``review_only`` marks a pattern the curriculum reviews rather than teaches
+    on the OWNER's deck, because the owner brings it with them (Cebuano ma- /
+    na-, which a Tagalog speaker already has). There it passes the pace gate on
+    a drill alone; on another learner's deck it is taught like any pattern
     (``app.generation.pattern_gate``).
 
     ``sentences`` is True for patterns taught as whole sentences rather than

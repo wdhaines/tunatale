@@ -112,7 +112,7 @@ def test_a_half_is_about_half_the_whole():
 
 def _drilled(curriculum, day, store, srs_db, lines=_WAKE):
     lesson = _story_lesson(f"Day {day}", lines)
-    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=srs_db, lemmatizer=None, store=store)
+    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=srs_db, lemmatizer=None, store=store, owner=True)
     return lesson
 
 
