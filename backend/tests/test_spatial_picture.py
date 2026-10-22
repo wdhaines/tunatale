@@ -58,7 +58,16 @@ class TestDataFiles:
     #: Pairs the user decided MAY share a picture: true synonyms, where a second
     #: drawing would invent a distinction the language does not make (Slovene
     #: poleg / zraven, both "beside"; "we can ignore the synonyms", 2026-09-29).
-    _SYNONYMS_MAY_SHARE: dict[str, dict[str, list[str]]] = {"sl": {"beside": ["poleg", "zraven"]}}
+    #: Cebuano's existentials share theirs with their long forms (Wolff nía =
+    #: anía, túa = atúa, náa = anáa; the user, 2026-10-22: "Share the drawing").
+    _SYNONYMS_MAY_SHARE: dict[str, dict[str, list[str]]] = {
+        "sl": {"beside": ["poleg", "zraven"]},
+        "ceb": {
+            "is_here_both": ["ania", "nia"],
+            "is_there_far": ["atua", "tua"],
+            "is_there_yours": ["anaa", "naa"],
+        },
+    }
 
     @pytest.mark.parametrize("code", ["no", "ceb", "sl", "tl"])
     def test_no_two_words_share_a_picture(self, code) -> None:
@@ -127,6 +136,12 @@ class TestGlossGuard:
             # Someone present, on the Wolff 1 lesson's gloss for nia.
             ("is_here_both", "is here (near you and me)"),
             ("is_there_far", "is there (far from us both)"),
+            # The long forms, on the glosses next_words.tsv gives them.
+            ("is_here_both", "there exists (near both the speaker and listener)"),
+            ("is_there_far", "there exists (far from both the speaker and listener)"),
+            # naa, on the owner's card and on Wolff's anáa {1}.
+            ("is_there_yours", "there is; is at (a place)"),
+            ("is_there_yours", "be there (near you)"),
         ],
     )
     def test_a_gloss_that_names_the_relation_matches(self, concept, gloss) -> None:
@@ -151,6 +166,8 @@ class TestGlossGuard:
             ("there_far", "therefore"),
             ("is_here_both", "where"),
             ("is_there_far", "gone"),
+            ("is_there_yours", "has"),  # Wolff's anáa {3}
+            ("is_there_yours", "therefore"),
         ],
     )
     def test_a_gloss_that_does_not_name_the_relation_refuses(self, concept, gloss) -> None:
@@ -222,10 +239,15 @@ class TestDispatch:
             ("diha", "ceb", "there (near you)", "there_yours"),
             ("didto", "ceb", "over there", "there_far"),
             # The existential short forms (Wolff nía = anía, túa = atúa): someone
-            # IS there. The long forms are not listed: two words on one picture.
+            # IS there. The long forms share the short forms' pictures (the user,
+            # 2026-10-22), and naa/anaa is drawn near you (Wolff anáa {1}).
             ("nia", "ceb", "is here (near you and me)", "is_here_both"),
             ("Nia", "ceb", "is here", "is_here_both"),
             ("tua", "ceb", "is there (far)", "is_there_far"),
+            ("ania", "ceb", "there exists (near both the speaker and listener)", "is_here_both"),
+            ("atua", "ceb", "there exists (far from both the speaker and listener)", "is_there_far"),
+            ("naa", "ceb", "there is; is at (a place)", "is_there_yours"),
+            ("anaa", "ceb", "be there (near you)", "is_there_yours"),
         ],
     )
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
@@ -240,6 +262,7 @@ class TestDispatch:
         [
             ("wala", "ceb", "none"),  # a homograph of "left", glossed as its other sense
             ("tunga", "ceb", "half"),
+            ("naa", "ceb", "has"),  # Wolff's anáa {3}: a possession, not a presence
             ("under", "no", ""),  # no gloss: cannot confirm the sense, so no picture
             ("hus", "no", "house"),  # not a spatial word at all
             ("fem", "no", "five"),

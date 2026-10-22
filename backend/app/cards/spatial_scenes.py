@@ -116,6 +116,9 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     # eight above draw (the user, 2026-10-18).
     "is_here_both",
     "is_there_far",
+    # naa (Wolff anáa {1} "be there, near you"), drawn at your distance (the
+    # user, 2026-10-22, over keeping its photo).
+    "is_there_yours",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -759,6 +762,7 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "there_far": lambda: _deixis("far", thing=False),
     "is_here_both": lambda: _deixis("both", thing=False, present=True),
     "is_there_far": lambda: _deixis("far", thing=False, present=True),
+    "is_there_yours": lambda: _deixis("yours", thing=False, present=True),
 }
 
 

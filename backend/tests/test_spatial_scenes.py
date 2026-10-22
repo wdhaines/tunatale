@@ -105,6 +105,9 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     # distance, which is neither the thing (ball) nor the place (flag).
     "is_here_both": (0, False, False),
     "is_there_far": (0, False, False),
+    # naa (Wolff anáa {1} "be there, near you"; the user, 2026-10-22: "Draw
+    # near-you"): the lit person in your zone, not mine.
+    "is_there_yours": (0, False, False),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -121,7 +124,7 @@ _MEASURED: dict[tuple[str, str], float] = {
 
 DEIXIS_THINGS = ("this_both", "this_mine", "that_yours", "that_far")
 DEIXIS_PLACES = ("here_both", "here_mine", "there_yours", "there_far")
-DEIXIS_PRESENT = ("is_here_both", "is_there_far")
+DEIXIS_PRESENT = ("is_here_both", "is_there_far", "is_there_yours")
 
 #: The pairs whose render must fail the other's predicate. The reason the
 #: oracle table exists at all: two neighbours that both satisfy one predicate
@@ -215,6 +218,14 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("that_far", "is_there_far"),
     ("is_here_both", "is_there_far"),
     ("is_there_far", "is_here_both"),
+    ("is_there_yours", "there_yours"),
+    ("there_yours", "is_there_yours"),
+    ("is_there_yours", "that_yours"),
+    ("that_yours", "is_there_yours"),
+    ("is_there_yours", "is_here_both"),
+    ("is_here_both", "is_there_yours"),
+    ("is_there_yours", "is_there_far"),
+    ("is_there_far", "is_there_yours"),
 )
 
 
@@ -995,6 +1006,7 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
     "there_far": _deixis("place", "out", "out"),
     "is_here_both": _deixis("present", "in", "in"),
     "is_there_far": _deixis("present", "out", "out"),
+    "is_there_yours": _deixis("present", "out", "in"),
 }
 
 
@@ -1043,6 +1055,7 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "there_far",
         "is_here_both",
         "is_there_far",
+        "is_there_yours",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)

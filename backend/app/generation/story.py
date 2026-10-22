@@ -8,7 +8,7 @@ import logging
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from app.cards.pronoun_picture import pronoun_gloss
+from app.cards.pronoun_picture import has_second_sense, pronoun_gloss
 from app.generation.glossing import dialogue_surface_lemmas, ensure_dialogue_glosses, uncovered_surfaces
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
@@ -607,8 +607,13 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
     # rebuilds through here, so the override reapplies.
     # A listed pronoun's gloss likewise comes from the pronoun table: the pass
     # said "we" for Cebuano kami, which is the exclusive we (tunatale-jm3d).
+    # Except a pronoun with a second sense: its table gloss names both (ako
+    # "I; my, mine"), so the pass's in-context gloss says more (the user,
+    # 2026-10-22). The card's gloss is the table's either way (api/srs.py).
     for surface in surface_lemma:
-        curated = fixed_gloss(surface, language.code) or pronoun_gloss(surface, language.code)
+        curated = fixed_gloss(surface, language.code)
+        if not curated and not (surface in token_glosses and has_second_sense(surface, language.code)):
+            curated = pronoun_gloss(surface, language.code)
         if curated:
             token_glosses[surface] = curated
 

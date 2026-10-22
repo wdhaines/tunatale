@@ -85,9 +85,11 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "here_mine": frozenset({"here"}),
     "there_yours": frozenset({"there"}),
     "there_far": frozenset({"there", "yonder"}),
-    # Being there: the lessons gloss nia "is here (near you and me)".
-    "is_here_both": frozenset({"here"}),
+    # Being there: the lessons gloss nia "is here (near you and me)", and the
+    # base list glosses the long forms anía / atúa "there exists (...)".
+    "is_here_both": frozenset({"here", "exists"}),
     "is_there_far": frozenset({"there", "yonder"}),
+    "is_there_yours": frozenset({"there"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")
