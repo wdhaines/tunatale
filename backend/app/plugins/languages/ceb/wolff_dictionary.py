@@ -574,6 +574,8 @@ def decode_classes(code: str) -> list[tuple[str, str]]:
                 ):
                     if d not in nums:
                         add(affix, UNDERGOER)
+                if "N" in digits:  # §7.121: BN takes paN- with mu-, as AN does
+                    add("maN-/naN-", UNDERGOER)
             elif letter == "C":
                 for d, affix in (("1", "mag-/nag-"), ("2", "magka-/nagka-"), ("3", "makig-/nakig-")):
                     if d not in nums:

@@ -13,9 +13,12 @@ import gzip
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.build_cebuano_lemma_table import (
     _assimilate_mang,
     _is_vowel_initial,
+    apply_wolff_roots,
     assign_defaults,
     base_list_headwords,
     build_from_path,
@@ -677,3 +680,193 @@ def test_the_table_contains_all_four_sources(tmp_path):
     assert ("akong\tPRON\tako\t1") in rows
     # Check that generated count is > 0
     assert stats["generated_count"] > 0
+
+
+# ── rule 5b: Wolff roots (tunatale-tofg.3) ─────────────────────────────────────
+
+
+def wolff_entry(head: str, *senses: tuple[str, str | None, str], subs: tuple = ()) -> dict:
+    """A Wolff lexicon entry (``wolff_lexicon.json``'s shape): (pos, class formula, gloss) root
+    senses, and sub-entries as (label, the same sense triples)."""
+
+    def form(label, rows):
+        senses = [{"pos": p, "n": None, "cls": c, "gloss": g, "phrase": None, "ex": None} for p, c, g in rows]
+        return {"label": label, "wolff": label, "hb": label, "short": [], "xref": None, "senses": senses}
+
+    return {"id": head, "heads": [head], "forms": [form(head, senses), *(form(lab, rows) for lab, rows in subs)]}
+
+
+def wolff(*entries: dict):
+    from app.plugins.languages.ceb.affixes import lexicon
+
+    return lexicon(entries)
+
+
+BILAR = wolff_entry("bilar", ("n", None, "vigil"), ("v", "A; b", "keep a wake"))
+SABUT = wolff_entry("sabut", ("v", "A2", "understand"))
+
+
+def test_an_unknown_inflected_word_gets_its_wolff_root():
+    """mobilar has no row (Wiktionary heads bilar as a noun only); Wolff's bilar is a
+    verb at its root that takes mu-, and bilar is a word of the table."""
+    rows = {("bilar", "NOUN", "bilar", 1)}
+    assert apply_wolff_roots(rows, ["mobilar"], wolff(BILAR)) == rows | {("mobilar", "VERB", "bilar", 1)}
+
+
+def test_a_word_read_as_its_own_adjective_moves_to_its_root():
+    """kasabot was its own adjective, so a lesson's kasabot never reached the sabot card
+    (the owner moved the live card by hand, 2026-10-22). Its own reading stays, as a non-default."""
+    rows = {("kasabot", "ADJ", "kasabot", 1), ("sabot", "VERB", "sabot", 1)}
+    assert apply_wolff_roots(rows, ["kasabot"], wolff(SABUT)) == {
+        ("kasabot", "ADJ", "sabot", 1),
+        ("kasabot", "ADJ", "kasabot", 0),
+        ("sabot", "VERB", "sabot", 1),
+    }
+
+
+def test_a_root_that_is_a_noun_at_wolffs_root_takes_no_forms():
+    """A root whose own block in Wolff is all noun, its verbs only in sub-entries, is not
+    a verb root; the table's non-default VERB reading of the word does not count."""
+    root = wolff_entry("dagat", ("n", None, "sea"), subs=(("paN-", [("v", "A; a", "fish")]),))
+    rows = {("dagat", "NOUN", "dagat", 1), ("dagat", "VERB", "dagat", 0)}
+    assert apply_wolff_roots(rows, ["nadagat"], wolff(root)) == rows
+
+
+def test_a_noun_reading_is_never_moved():
+    """pagkaon 'food' is a word in its own right; the corpus diff showed nouns are where
+    the decoder goes wrong (barangay as bárang + -ay)."""
+    rows = {("pagkaon", "NOUN", "pagkaon", 1), ("kaon", "VERB", "kaon", 1)}
+    assert apply_wolff_roots(rows, ["pagkaon"], wolff(wolff_entry("káun", ("v", "A; a", "eat")))) == rows
+
+
+def test_an_affix_the_root_does_not_take_moves_nothing():
+    rows = {("bilar", "NOUN", "bilar", 1)}
+    unclassed = wolff_entry("bilar", ("v", None, "keep a wake"))
+    assert apply_wolff_roots(rows, ["mobilar"], wolff(unclassed)) == rows
+
+
+@pytest.mark.parametrize(
+    ("word", "root", "table_root"),
+    [
+        # ka-an also makes nouns that have drifted from the root
+        ("kalibotan", "líbut", "libot"),  # 'world', from 'go around'
+        # §6.2's paN- and pag- are derivations, and where Cebuano lexicalizes most
+        ("pangulo", "úlu", "ulo"),  # 'president', from 'head'
+        ("pagtuo", "túu", "tuo"),  # 'belief', from 'believe'
+    ],
+)
+def test_a_derivational_affix_moves_nothing(word, root, table_root):
+    """Only the chart's inflections, and ma-un, move a word: the owner keeps the lexical
+    derivations their own words (pagkaon, kamatayon, paagi; 2026-10-22)."""
+    rows = {(table_root, "VERB", table_root, 1)}
+    lex = wolff(wolff_entry(root, ("v", "AN; a", "a verb that takes paN-, mag- and -an")))
+    assert apply_wolff_roots(rows, [word], lex) == rows
+
+
+def test_a_word_under_five_letters_moves_nothing():
+    """naka, maka: too short to tell from a function word (the corpus diff's ka + na-)."""
+    rows = {("ulo", "VERB", "ulo", 1)}
+    lex = wolff(wolff_entry("ulu", ("v", "A; a", "head")))
+    assert apply_wolff_roots(rows, ["uloa"], lex) == rows
+    assert ("uloha", "VERB", "ulo", 1) in apply_wolff_roots(rows, ["uloha"], lex)
+
+
+def test_the_e_chooses_between_two_table_words_wolff_spells_alike():
+    """Wolff's bílin is the table's bilin or its belen; ibilin has no e, so bilin."""
+    rows = {("bilin", "VERB", "bilin", 1), ("belen", "NOUN", "belen", 1)}
+    lex = wolff(wolff_entry("bílin", ("v", "A; c", "leave behind")))
+    assert ("ibilin", "VERB", "bilin", 1) in apply_wolff_roots(rows, ["ibilin"], lex)
+
+
+def test_a_root_two_table_words_spell_moves_nothing():
+    """o and u are one vowel to Wolff: with kuyog and kuyug both words of the table, no row."""
+    rows = {("kuyog", "VERB", "kuyog", 1), ("kuyug", "NOUN", "kuyug", 1)}
+    assert apply_wolff_roots(rows, ["mikuyog"], wolff(wolff_entry("kúyug", ("v", "A; a", "go along")))) == rows
+
+
+def test_a_hand_listed_word_is_left_to_its_hand_row():
+    """natawo 'born' is listed in closed_class.tsv to keep itself; Wolff's táwu root block
+    has 'be born' among its senses, so only the list keeps it from tawo 'person'."""
+    tawu = wolff_entry("táwu", ("n", None, "person"), ("v", "B", "be born"))
+    rows = {("tawo", "NOUN", "tawo", 1), ("natawo", "VERB", "natawo", 1)}
+    assert ("natawo", "VERB", "tawo", 1) in apply_wolff_roots(rows, ["natawo"], wolff(tawu))
+    assert apply_wolff_roots(rows, ["natawo"], wolff(tawu), keep={"natawo"}) == rows
+
+
+def test_a_word_another_rule_already_rooted_is_untouched():
+    rows = {("mipalit", "VERB", "palit", 1), ("palit", "VERB", "palit", 1)}
+    assert apply_wolff_roots(rows, ["mipalit"], wolff(wolff_entry("palit", ("v", "A; a", "buy")))) == rows
+
+
+def test_build_from_path_applies_wolff_roots_to_the_corpus_words(tmp_path):
+    frequency = tmp_path / "freq.tsv.gz"
+    with gzip.open(frequency, "wt", encoding="utf-8") as fh:
+        fh.write("#total_tokens=9\nmobilar\t5\nbilar\t4\n")
+    out = tmp_path / "out.tsv.gz"
+    stats = build_from_path(
+        write_fixture(tmp_path, [entry("bilar", "noun")]), out, frequency=frequency, wolff=wolff(BILAR)
+    )
+    assert stats["wolff_roots"] == 1
+    with gzip.open(out, "rt", encoding="utf-8") as fh:
+        assert "mobilar\tVERB\tbilar\t1" in fh.read().splitlines()
+
+
+def test_wolffs_i_meets_the_tables_e_only_in_a_word_spelled_with_e():
+    """Wolff writes Spanish e as i, so his bílin spells the table's belen (nativity scene)
+    as well as bilin: gibilin went to belen. A root with e needs a word with e."""
+    rows = {("depensa", "NOUN", "depensa", 1)}
+    lex = wolff(wolff_entry("dipinsa", ("v", "A; b", "defend")))
+    assert ("gidepensahan", "VERB", "depensa", 1) in apply_wolff_roots(rows, ["gidepensahan"], lex)
+    assert apply_wolff_roots(rows, ["gidipinsahan"], lex) == rows
+
+
+def test_a_linker_form_of_a_word_is_not_a_root_of_its_own():
+    """nakitang is nakita + the linker -ng, not na- + a root kitang."""
+    rows = {("kitang", "VERB", "kitang", 1), ("nakita", "VERB", "kita", 1)}
+    lex = wolff(wolff_entry("kitang", ("v", "A; a", "a made-up root")))
+    assert apply_wolff_roots(rows, ["nakitang"], lex) == rows
+    without = {("kitang", "VERB", "kitang", 1)}
+    assert ("nakitang", "VERB", "kitang", 1) in apply_wolff_roots(without, ["nakitang"], lex)
+
+
+def test_a_root_of_two_letters_moves_nothing():
+    """magda (a name) as mag- + dá."""
+    rows = {("da", "VERB", "da", 1)}
+    assert apply_wolff_roots(rows, ["magda"], wolff(wolff_entry("dá", ("v", "A; a", "take")))) == rows
+
+
+def test_only_a_content_word_is_a_root():
+    """napud is na + the particle pud; liboan 'thousands' stays its own word (the owner,
+    2026-10-22: the -an tens are words of their own)."""
+    lex = wolff(wolff_entry("pud", ("v", "A; a", "a made-up verb")), wolff_entry("libu", ("v", "A; b", "count")))
+    rows = {("pud", "PART", "pud", 1), ("libo", "NUM", "libo", 1), ("libo", "NOUN", "libo", 0)}
+    assert apply_wolff_roots(rows, ["napud", "liboan"], lex) == rows
+    # with the bare words in the corpus too: a word the table excludes is not respelled from it
+    assert apply_wolff_roots(rows, ["napud", "liboan", "pud", "libo"], lex) == rows
+
+
+def test_a_pronouns_homograph_is_a_root():
+    """kita is 'we' by default and Wiktionary may have no verb reading at all; Wolff's kítà
+    'see' is a verb at its root, and nakit-an is kita + na-an."""
+    rows = {("kita", "PRON", "kita", 1)}
+    lex = wolff(wolff_entry("kítà", ("v", "A; b", "see")))
+    assert ("nakit-an", "VERB", "kita", 1) in apply_wolff_roots(rows, ["nakit-an"], lex)
+
+
+def test_a_root_wiktionary_defaults_to_a_determiner_is_a_root_by_its_other_readings():
+    """hurot 'used up' is a DET by Wiktionary's default, and a verb besides."""
+    rows = {("hurot", "DET", "hurot", 1), ("hurot", "VERB", "hurot", 0)}
+    lex = wolff(wolff_entry("hurut", ("v", "B; a", "be used up")))
+    assert ("nahurot", "VERB", "hurot", 1) in apply_wolff_roots(rows, ["nahurot"], lex)
+
+
+def test_a_root_the_table_lacks_is_spelled_as_the_corpus_spells_it():
+    """apil 'join' is not in Wiktionary, so moapil had no table word to root to. The bare
+    root in the corpus gives the spelling, the commonest first (apil before apel)."""
+    lex = wolff(wolff_entry("apil", ("v", "A; a", "join")))
+    assert apply_wolff_roots(set(), ["moapil", "apil", "apel"], lex) == {("moapil", "VERB", "apil", 1)}
+
+
+def test_a_root_neither_the_table_nor_the_corpus_spells_moves_nothing():
+    lex = wolff(wolff_entry("apil", ("v", "A; a", "join")))
+    assert apply_wolff_roots(set(), ["moapil"], lex) == set()

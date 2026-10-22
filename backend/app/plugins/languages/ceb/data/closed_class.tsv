@@ -22,6 +22,11 @@
 # lesson's context tag happened to pick the generated row. Listed by hand, not by rule: the same headword shape is
 # natawo "born" (tawo "person") and managat "to fish" (dagat "sea"), which must stay themselves.
 # orasa is the generator's mistake the other way: root + -a is an imperative only on a verb.
+#
+# Wolff roots (rule 6b, tunatale-tofg.3, 2026-10-23). Rule 6b decodes the corpus's unrooted words by Wolff's
+# dictionary and runs AFTER this list: a root listed here is a word it can root to (bilin, istorya), and a
+# surface listed here is one it leaves alone. The rows below are the words it got wrong in the review of its
+# first build (a word of its own, a live card that is its own word, or the wrong root of two).
 surface	upos	lemma	note
 ang	DET	ang	topic marker (Wiktionary: article; its only other reading was a PROPN)
 mga	DET	mga	plural marker
@@ -70,3 +75,25 @@ mohilom	VERB	hilom	"to be silent": mo- + hilom
 maghilom	VERB	hilom	"to keep quiet": mag- + hilom
 nabuhi	VERB	buhi	"lived": na- + buhi
 dalaon	VERB	dala	"to bring, to carry": dala + -on
+mahimo	ADV	himo	"can, may, possibly": ma- + himo. The owner moved the live card to himo (2026-10-22); an ADV, so rule 5b (Wolff roots) does not reach it
+bilin	VERB	bilin	"to leave behind"; Wiktionary lacks it (Wolff bílin); a vocab card (849), and the root rule 6b gives ibilin
+istorya	VERB	istorya	"to talk, tell a story"; Wiktionary lacks it (Wolff isturya); a vocab card (850), the root of nag-istorya
+nia	VERB	nia	"is here (near you and me)"; Wiktionary lacks it (Wolff nía = anía); a vocab card (801)
+niay	VERB	nia	nia + y ("here is a"), as naay is naa + y
+natawo	VERB	natawo	"born": a word of its own (measured 2026-10-09); Wolff's táwu root block has 'be born' too, so rule 6b would file it under tawo "person"
+babae	NOUN	babae	"woman"; Wiktionary lacks it and Wolff spells it babáyi, so rule 6b read bàbà + -i
+sadya	ADJ	sadya	"merry"; rule 6b read sayal + -a
+magulang	ADJ	magulang	"elder, older": a word of its own, not ma- + gulang "age"
+bulawan	ADJ	bulawan	"gold"; a vocab card (389), not bulaw + -an
+habagatan	ADJ	habagatan	"south"; a vocab card (421), not habagat + -an
+kapehan	NOUN	kapehan	"coffee shop"; a vocab card (846), not kape + -an
+kabalo	VERB	kabalo	"can, know how"; a vocab card (841), left as it is (the owner, 2026-10-22)
+usbon	VERB	usab	"to do again": usab + -on; rule 6b read ubos
+pugngan	VERB	pugong	"to restrain": pugong + -an (Wolff pugung); rule 6b read pulong "word"
+mapugngan	VERB	pugong	"can be stopped": pugong + ma-an
+gipugngan	VERB	pugong	"was stopped": pugong + gi-an
+gitug-an	VERB	tugot	"was allowed": tugot + gi-an; rule 6b read tuig "year"
+bayan	NOUN	bayan	"town, nation"; rule 6b read bay + -an
+kaysa	SCONJ	kaysa	"than"; rule 6b read kayas + -a
+basihan	NOUN	basihan	"basis" (from base); rule 6b read basi + -an
+mobilar	VERB	bilar	"will keep vigil": mo- + bilar; a lesson word the news corpus lacks, so rule 6b never sees it; the owner's cloze card (852) is on bilar
