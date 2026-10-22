@@ -114,3 +114,28 @@ def test_a_word_carrying_the_y_particle_reads_as_its_host(table, surface, host):
     host_default = next(r for r in table.readings(host) if r.is_default)
     defaults = [(r.upos, r.lemma) for r in table.readings(surface) if r.is_default]
     assert defaults == [(host_default.upos, host)]
+
+
+@pytest.mark.parametrize(("surface", "linked"), [("nong", "no"), ("nang", "na")])
+def test_an_address_term_is_its_own_word_not_a_linker_form(table, surface, linked):
+    """Nong and Nang are the terms of address (Wolff: manung, manang, "Short form:
+    nung", "short form: nang"). Wiktionary heads neither, so the linker rule read
+    them as no + ng and na + ng, and the reader minted the lesson's "Nong" as a card
+    for "no", glossed "elder", with kunu's dictionary entry ("it is said") on it
+    (the owner, 2026-10-22: "The card for no seems wrong"). Every nong / nang in
+    the owner's lessons is the address term. The linker reading stays, for the
+    context resolver to pick."""
+    readings = {(r.upos, r.lemma, r.is_default) for r in table.readings(surface)}
+    assert ("NOUN", surface, True) in readings
+    assert any(lemma == linked and not default for _upos, lemma, default in readings)
+
+
+def test_the_lesson_line_the_no_card_came_from_reads_nong(table):
+    from app.srs.lemmatizer import lemmatize_surfaces_in_context
+    from app.srs.tokenizer import tokenize
+
+    line = "Nong, sa baybayon, palihug."
+    surfaces = tokenize(line)
+    assert (
+        dict(zip(surfaces, lemmatize_surfaces_in_context(surfaces, line, table, "ceb"), strict=True))["Nong"] == "nong"
+    )
