@@ -32,7 +32,9 @@ _LINES = {
     "Nag-ampo sila.": [_tok("Nag-ampo", "ampo"), _tok("sila", "sila", "PRON")],
     "Magdala ko.": [_tok("Magdala", "dala"), _tok("ko", "ko", "PRON")],
     "Matulog ko.": [_tok("Matulog", "tulog"), _tok("ko", "ko", "PRON")],
-    "Nakahibalo ko.": [_tok("Nakahibalo", "hibalo"), _tok("ko", "ko", "PRON")],
+    # The -a imperative is no A1 affix (nakahibalo was this line's verb until
+    # maka-/naka- joined the A1 set, 2026-10-23).
+    "Kuhaa ko.": [_tok("Kuhaa", "kuha"), _tok("ko", "ko", "PRON")],
     # A bare root is a verb token but carries no affix; ``ihatag`` read as a
     # noun is not a verb token at all.
     "Lakaw na, ihatag.": [_tok("Lakaw", "lakaw"), _tok("na", "na", "PART"), _tok("ihatag", "hatag", "NOUN")],
@@ -51,7 +53,7 @@ def test_exposure_counts_verbs_affixes_and_the_unexplained():
         "verb:mag": Counter({"maglakaw<lakaw": 1, "mag-ampo<ampo": 1, "magdala<dala": 1}),
         "verb:ma": Counter({"matulog<tulog": 1}),
     }
-    assert got.unrecognised == Counter({"nakahibalo<hibalo": 1})
+    assert got.unrecognised == Counter({"kuhaa<kuha": 1})
 
 
 def test_a_root_met_in_both_cells_of_a_pattern_is_a_pair():
@@ -99,7 +101,7 @@ def test_the_formatted_report_names_every_number():
     assert "verb tokens 9 = bare 1 + affixed 8 (recognised 7, unrecognised 1)" in text
     assert "lines with NO cached analysis: 2" in text
     assert "verb:nag  tokens 3  naglakaw<lakaw nagdala<dala nag-ampo<ampo" in text
-    assert "unrecognised: nakahibalo<hibalo" in text
+    assert "unrecognised: kuhaa<kuha" in text
     assert "mag-nag  tokens 6  pairs: ampo dala lakaw" in text
     assert "ma-na  tokens 1  pairs: none" in text
     assert "target (one pattern with 3+ same-root pairs): MET" in text

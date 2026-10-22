@@ -78,8 +78,8 @@ PATTERNS: tuple[AffixPattern, ...] = (
         review_only=True,
     ),
     # The potential (Wolff, maka-: "can", and "had the chance or managed to").
-    # Drilled as a pattern only: not an A1 affix, so a lesson's makakita gets
-    # no grammar hint (``a1_morphology``; tunatale-ve4p.31).
+    # An A1 affix too since 2026-10-23 (the owner, tunatale-bi67): a lesson's
+    # makakita gets a grammar hint and the Inflect button (``a1_morphology``).
     AffixPattern(
         "maka-naka",
         ("verb:maka", "verb:naka"),
