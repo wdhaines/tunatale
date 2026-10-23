@@ -18,6 +18,7 @@ import pytest
 from scripts.build_cebuano_lemma_table import (
     _assimilate_mang,
     _is_vowel_initial,
+    apply_contractions,
     apply_wolff_roots,
     assign_defaults,
     base_list_headwords,
@@ -870,3 +871,137 @@ def test_a_root_the_table_lacks_is_spelled_as_the_corpus_spells_it():
 def test_a_root_neither_the_table_nor_the_corpus_spells_moves_nothing():
     lex = wolff(wolff_entry("apil", ("v", "A; a", "join")))
     assert apply_wolff_roots(set(), ["moapil"], lex) == set()
+
+
+# ── rule 8: contractions (Wolff, Beginning Cebuano 3 F; tunatale-u8nz.36) ──────
+#
+# The written ones: ug/og -> g, nga/ang/ni -> ng, and the y particle -> y, onto
+# the word before (sa/si -> s is spoken, not written: 3 F 2). After n the n drops (daghan ug -> daghag, man y -> may); a
+# postpositive drops its final consonant (gyud ug -> gyug, sab y -> say). The
+# contracted surface reads as its host, the marker dropped, as rule 4's linker
+# and the hand rows unsay/kinsay already do.
+
+_HOSTS = {
+    ("kini", "PRON", "kini", 1),
+    ("balay", "NOUN", "balay", 1),
+    ("daghan", "ADJ", "daghan", 1),
+    ("gyud", "ADV", "gyud", 1),
+    ("sab", "ADV", "usab", 1),  # rule 7 has already sent sab to its main spelling
+    ("lang", "PART", "lang", 1),
+    ("ko", "PRON", "ko", 1),
+    ("kon", "SCONJ", "kon", 1),
+    ("man", "PART", "man", 1),
+    ("may", "PROPN", "may", 1),
+    ("ka", "PRON", "ka", 1),
+    ("kay", "SCONJ", "kay", 1),
+    ("pa", "ADV", "pa", 1),
+    ("sa", "ADP", "sa", 1),
+    ("lakaw", "VERB", "lakaw", 1),
+}
+
+
+def _default(rows, surface):
+    return next(((u, lem) for s, u, lem, d in rows if s == surface and d == 1), None)
+
+
+@pytest.mark.parametrize(
+    ("surface", "reading"),
+    [
+        ("kinig", ("PRON", "kini")),  # kiní ug
+        ("kog", ("PRON", "ko")),  # ko og
+        ("balayng", ("NOUN", "balay")),  # baláy ni: -ng after y, which rule 4 leaves out
+        ("daghag", ("ADJ", "daghan")),  # dághan ug: the n drops
+        ("gyug", ("ADV", "gyud")),  # gyud ug: a postpositive drops its final consonant
+        ("say", ("ADV", "usab")),  # sab y, read as the host's own default
+        ("lay", ("PART", "lang")),  # lang y
+    ],
+)
+def test_a_contracted_marker_reads_as_its_host(surface, reading):
+    assert _default(apply_contractions(_HOSTS), surface) == reading
+
+
+def test_a_word_already_in_the_table_keeps_its_reading_and_gains_the_contraction():
+    """may is 'there is' in May bir, and man + y in Unsa may átò?: the context decides."""
+    rows = apply_contractions(_HOSTS)
+    assert ("may", "PROPN", "may", 1) in rows
+    assert ("may", "PART", "man", 0) in rows
+
+
+def test_the_plain_host_beats_one_that_dropped_its_n():
+    """kog is ko + og before it is kon + og."""
+    rows = apply_contractions(_HOSTS)
+    assert _default(rows, "kog") == ("PRON", "ko")
+    assert ("kog", "SCONJ", "kon", 0) in rows
+
+
+@pytest.mark.parametrize("surface", ["pag", "mag", "nag", "manag", "lakawg", "kining", "daghang"])
+def test_what_is_not_a_contraction_gets_no_row(surface):
+    """pag is the prefix written apart, not pa + og; a verb is no host (rule 4's choice,
+    kept); a vowel-final host's -ng and an n-final host's n+g are rule 4's rows."""
+    hosts = _HOSTS | {("ma", "ADV", "ma", 1), ("na", "ADV", "na", 1), ("mana", "NOUN", "mana", 1)}
+    assert not any(s == surface for s, *_ in apply_contractions(hosts) - hosts)
+
+
+def test_a_marker_is_no_host():
+    """sa y is no contraction: sag and say come from sad/sab, never from sa."""
+    rows = apply_contractions(_HOSTS)
+    assert not any(lem == "sa" for s, _, lem, _ in rows - _HOSTS)
+    assert _default(rows, "sag") == ("ADV", "usab")
+
+
+def test_a_reading_already_present_is_not_added_twice():
+    rows = _HOSTS | {("kog", "PRON", "ko", 1)}
+    assert {r for r in apply_contractions(rows) if r[0] == "kog"} == {
+        ("kog", "PRON", "ko", 1),
+        ("kog", "SCONJ", "kon", 0),
+    }
+
+
+def test_sa_and_si_are_not_contracted():
+    """kiní si -> kinís is speech; written, an -s rule reads bukas 'tomorrow' as bukan + sa."""
+    rows = apply_contractions(_HOSTS | {("bukan", "NOUN", "bukan", 1)})
+    assert not any(s.endswith("s") for s, *_ in rows - _HOSTS)
+
+
+def test_a_word_wolff_lists_is_no_contraction():
+    """subay 'along' is a word, not suba + y."""
+    hosts = _HOSTS | {("suba", "NOUN", "suba", 1)}
+    assert _default(apply_contractions(hosts), "subay") == ("NOUN", "suba")
+    assert _default(apply_contractions(hosts, words=frozenset({"subay"})), "subay") is None
+
+
+def test_a_contraction_never_outnumbers_its_host():
+    """inig 646 against inin 202 in the news: inig is a word of its own."""
+    hosts = _HOSTS | {("inin", "NOUN", "inin", 1)}
+    assert _default(apply_contractions(hosts, frequency={"inig": 646, "inin": 202}), "inig") is None
+    assert _default(apply_contractions(hosts, frequency={"inig": 20, "inin": 202}), "inig") == ("NOUN", "inin")
+
+
+def test_a_hand_listed_surface_gets_no_contraction_reading():
+    """A hand row (rule 6) is the owner's word on that surface: rule 8 adds nothing to it."""
+    hosts = _HOSTS | {("akoy", "NOUN", "akoy", 1), ("ako", "PRON", "ako", 1)}
+    assert ("akoy", "PRON", "ako", 0) in apply_contractions(hosts)
+    assert {r for r in apply_contractions(hosts, keep={"akoy"}) if r[0] == "akoy"} == {("akoy", "NOUN", "akoy", 1)}
+
+
+def test_the_gates_guard_only_words_the_table_lacks():
+    """may is Wolff's word and the table's, and still gains man + y; lay is Wolff's
+    word too, but lang + y is 3 F's own example; say outnumbers sab, never usab."""
+    rows = apply_contractions(_HOSTS, words=frozenset({"may", "lay"}), frequency={"say": 824, "usab": 45564})
+    assert ("may", "PART", "man", 0) in rows
+    assert _default(rows, "lay") == ("PART", "lang")
+    assert _default(rows, "say") == ("ADV", "usab")
+
+
+def test_a_content_word_host_adds_no_reading_to_a_word_the_table_has():
+    """barangay is a word; barangan + y would only be noise under its tag."""
+    hosts = _HOSTS | {("barangan", "NOUN", "barangan", 1), ("barangay", "NOUN", "barangay", 1)}
+    assert {r for r in apply_contractions(hosts) if r[0] == "barangay"} == {("barangay", "NOUN", "barangay", 1)}
+
+
+def test_no_reading_is_added_under_a_tag_the_word_already_reads():
+    """kay is SCONJ already; ka + y would join under PRON, a tag it lacks; under SCONJ it would not."""
+    hosts = _HOSTS | {("kon", "SCONJ", "kon", 1)}
+    rows = apply_contractions(hosts | {("koy", "SCONJ", "koy", 1)})
+    assert ("koy", "PRON", "ko", 0) in rows
+    assert ("koy", "SCONJ", "kon", 0) not in rows
