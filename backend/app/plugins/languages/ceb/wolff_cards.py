@@ -555,6 +555,12 @@ class WolffLexicon:
             whole = {h: len(_phrases(english) & {p for g in gloss[h] for p in _phrases(g)}) for h in top}
             if most := max(whole.values()):
                 top = [h for h in top if whole[h] == most]
+        if len({h.surface for h in top}) > 1 and len({h.entry for h in top}) == 1:
+            # One entry printed with and without a hyphen ('cousin' ig-ágaw, and igágaw
+            # in its 'first cousin' sub-entries): the card word's own hyphen chooses.
+            hyphen = [h for h in top if ("-" in h.surface) == ("-" in word)]
+            if len({h.surface for h in hyphen}) == 1:
+                top = hyphen
         if len({h.surface for h in top}) > 1:
             return Miss("ambiguous", tuple(dict.fromkeys(h.surface for h in top)))
         return top[0]

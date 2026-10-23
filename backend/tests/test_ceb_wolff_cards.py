@@ -709,3 +709,35 @@ def test_a_phrase_front_does_not_take_a_second_words_spelling(committed):
     own dictionary word join its Spelling line."""
     one = committed.card_fields("oo", "yes").spelling
     assert committed.card_fields("oo, salamat", "yes").spelling == one
+
+
+# ── a tie of spellings that differ only by a hyphen (the owner, 2026-10-23:
+# "ig-igaw really doesn't have a Wolff definition?") ─────────────────────────
+
+
+def test_the_cards_hyphen_breaks_a_tie_inside_one_entry(committed):
+    """Wolff writes 'cousin' ig-ágaw, and igágaw inside its 'first cousin' sub-entries:
+    one entry, two spellings. The card word's own hyphen picks ig-ágaw."""
+    f = committed.card_fields("ig-agaw", "cousin")
+    assert f.spelling == "ig-ágaw"
+    assert "cousin" in f.meaning
+
+
+def test_a_one_entry_tie_the_hyphen_cannot_settle_stays_ambiguous():
+    """The control: two sub-forms of one entry, neither hyphenated, still ask."""
+
+    def form(label, hb, gloss):
+        sense = {"pos": "n", "n": None, "cls": None, "gloss": gloss, "phrase": None, "ex": None}
+        return {"label": label, "wolff": label, "hb": hb, "short": [], "xref": None, "senses": [sense]}
+
+    rec = {
+        "id": "zz",
+        "heads": ["zz"],
+        "text": "zz n thing.",
+        "forms": [
+            form("zz", "zz", "thing"),
+            form("báta", "báta", "small child here"),
+            form("batá", "batá", "child over there"),
+        ],
+    }
+    assert WolffLexicon([rec]).match("bata", "child") == Miss("ambiguous", ("báta", "batá"))
