@@ -38,6 +38,9 @@ class TestDispatch:
             ("lima", "ceb", render_count_svg(5)),
             ("lima", "tl", render_count_svg(5)),
             ("singko", "ceb", render_clock_svg(5)),
+            # Wolff's headword dyís and the lessons' "Alas dyis sa buntag" (the owner,
+            # 2026-10-23: "Why isn't dyis a clock?"); diyes is the doublet now
+            ("dyis", "ceb", render_clock_svg(10)),
             ("dose", "tl", render_clock_svg(12)),
             ("kinse", "ceb", render_money_svg(15, symbol="₱", coins=(1, 5, 10, 20), bills=(50, 100, 200, 500, 1000))),
             ("mil", "tl", render_money_svg(1000, symbol="₱", coins=(1, 5, 10, 20), bills=(50, 100, 200, 500, 1000))),
@@ -64,7 +67,7 @@ class TestDispatch:
     @pytest.mark.parametrize(
         ("word", "code"),
         [
-            ("dyis", "ceb"),  # spelling doublet of diyes, which carries the clock
+            ("diyes", "ceb"),  # spelling doublet of dyis, which carries the clock
             ("sero", "ceb"),  # zero: nothing to draw in any context
             ("en", "no"),
             ("båt", "no"),
