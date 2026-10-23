@@ -393,3 +393,74 @@ def test_a_homograph_keeps_its_reading_and_gains_the_contraction(real, surface, 
 @pytest.mark.parametrize("word,false_host", NOT_CONTRACTED.items())
 def test_a_word_that_only_looks_contracted_is_not_read_as_one(real, word, false_host):
     assert false_host not in {r.lemma for r in real.readings(word)}
+
+
+# ── the owner's review of rule 8 (2026-10-23) ──────────────────────────────────
+#
+# Each row was settled against the news corpus's own sentences (and Wolff's
+# dictionary), not by eye: a word capitalized in every use is a name or place.
+
+#: Contractions rule 8 roots to the wrong host: the plain host it prefers is not
+#: the word the news means ("aduna usay exemption" is usab + y, not usa + y).
+CONTRACTED_RIGHT_HOST = {
+    "basig": "basin",  # "kay basig mobalik", 'maybe': basin + ug, not basi
+    "juy": "gyud",  # "wa juy uwan": jud + y, not jun + y
+    "sigig": "sige",  # "sigig ihaw og pawikan": sigi (sige) + ug, not sigin
+    "bayay": "baya",  # "duna bayay mahimo": baya + y, not bayan
+    "usay": "usab",  # "aduna pa usay uban": usab + y, not usa
+    "dayog": "dayon",  # "dayog duslak": dayon + og, not dayo 'visitor'
+    "dayoy": "dayon",  # "naa na dayoy insidente"
+}
+
+#: Words that only look contracted: names and places (capitalized in every use),
+#: English, Tagalog, acronyms, and words of their own. Each keeps itself.
+NOT_CONTRACTED_REVIEWED = [
+    # names and places
+    "ninoy", "buboy", "sanoy", "biboy", "dodoy", "andog", "binoy", "sergey", "pandag", "litoy",
+    "duray", "saloy", "lilay", "davey", "tayag", "dulay", "ibag", "panggay", "dulag", "basay",
+    "anoy", "anog", "tanay", "duyag", "atoy", "mayag", "datoy", "kalamansig",
+    # English, Tagalog, acronyms
+    "delay", "alley", "deg", "diy", "sag", "alay", "daloy", "sipag",
+    # words of their own
+    "pasakay",  # 'to board': pa- + sakay
+    "atubangay",  # 'face-to-face' (atubangay nga klase)
+    "bayag",  # 'testicles'
+    "pung",  # Wolff púng = púlung 'say': '"…," pung ni Uy'
+]  # fmt: skip
+
+#: Words of their own that rule 8 gave a second reading: no contraction reading at all.
+NO_SECOND_READING = {
+    "humay": "human",  # 'rice'
+    "ubay": "uban",  # 'along', ubay-ubay 'several'
+    "tagay": "taga",  # 'a round of drinks'
+    "katulog": "katulo",  # 'can sleep': ka- + tulog
+}
+
+
+@pytest.mark.parametrize("surface,host", CONTRACTED_RIGHT_HOST.items())
+def test_a_reviewed_contraction_reads_as_the_host_the_news_means(real, surface, host):
+    assert real.lemmatize(surface, "ceb") == host
+
+
+@pytest.mark.parametrize("word", NOT_CONTRACTED_REVIEWED)
+def test_a_reviewed_lookalike_keeps_itself(real, word):
+    assert real.lemmatize(word, "ceb") == word
+
+
+@pytest.mark.parametrize("word,false_host", NO_SECOND_READING.items())
+def test_a_reviewed_word_gains_no_contraction_reading(real, word, false_host):
+    assert false_host not in {r.lemma for r in real.readings(word)}
+
+
+#: 3 F's postpositive gud ('explaining', short of ugud: Wolff) and the pronoun nato
+#: ('our, by us'), which the table lacked, so gung (gud + ang, 3 b 27) and natos stayed unrooted.
+#: gud is NOT a spelling of gyud.
+@pytest.mark.parametrize("surface,lemma", [("gud", "gud"), ("gung", "gud"), ("nato", "nato"), ("natog", "nato")])
+def test_the_hosts_gud_and_nato(real, surface, lemma):
+    assert real.lemmatize(surface, "ceb") == lemma
+
+
+def test_a_name_that_spells_a_contraction_of_nato_keeps_its_reading_and_gains_nato(real):
+    """Wiktionary has Natoy, a name; nato + y joins it as a reading for the context resolver."""
+    assert real.lemmatize("natoy", "ceb") == "natoy"
+    assert "nato" in {r.lemma for r in real.readings("natoy")}

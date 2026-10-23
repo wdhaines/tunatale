@@ -27,6 +27,12 @@
 # dictionary and runs AFTER this list: a root listed here is a word it can root to (bilin, istorya), and a
 # surface listed here is one it leaves alone. The rows below are the words it got wrong in the review of its
 # first build (a word of its own, a live card that is its own word, or the wrong root of two).
+#
+# Contractions (rule 8, tunatale-u8nz.36, 2026-10-23). Rule 8 reads a word ending in a contracted marker
+# (-g, -ng, -y) as its host, and skips every surface listed here. The rows below are the owner's review of its
+# first build, each settled against the news corpus's sentences: a contraction of a host other than the one
+# rule 8 picked (usay is usab + y, not usa + y), a name or place (capitalized in every use), a loanword or
+# acronym, a word of its own, and the two hosts the table lacked (gud, nato).
 surface	upos	lemma	note
 ang	DET	ang	topic marker (Wiktionary: article; its only other reading was a PROPN)
 mga	DET	mga	plural marker
@@ -97,3 +103,56 @@ bayan	NOUN	bayan	"town, nation"; rule 6b read bay + -an
 kaysa	SCONJ	kaysa	"than"; rule 6b read kayas + -a
 basihan	NOUN	basihan	"basis" (from base); rule 6b read basi + -an
 mobilar	VERB	bilar	"will keep vigil": mo- + bilar; a lesson word the news corpus lacks, so rule 6b never sees it; the owner's cloze card (852) is on bilar
+basig	ADV	basin	basin + ug, "kay basig mobalik" ('maybe'); rule 8 read basi + ug
+juy	ADV	gyud	jud + y, "wa juy uwan"; rule 8 read jun + y
+sigig	ADV	sige	sigi (sige) + ug, "sigig ihaw og pawikan"; rule 8 read sigin + ug
+bayay	PART	baya	baya + y, "duna bayay mahimo"; rule 8 read bayan + y
+usay	ADV	usab	usab + y, "aduna pa usay uban"; rule 8 read usa + y
+dayog	ADV	dayon	dayon + og, "dayog duslak"; rule 8 read dayo 'visitor' + og
+dayoy	ADV	dayon	dayon + y, "naa na dayoy insidente"
+gud	PART	gud	particle introducing an explanation (man gud), short of ugud (Wolff); NOT a spelling of gyud. The host of gung (3 b 27)
+nato	PRON	nato	"our (including you); by us", genitive of kita; Wiktionary lacks it. The host of natog, natoy
+pasakay	VERB	pasakay	'to board' (gipugos og pasakay): a word, not pasaka + y
+atubangay	ADJ	atubangay	'face-to-face' (atubangay nga klase): a word, not atubangan + y
+bayag	NOUN	bayag	'testicles': a word, not bayan + ug
+pung	VERB	pung	'say' (Wolff púng = púlung): '"...," pung ni Uy'; not pud + nga
+humay	NOUN	humay	'rice': no human + y reading
+ubay	ADP	ubay	'along', ubay-ubay 'several': no uban + y reading
+tagay	VERB	tagay	'a round of drinks': no taga + y reading
+katulog	NOUN	katulog	'can sleep' (dili ka katulog), ka- + tulog: no katulo + ug reading (default kept as it was)
+delay	NOUN	delay	English; not a contraction
+alley	NOUN	alley	English; not a contraction
+deg	PROPN	deg	an acronym (DEG, DIY, SAG) in the news; not a contraction
+diy	PROPN	diy	an acronym (DEG, DIY, SAG) in the news; not a contraction
+sag	PROPN	sag	an acronym (DEG, DIY, SAG) in the news; not a contraction
+alay	NOUN	alay	Tagalog (Alay Lakad, daloy 'flow', sipag 'diligence'); not a contraction
+daloy	NOUN	daloy	Tagalog (Alay Lakad, daloy 'flow', sipag 'diligence'); not a contraction
+sipag	NOUN	sipag	Tagalog (Alay Lakad, daloy 'flow', sipag 'diligence'); not a contraction
+ninoy	PROPN	ninoy	a name or place, capitalized in every use in the news; not a contraction
+buboy	PROPN	buboy	a name or place, capitalized in every use in the news; not a contraction
+sanoy	PROPN	sanoy	a name or place, capitalized in every use in the news; not a contraction
+biboy	PROPN	biboy	a name or place, capitalized in every use in the news; not a contraction
+dodoy	PROPN	dodoy	a name or place, capitalized in every use in the news; not a contraction
+andog	PROPN	andog	a name or place, capitalized in every use in the news; not a contraction
+binoy	PROPN	binoy	a name or place, capitalized in every use in the news; not a contraction
+sergey	PROPN	sergey	a name or place, capitalized in every use in the news; not a contraction
+pandag	PROPN	pandag	a name or place, capitalized in every use in the news; not a contraction
+litoy	PROPN	litoy	a name or place, capitalized in every use in the news; not a contraction
+duray	PROPN	duray	a name or place, capitalized in every use in the news; not a contraction
+saloy	PROPN	saloy	a name or place, capitalized in every use in the news; not a contraction
+lilay	PROPN	lilay	a name or place, capitalized in every use in the news; not a contraction
+davey	PROPN	davey	a name or place, capitalized in every use in the news; not a contraction
+tayag	PROPN	tayag	a name or place, capitalized in every use in the news; not a contraction
+dulay	PROPN	dulay	a name or place, capitalized in every use in the news; not a contraction
+ibag	PROPN	ibag	a name or place, capitalized in every use in the news; not a contraction
+panggay	PROPN	panggay	a name or place, capitalized in every use in the news; not a contraction
+dulag	PROPN	dulag	a name or place, capitalized in every use in the news; not a contraction
+basay	PROPN	basay	a name or place, capitalized in every use in the news; not a contraction
+anoy	PROPN	anoy	a name or place, capitalized in every use in the news; not a contraction
+anog	PROPN	anog	a name or place, capitalized in every use in the news; not a contraction
+tanay	PROPN	tanay	a name or place, capitalized in every use in the news; not a contraction
+duyag	PROPN	duyag	a name or place, capitalized in every use in the news; not a contraction
+atoy	PROPN	atoy	a name or place, capitalized in every use in the news; not a contraction
+mayag	PROPN	mayag	a name or place, capitalized in every use in the news; not a contraction
+datoy	PROPN	datoy	a name or place, capitalized in every use in the news; not a contraction
+kalamansig	PROPN	kalamansig	a name or place, capitalized in every use in the news; not a contraction
