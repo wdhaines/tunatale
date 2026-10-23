@@ -566,7 +566,7 @@ class WolffLexicon:
         if isinstance(hit, Attested):
             root = self.entries[hit.entry]["forms"][0]["hb"] or self.entries[hit.entry]["heads"][0]
             return CardFields(
-                spelling=onto_card(cebuano.split(",")[0].strip(), hit.surface),
+                spelling=self._spelling(cebuano, hit.surface, hit.entry),
                 meaning="",
                 verb="",
                 details=(
@@ -576,12 +576,27 @@ class WolffLexicon:
                 dictionary_entry=self._dictionary_entry(hit),
             )
         return CardFields(
-            spelling=onto_card(cebuano.split(",")[0].strip(), hit.surface),
+            spelling=self._spelling(cebuano, hit.surface, hit.entry),
             meaning=self._meaning(hit),
             verb=self._verb(hit, _words(english)),
             details=self._details(hit, cebuano),
             dictionary_entry=self._dictionary_entry(hit),
         )
+
+    def _spelling(self, cebuano: str, surface: str, entry: int) -> str:
+        """The card word with *surface*'s marks, and each other form on a front such as
+        'manong, nong' with its own (Wolff's short forms carry theirs: unyà, nyà).
+
+        A form joins only when it is the same dictionary word: 'Oo, salamat' is two words,
+        and the line is the card word's.
+        """
+        first, *rest = (w.strip() for w in cebuano.split(","))
+        out = [onto_card(first, surface)]
+        for word in rest:
+            same = next((h.surface for h in self._hits(word) if h.entry == entry), None)
+            if same is not None:
+                out.append(onto_card(word, same))
+        return ", ".join(out)
 
     # --- the tiers ----------------------------------------------------------------------------
 

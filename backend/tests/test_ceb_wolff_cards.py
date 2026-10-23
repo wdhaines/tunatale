@@ -122,7 +122,7 @@ def test_a_sub_entry_word_shows_its_root(lexicon):
 
 def test_the_card_front_may_carry_its_short_form(lexicon):
     f = lexicon.card_fields("dili, di", "no; not")
-    assert f.spelling == "dílì"
+    assert f.spelling == "dílì, dì"
 
 
 def test_one_candidate_needs_no_english(lexicon):
@@ -350,10 +350,6 @@ def test_a_stress_that_cannot_be_placed_keeps_wolffs_spelling():
 )
 def test_a_cards_spelling_uses_its_own_letters(committed, word, english, spelling):
     assert committed.card_fields(word, english).spelling == spelling
-
-
-def test_the_short_form_front_uses_its_first_spelling(committed):
-    assert committed.card_fields("dili, di", "no; not").spelling == "dílì"
 
 
 # ── words Wolff prints but does not list (tunatale-h0q3.21) ────────────────
@@ -685,3 +681,31 @@ def test_a_hand_row_naming_a_missing_sub_entry_is_refused(committed):
     row = Decoded("kabalo", "kabaló", "balu", "no-such-label", "ka-", "")
     with pytest.raises(ValueError, match="no-such-label"):
         WolffLexicon(committed.entries, committed.relations, decoded=[row])
+
+
+# ── a two-form card's Spelling line (the owner, 2026-10-23: "It just says manong in the
+# pronunciation line. No nong.") ──────────────────────────────────────────────
+#
+# A card front may carry the short form ('dili, di', tunatale-0iri). Its Spelling
+# line marks every form that is the same dictionary word, each with its own
+# marks: Wolff's short forms carry theirs (unyà, short form nyà).
+
+
+@pytest.mark.parametrize(
+    ("front", "english", "spelling"),
+    [
+        ("manong, nong", "title for an elder brother; older man", "manóng, nong"),
+        ("dili, di", "no; not", "dílì, dì"),
+        ("unya, nya", "later; then", "unyâ, nyà"),
+        ("inday, day", "Inday", "índay, day"),
+    ],
+)
+def test_a_two_form_card_spells_both_forms(committed, front, english, spelling):
+    assert committed.card_fields(front, english).spelling == spelling
+
+
+def test_a_phrase_front_does_not_take_a_second_words_spelling(committed):
+    """'Oo, salamat' is two words, not two spellings of one: only forms of the card's
+    own dictionary word join its Spelling line."""
+    one = committed.card_fields("oo", "yes").spelling
+    assert committed.card_fields("oo, salamat", "yes").spelling == one
