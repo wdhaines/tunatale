@@ -1243,3 +1243,47 @@ class TestCardWordReading:
         """Norwegian's card voice is Azure, where a map wraps every word in
         <phoneme> and would change audio nobody has listened to."""
         assert await self._phonemes("hotell", "no") == [None]
+
+
+# ── a variant front voices its first form (the owner, 2026-10-23: two-form cards'
+# audio is the full form only, as 'dili, di' and 'unya, nya' already are) ─────
+
+
+class TestVariantFrontAudio:
+    async def _spoken(self, front, language_code, *, forvo_finds):
+        heard = {}
+
+        def forvo(word, *, language_code="sl", http_client=None):
+            heard["forvo"] = word
+            return _forvo_result(b"forvo_mp3" if forvo_finds else None)
+
+        async def tts(text, *, voice=None, phonemes=None):
+            heard["tts"] = text
+            return b"tts_mp3"
+
+        _, _, search_fn, dl_fn, norm_fn = _make_fakes(search_returns=PixabaySearch(hits=[], status="no_results"))
+        await fetch_card_media(
+            front,
+            "x",
+            pixabay_key="key",
+            language_code=language_code,
+            forvo_enabled=True,
+            image_query="",
+            _forvo_fn=forvo,
+            _tts_fn=tts,
+            _search_fn=search_fn,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+        )
+        return heard
+
+    @pytest.mark.parametrize(
+        ("front", "lang", "first"), [("mot, imot", "no", "mot"), ("manong, nong", "ceb", "manong")]
+    )
+    async def test_forvo_and_tts_get_the_first_form(self, front, lang, first):
+        assert await self._spoken(front, lang, forvo_finds=False) == {"forvo": first, "tts": first}
+
+    async def test_a_phrase_with_a_comma_is_voiced_whole(self):
+        """The control: a phrase is not a variant list, so nothing is cut."""
+        front = "hei, hvordan går det"
+        assert await self._spoken(front, "no", forvo_finds=True) == {"forvo": front}

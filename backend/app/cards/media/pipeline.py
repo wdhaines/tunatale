@@ -11,7 +11,7 @@ from typing import Any, Literal
 import anyio
 
 from app.audio.synth_plan import word_readings
-from app.languages import get_ipa_for_card_words, get_phoneme_planner, get_tts_voice
+from app.languages import card_surface_variants, get_ipa_for_card_words, get_phoneme_planner, get_tts_voice
 
 from .choose_llm import choose_image_hit
 from .forvo import ForvoOutcome, ForvoResult, fetch_forvo_pronunciation
@@ -116,6 +116,9 @@ async def fetch_card_media(
     # Resolve the synthesis voice from the card's language so a non-Slovene card
     # never gets Slovene TTS. Callers may still override explicitly (tests).
     voice = tts_voice or get_tts_voice(language_code)
+    # A front listing spellings of one word ('manong, nong') is voiced as its first,
+    # the full form, as 'dili, di' is (the owner, 2026-10-23). A phrase stays whole.
+    spoken = card_surface_variants(language_code, word)[0]
 
     result = MediaResult()
 
@@ -143,7 +146,7 @@ async def fetch_card_media(
         result.audio_status = "disabled"
     else:
         forvo = await anyio.to_thread.run_sync(
-            partial(forvo_fn, word, language_code=language_code, http_client=http_client)
+            partial(forvo_fn, spoken, language_code=language_code, http_client=http_client)
         )
         result.audio_status = forvo.outcome.value
     if forvo.outcome is ForvoOutcome.FOUND:
@@ -153,7 +156,7 @@ async def fetch_card_media(
         # Every non-FOUND outcome still falls back to TTS — the card must not be
         # blocked on a nice-to-have. audio_status is what keeps that fallback
         # from being silent.
-        audio = await tts_fn(word, voice=voice, phonemes=_card_word_readings(word, language_code))
+        audio = await tts_fn(spoken, voice=voice, phonemes=_card_word_readings(spoken, language_code))
         if audio is not None:
             result.audio_source = "tts"
             result.audio_bytes = audio
