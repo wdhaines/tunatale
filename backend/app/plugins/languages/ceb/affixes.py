@@ -296,9 +296,13 @@ def _infixed(infix: str, word: tuple[_Sound, ...]) -> set[tuple[_Sound, ...]]:
     return out
 
 
-def generate(root: str, affix: str) -> list[Candidate]:
-    """The forms §5 allows for *root* (Wolff's spelling) plus *affix* (``nag-``, ``-an``,
-    ``ka-an``, ``-in-+-an``, with ``(→)``/``(←)`` for a shift of stress, §5.11)."""
+@cache
+def _generated(root: str, affix: str) -> tuple[Candidate, ...]:
+    """§5's forms for (root, affix), cached: decoding asks the same pair over and over.
+
+    A tuple, because the cache hands the same object to every caller and a list could
+    be mutated through it; :func:`generate` copies it out.
+    """
     pre, inf, suf, shift = _split_affix(affix)
     sounds = _sounds(root)
     words = _suffixed(sounds, suf) if suf else {(tuple(sounds), ())}
@@ -312,15 +316,31 @@ def generate(root: str, affix: str) -> list[Candidate]:
 
                     surface, applied = shifted(surface, shift), (*rules, "5.11")
                 out.setdefault(surface, applied)
-    return [Candidate(s, r) for s, r in sorted(out.items())]
+    return tuple(Candidate(s, r) for s, r in sorted(out.items()))
+
+
+def generate(root: str, affix: str) -> list[Candidate]:
+    """The forms §5 allows for *root* (Wolff's spelling) plus *affix* (``nag-``, ``-an``,
+    ``ka-an``, ``-in-+-an``, with ``(→)``/``(←)`` for a shift of stress, §5.11)."""
+    return list(_generated(root, affix))
 
 
 @cache
-def _by_first(roots: frozenset[str]) -> dict[str, tuple[str, ...]]:
+def _stripped_roots(roots: frozenset[str]) -> dict[str, tuple[str, ...]]:
+    """A root's letters -> the roots spelling it, sorted: decode's 'this is a headword'."""
     index: dict[str, list[str]] = {}
     for root in roots:
-        letters = strip_marks(root).lstrip("-")
-        index.setdefault(letters[:1], []).append(root)
+        index.setdefault(strip_marks(root), []).append(root)
+    return {k: tuple(sorted(v)) for k, v in index.items()}
+
+
+@cache
+def _by_first(roots: frozenset[str]) -> dict[str, tuple[tuple[str, int], ...]]:
+    """A root's first letter -> (root, the length of its letters), for decode's prefilter."""
+    index: dict[str, list[tuple[str, int]]] = {}
+    for root in roots:
+        letters = strip_marks(root)
+        index.setdefault(letters.lstrip("-")[:1], []).append((root, len(letters)))
     return {k: tuple(v) for k, v in index.items()}
 
 
@@ -368,6 +388,20 @@ def _core(target: str, pre: str, inf: str, suf: str) -> str | None:
     return word[len(lead) :]
 
 
+@cache
+def _surfaces(root: str, affix: str) -> dict[str, tuple[str, ...]]:
+    """The letters of §5's forms for (root, affix) -> the rules of the first one so spelt.
+
+    Cached: ``generate`` plus ``strip_marks`` was most of the decoder's time, and the
+    first form in :func:`generate`'s order is the one decode records, so the collapse
+    must keep that order.
+    """
+    out: dict[str, tuple[str, ...]] = {}
+    for cand in _generated(root, affix):
+        out.setdefault(strip_marks(cand.surface), cand.rules)
+    return out
+
+
 def decode(surface: str, roots: frozenset[str]) -> list[Analysis]:
     """Every (root, affix) among *roots* that the rules turn into *surface*.
 
@@ -376,9 +410,9 @@ def decode(surface: str, roots: frozenset[str]) -> list[Analysis]:
     ``ibabaw``) is not a form of a shorter one.
     """
     target = strip_marks(surface)
-    own = [r for r in roots if strip_marks(r) == target]
+    own = _stripped_roots(roots).get(target)
     if own:
-        return [Analysis(r, "", ()) for r in sorted(own)]
+        return [Analysis(r, "", ()) for r in own]
     index = _by_first(roots)
     found: dict[tuple[str, str], tuple[str, ...]] = {}
     for pre, inf, suf in _shells():
@@ -387,12 +421,12 @@ def decode(surface: str, roots: frozenset[str]) -> list[Analysis]:
             continue
         affix = _label(pre, inf, suf)
         for first in _first_letters(core, pre):
-            for root in index.get(first, ()):
-                if abs(len(strip_marks(root)) - len(core)) > 2:
+            for root, length in index.get(first, ()):
+                if abs(length - len(core)) > 2:
                     continue
-                for cand in generate(root, affix):
-                    if strip_marks(cand.surface) == target:
-                        found.setdefault((root, affix), cand.rules)
+                rules = _surfaces(root, affix).get(target)
+                if rules is not None:
+                    found.setdefault((root, affix), rules)
     return [Analysis(root, affix, rules) for (root, affix), rules in sorted(found.items())]
 
 
