@@ -335,3 +335,61 @@ def test_a_word_wiktionary_leaves_unrooted_takes_its_wolff_root(real, surface, r
 @pytest.mark.parametrize("word", WOLFF_LEFT_ALONE)
 def test_a_word_of_its_own_keeps_itself_against_wolffs_root(real, word):
     assert real.lemmatize(word, "ceb") == word
+
+
+# ── contractions (rule 8, tunatale-u8nz.36, 2026-10-23) ─────────────────────────
+#
+# The owner, 2026-10-22: "the lemmatizer needs to handle contractions better;
+# there's a section in chapter 3 of Beginning Cebuano on how that works."
+# Wolff, Beginning Cebuano I, 3 F: every WRITTEN example (ug, nga and y; the sa/si
+# ones are speech), in today's spelling, read as its host. Measured before rule 8:
+# 8 of 26 of 3 F's forms reached their host.
+
+CONTRACTED = {
+    "mog": "mo",  # mu ug
+    "balayng": "balay",  # baláy ni
+    "daghag": "daghan",  # dághan ug: the n drops
+    "bisag": "bisan",  # bisán ug
+    "gyug": "gyud",  # gyud ug: a postpositive's final consonant drops
+    "say": "usab",  # sab y, to sab's main spelling
+    "lay": "lang",  # lang y: ng is one consonant
+    "siyag": "siya",  # a basic sentence's siya + ug
+    "kog": "ko",  # 11 times in the live lessons: ko + og
+    # rule 4's and the hand rows', unchanged
+    "daghang": "daghan",
+    "kining": "kini",
+    "walay": "wala",
+    "unsay": "unsa",
+}
+
+#: 3 F's homographs: the word keeps its reading, and gains the contraction for the context resolver.
+CONTRACTED_HOMOGRAPHS = {"may": "man", "sang": "usab", "tuong": "tuod"}
+
+#: Words that look contracted and are not: the host an ungated rule read each as (measured).
+NOT_CONTRACTED = {
+    "bukas": "bukan",  # 'tomorrow': sa -> s is speech, not written
+    "mas": "man",  # 'more'
+    "subay": "suba",  # 'along': a word Wolff lists
+    "matag": "mata",  # 'each'
+    "angay": "anga",  # 'should'
+    "inig": "inin",  # 'when': the news uses it 3x as often as inin
+    "pag": "pa",  # the prefix, written apart
+    "manag": "mana",  # the reciprocal prefix
+}
+
+
+@pytest.mark.parametrize("surface,host", CONTRACTED.items())
+def test_a_written_contraction_reads_as_its_host(real, surface, host):
+    assert real.lemmatize(surface, "ceb") == host
+
+
+@pytest.mark.parametrize("surface,host", CONTRACTED_HOMOGRAPHS.items())
+def test_a_homograph_keeps_its_reading_and_gains_the_contraction(real, surface, host):
+    readings = real.readings(surface)
+    assert real.lemmatize(surface, "ceb") != host
+    assert host in {r.lemma for r in readings}
+
+
+@pytest.mark.parametrize("word,false_host", NOT_CONTRACTED.items())
+def test_a_word_that_only_looks_contracted_is_not_read_as_one(real, word, false_host):
+    assert false_host not in {r.lemma for r in real.readings(word)}

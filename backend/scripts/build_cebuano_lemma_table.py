@@ -77,6 +77,29 @@ Rules, in order (see the brief for rationale):
    + the linker (nakitang) is not decoded. Nouns are never moved: the corpus diff
    showed that is where decoding goes wrong (barangay as bárang + -ay). The words
    these gates still get wrong are hand rows in closed_class.tsv (rule 6).
+7. Spelling variants (``spelling_variants.tsv``) read as their main spelling.
+8. Contractions (Wolff, Beginning Cebuano 3 F; tunatale-u8nz.36), last, so each
+   host reads as its final default (say = sab + y reaches sab's main spelling
+   usab). The WRITTEN contractions only: ug/og -> g, nga/ang/ni -> ng, and the
+   y particle -> y join the word before (sa/si -> s is "spoken but not
+   written", 3 F 2, and as a rule it read bukas 'tomorrow' and the Spanish
+   plurals as contractions): after a vowel, w or y (kog, balayng; a vowel's
+   -ng is rule 4's); after n the n drops (daghag, may); a postpositive drops
+   its final consonant (gyug, say, lay). The surface reads as its host, the
+   marker dropped, as rule 4 and the hand rows unsay/kinsay do. Hosts are
+   non-verb defaults, as for rule 4, and never a marker themselves. A
+   candidate is no contraction when Wolff lists it as a word (subay 'along',
+   angay 'should', matag 'each'), when it spells a verb prefix written apart
+   (pag, mag, nag), or when the news corpus uses it more than its host (inig
+   646 against inin 202: a contraction is one use of its host). A new surface
+   takes the contraction as its default, the plain host before one that
+   dropped a consonant (kog: ko + og before kon + og). A surface the table
+   already has keeps its default and gains the contraction as another reading,
+   for the context resolver (may: 'there is', or man + y), when the host is a
+   function word, as all of 3 F's homographs are, and the word has no reading
+   under that tag yet (a tag picks the first reading listed). What these gates
+   still get wrong are hand rows in closed_class.tsv (rule 6 runs first, and a
+   listed surface keeps its listed default).
 """
 
 from __future__ import annotations
@@ -678,6 +701,14 @@ def build_from_path(
     # 2026-09-28: pwede/puwede, lamesa/mesa). Last, so no earlier rule re-splits them.
     if spelling_variants is not None:
         rows = apply_spelling_variants(rows, load_spelling_variants(spelling_variants))
+    # Rule 8: contractions, last, so each host reads as its final default.
+    before_contractions = len(rows)
+    rows = apply_contractions(
+        rows,
+        words=wolff_words(wolff) if wolff is not None else frozenset(),
+        frequency=corpus_counts(frequency) if frequency is not None else None,
+        keep={s for s, _, _ in listed},
+    )
 
     # Emit
     out = io.StringIO()
@@ -715,6 +746,7 @@ def build_from_path(
         "base_list_added": base_added,
         "form_of_count": len(form_of),
         "wolff_roots": wolff_count,
+        "contraction_rows": len(rows) - before_contractions,
     }
 
     print(f"source: {source} ({sha_hex[:12]})")
@@ -726,9 +758,112 @@ def build_from_path(
     print(f"linker rows: {linker_count}")
     print(f"base-list headwords Wiktionary lacks: {base_added}")
     print(f"corpus words rooted by Wolff's dictionary: {wolff_count}")
+    print(f"contraction rows: {stats['contraction_rows']}")
     print(f"total rows: {stats['rows']}; distinct surfaces: {stats['surfaces']}; surfaces with >1 lemma: {multi_lemma}")
     print(f"wrote {output} ({stats['size']} bytes)")
     return stats
+
+
+#: Rule 8's markers, as written contracted: ug/og, nga/ang/ni, and the y particle.
+_CONTRACTED = ("g", "ng", "y")
+#: The postpositives that drop a final consonant before a contracted marker (3 F 2-3).
+_POSTPOSITIVES = frozenset(("gud", "gyud", "jud", "dyud", "gayod", "sad", "sab", "pud", "lang", "tuod"))
+#: Hosts whose contraction may also read a word the table already has: 3 F's homographs are
+#: all function words (may = man + y, sang = sad + nga, tuong = tuod + nga). A content word
+#: there would only add noise (barangay as barangan + y).
+_FUNCTION_UPOS = frozenset(("PRON", "PART", "ADV", "SCONJ", "CCONJ", "ADP", "DET"))
+#: Words that are markers themselves: no host (sa y is no contraction).
+_MARKERS = frozenset(("ang", "nga", "ng", "sa", "si", "ni", "sang", "kang", "ug", "og", "y"))
+#: Prefixes written apart (pag-abot split in a lesson, panag- in the news): never a contraction.
+_PREFIX_SPELLINGS = frozenset(
+    ("mo", "mi", "ni", "maka", "naka", "ma", "na", "gi", "i", "ka", "mag", "nag", "pag", "mang", "nang", "pang")
+    + ("manag", "nanag", "panag", "magka", "nagka", "maga", "naga", "paga", "gina")
+)
+
+
+def _contractions(host: str) -> list[tuple[str, int]]:
+    """The surfaces *host* takes with a contracted marker, each with its precedence (0 = plain)."""
+    if host in _POSTPOSITIVES:
+        stem = host[:-2] if host.endswith("ng") else host[:-1]  # ng is one consonant: lang y -> lay
+        return [(stem + m, 2) for m in _CONTRACTED]
+    if host[-1] in VOWELS:
+        return [(host + m, 0) for m in _CONTRACTED if m != "ng"]  # vowel + ng is rule 4's
+    if host[-1] in "wy":
+        return [(host + m, 0) for m in _CONTRACTED]
+    if host[-1] == "n":
+        return [(host[:-1] + m, 1) for m in _CONTRACTED if m != "ng"]  # n + g is rule 4's nga
+    return []
+
+
+def apply_contractions(
+    rows: Rows,
+    *,
+    words: frozenset[str] = frozenset(),
+    frequency: dict[str, int] | None = None,
+    keep: Iterable[str] = (),
+) -> Rows:
+    """Rule 8: each host's contracted surfaces read as that host (module docstring).
+
+    *words* are Wolff's words in his letters (``affixes.wolff_letters``): none is a contraction.
+    *frequency* is the news corpus's count per word: no contraction outnumbers its host
+    (or the host's lemma: sab is always usab in the news).
+    *keep* are the hand-listed surfaces (rule 6), which get no contraction reading at all.
+    """
+    kept = frozenset(keep)
+    from app.plugins.languages.ceb.affixes import wolff_letters
+
+    counts = frequency or {}
+    defaults = {s: (u, lem) for s, u, lem, d in rows if d == 1}
+    readings = {(s, u, lem) for s, u, lem, _ in rows}
+    found: dict[str, list[tuple[int, str, str, str]]] = defaultdict(list)
+    for host, (upos, lemma) in defaults.items():
+        if upos == "VERB" or host in _MARKERS or len(host) < 2:
+            continue
+        for surface, rank in _contractions(host):
+            if surface == host or surface in kept or surface in _PREFIX_SPELLINGS:
+                continue
+            # The gates guard a word the table lacks from being taken over; a word it has
+            # only gains a reading. A postpositive's contraction is 3 F's own rule (lay =
+            # lang + y, though Wolff also lists a lay).
+            if surface in defaults and upos not in _FUNCTION_UPOS:
+                continue
+            if surface not in defaults and (
+                (rank < 2 and wolff_letters(surface) in words)
+                or counts.get(surface, 0) > max(counts.get(host, 0), counts.get(lemma, 0))
+            ):
+                continue
+            found[surface].append((rank, host, upos, lemma))
+    tags = {(s, u) for s, u, _ in readings}
+    out: Rows = set(rows)
+    for surface, hosts in found.items():
+        hosts.sort()
+        has_default = surface in defaults
+        for i, (_, _, upos, lemma) in enumerate(hosts):
+            # Under a tag the word already reads, an added lemma could be the one listed first.
+            if has_default and (surface, upos) in tags:
+                continue
+            if (surface, upos, lemma) not in readings:
+                out.add((surface, upos, lemma, int(i == 0 and not has_default)))
+                readings.add((surface, upos, lemma))
+    return out
+
+
+def wolff_words(lex: Lexicon) -> frozenset[str]:
+    """Every word Wolff lists, as a headword or written out, in his letters (marks and homograph numbers off)."""
+    from app.plugins.languages.ceb.affixes import strip_marks
+
+    return frozenset(strip_marks(r).lstrip("*").split("_")[0] for r in lex.roots) | frozenset(lex.written)
+
+
+def corpus_counts(path: Path) -> dict[str, int]:
+    """The frequency list as word -> count."""
+    counts: dict[str, int] = {}
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 2 and parts[1].isdigit():
+                counts[parts[0]] = int(parts[1])
+    return counts
 
 
 def corpus_words(path: Path) -> list[str]:
