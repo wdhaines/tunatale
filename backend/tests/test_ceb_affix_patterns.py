@@ -74,7 +74,7 @@ def test_spell_attaches_the_prefix(root, affix, surface):
 
 
 @pytest.mark.parametrize("root", ["lakaw", "ampo", "tan-aw", "adto", "tulog", "gutom", "inom"])
-@pytest.mark.parametrize("affix", ["mo", "mi", "mag", "nag", "ma", "na"])
+@pytest.mark.parametrize("affix", ["mo", "mi", "mag", "nag", "ma", "na", "maka", "naka"])
 def test_every_spelled_form_is_recognised_back_as_its_own_affix(root, affix):
     """The round trip the drill and the card depend on: a form this module
     writes must be read by ``affix_of`` as the affix it was written with.
@@ -140,29 +140,13 @@ def test_one_strong_cell_does_not_carry_a_weak_one():
 # ── the committed table ──────────────────────────────────────────────────────
 
 
-# maka- / naka- is drilled as a pattern but is not an A1 affix: a lesson's
-# makakita gets no grammar hint and no Inflect card (the owner, 2026-09-27).
-_POTENTIAL = {"maka", "naka"}
-
-
 def test_every_committed_row_round_trips_through_affix_of():
     """The whole table, not a sample: every (root, affix) it holds of an A1
     affix must spell a form ``affix_of`` reads back as that affix on that root."""
     table = load_affix_counts(COUNTS_PATH)
     assert len(table) > 1000
-    wrong = [
-        (root, affix)
-        for root, affix in table
-        if affix not in _POTENTIAL and affix_of(spell(root, affix), root) != affix
-    ]
+    wrong = [(root, affix) for root, affix in table if affix_of(spell(root, affix), root) != affix]
     assert wrong == []
-
-
-def test_a_potential_form_is_drilled_but_not_read_as_an_a1_affix():
-    table = load_affix_counts(COUNTS_PATH)
-    potential = [(root, affix) for root, affix in table if affix in _POTENTIAL]
-    assert len(potential) > 100
-    assert [(root, affix) for root, affix in potential if affix_of(spell(root, affix), root) is not None] == []
 
 
 def test_the_committed_table_only_holds_pattern_affixes_and_counted_rows():

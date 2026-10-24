@@ -7,16 +7,18 @@ inflection cloze on that root, hinted with the affix and what it means.
 The table lemmatizer carries no morphological features — Wiktionary's Cebuano
 conjugation tables tag almost nothing (11 forms "past", 1 "future" across the
 whole extract) — so the affix is recovered from the surface by subtracting the
-root. A form the subtraction cannot explain (syncope: ``imnon`` from ``inom``)
-gets no feature and stays a plain word; guessing would put a wrong hint on a
-card.
+root. A form the subtraction cannot explain goes to the affix decoder
+(``affixes.decode``), which runs Wolff's §5 sound changes against this one root
+(``putlon`` = ``putol`` + -on, the vowel dropped). A form neither explains, or
+that the decoder reads two ways, gets no feature and stays a plain word;
+guessing would put a wrong hint on a card.
 
 A1 by the user's decision (2026-09-27): the core actor affixes mo- mi- mag- nag-
 and the core object affixes gi- -on -an gi-…-an i-. Stative ma- na- joined them
 on 2026-10-07 (tunatale-ve4p.1): they were 5 of the 14 affixed verbs the first
 two lessons left unexplained (``matulog``, ``malipay``, ``nalipay``, ``nakita``).
-Ability (maka- naka-) and imperatives (-a -i pag-) are deliberately NOT
-recognised.
+Ability maka- naka- joined them on 2026-10-23 (the owner, tunatale-bi67), once
+its drill had shipped. Imperatives (-a -i pag-) are deliberately NOT recognised.
 
 ``ni-`` is read as ``mi-`` (the user, 2026-10-07): it is the same affix in
 another spelling, and the commoner one in native news (``niadto`` 1,058 against
@@ -35,13 +37,14 @@ from app.plugins.languages.ceb.affix_patterns import (
     pattern_roots,
     pattern_sentences,
 )
+from app.plugins.languages.ceb.affixes import decode, wolff_letters
 from app.plugins.languages.ceb.focus_sentences import irregular_forms
 from app.srs.a1_morphology import A1Morphology
 from app.srs.function_words import _default_format_morphology_hint
 from app.srs.lemmatizer import TokenAnalysis
 
-# Longest first: "mag"/"nag" before the "ma"/"na" they begin with, "i" last.
-_PREFIXES = ("mag", "nag", "ma", "na", "mo", "mi", "gi", "i")
+# Longest first: "maka"/"mag" before the "ma" they begin with, "i" last.
+_PREFIXES = ("maka", "naka", "mag", "nag", "ma", "na", "mo", "mi", "gi", "i")
 _SUFFIXES = ("on", "an")
 # Another spelling of an affix above → the affix it is.
 _SPELLINGS = {"ni": "mi"}
@@ -59,7 +62,16 @@ _AFFIXES: dict[str, tuple[str, str]] = {
     "an": ("-an", "will be done to/at"),
     "gi-an": ("gi-…-an", "was done to/at"),
     "i": ("i-", "will be done with/for"),
+    # the owner's English (2026-10-23), from the maka-/naka- drill's notes
+    "maka": ("maka-", "can do, will get the chance to"),
+    "naka": ("naka-", "managed to, got the chance to"),
 }
+
+# The decoder's affix (Wolff's spelling) -> the A1 affix above.
+_DECODED = {
+    "mu-": "mo", "mi-": "mi", "ni-": "mi", "mag-": "mag", "nag-": "nag", "ma-": "ma", "na-": "na",
+    "gi-": "gi", "i-": "i", "-un": "on", "-an": "an", "gi-an": "gi-an", "maka-": "maka", "naka-": "naka",
+}  # fmt: skip
 
 
 def _stems(root: str) -> tuple[str, ...]:
@@ -93,7 +105,10 @@ def affix_of(surface: str, root: str) -> str | None:
     for spelling, affix in _SPELLINGS.items():
         if s == spelling + r:
             return affix
-    return None
+    # The decoder reads Wolff's hyphen as the glottal stop it is, so it gets the word as written.
+    roots = frozenset({wolff_letters(root.casefold())})
+    found = {_DECODED.get(a.affix) for a in decode(wolff_letters(surface.casefold()), roots)} - {None}
+    return found.pop() if len(found) == 1 else None
 
 
 def _to_feature(analysis: TokenAnalysis) -> str | None:

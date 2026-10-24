@@ -3,13 +3,16 @@
 User decisions (2026-09-27): A1 = the core actor affixes (mo- mi- mag- nag-)
 and the core object affixes (gi- -on -an gi-...-an i-). Stative ma- na- joined
 them on 2026-10-07 (tunatale-ve4p.1): ``matulog``, ``nalipay`` and ``nakita``
-are in the first two lessons. Still NOT A1: ability (maka- naka-) and
+are in the first two lessons. Ability maka- naka- joined them on 2026-10-23
+(the owner, tunatale-bi67), once its drill had shipped. Still NOT A1:
 imperatives (-a -i pag-). Hints name the affix and its meaning:
 "lakaw — mi- / ni-: did (completed)". ni- is read as a spelling of mi-
 (2026-10-07), so that hint names both.
 
 The feature is recovered from (surface, lemma) by subtracting the root, because
 Wiktionary's conjugation tags are too sparse to use (11 forms tagged "past").
+A form the subtraction cannot explain goes to the affix decoder, which applies
+Wolff's §5 sound changes (putlon = putol + -on, the vowel dropped).
 """
 
 from __future__ import annotations
@@ -71,6 +74,14 @@ from app.srs.lemmatizer import TokenAnalysis
         ("imnon", "inom", "on"),
         ("kan-on", "kaon", "on"),
         ("dad-on", "dala", "on"),
+        # Ability (the owner, 2026-10-23): the drilled pair, now hinted in lessons too.
+        ("makakaon", "kaon", "maka"),
+        ("nakahibalo", "hibalo", "naka"),
+        ("makakita", "kita", "maka"),
+        ("Nakakita", "kita", "naka"),
+        # Wolff §5.12 through the decoder: a stressed final vowel drops before a suffix.
+        ("putlon", "putol", "on"),
+        ("dakpon", "dakop", "on"),
     ],
 )
 def test_affix_of_recovers_the_a1_affix(surface, root, affix):
@@ -81,11 +92,9 @@ def test_affix_of_recovers_the_a1_affix(surface, root, affix):
     ("surface", "root"),
     [
         ("lakaw", "lakaw"),  # no affix
-        ("makakaon", "kaon"),  # maka-: ability, not A1
-        ("nakahibalo", "hibalo"),  # naka-: ability, not A1
-        ("kuhaa", "kuha"),  # -a imperative: not A1
+        ("kuhaa", "kuha"),  # -a imperative: not A1, to the subtraction or the decoder
         ("paglakaw", "lakaw"),  # pag-: not A1
-        ("putlon", "putol"),  # syncope no checked row lists: the root is not a substring; no guess
+        ("putla", "putol"),  # §5.12's dropped vowel before the -a imperative: the decoder reads it, not A1
         ("gilakaw", "hatag"),  # a different root
         ("niini", "kini"),  # a pronoun that happens to begin ni-
         ("nila", "nila"),  # ...and one that is its own lemma
@@ -115,6 +124,7 @@ def test_cebuano_registers_a_bundle():
         ("matulog", "tulog", "verb:ma"),
         ("nalipay", "lipay", "verb:na"),
         ("niadto", "adto", "verb:mi"),
+        ("nakakita", "kita", "verb:naka"),
     ],
 )
 def test_an_a1_form_maps_to_a_whitelisted_feature(surface, lemma, feature):
@@ -129,7 +139,7 @@ def test_only_a_verb_reading_carries_a_feature():
 
 
 def test_a_non_a1_form_has_no_feature():
-    assert ud_feats_to_tt_feature(_analysis("nakahibalo", "hibalo"), "ceb") is None
+    assert ud_feats_to_tt_feature(_analysis("kuhaa", "kuha"), "ceb") is None
 
 
 def test_the_whitelist_holds_exactly_the_decided_affixes():
@@ -146,6 +156,8 @@ def test_the_whitelist_holds_exactly_the_decided_affixes():
         "verb:an",
         "verb:gi-an",
         "verb:i",
+        "verb:maka",
+        "verb:naka",
     }
 
 
@@ -158,6 +170,9 @@ def test_the_whitelist_holds_exactly_the_decided_affixes():
         ("hatag", "verb:gi-an", "hatag — gi-…-an: was done to/at"),
         ("tulog", "verb:ma", "tulog — ma-: will be / will happen (not yet)"),
         ("lipay", "verb:na", "lipay — na-: is / was / happened"),
+        # the owner's English, 2026-10-23, from the maka-/naka- drill's notes
+        ("kita", "verb:maka", "kita — maka-: can do, will get the chance to"),
+        ("kita", "verb:naka", "kita — naka-: managed to, got the chance to"),
     ],
 )
 def test_the_hint_names_the_affix_and_its_meaning(lemma, feature, hint):
