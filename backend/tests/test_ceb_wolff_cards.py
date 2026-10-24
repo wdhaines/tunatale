@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -741,3 +742,74 @@ def test_a_one_entry_tie_the_hyphen_cannot_settle_stays_ambiguous():
         ],
     }
     assert WolffLexicon([rec]).match("bata", "child") == Miss("ambiguous", ("báta", "batá"))
+
+
+# ── stress by rule for a suffixed word Wolff lacks (the owner, 2026-10-23: "Can words
+# like kapehan get pronunciation marks via rules?") ─────────────────────────────
+#
+# A word no entry lists and no example prints got no Spelling line. When the
+# affix decoder's best analysis of it (ranked by the card's English) carries a
+# suffix, the stress goes on the next-to-last syllable: Wolff's §5.11 placement,
+# which matched his printed suffixed forms 4,839/4,896 (tunatale-h0q3.28). A
+# prefix-only word stays blank: its stress follows the root, and picking the
+# wrong homograph root (tulu 'three' vs túlù 'drip') moves it.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "spelling"),
+    [
+        ("kapehan", "coffee shop", "kapéhan"),  # kape 'coffee' + -an; the root's own stress is kápe
+        ("orasan", "clock", "orásan"),
+        ("amihanan", "north", "amihánan"),
+        ("habagatan", "south", "habagátan"),
+        ("sakyanan", "vehicle", "sakyánan"),  # -anan, and the root's vowel drops (sakay)
+        ("barangay", "village district", "barángay"),
+        ("kasiyaman", "ninety", "kasiyáman"),  # ka-an
+        ("kapolisan", "police", "kapolísan"),
+        ("kalim-an", "fifty", "kalím-an"),  # the card's hyphen (a glottal stop) stays
+        ("tinun-an", "student", "tinún-an"),  # -in- + -an
+    ],
+)
+def test_a_suffixed_word_wolff_lacks_is_stressed_by_rule(committed, word, english, spelling):
+    assert committed.match(word, english) == Miss("not-in-dictionary", ())
+    f = committed.card_fields(word, english)
+    assert isinstance(f, CardFields)
+    assert f.spelling == spelling
+
+
+def test_a_rule_made_spelling_says_so(committed):
+    f = committed.card_fields("kapehan", "coffee shop")
+    assert f.details.startswith("<div>Not listed in Wolff: stressed by rule")
+    # nothing is claimed from an entry: no meaning, no verb line, no dictionary text
+    assert (f.meaning, f.verb, f.dictionary_entry) == ("", "", "")
+
+
+@pytest.mark.parametrize(
+    ("word", "english"),
+    [
+        ("pagpatay", "murder"),  # pag- alone: the root decides the stress
+        ("himutang", "be located"),  # hiN- alone
+        ("kompyuter", "computer"),  # no analysis at all
+        ("Huwebes", "Thursday"),
+    ],
+)
+def test_a_word_with_no_suffix_stays_blank(committed, word, english):
+    assert committed.card_fields(word, english) == Miss("not-in-dictionary", ())
+    assert committed.by_rule(word, english) is None
+
+
+def test_a_printed_spelling_outranks_the_rule(committed):
+    # Wolff prints kinabúhì (ka- + -in- + búhì + -i); the rule would not see the glottal stop
+    assert committed.card_fields("kinabuhi", "life").spelling == "kinabúhì"
+
+
+def test_the_rule_agrees_with_wolffs_printed_suffixed_words(committed):
+    """The rule against every 25th word Wolff prints in an example (letters only in,
+    his marks out). Measured on all 15,444 when the rule was made: 96% exact,
+    marks included, where it gives a spelling at all."""
+    printed = sorted({hb for rec in committed.entries for hb, *_ in rec.get("attested", ())})[::25]
+    pairs = [(hb, committed.by_rule(strip_marks(hb))) for hb in printed]
+    ruled = [(hb, got) for hb, got in pairs if got is not None]
+    right = sum(unicodedata.normalize("NFC", hb) == unicodedata.normalize("NFC", got) for hb, got in ruled)
+    assert len(ruled) > 150
+    assert right / len(ruled) >= 0.95, [p for p in ruled if p[0] != p[1]][:20]
