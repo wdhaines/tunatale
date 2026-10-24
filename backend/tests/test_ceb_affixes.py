@@ -468,3 +468,74 @@ def test_every_chart_form_of_palit_has_a_letter_map(affix, form):
     assert len(ints) == len(set(ints)) and all(0 <= x < len("palit") for x in ints)
     first, last = got.index(ints[0]), got.index(ints[-1])
     assert "p" not in got[first:] and "s" not in got[: last + 1]
+
+
+# ── the book's decoder gaps (tunatale-tofg.11) ────────────────────────────────────
+#
+# Words in Lessons 1-4 of the course the decoder found no reading for, each beside the
+# form Wolff prints that settles the rule (the book's words are in the dictionary's
+# letters, its q written as the dictionary writes it):
+#   tig-       the agentive prefix (its own entry, and a 'tig-' sub-entry of bása);
+#   maN-+ka-   maN-/naN-/paN- on a ka- base: Wolff's panga-, printed inside the ka-
+#              sub-entry (matay: 'panga-(←) ... Nangamátay ang ákung mga manuk');
+#   gabíi      + a suffix is gabhi-: 'Nagabhian (nagabin-an) siya' and the written-out
+#              gabhiúna. 5.13's h, 5.14's ʔVh -> hVʔ, then the vowel before the h drops;
+#   -in- base  an inflecting prefix goes OUTSIDE a derived -in- base: 'Kinsa tung paríang
+#              nagbinisayà sa biblíya?' (bisayà), not n-in-ag-.
+
+GAPS: list[tuple[str, str, str]] = [
+    ("bása", "tig-", "tigbása"),  # bása: 'tig-'
+    ("pílì", "tig-", "tigpilì"),  # the book: tigpilíq
+    ("lígù", "maN-+ka-", "mangalígù"),  # handà: 'Naghandà ming mangalígù sa dágat'
+    ("lígù", "naN-+ka-", "nangalígù"),  # the book
+    ("lígù", "paN-+ka-", "pangalígù"),  # the book
+    ("matay", "naN-+ka-", "nangamátay"),
+    ("gabíi", "na-an", "nagabhian"),
+    ("gabíi", "ka-an", "kagabhian"),  # the book: kagabhiqán
+    ("gabíi", "ma-an", "magabhian"),  # the book: magabhiqán
+    ("bisayà", "nag-+-in-", "nagbinisayà"),
+    ("bisayà", "maka-+-in-", "makabinisayà"),  # the book: Makabinisayáq
+]
+GAP_ROOTS = frozenset(root for root, *_ in GAPS)
+
+
+@pytest.mark.parametrize(("root", "affix", "form"), GAPS, ids=[f"{r}+{a}={f}" for r, a, f in GAPS])
+def test_a_gap_form_generates_and_decodes(root, affix, form):
+    assert strip_marks(form) in {strip_marks(c.surface) for c in generate(root, affix)}
+    assert (root, affix) in {(a.root, a.affix) for a in decode(form, GAP_ROOTS)}
+
+
+@pytest.mark.parametrize(("root", "affix", "form"), GAPS, ids=[f"{r}+{a}={f}" for r, a, f in GAPS])
+def test_a_gap_form_is_read_against_the_real_lexicon(lex, root, affix, form):
+    """The book's own path: analyse() over every headword, not a hand-picked root list."""
+    assert (root, affix) in {(a.root, a.affix) for a in analyse(form, lex)}
+
+
+@pytest.mark.parametrize(
+    ("root", "affix", "form", "expected"),
+    [
+        ("pílì", "tig-", "tigpili", ("p", "p", "p", 0, 1, 2, 3)),
+        ("lígù", "maN-+ka-", "mangaligu", ("p", "p", "p", "p", "p", 0, 1, 2, 3)),  # ka-'s k is the nasal
+        ("gabíi", "ka-an", "kagabhian", ("p", "p", 0, 1, 2, "+", 4, "s", "s")),  # the FIRST i dropped
+        ("bisayà", "maka-+-in-", "makabinisaya", ("p", "p", "p", "p", 0, "i", "i", 1, 2, 3, 4, 5)),
+    ],
+)
+def test_a_gap_form_has_a_letter_map(root, affix, form, expected):
+    from app.plugins.languages.ceb import affixes
+
+    assert affixes.letter_map(form, root, affix) == expected
+
+
+def test_an_inflecting_prefix_no_longer_takes_the_infix_itself():
+    """nag- + -in- + bisayà is nagbinisayà; the old order made n-in-ag-bisayà."""
+    assert "ninagbisaya" not in {strip_marks(c.surface) for c in generate("bisayà", "nag-+-in-")}
+
+
+def test_a_derivational_prefix_still_takes_the_infix():
+    """ka- is not a chart cell, so -in- still goes into it: k-in-a-matay-an (O1B)."""
+    assert "kinamatyan" in {strip_marks(c.surface) for c in generate("matay", "ka-+-in-+-an")}
+
+
+def test_a_prefix_stack_wolff_does_not_print_is_refused():
+    with pytest.raises(ValueError, match="mu-"):
+        generate("palit", "mu-+mag-")
