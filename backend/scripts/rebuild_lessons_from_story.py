@@ -92,7 +92,9 @@ from app.srs.database import SRSDatabase  # noqa: E402
 from app.storage.store import ContentStore  # noqa: E402
 
 
-def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, language, *, srs_db) -> Lesson | None:
+def rebuild(
+    store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, language, *, srs_db, owner: bool
+) -> Lesson | None:
     """Rebuild *lesson* from its stored Story JSON, or ``None`` if it has none.
 
     ``review_words`` comes from the curriculum's recorded request for that day —
@@ -111,7 +113,7 @@ def rebuild(store: ContentStore, lesson: Lesson, day: int, curriculum_id: str, l
     # rebuilt lesson would lose the drill the stored one ends on. Its whole
     # lines are chosen against the learner's deck AS IT IS NOW (*srs_db*), so a
     # rebuild can end on lines the first build held back.
-    add_day_drill(rebuilt, language, curriculum, day, srs_db=srs_db, lemmatizer=None, store=store)
+    add_day_drill(rebuilt, language, curriculum, day, srs_db=srs_db, lemmatizer=None, store=store, owner=owner)
     # As publishing does: words the learner knows well are not taken apart.
     if srs_db is not None:
         trim_well_known_buildups(rebuilt, srs_db, None)
@@ -230,6 +232,11 @@ async def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--day", type=int, action="append", help="only these days (repeatable)")
+    ap.add_argument(
+        "--learner",
+        action="store_true",
+        help="--db is another learner's, not the owner's: a pattern the owner only reviews is taught",
+    )
     ap.add_argument("--db", default=None, help="content DB path (default: the configured DB for --language)")
     ap.add_argument("--audio-dir", default=None)
     ap.add_argument("--language", default=None, help="default: settings.target_language")
@@ -270,7 +277,7 @@ async def main() -> int:
         if args.day and day not in args.day:
             continue
         label = f"day {day:>2}  {lesson_id[:44]:46}"
-        fresh = rebuild(store, stored, day, curriculum_id, language, srs_db=srs_db)
+        fresh = rebuild(store, stored, day, curriculum_id, language, srs_db=srs_db, owner=not args.learner)
         if fresh is None:
             print(f"  --  {label} NO stored Story JSON; skipped (never reconstructed)")
             skipped += 1

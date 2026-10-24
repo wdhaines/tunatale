@@ -15,7 +15,10 @@ fortnight first proposed:
   steps are not reviews: passing them shows the card was read the day it was
   added, not that the form came back on a later day.
 
-A ``review_only`` pattern needs one drill and no cards. Nothing else brings a
+A ``review_only`` pattern needs one drill and no cards, on the OWNER's deck:
+the flag marks what the owner already knows. Another learner is taught it like
+any other pattern (the owner, 2026-10-23, for ma-/na-: tunatale-bi67), so every
+caller says whose deck it is reading. Nothing else brings a
 passed pattern back: its cards' own spacing is the widening gap. With every
 pattern passed, the one heard longest ago comes round.
 
@@ -60,6 +63,7 @@ class Progress:
     """How far the learner has come with one pattern."""
 
     pattern: AffixPattern
+    review_only: bool  # the pattern's flag, on the owner's deck only
     drill_days: int
     first_passes: int  # contrast cards whose first review passed
     reviews: int  # every review of its contrast cards
@@ -68,7 +72,7 @@ class Progress:
 
     @property
     def met(self) -> bool:
-        if self.pattern.review_only:
+        if self.review_only:
             return self.drill_days >= REVIEW_ONLY_DRILL_DAYS
         return (
             self.drill_days >= DRILL_DAYS
@@ -86,7 +90,7 @@ class Progress:
         A review-only pattern needs its drill days and nothing else, so its
         card targets are 0.
         """
-        review_only = self.pattern.review_only
+        review_only = self.review_only
         return {
             "review_only": review_only,
             "drill_days": self.drill_days,
@@ -126,7 +130,7 @@ def _card_keys(pattern: AffixPattern) -> list[str]:
     return [pair_key(feature) for feature in pattern.features]
 
 
-def _progress(pattern: AffixPattern, heard: list[date], srs_db) -> Progress:
+def _progress(pattern: AffixPattern, heard: list[date], srs_db, *, owner: bool) -> Progress:
     first_passes = reviews = passes = 0
     for key in _card_keys(pattern):
         for collocation_id in srs_db.get_collocation_ids_by_disambig_key(key):
@@ -138,6 +142,7 @@ def _progress(pattern: AffixPattern, heard: list[date], srs_db) -> Progress:
             passes += sum(graded)
     return Progress(
         pattern=pattern,
+        review_only=pattern.review_only and owner,
         drill_days=len(heard),
         first_passes=first_passes,
         reviews=reviews,
@@ -146,18 +151,21 @@ def _progress(pattern: AffixPattern, heard: list[date], srs_db) -> Progress:
     )
 
 
-def progress(pattern: AffixPattern, *, srs_db, store: ContentStore) -> Progress:
-    """The learner's progress with *pattern*, read from their listens and their contrast cards."""
-    return _progress(pattern, _drill_days(store, srs_db).get(pattern.key, []), srs_db)
+def progress(pattern: AffixPattern, *, srs_db, store: ContentStore, owner: bool) -> Progress:
+    """The learner's progress with *pattern*, read from their listens and their contrast cards.
+
+    *owner*: whether *srs_db* is the owner's deck, where a ``review_only`` pattern is reviewed, not taught.
+    """
+    return _progress(pattern, _drill_days(store, srs_db).get(pattern.key, []), srs_db, owner=owner)
 
 
-def next_pattern(language_code: str, *, srs_db, store: ContentStore) -> AffixPattern | None:
+def next_pattern(language_code: str, *, srs_db, store: ContentStore, owner: bool) -> AffixPattern | None:
     """The pattern the learner's next lesson drills, or ``None`` for a language with none."""
     bundle = get_a1_morphology(language_code)
     if bundle is None or not bundle.patterns:
         return None
     days = _drill_days(store, srs_db)
-    every = [_progress(pattern, days.get(pattern.key, []), srs_db) for pattern in bundle.patterns]
+    every = [_progress(pattern, days.get(pattern.key, []), srs_db, owner=owner) for pattern in bundle.patterns]
     current = next((each for each in every if not each.met), None)
     if current is None:
         return min(every, key=lambda each: each.last_heard).pattern  # met means heard at least once

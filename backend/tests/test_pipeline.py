@@ -40,6 +40,7 @@ class FakeStoryGenerator:
         review_pressure=None,
         content_store=None,
         curriculum_id=None,
+        owner,
     ):
         # `srs_db` is RECORDED, not ignored: the pipeline is the third call site
         # of build_story_prompts and the one no HTTP test drives, so this double
@@ -54,6 +55,7 @@ class FakeStoryGenerator:
                 "review_pressure": review_pressure,
                 "content_store": content_store,
                 "curriculum_id": curriculum_id,
+                "owner": owner,
             }
         )
         if self.fail_count > 0:
@@ -1953,6 +1955,22 @@ class TestPerUserScope:
         assert owner_store.get_latest_lesson_by_day("cur-1", 1)[0] == owner_rec["lesson_id"]
         assert learner_store.get_latest_lesson_by_day("cur-1", 1)[0] == learner_rec["lesson_id"]
         assert pipeline.status_for("no", "cur-1", user_id=2)["days"][0]["lesson_id"] == learner_rec["lesson_id"]
+
+    async def test_the_story_generator_is_told_whose_deck_it_reads(self, world, fake_generator):
+        """The owner's deck reviews what the owner already knows; a learner's is taught it (pattern_gate)."""
+        pipeline, _, owner_store, _, learner_store, _ = world
+        owner_store.save_curriculum("cur-1", self._curriculum())
+        learner_store.save_curriculum("cur-1", self._curriculum())
+
+        pipeline.start()
+        pipeline.enqueue("no", "cur-1", 1, "generate", user_id=None)
+        pipeline.enqueue("no", "cur-1", 1, "generate", user_id=2)
+        await self._wait(pipeline, (None, "no", "cur-1", 1))
+        await self._wait(pipeline, (2, "no", "cur-1", 1))
+        await pipeline.shutdown()
+
+        owner_of = {id(call["content_store"]): call["owner"] for call in fake_generator.calls}
+        assert owner_of == {id(owner_store): True, id(learner_store): False}
 
     async def test_reconcile_and_status_read_the_learners_store(self, world):
         pipeline, _, _, _, learner_store, _ = world

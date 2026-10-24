@@ -80,6 +80,7 @@ async def generate_story(body: GenerateStoryRequest, request: Request):
             review_pressure=curriculum.review_pressure(body.review_pressure),
             content_store=store,
             curriculum_id=body.curriculum_id,
+            owner=request.state.is_owner,
         )
     except StoryGenerationError as e:
         # Malformed LLM output — nothing persisted; the user retries.
@@ -215,6 +216,7 @@ async def get_story_prompt(
         review_pressure=curriculum.review_pressure(review_pressure),
         content_store=store,
         curriculum_id=curriculum_id,
+        owner=request.state.is_owner,
     )
     # A write on a GET, deliberately: recording what an EXPORT handed out is
     # part of exporting it, and this is the only moment the requested set exists
@@ -245,7 +247,9 @@ async def get_lesson(lesson_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     lesson = Lesson.from_json(row["data_json"])
-    return serialize_lesson(lesson_id, lesson, day=row["day"], srs_db=request.state.srs_db, store=store)
+    return serialize_lesson(
+        lesson_id, lesson, day=row["day"], srs_db=request.state.srs_db, store=store, owner=request.state.is_owner
+    )
 
 
 @router.post("/{lesson_id}/regloss", status_code=200, response_model=ReglossLessonResponse)

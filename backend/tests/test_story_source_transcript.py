@@ -92,20 +92,22 @@ class TestPriorDayTranscript:
 class TestDeeperPrompt:
     def test_deeper_carries_the_prior_transcript(self, store, language_no):
         user = build_story_prompts(
-            _day(6), language_no, ContentStrategy.DEEPER, "A2", content_store=store, curriculum_id=CID
+            _day(6), language_no, ContentStrategy.DEEPER, "A2", content_store=store, curriculum_id=CID, owner=True
         ).user_prompt
         assert "**SOURCE TRANSCRIPT TO ENHANCE:**\n```\n[Ved disken]\nmale-1: Hva koster det?" in user
         assert "(not available)" not in user
 
     def test_deeper_without_a_source_has_NO_block_not_a_placeholder(self, store, language_no):
         for kwargs in ({}, {"content_store": store, "curriculum_id": CID}):
-            user = build_story_prompts(_day(1), language_no, ContentStrategy.DEEPER, "A2", **kwargs).user_prompt
+            user = build_story_prompts(
+                _day(1), language_no, ContentStrategy.DEEPER, "A2", **kwargs, owner=True
+            ).user_prompt
             assert "SOURCE TRANSCRIPT" not in user
             assert "(not available)" not in user
             assert "```" not in user
 
     def test_the_rest_of_the_deeper_prompt_is_intact(self, store, language_no):
-        user = build_story_prompts(_day(1), language_no, ContentStrategy.DEEPER, "A2").user_prompt
+        user = build_story_prompts(_day(1), language_no, ContentStrategy.DEEPER, "A2", owner=True).user_prompt
         assert "**Strategy:** DEEPER" in user
         assert "**New Collocations to Teach:**\n- en kopp kaffe" in user
         assert "**DEEPER STRATEGY RULES**" in user
@@ -118,7 +120,7 @@ class TestDeeperPrompt:
         s.save_lesson("l1", CID, 1, _lesson(("Lang scene", long_lines)))
         with caplog.at_level(logging.WARNING, logger="app.generation.story"):
             prompts = build_story_prompts(
-                _day(2), language_no, ContentStrategy.DEEPER, "A2", content_store=s, curriculum_id=CID
+                _day(2), language_no, ContentStrategy.DEEPER, "A2", content_store=s, curriculum_id=CID, owner=True
             )
         estimate = (len(prompts.system_prompt) + len(prompts.user_prompt)) // 4
         assert estimate <= story.PROMPT_TOKEN_BUDGET
@@ -130,8 +132,8 @@ class TestDeeperPrompt:
 
 class TestOtherStrategiesAreUntouched:
     def test_wider_is_byte_identical_with_or_without_a_store(self, store, language_no):
-        without = build_story_prompts(_day(6), language_no, ContentStrategy.WIDER, "A2")
+        without = build_story_prompts(_day(6), language_no, ContentStrategy.WIDER, "A2", owner=True)
         with_store = build_story_prompts(
-            _day(6), language_no, ContentStrategy.WIDER, "A2", content_store=store, curriculum_id=CID
+            _day(6), language_no, ContentStrategy.WIDER, "A2", content_store=store, curriculum_id=CID, owner=True
         )
         assert with_store == without

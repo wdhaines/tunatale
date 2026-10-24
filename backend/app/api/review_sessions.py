@@ -562,7 +562,7 @@ async def get_review_session(session_id: str, request: Request):
     if row is None:
         raise HTTPException(status_code=404, detail="Review session not found")
     lesson = store.get_review_session(session_id)
-    return serialize_lesson(session_id, lesson) | {"session_date": row["session_date"]}
+    return serialize_lesson(session_id, lesson, owner=request.state.is_owner) | {"session_date": row["session_date"]}
 
 
 @router.post(

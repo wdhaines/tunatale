@@ -153,7 +153,7 @@ class TestThePromptNeedsNoDay:
         safe rather than merely convenient.
         """
         dayless = build_review_session_prompts(language, "A2", srs_db=seeded_db)
-        day_shaped = build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db)
+        day_shaped = build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db, owner=True)
 
         assert dayless.system_prompt == day_shaped.system_prompt
         assert dayless.user_prompt == day_shaped.user_prompt

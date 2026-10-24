@@ -60,7 +60,7 @@ def _curriculum(days: list[CurriculumDay], language_code: str = "ceb") -> Curric
 
 
 def _key(curriculum: Curriculum, day: CurriculumDay, **learner) -> str | None:
-    pattern = pattern_for_day(curriculum, day, **learner)
+    pattern = pattern_for_day(curriculum, day, **learner, owner=True)
     return pattern.key if pattern is not None else None
 
 
@@ -189,7 +189,7 @@ def test_a_pattern_with_three_worded_roots_asks_for_all_three():
 
 
 def _fingerprint(code: str, strategy: str, **kwargs) -> str:
-    prompts = build_story_prompts(_day(1), get_language(code), ContentStrategy[strategy], "A1", **kwargs)
+    prompts = build_story_prompts(_day(1), get_language(code), ContentStrategy[strategy], "A1", **kwargs, owner=True)
     return hashlib.sha256((prompts.system_prompt + "\x1f" + prompts.user_prompt).encode()).hexdigest()[:16]
 
 
@@ -224,9 +224,16 @@ def test_a_story_in_a_curriculum_is_asked_for_its_days_pattern(owner, strategy):
     language = get_language("ceb")
     day = store.get_curriculum("funeral").days[1]  # with no deck to read, nothing has passed: mo-mi
 
-    plain = build_story_prompts(day, language, ContentStrategy[strategy], "A1")
+    plain = build_story_prompts(day, language, ContentStrategy[strategy], "A1", owner=True)
     planned = build_story_prompts(
-        day, language, ContentStrategy[strategy], "A1", srs_db=None, content_store=store, curriculum_id="funeral"
+        day,
+        language,
+        ContentStrategy[strategy],
+        "A1",
+        srs_db=None,
+        content_store=store,
+        curriculum_id="funeral",
+        owner=True,
     )
 
     block = pattern_block("ceb", _PATTERNS["mo-mi"])
@@ -252,6 +259,7 @@ def test_a_story_with_a_deck_is_asked_for_the_gates_pattern(owner):  # noqa: F81
         srs_db=srs_db,
         content_store=store,
         curriculum_id="funeral",
+        owner=True,
     )
     assert pattern_block("ceb", _PATTERNS["mag-nag"], srs_db=srs_db) in prompts.user_prompt
 
@@ -270,12 +278,14 @@ def test_a_new_days_closing_drill_follows_the_gate(srs_db):
     _mo_mi_passed(srs_db, store)
 
     lesson = _story_lesson("At the Market", _MARKET)
-    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=srs_db, lemmatizer=None, store=store)
+    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=srs_db, lemmatizer=None, store=store, owner=True)
     assert lesson.generation_metadata["affix_drill"]["pattern"] == "mag-nag"
 
 
 def test_a_day_that_names_its_pattern_is_asked_for_it_with_no_curriculum_to_read():
-    prompts = build_story_prompts(_day(1, pattern="ma-na"), get_language("ceb"), ContentStrategy.WIDER, "A1")
+    prompts = build_story_prompts(
+        _day(1, pattern="ma-na"), get_language("ceb"), ContentStrategy.WIDER, "A1", owner=True
+    )
     assert pattern_block("ceb", _PATTERNS["ma-na"]) in prompts.user_prompt
 
 
@@ -383,7 +393,7 @@ def _stored(store, curriculum, day: int, lesson) -> None:
 
 def _drilled(curriculum, day: int, store, title: str = "An Evening Wake"):
     lesson = _story_lesson(title, _WAKE)
-    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=None, lemmatizer=None, store=store)
+    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=None, lemmatizer=None, store=store, owner=True)
     return lesson
 
 
@@ -651,7 +661,7 @@ def test_the_day_drill_asks_the_same_deck(srs_db):
     curriculum = _curriculum([_day(1, pattern="mo-mi")])
     lesson = _story_lesson("An Evening Wake", _WAKE)
 
-    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=srs_db, lemmatizer=None)
+    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=srs_db, lemmatizer=None, owner=True)
 
     assert _answers(lesson)[-1] == "Mouban ko ugma."
 
@@ -711,7 +721,7 @@ def test_the_story_lesson_then_adds_contrast_cards_like_a_grammar_lesson(owner):
 def test_a_lesson_published_into_its_day_gets_that_days_drill():
     curriculum = _curriculum([_day(1), _day(2)])
     lesson = _story_lesson("An Evening Wake", _WAKE)
-    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=None, lemmatizer=None)
+    add_day_drill(lesson, get_language("ceb"), curriculum, 1, srs_db=None, lemmatizer=None, owner=True)
     assert lesson.generation_metadata["affix_drill"]["pattern"] == "mo-mi"
 
 
@@ -727,7 +737,7 @@ def test_a_lesson_published_into_its_day_gets_that_days_drill():
 def test_a_lesson_with_no_planned_pattern_is_left_as_it_was(curriculum, day):
     lesson = _story_lesson("An Evening Wake", _WAKE)
     before = len(lesson.sections)
-    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=None, lemmatizer=None)
+    add_day_drill(lesson, get_language("ceb"), curriculum, day, srs_db=None, lemmatizer=None, owner=True)
     assert len(lesson.sections) == before
     assert "affix_drill" not in lesson.generation_metadata
 

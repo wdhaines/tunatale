@@ -66,12 +66,16 @@ class TestStoryGeneration:
 
     async def test_generate_returns_lesson(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         assert isinstance(lesson, Lesson)
 
     async def test_generate_lesson_has_all_sections(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         section_types = {s.section_type for s in lesson.sections}
         assert SectionType.KEY_PHRASES in section_types
         assert SectionType.NATURAL_SPEED in section_types
@@ -83,12 +87,16 @@ class TestStoryGeneration:
 
     async def test_generate_lesson_has_seven_sections(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         assert len(lesson.sections) == 7
 
     async def test_generate_key_phrases_section_bounded(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         kp_section = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
         # Each key_phrase produces multiple phrases via breakdown; at least 2 input phrases
         assert len(kp_section.phrases) >= 2
@@ -101,18 +109,22 @@ class TestStoryGeneration:
         from app.generation.story import StoryGenerationError
 
         with pytest.raises(StoryGenerationError):
-            await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+            await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
 
     async def test_generate_key_phrases_have_narrator_translations(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         kp_section = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
         narrator_phrases = [p for p in kp_section.phrases if p.role == "narrator"]
         assert len(narrator_phrases) >= 1
 
     async def test_generate_natural_speed_has_scene_labels(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         nat_section = next(s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED)
         narrator_phrases = [p for p in nat_section.phrases if p.role == "narrator"]
         assert any("Riverside" in p.text or "Café" in p.text for p in narrator_phrases)
@@ -121,7 +133,9 @@ class TestStoryGeneration:
         """A generated lesson's Enunciated section holds the lines as written;
         the pauses are made at render time (tunatale-tyfk)."""
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         slow_section = next(s for s in lesson.sections if s.section_type == SectionType.SLOW_SPEED)
         natural_section = next(s for s in lesson.sections if s.section_type == SectionType.NATURAL_SPEED)
         dialogue = [p.text for p in slow_section.phrases if p.role != "narrator"]
@@ -130,14 +144,16 @@ class TestStoryGeneration:
 
     async def test_generate_translated_interleaves(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         trans_section = next(s for s in lesson.sections if s.section_type == SectionType.TRANSLATED)
         narrator_translations = [p for p in trans_section.phrases if p.role == "narrator" and p.language_code == "en"]
         assert len(narrator_translations) >= 2  # at least the translations (not just scene labels)
 
     async def test_generate_uses_system_prompt(self, generator, language, mock_llm):
         day = _make_curriculum_day()
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         call_kwargs = mock_llm.complete.call_args_list[0]
         assert call_kwargs.kwargs.get("system_prompt") is not None or (
             len(call_kwargs.args) > 1 and call_kwargs.args[1] is not None
@@ -145,7 +161,9 @@ class TestStoryGeneration:
 
     async def test_generate_populates_key_phrases(self, generator, language):
         day = _make_curriculum_day()
-        lesson = await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         assert len(lesson.key_phrases) == 2
         phrases = {kp.phrase: kp.translation for kp in lesson.key_phrases}
         assert phrases["dober dan"] == "good day"
@@ -156,7 +174,7 @@ class TestStoryGeneration:
         client.complete = AsyncMock(return_value=_mock_story_response(include_glosses=True))
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
-        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         glosses = lesson.generation_metadata.get("token_glosses", {})
         assert isinstance(glosses, dict)
         assert glosses.get("dober") == "good"
@@ -178,7 +196,7 @@ class TestStoryGeneration:
         client.complete = AsyncMock(return_value=json.dumps(data))
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
-        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         glosses = lesson.generation_metadata.get("token_glosses", {})
         assert glosses.get("hvala") == "thanks"
         assert "Hvala" not in glosses
@@ -189,7 +207,7 @@ class TestStoryGeneration:
         client.complete = AsyncMock(return_value=_mock_story_response(include_glosses=True))
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
-        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         glosses = lesson.generation_metadata.get("token_glosses", {})
         assert glosses.get("dober") == "good"
         assert glosses.get("kavo") == "coffee"
@@ -203,7 +221,7 @@ class TestStoryGeneration:
         client.complete = AsyncMock(return_value=json.dumps(data))
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
-        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        lesson = await gen.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         glosses = lesson.generation_metadata.get("token_glosses", {})
         assert glosses.get("dober") == "good"  # real entries survive
         assert "extra" not in glosses  # empty translation skipped
@@ -318,14 +336,16 @@ class TestStoryGeneration:
 
     async def test_generate_passes_cefr_level_in_user_prompt(self, generator, language, mock_llm):
         day = _make_curriculum_day()
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, cefr_level="B1")
+        await generator.generate(
+            curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, cefr_level="B1", owner=True
+        )
         call_kwargs = mock_llm.complete.call_args_list[0]
         user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
         assert "B1" in user_prompt
 
     async def test_generate_default_cefr_level_is_a2(self, generator, language, mock_llm):
         day = _make_curriculum_day()
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         call_kwargs = mock_llm.complete.call_args_list[0]
         user_prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs.get("prompt", "")
         assert "A2" in user_prompt
@@ -396,7 +416,7 @@ class TestStoryGeneration:
 
     async def test_generate_system_prompt_contains_slovene_style_notes(self, generator, language, mock_llm):
         day = _make_curriculum_day()
-        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER)
+        await generator.generate(curriculum_day=day, language=language, strategy=ContentStrategy.WIDER, owner=True)
         call_kwargs = mock_llm.complete.call_args_list[0]
         system_prompt = call_kwargs.kwargs.get("system_prompt", "")
         # Style notes for Slovene must include the izvinite/oprostite guardrail
@@ -433,7 +453,7 @@ class TestStoryGenerationResilience:
         client = _make_metadata_client(["not json", _mock_story_response()])
         gen = StoryGenerator(llm_client=client)
         lesson = await gen.generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert isinstance(lesson, Lesson)
         # Two story attempts (the retry this test is about) plus the gloss pass
@@ -447,7 +467,9 @@ class TestStoryGenerationResilience:
         client = _make_metadata_client(["not json", "still not json"])
         gen = StoryGenerator(llm_client=client)
         with pytest.raises(StoryGenerationError):
-            await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+            await gen.generate(
+                curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
+            )
         assert client.complete.call_count == 2
 
     async def test_truncated_response_bumps_retry_max_tokens(self, language):
@@ -462,7 +484,7 @@ class TestStoryGenerationResilience:
         )
         gen = StoryGenerator(llm_client=client)
         lesson = await gen.generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert isinstance(lesson, Lesson)
         assert client.complete.call_args_list[0].kwargs["max_tokens"] == 4096
@@ -477,7 +499,9 @@ class TestStoryGenerationResilience:
             usage={"prompt_tokens": 7900},
         )
         gen = StoryGenerator(llm_client=client)
-        await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+        await gen.generate(
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
+        )
         assert client.complete.call_args_list[1].kwargs["max_tokens"] == 4096
 
     async def test_truncated_error_message_mentions_truncation(self, language):
@@ -490,7 +514,9 @@ class TestStoryGenerationResilience:
         )
         gen = StoryGenerator(llm_client=client)
         with pytest.raises(StoryGenerationError, match="truncated"):
-            await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+            await gen.generate(
+                curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
+            )
         # No usage info → no basis for a bump; retry keeps the same cap.
         assert client.complete.call_args_list[1].kwargs["max_tokens"] == 4096
 
@@ -502,7 +528,9 @@ class TestStoryGenerationResilience:
         client = _make_metadata_client(["junk", "more junk"], provider="ollama")
         gen = StoryGenerator(llm_client=client)
         with pytest.raises(StoryGenerationError, match="Ollama.*rate-limited"):
-            await gen.generate(curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER)
+            await gen.generate(
+                curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
+            )
 
 
 class TestBuildLessonFromStory:
@@ -611,7 +639,7 @@ class TestNorwegianStoryGeneration:
     async def test_generates_lesson_in_norwegian(self, norwegian_generator, norwegian):
         day = _make_curriculum_day()
         lesson = await norwegian_generator.generate(
-            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER, owner=True
         )
         assert isinstance(lesson, Lesson)
         assert lesson.language_code == "no"
@@ -619,7 +647,7 @@ class TestNorwegianStoryGeneration:
     async def test_key_phrases_use_norwegian_voice(self, norwegian_generator, norwegian):
         day = _make_curriculum_day()
         lesson = await norwegian_generator.generate(
-            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER, owner=True
         )
         kp = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
         l2_phrases = [p for p in kp.phrases if p.language_code == "no"]
@@ -631,7 +659,7 @@ class TestNorwegianStoryGeneration:
         (mor-gen), proving section_builder routes through the active language."""
         day = _make_curriculum_day()
         lesson = await norwegian_generator.generate(
-            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER, owner=True
         )
         kp = next(s for s in lesson.sections if s.section_type == SectionType.KEY_PHRASES)
         texts = [p.text for p in kp.phrases]
@@ -656,7 +684,7 @@ class TestNorwegianStoryGeneration:
         """
         day = _make_curriculum_day()
         lesson = await norwegian_generator.generate(
-            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER, owner=True
         )
         l2_phrases = [p for s in lesson.sections for p in s.phrases if p.language_code == "no"]
         # Vacuity guard: `all()` over an empty list is True, which is exactly how
@@ -673,7 +701,7 @@ class TestNorwegianStoryGeneration:
         """
         day = _make_curriculum_day()
         lesson = await norwegian_generator.generate(
-            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER
+            curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER, owner=True
         )
         assert SectionType.NATURAL_SPEED in {s.section_type for s in lesson.sections}
 
@@ -682,7 +710,7 @@ class TestNorwegianStoryGeneration:
         client.complete = AsyncMock(return_value=self._norwegian_response())
         gen = StoryGenerator(llm_client=client)
         day = _make_curriculum_day()
-        await gen.generate(curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER)
+        await gen.generate(curriculum_day=day, language=norwegian, strategy=ContentStrategy.WIDER, owner=True)
         system_prompt = client.complete.call_args_list[0].kwargs.get("system_prompt", "")
         assert "Bokmål" in system_prompt
         assert "Allowed cases for A1" not in system_prompt
@@ -695,7 +723,7 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        prompts = build_story_prompts(day, language, ContentStrategy.WIDER, "A2")
+        prompts = build_story_prompts(day, language, ContentStrategy.WIDER, "A2", owner=True)
         system = prompts.system_prompt
         user = prompts.user_prompt
         assert isinstance(system, str) and len(system) > 0
@@ -705,7 +733,7 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2").user_prompt
+        user = build_story_prompts(day, language, ContentStrategy.WIDER, "A2", owner=True).user_prompt
         for c in day.collocations:
             assert c in user
 
@@ -713,7 +741,7 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        user = build_story_prompts(day, language, ContentStrategy.WIDER, "B1").user_prompt
+        user = build_story_prompts(day, language, ContentStrategy.WIDER, "B1", owner=True).user_prompt
         assert "B1" in user
 
     def test_deeper_strategy_without_a_source_carries_no_placeholder(self, language):
@@ -723,7 +751,7 @@ class TestBuildStoryPrompts:
         from app.generation.story import build_story_prompts
 
         day = _make_curriculum_day()
-        user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2").user_prompt
+        user = build_story_prompts(day, language, ContentStrategy.DEEPER, "A2", owner=True).user_prompt
         assert "SOURCE TRANSCRIPT" not in user
         assert "(not available)" not in user
 

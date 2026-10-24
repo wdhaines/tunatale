@@ -370,13 +370,13 @@ class TestRebuildAndDescribe:
         lesson = store.get_lesson("lesson-day-1")
         lesson.generation_metadata.pop("story")
 
-        assert rebuild_mod.rebuild(store, lesson, 1, "cur-1", get_language(_LANG), srs_db=None) is None
+        assert rebuild_mod.rebuild(store, lesson, 1, "cur-1", get_language(_LANG), srs_db=None, owner=True) is None
 
     def test_rebuild_resolves_todays_voice_map(self, tmp_path):
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
 
-        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None)
+        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None, owner=True)
 
         roles = {p.role: p.voice_id for s in fresh.sections for p in s.phrases if p.role}
         assert roles["male-2"] == get_language(_LANG).tts_voice_map["male-2"]
@@ -387,12 +387,15 @@ class TestRebuildAndDescribe:
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
 
-        assert rebuild_mod.rebuild(store, stored, 1, "no-such-curriculum", get_language(_LANG), srs_db=None) is not None
+        assert (
+            rebuild_mod.rebuild(store, stored, 1, "no-such-curriculum", get_language(_LANG), srs_db=None, owner=True)
+            is not None
+        )
 
     def test_describe_counts_voice_and_text_changes(self, tmp_path):
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
-        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None)
+        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None, owner=True)
 
         summary = rebuild_mod.describe(stored, fresh)
 
@@ -405,7 +408,7 @@ class TestRebuildAndDescribe:
         whose shape moved is not a voice swap and wants human eyes."""
         store = _seed(tmp_path)
         stored = store.get_lesson("lesson-day-1")
-        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None)
+        fresh = rebuild_mod.rebuild(store, stored, 1, "cur-1", get_language(_LANG), srs_db=None, owner=True)
         fresh.sections[0].phrases.pop()
 
         assert "STRUCTURE DIFFERS" in rebuild_mod.describe(stored, fresh)
@@ -636,7 +639,9 @@ class TestTheClosingDrill:
         store, language = self._store_with(
             self._wake([("Moadto ko sa haya.", "I am going to the wake."), ("Mouban ko ugma.", "I will come along.")])
         )
-        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None)
+        rebuilt = rebuild_mod.rebuild(
+            store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None, owner=True
+        )
         assert rebuilt.generation_metadata["affix_drill"] == {
             "pattern": "mo-mi",
             "roots": ["adto", "uban"],
@@ -671,7 +676,9 @@ class TestTheClosingDrill:
             )
 
         def answers(deck) -> list[str]:
-            rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=deck)
+            rebuilt = rebuild_mod.rebuild(
+                store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=deck, owner=True
+            )
             return [p.text for p in rebuilt.sections[-1].phrases if p.role == "answer"]
 
         with_deck = answers(srs_db)
@@ -701,7 +708,9 @@ class TestTheClosingDrill:
         )
 
         def pieces_of_gabii(deck) -> list[str]:
-            rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=deck)
+            rebuilt = rebuild_mod.rebuild(
+                store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=deck, owner=True
+            )
             return [p.text for p in rebuilt.sections[0].phrases if p.source_word == "gabii" and p.text != "gabii"]
 
         assert pieces_of_gabii(None)
@@ -722,7 +731,7 @@ class TestTheClosingDrill:
             self._wake([("Moadto ko.", "I am going."), ("Mouban ko ugma.", "I will come along.")]), language=language
         )
         store.save_lesson(
-            "wake-1", "funeral", 1, rebuild_mod.rebuild(store, built, 1, "funeral", language, srs_db=None)
+            "wake-1", "funeral", 1, rebuild_mod.rebuild(store, built, 1, "funeral", language, srs_db=None, owner=True)
         )
 
         def dry_run() -> str:
@@ -758,7 +767,9 @@ class TestTheClosingDrill:
 
     def test_a_story_that_does_not_is_rebuilt_without_one(self):
         store, language = self._store_with(self._wake([("Maayong gabii.", "Good evening.")]))
-        rebuilt = rebuild_mod.rebuild(store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None)
+        rebuilt = rebuild_mod.rebuild(
+            store, store.get_lesson("wake-1"), 1, "funeral", language, srs_db=None, owner=True
+        )
         assert "affix_drill" not in rebuilt.generation_metadata
 
 

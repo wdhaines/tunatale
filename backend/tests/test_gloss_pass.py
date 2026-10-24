@@ -302,7 +302,7 @@ class TestGeneratorRunsTheGlossPass:
     async def test_second_call_supplies_the_glosses(self, language):
         client = _two_call_client(_story())
         lesson = await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert client.complete.await_count == 2
         glosses = lesson.generation_metadata["token_glosses"]
@@ -313,7 +313,7 @@ class TestGeneratorRunsTheGlossPass:
         """The splice happens before the build, so the paste round-trip is unchanged."""
         client = _two_call_client(_story())
         lesson = await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         stored = lesson.generation_metadata["story"]
         assert [g["word"] for g in stored["dialogue_glosses"]] == ["dober", "dan", "prosim", "kavo"]
@@ -331,7 +331,7 @@ class TestGeneratorRunsTheGlossPass:
         )
         client = _two_call_client(_story(), gloss_reply=reply)
         lesson = await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert lesson.generation_metadata["verb_base_glosses"].get("prosim") == "ask"
 
@@ -339,7 +339,7 @@ class TestGeneratorRunsTheGlossPass:
         """The paste route and legacy cassettes carry their own glosses — never re-ask."""
         client = _two_call_client(_story(include_glosses=True))
         lesson = await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert client.complete.await_count == 1
         assert lesson.generation_metadata["token_glosses"].get("dober") == "good"
@@ -349,7 +349,7 @@ class TestGeneratorRunsTheGlossPass:
         story["scenes"] = []
         client = _two_call_client(story)
         await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert client.complete.await_count == 1
 
@@ -453,7 +453,7 @@ class TestGlossFailureDegrades:
     async def test_unparseable_gloss_reply_still_builds_the_lesson(self, language, caplog):
         client = _two_call_client(_story(), gloss_reply="not json at all")
         lesson = await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert lesson.title == "Ordering Coffee"
         assert lesson.generation_metadata["token_glosses"] == {}
@@ -463,7 +463,7 @@ class TestGlossFailureDegrades:
         client = MagicMock()
         client.complete = AsyncMock(side_effect=[json.dumps(_story()), RuntimeError("groq down")])
         lesson = await StoryGenerator(llm_client=client).generate(
-            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+            curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
         )
         assert lesson.title == "Ordering Coffee"
         assert "gloss pass" in caplog.text.lower()
@@ -684,7 +684,7 @@ class TestMissingLogUsesTheCoveragePredicate:
         client = _two_call_client(_story(), gloss_reply=_GLOSS_REPLY)
         with caplog.at_level(logging.WARNING):
             await StoryGenerator(llm_client=client).generate(
-                curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER
+                curriculum_day=_make_curriculum_day(), language=language, strategy=ContentStrategy.WIDER, owner=True
             )
         assert "LLM omitted" not in caplog.text
 

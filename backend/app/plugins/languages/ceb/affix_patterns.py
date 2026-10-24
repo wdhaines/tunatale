@@ -75,6 +75,7 @@ PATTERNS: tuple[AffixPattern, ...] = (
             "The second is for a state that has come about.",
         ),
         # Already the owner's from Tagalog: reviewed, not taught (tunatale-ve4p.26).
+        # The second learner has no Tagalog, so their deck is taught it (tunatale-bi67).
         review_only=True,
     ),
     # The potential (Wolff, maka-: "can", and "had the chance or managed to").

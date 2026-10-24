@@ -307,7 +307,7 @@ def test_a_drill_served_without_the_learners_deck_has_no_progress():
     """Nothing to count listens or cards from, so no meters rather than zeros."""
     lesson = _wake()
     lesson.generation_metadata["affix_drill"] = {"pattern": "mo-mi", "roots": ["adto"], "new_roots": []}
-    served = serialize_lesson("wake", lesson)
+    served = serialize_lesson("wake", lesson, owner=True)
     assert served["drill"]["pattern"] == "mo-mi"
     assert "progress" not in served["drill"]
 

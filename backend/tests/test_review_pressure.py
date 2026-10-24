@@ -44,7 +44,7 @@ class TestEmptySetIsUnchanged:
     @pytest.mark.parametrize("pressure", list(ReviewPressure))
     def test_no_review_words_renders_exactly_the_old_literal(self, language, strategy, pressure):
         user = build_story_prompts(
-            _make_curriculum_day(), language, strategy, "A2", review_pressure=pressure
+            _make_curriculum_day(), language, strategy, "A2", review_pressure=pressure, owner=True
         ).user_prompt
         assert EMPTY_SLOT in user
 
@@ -52,7 +52,7 @@ class TestEmptySetIsUnchanged:
         """The dial must be invisible with an empty set — otherwise the pressure
         parameter alone would re-key every cassette recorded before it existed."""
         prompts = {
-            build_story_prompts(_make_curriculum_day(), language, strategy, "A2", review_pressure=p)[1]
+            build_story_prompts(_make_curriculum_day(), language, strategy, "A2", review_pressure=p, owner=True)[1]
             for p in ReviewPressure
         }
         assert len(prompts) == 1

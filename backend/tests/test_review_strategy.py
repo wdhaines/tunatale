@@ -87,12 +87,12 @@ class TestTheTemplate:
 
 class TestBuilding:
     def test_the_prompt_contains_the_due_words(self, seeded_db, language):
-        prompts = build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db)
+        prompts = build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db, owner=True)
         assert WORD in prompts.user_prompt
         assert prompts.review_words == (WORD,)
 
     def test_the_day_theme_does_not_leak_in(self, seeded_db, language):
-        prompts = build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db)
+        prompts = build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db, owner=True)
         assert "Café vocabulary" not in prompts.user_prompt
         assert "Ljubljana" not in prompts.user_prompt
 
@@ -101,7 +101,13 @@ class TestBuilding:
         requirements", "including none of them is a correct answer" — is
         self-contradictory in a story whose only content IS those words."""
         prompts = build_story_prompts(
-            _day(), language, ContentStrategy.REVIEW, "A2", srs_db=seeded_db, review_pressure=ReviewPressure.NATURAL
+            _day(),
+            language,
+            ContentStrategy.REVIEW,
+            "A2",
+            srs_db=seeded_db,
+            review_pressure=ReviewPressure.NATURAL,
+            owner=True,
         )
         assert "candidates, not requirements" not in prompts.user_prompt
         assert "matters MORE than staying" in prompts.user_prompt
@@ -115,18 +121,18 @@ class TestNothingToReview:
 
     def test_an_empty_set_refuses_rather_than_sending_an_empty_prompt(self, language):
         with SRSDatabase(":memory:") as empty, pytest.raises(NoReviewVocabularyError):
-            build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=empty)
+            build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", srs_db=empty, owner=True)
 
     def test_no_db_at_all_also_refuses(self, language):
         """A caller that forgets the db must not get a themeless, contentless
         prompt — it must get an error naming the reason."""
         with pytest.raises(NoReviewVocabularyError):
-            build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2")
+            build_story_prompts(_day(), language, ContentStrategy.REVIEW, "A2", owner=True)
 
     def test_the_other_strategies_still_accept_an_empty_set(self, language):
         """WIDER and DEEPER have a theme to fall back on, so nothing due is
         normal for them and must stay silent."""
-        prompts = build_story_prompts(_day(), language, ContentStrategy.WIDER, "A2")
+        prompts = build_story_prompts(_day(), language, ContentStrategy.WIDER, "A2", owner=True)
         assert "(none yet)" in prompts.user_prompt
 
 

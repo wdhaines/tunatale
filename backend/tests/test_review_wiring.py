@@ -120,7 +120,7 @@ def stored_curriculum():
 class TestBuildStoryPrompts:
     def test_a_db_puts_real_review_words_in_the_prompt(self, seeded_db, language):
         user = build_story_prompts(
-            _curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db
+            _curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db, owner=True
         ).user_prompt
         assert SL_WORD in user
         assert "(none yet)" not in user
@@ -128,12 +128,12 @@ class TestBuildStoryPrompts:
     def test_no_db_is_the_old_prompt_byte_for_byte(self, language):
         """Every story cassette was recorded without a db. `srs_db=None` must
         still key identically, or the whole recorded corpus is orphaned."""
-        user = build_story_prompts(_curriculum_day(), language, ContentStrategy.WIDER, "A2").user_prompt
+        user = build_story_prompts(_curriculum_day(), language, ContentStrategy.WIDER, "A2", owner=True).user_prompt
         assert "**Review Collocations to Include:**\n(none yet)\n" in user
 
     def test_pressure_reaches_the_rendered_block(self, seeded_db, language):
         natural = build_story_prompts(
-            _curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db
+            _curriculum_day(), language, ContentStrategy.WIDER, "A2", srs_db=seeded_db, owner=True
         ).user_prompt
         insistent = build_story_prompts(
             _curriculum_day(),
@@ -142,6 +142,7 @@ class TestBuildStoryPrompts:
             "A2",
             srs_db=seeded_db,
             review_pressure=ReviewPressure.INSISTENT,
+            owner=True,
         ).user_prompt
         assert natural != insistent
         assert "candidates, not requirements" in natural
@@ -160,6 +161,7 @@ class TestAutoGeneratePath:
             language=language,
             strategy=ContentStrategy.WIDER,
             srs_db=seeded_db,
+            owner=True,
         )
         # call_args_list[0], not call_args: the LAST call is now the gloss pass
         # (bd tunatale-yet7), which carries dialogue rather than review words.

@@ -168,6 +168,7 @@ async def _generate(language, db):
         language=language,
         strategy=ContentStrategy.WIDER,
         srs_db=db,
+        owner=True,
     )
 
 
@@ -231,7 +232,7 @@ class TestTheLessonResponseCarriesTheMeter:
         from app.api._serializers import serialize_lesson
 
         lesson = await _generate(language, db)
-        payload = serialize_lesson("l1", lesson)
+        payload = serialize_lesson("l1", lesson, owner=True)
 
         assert set(payload["review_requested"]) == {PRESENT_WORD, ABSENT_WORD}
         assert payload["review_used"] == [PRESENT_WORD]
@@ -243,7 +244,7 @@ class TestTheLessonResponseCarriesTheMeter:
         from app.api._serializers import serialize_lesson
         from app.models.lesson import Lesson
 
-        payload = serialize_lesson("l1", Lesson(title="T", language_code="sl", sections=[]))
+        payload = serialize_lesson("l1", Lesson(title="T", language_code="sl", sections=[]), owner=True)
         assert payload["review_requested"] == []
         assert payload["review_used"] == []
 
@@ -251,6 +252,6 @@ class TestTheLessonResponseCarriesTheMeter:
         from app.api._serializers import serialize_lesson
 
         lesson = await _generate(language, db)
-        payload = serialize_lesson("l1", lesson)
+        payload = serialize_lesson("l1", lesson, owner=True)
         for heavy in ("token_glosses", "sentence_translations", "story", "generation_metadata"):
             assert heavy not in payload, f"{heavy} would bloat every lesson fetch on the reading path"

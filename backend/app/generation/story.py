@@ -159,6 +159,7 @@ def build_story_prompts(
     review_pressure: ReviewPressure = ReviewPressure.NATURAL,
     content_store: ContentStore | None = None,
     curriculum_id: str | None = None,
+    owner: bool,
 ) -> StoryPrompts:
     """Build the (system_prompt, user_prompt) pair for story generation.
 
@@ -202,7 +203,7 @@ def build_story_prompts(
         content_store.get_curriculum(curriculum_id) if content_store is not None and curriculum_id is not None else None
     )
     pattern = (
-        pattern_for_day(curriculum, curriculum_day, srs_db=srs_db, store=content_store)
+        pattern_for_day(curriculum, curriculum_day, srs_db=srs_db, store=content_store, owner=owner)
         if curriculum is not None
         else named_pattern(language.code, curriculum_day)
     )
@@ -338,6 +339,7 @@ class StoryGenerator:
         review_pressure: ReviewPressure = ReviewPressure.NATURAL,
         content_store: ContentStore | None = None,
         curriculum_id: str | None = None,
+        owner: bool,
     ) -> Lesson:
         """Generate a Lesson for the given curriculum day.
 
@@ -351,6 +353,7 @@ class StoryGenerator:
             content_store: The language's content store, for DEEPER's source
                 transcript (the previous stored day's dialogue).
             curriculum_id: The curriculum *curriculum_day* belongs to.
+            owner: Whether *srs_db* is the owner's deck (``pattern_gate``).
 
         Returns:
             Parsed Lesson with 4 Pimsleur sections built mechanically from LLM JSON.
@@ -364,6 +367,7 @@ class StoryGenerator:
             review_pressure=review_pressure,
             content_store=content_store,
             curriculum_id=curriculum_id,
+            owner=owner,
         )
         return await self._complete(prompts, language, f"day {curriculum_day.day} ({strategy.value})")
 
