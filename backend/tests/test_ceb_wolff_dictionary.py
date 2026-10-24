@@ -230,6 +230,24 @@ def test_decode_stative_and_mutual_classes():
     assert [a for a, _ in decode_classes("C; c6")] == ["mag-/nag-", "magka-/nagka-", "makig-/nakig-", "i-/gi-"]
 
 
+def test_maka_on_a_verb_of_state_names_the_cause_unless_b3():
+    # Wolff §7.12: class B takes maka- (or makapa-) 'cause s.t. to become [so-and-so]', so its subject is
+    # the cause; §7.121: B3 verbs take maka- meaning 'become' instead, and B3(1) has both readings.
+    # Live due cards showed delikado [B12; b5], kalma [B; a12], unsa [B16] as 'the one it happens to'.
+    assert dict(decode_classes("B16"))["maka-/naka-"] == "what causes it"
+    assert dict(decode_classes("B"))["maka-/naka-"] == "what causes it"
+    assert dict(decode_classes("B12; b5"))["maka-/naka-"] == "what causes it"  # delikado
+    assert dict(decode_classes("B1236; b"))["maka-/naka-"] == "the one it happens to"  # hibalo 'come to know'
+    assert dict(decode_classes("B36"))["maka-/naka-"] == "the one it happens to"  # dayon
+    assert dict(decode_classes("B3(1)"))["maka-/naka-"] == "the one it happens to, or what causes it"  # lup-ut2
+    assert "maka-/naka-" not in dict(decode_classes("B5"))
+    # controls: the other B affixes keep the undergoer, an action verb's maka- is the doer, and on a
+    # mixed code (nindot [APB; a2]) A's doer comes first
+    assert dict(decode_classes("B16"))["ma-/na-"] == "the one it happens to"
+    assert dict(decode_classes("A"))["maka-/naka-"] == "the one doing it"
+    assert dict(decode_classes("APB; a2"))["maka-/naka-"] == "the one doing it"
+
+
 def test_n_adds_man_to_a_stative_verb_as_to_an_action_verb():
     """§7.121: 'A symbol BN indicates that paN- may be added to the base with the
     volitional affix (mu-)', as AN does for class A (§7.11). Wolff's example is pula."""

@@ -835,3 +835,16 @@ def test_a_root_spelled_as_an_affix_still_takes_the_rule(committed, word, spelli
     # the control: refusing every root written with a hyphen would lose these, which
     # Wolff prints exactly as the rule spells them
     assert committed.by_rule(word) == spelling
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "line"),
+    [
+        ("delikado", "dangerous", "<li>maka-/naka-: what causes it</li>"),  # [B12; b5]
+        ("kalma", "calm", "<li>maka-/naka-: what causes it</li>"),  # [B; a12]: makakalma 'soothe'
+        ("hibalo", "know", "<li>ma-/na-, maka-/naka-: the one it happens to</li>"),  # [B1236; b]: B3 'come to know'
+    ],
+)
+def test_a_verb_of_state_says_who_its_maka_belongs_to(committed, word, english, line):
+    # Wolff §7.12 (class B maka- 'cause s.t. to become') against §7.121 (B3 'become')
+    assert line in committed.card_fields(word, english).details
