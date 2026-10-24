@@ -373,3 +373,98 @@ def _entry(head: str, *senses: tuple[str, str | None, str]) -> dict:
     rows = [{"pos": p, "n": None, "cls": c, "gloss": g, "phrase": None, "ex": None} for p, c, g in senses]
     form = {"label": head, "wolff": head, "hb": head, "short": [], "xref": None, "senses": rows}
     return {"id": head, "heads": [head], "forms": [form]}
+
+
+# ── which surface letters spell the root (tunatale-tofg.3, consumer: the EPUB respeller) ──
+#
+# The book respells Wolff's three vowels by Raisanen's rules: u is o in the ROOT's last
+# syllable and in the affixes mo- and -on. A form that went through §5 (a dropped vowel,
+# a moved consonant, an added h) no longer shows where its root is, so
+# affixes.letter_map(surface, root, affix) says it letter by letter. One entry per letter
+# of strip_marks(surface), hyphens included:
+#   int  the index of the root letter (in strip_marks(root)) this letter spells. A letter a
+#        rule changed (l -> d, d -> r, a final r -> h) is the letter it replaced; a letter
+#        a rule moved (5.14) keeps its index; a dropped root letter appears nowhere.
+#   "p" / "i" / "s"  a prefix / infix / suffix letter. paN-'s nasal is "p" (the root
+#        consonant it stands in for appears nowhere).
+#   "+"  a letter that spells neither: 5.13's h, and a glottal-stop hyphen the root
+#        spells with no letter of its own (káun's, walà's) or that comes before a
+#        vowel-initial root (pag-agáwan).
+# None when the rules do not turn (root, affix) into surface.
+
+LETTER_MAPS: list[tuple[str, str, str, tuple[int | str, ...]]] = [
+    # O1, §5's own worked examples
+    ("káun", "nag-(→)", "nagkaun", ("p", "p", "p", 0, 1, 2, 3)),
+    ("tugnaw", "-un(→)", "tugnawun", (0, 1, 2, 3, 4, 5, "s", "s")),
+    ("sakay", "nag-(←)", "nagsákay", ("p", "p", "p", 0, 1, 2, 3, 4)),
+    ("dakup", "-an", "dakpan", (0, 1, 2, 4, "s", "s")),  # 5.12: the root's last vowel drops
+    ("pisik", "-an", "piskan", (0, 1, 2, 4, "s", "s")),
+    ("lakat", "-unun", "laktunun", (0, 1, 2, 4, "s", "s", "s", "s")),
+    ("kalímut", "-i", "kalimti", (0, 1, 2, 3, 4, 6, "s")),
+    ("bása", "-un", "basáhun", (0, 1, 2, 3, "+", "s", "s")),  # 5.13 h
+    ("adtu", "-un", "adtúun", (0, 1, 2, 3, "s", "s")),
+    ("kabaláka", "-an", "kabalak-an", (0, 1, 2, 3, 4, 5, 6, "+", "s", "s")),
+    ("sulti", "-un", "sultíhun", (0, 1, 2, 3, 4, "+", "s", "s")),
+    ("sulti", "-ánay", "sultiánay", (0, 1, 2, 3, 4, "s", "s", "s", "s")),
+    ("káun", "-a", "kan-a", (0, 1, 3, "+", "s")),  # 5.14: the glottal stop between a and u moves
+    ("luhud", "-an", "ludhan", (0, 1, 4, 2, "s", "s")),
+    ("túu", "-an", "tuhúan", (0, 1, "+", 2, "s", "s")),
+    ("ngálan", "-an", "nganlan", (0, 1, 2, 5, 3, "s", "s")),
+    ("sulud", "-un", "sudlun", (0, 1, 4, 2, "s", "s")),
+    ("inum", "-a", "imna", (0, 3, 1, "s")),
+    ("putus", "-un", "pustun", (0, 1, 4, 2, "s", "s")),
+    ("lusut", "-an", "lutsan", (0, 1, 4, 2, "s", "s")),
+    ("búkid", "ka-an", "kabukíran", ("p", "p", 0, 1, 2, 3, 4, "s", "s")),  # 5.15 d -> r
+    ("walà", "-un", "wad-un", (0, 1, 2, "+", "s", "s")),  # l -> d
+    ("hurut", "-un", "hutdun", (0, 1, 4, 2, "s", "s")),
+    ("pálung", "-an", "pagngan", (0, 1, 2, 4, 5, "s", "s")),  # l -> g before a velar
+    ("haluk", "-an", "hagkan", (0, 1, 2, 4, "s", "s")),
+    ("mantinil", "-an", "mantinihan", (0, 1, 2, 3, 4, 5, 6, 7, "s", "s")),  # a final l -> h
+    ("imbitar", "-un", "imbitahun", (0, 1, 2, 3, 4, 5, 6, "s", "s")),
+    # O1B, forms Wolff writes out
+    ("sulud", "-in-+-an", "sinudlan", (0, "i", "i", 1, 4, 2, "s", "s")),
+    ("dala", "-in-+-an", "dinalhan", (0, "i", "i", 1, 2, "+", "s", "s")),
+    ("ubra", "-in-+-an", "inubráhan", ("i", "i", 0, 1, 2, 3, "+", "s", "s")),
+    ("íkut", "-in-+-an", "iniktan", ("i", "i", 0, 1, 3, "s", "s")),
+    ("matay", "ka-+-in-+-an", "kinamatyan", ("p", "i", "i", "p", 0, 1, 2, 4, "s", "s")),
+    ("káun", "-anan", "kan-anan", (0, 1, 3, "+", "s", "s", "s", "s")),
+    ("táwu", "-ánun", "tawhánun", (0, 1, 2, "+", "s", "s", "s", "s")),
+    ("hapun", "-ánun", "hapunánun", (0, 1, 2, 3, 4, "s", "s", "s", "s")),
+    ("agaw", "pag-+-an", "pag-agáwan", ("p", "p", "p", "+", 0, 1, 2, 3, "s", "s")),
+    # the book's Lessons 1-4 (the course's q written as the dictionary writes it)
+    ("tuun", "-in-+-an", "tinun-an", (0, "i", "i", 1, 3, "+", "s", "s")),  # the u left is the root's FIRST
+    ("dala", "-un", "dad-un", (0, 1, 2, "+", "s", "s")),  # dádqun
+    ("uwan", "mu-", "muuwan", ("p", "p", 0, 1, 2, 3)),  # muquwán: mu- is the book's mo-
+    ("bása", "paN-", "pamása", ("p", "p", "p", 1, 2, 3)),
+]
+
+
+@pytest.mark.parametrize(
+    ("root", "affix", "form", "expected"), LETTER_MAPS, ids=[f"{r}+{a}={f}" for r, a, f, _ in LETTER_MAPS]
+)
+def test_letter_map_says_which_letters_spell_the_root(root, affix, form, expected):
+    from app.plugins.languages.ceb import affixes
+
+    assert affixes.letter_map(form, root, affix) == expected
+
+
+def test_letter_map_ignores_marks_and_refuses_a_form_the_rules_do_not_make():
+    from app.plugins.languages.ceb import affixes
+
+    assert affixes.letter_map("basahun", "bása", "-un") == affixes.letter_map("basáhun", "bása", "-un")
+    assert affixes.letter_map("dakpan", "sulud", "-an") is None
+    assert affixes.letter_map("palitan", "palit", "-un") is None
+
+
+@pytest.mark.parametrize(("affix", "form"), O2, ids=[f"{a}={f}" for a, f in O2])
+def test_every_chart_form_of_palit_has_a_letter_map(affix, form):
+    """Shape, on every chart affix: one entry per letter, each root letter at most once,
+    prefix letters before the root and suffix letters after it."""
+    from app.plugins.languages.ceb import affixes
+
+    got = affixes.letter_map(form, "palit", affix)
+    assert got is not None and len(got) == len(strip_marks(form))
+    ints = [x for x in got if isinstance(x, int)]
+    assert len(ints) == len(set(ints)) and all(0 <= x < len("palit") for x in ints)
+    first, last = got.index(ints[0]), got.index(ints[-1])
+    assert "p" not in got[first:] and "s" not in got[: last + 1]

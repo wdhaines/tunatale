@@ -26,6 +26,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from functools import cache
+from itertools import chain, repeat
 from typing import Any, NamedTuple
 
 _VOWELS = frozenset("aiueo")
@@ -48,6 +49,10 @@ class Analysis(NamedTuple):
 class _Sound(NamedTuple):
     s: str  # a vowel letter, a consonant letter, "ŋ" or "ʔ"
     long: bool = False
+    # Which letters of the root this sound spells (indices into strip_marks(root)), or the
+    # tag of what put it there: "p" prefix, "i" infix, "s" suffix, "+" a rule's own. One
+    # entry per letter it is written with. generate() never looks at it; letter_map() does.
+    origin: tuple[int | str, ...] = ()
 
 
 # ── the affixes: §6.1's chart, §6.2's derivational prefixes, and the suffixes §5 uses ──────────
@@ -181,8 +186,9 @@ def _sounds(word: str) -> list[_Sound]:
     return out
 
 
-def _spell(sounds: list[_Sound]) -> str:
-    out = ""
+def _pieces(sounds: list[_Sound]) -> list[tuple[str, tuple[int | str, ...]]]:
+    """What each written piece of the spelling is, with the origin of the sound it spells."""
+    out: list[tuple[str, tuple[int | str, ...]]] = []
     for k, snd in enumerate(sounds):
         prev = sounds[k - 1].s if k else ""
         nxt = sounds[k + 1].s if k + 1 < len(sounds) else ""
@@ -190,16 +196,26 @@ def _spell(sounds: list[_Sound]) -> str:
             if k == 0 or nxt in _VOWELS and prev in _VOWELS:
                 continue  # unwritten word-initially and between vowels
             if prev in _VOWELS:
-                out = unicodedata.normalize("NFD", out)
-                out = out[:-1] if out.endswith(_ACUTE) else out  # one mark per vowel: the glottal's
-                out += _GRAVE
+                text, origin = out[-1]
+                text = unicodedata.normalize("NFD", text)
+                text = text[:-1] if text.endswith(_ACUTE) else text  # one mark per vowel: the glottal's
+                out[-1] = (text + _GRAVE, origin)
             else:
-                out += "-"
+                out.append(("-", snd.origin))
         elif snd.s == "ŋ":
-            out += "ng"
+            out.append(("ng", snd.origin))
         else:
-            out += snd.s + (_ACUTE if snd.long else "")
-    return unicodedata.normalize("NFC", out)
+            out.append((snd.s + (_ACUTE if snd.long else ""), snd.origin))
+    return out
+
+
+def _spell(sounds: list[_Sound]) -> str:
+    return unicodedata.normalize("NFC", "".join(text for text, _ in _pieces(sounds)))
+
+
+def _tagged(sounds: Iterable[_Sound], tag: str) -> tuple[_Sound, ...]:
+    """*sounds* (an affix's) marked as *tag*'s: one tag per letter they are written with."""
+    return tuple(snd._replace(origin=(tag,) * (2 if snd.s == "ŋ" else 1)) for snd in sounds)
 
 
 # ── §5.1: the stem a suffix attaches to ───────────────────────────────────────────────────────
@@ -215,15 +231,16 @@ def _stems(root: list[_Sound]) -> set[tuple[tuple[_Sound, ...], tuple[str, ...]]
     stems: set[tuple[tuple[_Sound, ...], tuple[str, ...]]] = set()
     if not _is_c(base[-1]):
         # 5.13: a vowel-final root adds h or a glottal stop
-        stems |= {(base + (_Sound("h"),), ("5.13",)), (base + (_Sound("ʔ"),), ("5.13",))}
+        stems |= {(base + (_Sound("h", origin=("+",)),), ("5.13",)), (base + (_Sound("ʔ", origin=("+",)),), ("5.13",))}
     else:
         stems.add((base, ()))
         if base[-1].s in _LIQUIDS:
-            stems.add((base[:-1] + (_Sound("h"),), ("5.15",)))  # imbitar -> imbitah-
+            stems.add((base[:-1] + (_Sound("h", origin=base[-1].origin),), ("5.15",)))  # imbitar -> imbitah-
     for stem, rules in list(stems):
         # 5.14: ʔVh becomes hVʔ (túu + h -> tuhuʔ)
         if len(stem) >= 3 and stem[-3].s == "ʔ" and not _is_c(stem[-2]) and stem[-1].s == "h":
-            stems.add((stem[:-3] + (_Sound("h"), stem[-2], _Sound("ʔ")), (*rules, "5.14")))
+            moved = (_Sound("h", origin=("+",)), stem[-2], _Sound("ʔ", origin=stem[-3].origin))
+            stems.add((stem[:-3] + moved, (*rules, "5.14")))
         # 5.12: the vowel of the final syllable drops (dakup -> dakp-)
         if len(stem) >= 3 and _is_c(stem[-3]) and not _is_c(stem[-2]) and _is_c(stem[-1]):
             dropped = stem[:-2] + stem[-1:]
@@ -241,14 +258,14 @@ def _stems(root: list[_Sound]) -> set[tuple[tuple[_Sound, ...], tuple[str, ...]]
                 continue
             near = {stem[j].s for j in (k - 1, k + 1) if 0 <= j < len(stem) and _is_c(stem[j])}
             if near & _VELARS:
-                changed.add((stem[:k] + (_Sound("g"),) + stem[k + 1 :], (*rules, "5.15")))
+                changed.add((stem[:k] + (_Sound("g", origin=stem[k].origin),) + stem[k + 1 :], (*rules, "5.15")))
             elif near and stem[k].s in _LIQUIDS:
-                changed.add((stem[:k] + (_Sound("d"),) + stem[k + 1 :], (*rules, "5.15")))
+                changed.add((stem[:k] + (_Sound("d", origin=stem[k].origin),) + stem[k + 1 :], (*rules, "5.15")))
     return stems | changed
 
 
 def _suffixed(root: list[_Sound], suffix: str) -> set[tuple[tuple[_Sound, ...], tuple[str, ...]]]:
-    tail = tuple(_sounds(suffix))[1:]  # a suffix's own leading glottal is the stem's business
+    tail = _tagged(_sounds(suffix)[1:], "s")  # a suffix's own leading glottal is the stem's business
     out = set()
     for stem, rules in _stems(root):
         word = stem + tail
@@ -257,7 +274,7 @@ def _suffixed(root: list[_Sound], suffix: str) -> set[tuple[tuple[_Sound, ...], 
         k = len(stem) - 1
         if word[k].s == "d" and not _is_c(word[k - 1]) and not _is_c(word[k + 1]):
             for liquid in "rl":
-                out.add((word[:k] + (_Sound(liquid),) + word[k + 1 :], (*rules, "5.15")))
+                out.add((word[:k] + (_Sound(liquid, origin=word[k].origin),) + word[k + 1 :], (*rules, "5.15")))
     return out
 
 
@@ -267,19 +284,20 @@ def _suffixed(root: list[_Sound], suffix: str) -> set[tuple[tuple[_Sound, ...], 
 def _prefixed(prefix: str, word: tuple[_Sound, ...]) -> set[tuple[_Sound, ...]]:
     """*prefix* on *word*. ``N`` is the nasal that takes the place of p b (m), t d s (n) and
     k (ng), and is ng before anything else."""
-    head = tuple(_sounds(prefix.removesuffix("N")))
+    head = _tagged(_sounds(prefix.removesuffix("N")), "p")
     if not prefix.endswith("N"):
         return {head + word}
     first = word[0].s
+    m, n, ng = _tagged([_Sound("m"), _Sound("n"), _Sound("ŋ")], "p")
     if first in "pb":
-        return {head + (_Sound("m"),) + word[1:]}
+        return {head + (m,) + word[1:]}
     if first in "tds":
-        return {head + (_Sound("n"),) + word[1:]}
+        return {head + (n,) + word[1:]}
     if first == "k":
-        return {head + (_Sound("ŋ"),) + word[1:]}
+        return {head + (ng,) + word[1:]}
     if first == "ʔ":  # a vowel-initial root: the glottal may stay or go
-        return {head + (_Sound("ŋ"),) + word, head + (_Sound("ŋ"),) + word[1:]}
-    return {head + (_Sound("ŋ"),) + word}
+        return {head + (ng,) + word, head + (ng,) + word[1:]}
+    return {head + (ng,) + word}
 
 
 # ── the two directions ────────────────────────────────────────────────────────────────────────
@@ -289,11 +307,23 @@ def _infixed(infix: str, word: tuple[_Sound, ...]) -> set[tuple[_Sound, ...]]:
     """*infix* after the word's first consonant, a vowel-initial word's glottal included
     (k-in-a-matay-an, ʔ-in-ubra-han); before l, -in- may also come first as ni-
     (Wolff's entry 'ni-, -in-': linaktan, nilaktan)."""
-    sounds = tuple(_sounds(infix))[1:]
+    sounds = _tagged(_sounds(infix)[1:], "i")
     out = {word[:1] + sounds + word[1:]}
     if infix == "in" and word[0].s == "l":
         out.add(sounds[::-1] + word)
     return out
+
+
+def _derived(
+    sounds: list[_Sound], pre: str, inf: str, suf: str
+) -> Iterable[tuple[tuple[_Sound, ...], tuple[str, ...]]]:
+    """Every word (as sounds) and the rules applied that §5 makes of *sounds* plus the affixes.
+    The one copy of the derivation: :func:`generate` spells it, :func:`letter_map` reads its origins."""
+    words = _suffixed(sounds, suf) if suf else {(tuple(sounds), ())}
+    for word, rules in words:
+        for prefixed in _prefixed(pre, word) if pre else {word}:
+            for full in _infixed(inf, prefixed) if inf else {prefixed}:
+                yield full, rules
 
 
 @cache
@@ -304,18 +334,14 @@ def _generated(root: str, affix: str) -> tuple[Candidate, ...]:
     be mutated through it; :func:`generate` copies it out.
     """
     pre, inf, suf, shift = _split_affix(affix)
-    sounds = _sounds(root)
-    words = _suffixed(sounds, suf) if suf else {(tuple(sounds), ())}
     out: dict[str, tuple[str, ...]] = {}
-    for word, rules in words:
-        for prefixed in _prefixed(pre, word) if pre else {word}:
-            for full in _infixed(inf, prefixed) if inf else {prefixed}:
-                surface, applied = _spell(list(full)), rules
-                if shift:
-                    from app.plugins.languages.ceb.wolff_dictionary import shifted
+    for full, rules in _derived(_sounds(root), pre, inf, suf):
+        surface, applied = _spell(list(full)), rules
+        if shift:
+            from app.plugins.languages.ceb.wolff_dictionary import shifted
 
-                    surface, applied = shifted(surface, shift), (*rules, "5.11")
-                out.setdefault(surface, applied)
+            surface, applied = shifted(surface, shift), (*rules, "5.11")
+        out.setdefault(surface, applied)
     return tuple(Candidate(s, r) for s, r in sorted(out.items()))
 
 
@@ -323,6 +349,49 @@ def generate(root: str, affix: str) -> list[Candidate]:
     """The forms §5 allows for *root* (Wolff's spelling) plus *affix* (``nag-``, ``-an``,
     ``ka-an``, ``-in-+-an``, with ``(→)``/``(←)`` for a shift of stress, §5.11)."""
     return list(_generated(root, affix))
+
+
+def _root_sounds(root: str) -> list[_Sound]:
+    """*root*'s sounds, each marked with the letters of strip_marks(root) it is written with
+    (ng is one sound and two letters; an unwritten glottal stop has none)."""
+    sounds = _sounds(root)
+    spans: dict[int, tuple[int, ...]] = {}
+    start = 0
+    for text, (k,) in _pieces([snd._replace(origin=(i,)) for i, snd in enumerate(sounds)]):
+        spans[k] = tuple(range(start, start := start + len(strip_marks(text))))
+    return [snd._replace(origin=spans.get(i, ())) for i, snd in enumerate(sounds)]
+
+
+def letter_map(surface: str, root: str, affix: str) -> tuple[int | str, ...] | None:
+    """Which letters of *surface* spell *root*, one entry per letter of ``strip_marks(surface)``
+    (hyphens included), or None when §5 does not make *surface* of *root* plus *affix*:
+
+    * an int is the index, in ``strip_marks(root)``, of the root letter this letter spells.
+      A letter a rule changed (l -> d, d -> r, a final r -> h) is the letter it replaced; a
+      letter a rule moved (§5.14) keeps its index; a dropped root letter appears nowhere.
+      Wolff's ng is two letters, each with its own index;
+    * ``"p"`` / ``"i"`` / ``"s"`` is a prefix / infix / suffix letter (paN-'s nasal is ``"p"``:
+      the root consonant it stands in for appears nowhere);
+    * ``"+"`` is a letter that spells neither: §5.13's h, and a glottal-stop hyphen the root
+      spells with no letter of its own.
+
+    Accents, and so stress shifts, do not matter: the map is of letters. Several derivations
+    can make one surface with different maps; the smallest by ``repr`` is taken, so the answer
+    does not depend on set order."""
+    pre, inf, suf, _ = _split_affix(affix)
+    wanted = strip_marks(surface)
+    spelled = [_letter_tags(list(full)) for full, _ in _derived(_root_sounds(root), pre, inf, suf)]
+    maps = [tuple(tag for _, tag in tagged) for tagged in spelled if "".join(ch for ch, _ in tagged) == wanted]
+    return min(maps, key=repr, default=None)
+
+
+def _letter_tags(sounds: list[_Sound]) -> list[tuple[str, int | str]]:
+    """Each letter of the stripped spelling of *sounds* with the origin it spells."""
+    return [
+        pair
+        for text, origin in _pieces(sounds)
+        for pair in zip(strip_marks(text), chain(origin, repeat("+")), strict=False)
+    ]
 
 
 @cache
