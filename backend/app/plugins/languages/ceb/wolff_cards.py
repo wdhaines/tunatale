@@ -585,11 +585,15 @@ class WolffLexicon:
         """*word* with its stress by rule, when the affix decoder's best analysis of it
         (ranked by *english*) carries a suffix: Wolff's §5.11 stress on the next-to-last
         syllable (tunatale-h0q3.28). None for any other word. A prefix-only word's stress
-        is its root's, and a wrongly picked homograph root would move it."""
+        is its root's, and a wrongly picked homograph root would move it. A root with no
+        consonant gets no rule (aa 'hey')."""
         found = affixes.analyse(word, self._decoder, english)
         if not found or not found[0].affix or not affixes._split_affix(found[0].affix)[2]:
             return None
         root, affix, _ = found[0]
+        core = affixes.strip_marks(root).replace("-", "")
+        if core and all(c in "aeiou" for c in core):
+            return None
         letters = affixes.wolff_letters(word)
         form = next(c.surface for c in affixes.generate(root, affix) if affixes.strip_marks(c.surface) == letters)
         return onto_card(word, handbook_spelling(shifted(form, "←"), _NO_CORPUS).text)
