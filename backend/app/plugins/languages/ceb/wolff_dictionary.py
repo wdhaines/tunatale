@@ -531,6 +531,7 @@ def parse_entry(paragraph: str) -> Entry:
 # --- verb classes (intro §7.11-7.231) ---------------------------------------------------------
 
 DOER, UNDERGOER, TOGETHER = "the one doing it", "the one it happens to", "those doing it together"
+CAUSE = "what causes it"
 DIRECT, PLACE, USED = "what it is done to", "where or for whom it is done", "what is used or moved"
 _LOCAL_SUBJECT = {
     "": "who or what it is done to",
@@ -565,6 +566,9 @@ def decode_classes(code: str) -> list[tuple[str, str]]:
                 if "N" in digits:
                     add("maN-/naN-", DOER)
             elif letter == "B":
+                # §7.12: class B's maka- (or makapa-) means 'cause s.t. to become [so-and-so]', so its
+                # subject is the cause; §7.121: on B3 it means 'become' instead, and B3(1) has both
+                maka = f"{UNDERGOER}, or {CAUSE}" if "3(1)" in digits else UNDERGOER if "3" in nums else CAUSE
                 for d, affix in (
                     ("1", "mo-/mi-"),
                     ("2", "mag-/nag-"),
@@ -573,7 +577,7 @@ def decode_classes(code: str) -> list[tuple[str, str]]:
                     ("6", "magka-/nagka-"),
                 ):
                     if d not in nums:
-                        add(affix, UNDERGOER)
+                        add(affix, maka if affix == "maka-/naka-" else UNDERGOER)
                 if "N" in digits:  # §7.121: BN takes paN- with mu-, as AN does
                     add("maN-/naN-", UNDERGOER)
             elif letter == "C":
