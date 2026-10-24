@@ -66,7 +66,12 @@ _PREFIXES = (
     "pa", "paN", "maN", "naN", "hiN", "hi", "ha", "pakig", "makig", "nakig", "paki",
     "paniN", "maniN", "naniN", "pani", "mani", "nani", "panggi", "manggi", "nanggi",
     "magka", "nagka", "makapa", "nakapa", "pag", "paga",
+    # nouns: tig- 'one who usually does [so-and-so]' (its own entry)
+    "tig",
 )  # fmt: skip
+#: Prefixes on a prefixed base, outer first: paN-, maN-, naN- on a ka- base, Wolff's panga-
+#: (printed inside the ka- sub-entry: matay 'panga-(←) ... Nangamátay', lígù 'mangalígù').
+_PREFIX_STACKS = ("paN+ka", "maN+ka", "naN+ka")
 _SUFFIXES = ("un", "a", "an", "i", "ay", "ánay", "unun", "anan", "ánun")
 #: §7.0's productive -in- (nominal and past-participle forms); after the word's first consonant
 _INFIXES = ("in",)
@@ -99,7 +104,8 @@ def _label(pre: str, inf: str, suf: str) -> str:
     """The name of (prefix, infix, suffix): the chart's own for a listed circumfix."""
     if not inf and pre and suf and (pre, suf) in _CIRCUMFIXES:
         return f"{pre}-{suf}"
-    return "+".join(x for x in (pre and f"{pre}-", inf and f"-{inf}-", suf and f"-{suf}") if x)
+    pres = "+".join(f"{p}-" for p in pre.split("+")) if pre else ""
+    return "+".join(x for x in (pres, inf and f"-{inf}-", suf and f"-{suf}") if x)
 
 
 def _split_affix(affix: str) -> tuple[str, str, str, str]:
@@ -115,9 +121,11 @@ def _split_affix(affix: str) -> tuple[str, str, str, str]:
         elif piece.startswith("-"):
             suf = piece[1:]
         elif piece.endswith("-"):
-            pre = piece[:-1]
+            pre = f"{pre}+{piece[:-1]}" if pre else piece[:-1]
         else:
             pre, _, suf = piece.partition("-")
+    if "+" in pre and pre not in _PREFIX_STACKS:
+        raise ValueError(f"not a prefix stack this module knows: {affix!r}")
     return pre, inf, suf, shift
 
 
@@ -126,7 +134,19 @@ def _grammatical(pre: str, suf: str) -> bool:
     nouns with -un (ma-un, ka-un), but never take the subjunctive -a."""
     if not (pre and suf) or (pre, suf) in _CIRCUMFIXES or suf not in _INFLECTIONS:
         return True
-    return pre not in _INFLECTING and not (pre in ("ma", "ka") and suf == "a")
+    return _outer(pre) not in _INFLECTING and not (pre in ("ma", "ka") and suf == "a")
+
+
+def _outer(pre: str) -> str:
+    """The outermost prefix of a prefix or a stack (``maN+ka`` -> ``maN``)."""
+    return pre.partition("+")[0]
+
+
+def _infix_inside(pre: str) -> bool:
+    """Whether -in- goes into the root, under *pre*: an inflecting prefix is added to the
+    derived -in- base (nag- + binisayà, 'nagbinisayà'); any other prefix takes the infix
+    itself (k-in-a-matay-an)."""
+    return pre in _INFLECTING
 
 
 _SUFFIX_BY_LETTERS = {"".join(c for c in unicodedata.normalize("NFD", s) if c.isascii()): s for s in _SUFFIXES}
@@ -241,6 +261,10 @@ def _stems(root: list[_Sound]) -> set[tuple[tuple[_Sound, ...], tuple[str, ...]]
         if len(stem) >= 3 and stem[-3].s == "ʔ" and not _is_c(stem[-2]) and stem[-1].s == "h":
             moved = (_Sound("h", origin=("+",)), stem[-2], _Sound("ʔ", origin=stem[-3].origin))
             stems.add((stem[:-3] + moved, (*rules, "5.14")))
+            # 5.12 then drops the vowel before the moved h (gabíi + -an -> gabhian, Wolff's
+            # 'nagabhian' and gabhiúna)
+            if len(stem) >= 5 and not _is_c(stem[-4]) and _is_c(stem[-5]):
+                stems.add((stem[:-4] + moved, (*rules, "5.14", "5.12")))
         # 5.12: the vowel of the final syllable drops (dakup -> dakp-)
         if len(stem) >= 3 and _is_c(stem[-3]) and not _is_c(stem[-2]) and _is_c(stem[-1]):
             dropped = stem[:-2] + stem[-1:]
@@ -284,6 +308,9 @@ def _suffixed(root: list[_Sound], suffix: str) -> set[tuple[tuple[_Sound, ...], 
 def _prefixed(prefix: str, word: tuple[_Sound, ...]) -> set[tuple[_Sound, ...]]:
     """*prefix* on *word*. ``N`` is the nasal that takes the place of p b (m), t d s (n) and
     k (ng), and is ng before anything else."""
+    if "+" in prefix:
+        outer, _, inner = prefix.partition("+")
+        return {w for base in _prefixed(inner, word) for w in _prefixed(outer, base)}
     head = _tagged(_sounds(prefix.removesuffix("N")), "p")
     if not prefix.endswith("N"):
         return {head + word}
@@ -321,6 +348,11 @@ def _derived(
     The one copy of the derivation: :func:`generate` spells it, :func:`letter_map` reads its origins."""
     words = _suffixed(sounds, suf) if suf else {(tuple(sounds), ())}
     for word, rules in words:
+        if inf and _infix_inside(pre):
+            for based in _infixed(inf, word):
+                for full in _prefixed(pre, based):
+                    yield full, rules
+            continue
         for prefixed in _prefixed(pre, word) if pre else {word}:
             for full in _infixed(inf, prefixed) if inf else {prefixed}:
                 yield full, rules
@@ -431,7 +463,29 @@ def _first_letters(core: str, prefix: str) -> set[str]:
 def _shells() -> list[tuple[str, str, str]]:
     """Every (prefix, infix, suffix) decoding tries: each alone, and stacked."""
     pres, infs, sufs = ("", *_PREFIXES), ("", *_INFIXES), ("", *_SUFFIXES)
-    return [(p, i, s) for p in pres for i in infs for s in sufs if (p or i or s) and _grammatical(p, s)]
+    shells = [(p, i, s) for p in pres for i in infs for s in sufs if (p or i or s) and _grammatical(p, s)]
+    return shells + [(p, "", s) for p in _PREFIX_STACKS for s in ("", *_SUFFIXES) if _grammatical(p, s)]
+
+
+@cache
+def _lead(pre: str) -> str:
+    """The letters *pre* starts a word with, its nasal left off: ``maN`` -> ``ma``; a stack
+    is spelt whole, its outer nasal in place of the inner prefix's k (``maN+ka`` -> ``manga``)."""
+    if "+" not in pre:
+        return pre.removesuffix("N")
+    (word,) = _prefixed(pre, ())
+    return strip_marks(_spell(list(word)))
+
+
+def _uninfixed(word: str, inf: str) -> str | None:
+    """*word* with -in- taken out from after its first letter, or None when it is not there."""
+    if word.startswith(inf):
+        return word[len(inf) :] or None  # a vowel-initial root: in + ubra
+    if word[1 : 1 + len(inf)] == inf:
+        return word[:1] + word[1 + len(inf) :]
+    if word.startswith("nil"):
+        return word[2:]  # ni- before l
+    return None
 
 
 def _core(target: str, pre: str, inf: str, suf: str) -> str | None:
@@ -439,22 +493,15 @@ def _core(target: str, pre: str, inf: str, suf: str) -> str | None:
     if not target.endswith(suf):
         return None
     word = target[: len(target) - len(suf)] if suf else target
-    lead = pre.removesuffix("N")
-    if inf:
-        # the infix sits after the first letter of whatever comes first
-        if lead:
-            lead = lead[:1] + inf + lead[1:]
-        elif word.startswith(inf):
-            return word[len(inf) :] or None  # a vowel-initial root: in + ubra
-        elif word[1 : 1 + len(inf)] == inf:
-            return word[:1] + word[1 + len(inf) :]
-        elif word.startswith("nil"):
-            return word[2:]  # ni- before l
-        else:
-            return None
+    lead = _lead(pre)
+    if not lead:
+        return (_uninfixed(word, inf) if inf else word) or None
+    if inf and not _infix_inside(pre):
+        lead = lead[:1] + inf + lead[1:]  # the infix sits after the prefix's first letter
     if not word.startswith(lead) or len(word) <= len(lead):
         return None
-    return word[len(lead) :]
+    core = word[len(lead) :]
+    return _uninfixed(core, inf) if inf and _infix_inside(pre) else core
 
 
 @cache
@@ -485,7 +532,7 @@ def decode(surface: str, roots: frozenset[str]) -> list[Analysis]:
     index = _by_first(roots)
     found: dict[tuple[str, str], tuple[str, ...]] = {}
     for pre, inf, suf in _shells():
-        core = _core(target, strip_marks(pre) if not pre.endswith("N") else pre, inf, strip_marks(suf))
+        core = _core(target, pre, inf, strip_marks(suf))
         if core is None:
             continue
         affix = _label(pre, inf, suf)
