@@ -44,13 +44,21 @@ import unicodedata
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import cache
+from functools import cache, cached_property
 from pathlib import Path
 from typing import NamedTuple
 
 from app.cards.vocab_notetype import DICTIONARY_FIELDS
+from app.plugins.languages.ceb import affixes
 from app.plugins.languages.ceb.handbook_spelling import SpellingLexicon, convert_text, handbook_spelling
-from app.plugins.languages.ceb.wolff_dictionary import Entry, Form, decode_classes, is_affix_label, strip_marks
+from app.plugins.languages.ceb.wolff_dictionary import (
+    Entry,
+    Form,
+    decode_classes,
+    is_affix_label,
+    shifted,
+    strip_marks,
+)
 
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
@@ -59,6 +67,10 @@ CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spe
 FIELD_NAMES = DICTIONARY_FIELDS
 _POS_NAMES = {"n": "noun", "v": "verb", "a": "adjective"}
 _MEANING_SENSES = 6
+#: The Details line of a card whose Spelling :meth:`WolffLexicon.by_rule` made.
+RULE_NOTE = "<div>Not listed in Wolff: stressed by rule (a suffix puts the stress on the next-to-last syllable).</div>"
+#: No corpus: a ruled spelling takes its vowels from the card word, not from the rules of e and o.
+_NO_CORPUS = SpellingLexicon(freq={}, entries={}, loans={})
 _RELATED = 12
 _STOP = frozenset(
     [
@@ -565,8 +577,30 @@ class WolffLexicon:
             return Miss("ambiguous", tuple(dict.fromkeys(h.surface for h in top)))
         return top[0]
 
+    @cached_property
+    def _decoder(self) -> affixes.Lexicon:
+        return affixes.lexicon(self.entries)
+
+    def by_rule(self, word: str, english: str = "") -> str | None:
+        """*word* with its stress by rule, when the affix decoder's best analysis of it
+        (ranked by *english*) carries a suffix: Wolff's §5.11 stress on the next-to-last
+        syllable (tunatale-h0q3.28). None for any other word. A prefix-only word's stress
+        is its root's, and a wrongly picked homograph root would move it."""
+        found = affixes.analyse(word, self._decoder, english)
+        if not found or not found[0].affix or not affixes._split_affix(found[0].affix)[2]:
+            return None
+        root, affix, _ = found[0]
+        letters = affixes.wolff_letters(word)
+        form = next(c.surface for c in affixes.generate(root, affix) if affixes.strip_marks(c.surface) == letters)
+        return onto_card(word, handbook_spelling(shifted(form, "←"), _NO_CORPUS).text)
+
     def card_fields(self, cebuano: str, english: str) -> CardFields | Miss:
         hit = self.match(cebuano, english)
+        if hit == Miss("not-in-dictionary", ()):
+            word = cebuano.split(",")[0].strip()
+            ruled = self.by_rule(word, english) if word and " " not in word else None
+            if ruled is not None:
+                return CardFields(spelling=ruled, meaning="", verb="", details=RULE_NOTE, dictionary_entry="")
         if isinstance(hit, Miss):
             return hit
         if isinstance(hit, Attested):
