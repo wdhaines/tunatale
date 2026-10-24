@@ -813,3 +813,25 @@ def test_the_rule_agrees_with_wolffs_printed_suffixed_words(committed):
     right = sum(unicodedata.normalize("NFC", hb) == unicodedata.normalize("NFC", got) for hb, got in ruled)
     assert len(ruled) > 150
     assert right / len(ruled) >= 0.95, [p for p in ruled if p[0] != p[1]][:20]
+
+
+def test_a_root_with_no_consonant_gives_no_rule(committed):
+    """aa 'hey' (card 802): the decoder's best reading was the suffix entry -a + -a, then
+    á + -a, and the rule wrote âa. No word Wolff prints has a top root with no consonant,
+    so refusing one costs no right answer (measured 2026-10-24, tunatale-h0q3.29)."""
+    assert committed.by_rule("aa", "hey") is None
+    assert committed.card_fields("aa", "hey") == Miss("not-in-dictionary", ())
+
+
+@pytest.mark.parametrize(
+    ("word", "spelling"),
+    [
+        ("duwaan", "duwâan"),  # Wolff's combining form duwa-, spelled like a prefix
+        ("kwaa", "kwâa"),  # kwa-
+        ("niyay", "níyay"),  # a one-letter root that has a consonant
+    ],
+)
+def test_a_root_spelled_as_an_affix_still_takes_the_rule(committed, word, spelling):
+    # the control: refusing every root written with a hyphen would lose these, which
+    # Wolff prints exactly as the rule spells them
+    assert committed.by_rule(word) == spelling
