@@ -57,7 +57,83 @@ def langeek_term(english: str) -> str | None:
     """
     first = re.split(r"[;,]", re.sub(r"\([^()]*\)", "", english), maxsplit=1)[0]
     term = re.sub(r"^to\s+", "", " ".join(first.split()), flags=re.IGNORECASE).casefold()
-    return term or None
+    # LanGeek's entries carry no punctuation ('Bye!', 'where?' found nothing, 2026-10-27)
+    return term.strip("!?.") or None
+
+
+# Irregular English forms a card gloss is likely to use, by base form. A gloss
+# copies the lesson's English, so a past-tense line gives 'knew', which LanGeek
+# has no entry for (hibalo, 2026-10-27); 'know' it illustrates twice.
+_IRREGULAR = {
+    form: base
+    for base, forms in {
+        "know": "knew known",
+        "go": "went gone",
+        "eat": "ate eaten",
+        "see": "saw seen",
+        "come": "came",
+        "give": "gave given",
+        "take": "took taken",
+        "make": "made",
+        "say": "said",
+        "get": "got gotten",
+        "buy": "bought",
+        "bring": "brought",
+        "think": "thought",
+        "tell": "told",
+        "find": "found",
+        "leave": "left",
+        "feel": "felt",
+        "keep": "kept",
+        "sleep": "slept",
+        "meet": "met",
+        "run": "ran",
+        "sit": "sat",
+        "stand": "stood",
+        "understand": "understood",
+        "write": "wrote written",
+        "speak": "spoke spoken",
+        "drink": "drank drunk",
+        "sing": "sang sung",
+        "swim": "swam swum",
+        "begin": "began begun",
+        "forget": "forgot forgotten",
+        "become": "became",
+        "child": "children",
+        "man": "men",
+        "woman": "women",
+        "foot": "feet",
+        "tooth": "teeth",
+        "mouse": "mice",
+    }.items()
+    for form in forms.split()
+}
+#: At most this many base forms are looked up after a miss: one request each.
+_BASE_FORMS = 3
+
+
+def base_forms(term: str) -> list[str]:
+    """Dictionary forms *term* may be inflected from, most likely first: the irregular
+    form's base, else the word with a plural or verb ending removed (or with its e back,
+    or a doubled consonant undone). A phrase gets none: which word inflects is a guess."""
+    if " " in term:
+        return []
+    if term in _IRREGULAR:
+        return [_IRREGULAR[term]]
+    out: list[str] = []
+    if term.endswith("ies") and len(term) > 4:
+        out.append(term[:-3] + "y")
+    elif term.endswith("es") and len(term) > 4 and re.search(r"(s|x|z|ch|sh)es$", term):
+        out += [term[:-2], term[:-1]]
+    elif term.endswith("s") and not term.endswith("ss") and len(term) > 3:
+        out.append(term[:-1])
+    for ending in ("ed", "ing"):
+        stem = term[: -len(ending)]
+        if term.endswith(ending) and len(stem) >= 3:
+            out += [stem, stem + "e"]
+            if len(stem) > 3 and stem[-1] == stem[-2] and stem[-1] not in "aeiou":
+                out.append(stem[:-1])
+    return list(dict.fromkeys(f for f in out if f != term))[:_BASE_FORMS]
 
 
 class _Throttle:
@@ -100,7 +176,23 @@ def search_langeek(
     api_url: str | None = None,
     throttle: _Throttle | None = None,
 ) -> LangeekSearch:
-    """Look *term* up; ``senses`` are only the exact entry's illustrated ones."""
+    """Look *term* up; ``senses`` are only the exact entry's illustrated ones. When
+    *term* is no entry, its :func:`base_forms` are looked up in turn, one request each."""
+    found = _search(term, http_client=http_client, api_url=api_url, throttle=throttle)
+    for base in base_forms(term) if found.status == "no_results" else ():
+        found = _search(base, http_client=http_client, api_url=api_url, throttle=throttle)
+        if found.status != "no_results":
+            break
+    return found
+
+
+def _search(
+    term: str,
+    *,
+    http_client: httpx.Client | None,
+    api_url: str | None,
+    throttle: _Throttle | None,
+) -> LangeekSearch:
     if api_url is None:
         from app.config import settings
 
