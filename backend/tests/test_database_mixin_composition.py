@@ -121,4 +121,6 @@ def test_public_method_count_pinned() -> None:
     #  are its cells — tunatale-ve4p.26)
     # +list_vocab_for_extras / +set_extras (a learner with no Anki gets the
     #  dictionary layers written into TT directly — tunatale-h0q3.2)
-    assert count == 144
+    # +list_shared_photo_groups (photographs two or more cards already share,
+    #  for the one-off repair that re-pictures the less common word — tunatale-jlwy)
+    assert count == 145
