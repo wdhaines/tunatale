@@ -30,10 +30,12 @@ tells the halves apart.
 
 from __future__ import annotations
 
+import gzip
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from functools import cache
+from pathlib import Path
 from typing import NamedTuple
 
 POS_LABELS = frozenset(
@@ -249,6 +251,48 @@ def _is_cebuano(clause: str) -> bool:
     return english * 2 < len(words)
 
 
+@cache
+def _cebuano_counts() -> dict[str, int]:
+    """Word -> its count in the Cebuano news corpus (the frequency list the cards use)."""
+    out: dict[str, int] = {}
+    with gzip.open(Path(__file__).parent / "data" / "cebuano_frequency.tsv.gz", "rt") as fh:
+        for line in fh:
+            word, _, count = line.rstrip("\n").partition("\t")
+            out[word] = int(count.split("\t")[0]) if count.split("\t")[0].isdigit() else 0
+    return out
+
+
+def _english_word(token: str) -> bool:
+    """Whether *token* is English, though rare: English uses it (wordfreq zipf >= 2) and the
+    Cebuano news corpus hardly does. 'spiderweb' and 'crowbar' are not among the 20,000
+    commonest English words, but they are English; 'sa' and 'lang' are common in both, and
+    Cebuano. A hyphened compound is English when every part is (thick-lipped). Wolff's own
+    headwords never are: his 1972 spelling (batu, tris) is not the corpus's, and a glottal
+    hyphen (lut-ud) is no compound."""
+    import wordfreq
+
+    if re.search(r"[̀́̂̄̌]", unicodedata.normalize("NFD", token)):
+        return False  # Wolff marks only Cebuano
+    word = token.lower().strip(".,;:()’'\"")
+    if word in _wolff_heads():
+        return False  # Wolff's own headword (animas, kiting, burd 'board'), however English it looks
+    parts = word.split("-")
+    return all(
+        p.isalpha() and wordfreq.zipf_frequency(p, "en") >= 2 and _cebuano_counts().get(p, 0) < 20 for p in parts
+    )
+
+
+@cache
+def _wolff_heads() -> frozenset[str]:
+    """The headwords of the shipped lexicon, unmarked. Heads do not depend on how a phrase
+    is split, so rebuilding the lexicon may read the last build's."""
+    import json
+
+    with gzip.open(Path(__file__).parent / "data" / "wolff_lexicon.json.gz", "rt") as fh:
+        entries = json.load(fh)["entries"]
+    return frozenset(strip_marks(h).lower().split("_")[0] for e in entries for h in e["heads"])
+
+
 def split_examples(text: str) -> list[Example]:
     """'Ceb, Eng. Ceb? Eng?' -> examples. A clause is Cebuano by its marks or its words."""
     clauses = [c for c in re.split(r"(?<=[,.?!])\s+(?=[A-ZÀ-Ý‘“'\"(])", text.strip()) if c]
@@ -359,7 +403,7 @@ def _senses(text: str) -> tuple[list[Sense], list[str], tuple[str, str] | None]:
             while j < len(tokens) and tokens[j] not in POS_LABELS and not tokens[j].startswith(("[", "{")):
                 if _sentence_end(tokens[j - 1]) and j > i + 1:
                     break
-                if phrase and not _is_cebuano(tokens[j]):
+                if phrase and (not _is_cebuano(tokens[j]) or _english_word(tokens[j])):
                     break  # no part of speech given: the gloss starts at the first English word
                 phrase.append(tokens[j])
                 j += 1
