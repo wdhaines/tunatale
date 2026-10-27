@@ -37,6 +37,13 @@ def _wolff_note_fields(word: str, english: str) -> dict[str, str]:
     return {} if isinstance(fields, Miss) else fields.as_note_fields()
 
 
+def _wolff_gloss(word: str) -> str:
+    """Wolff's short gloss for a word, or "" when its letters do not settle the entry."""
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon
+
+    return load_lexicon().short_gloss(word)
+
+
 register(
     "ceb",
     LanguageConfig(
@@ -153,6 +160,8 @@ register(
         # The same fields on a card TT mints, filled from Wolff when the card's
         # English settles the entry.
         dictionary_fields_fn=_wolff_note_fields,
+        # A new card's English when the model cannot gloss it (offline, tunatale-iiwm.5).
+        dictionary_gloss_fn=_wolff_gloss,
         # The style guide's first job is keeping Tagalog OUT: close kin, and
         # dominant in training data (tunatale-u8nz.4). All three data files are
         # orchestrator-drafted and not yet native-checked (tunatale-u8nz.9).

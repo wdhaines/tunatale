@@ -999,3 +999,25 @@ def test_a_printed_an_form_gives_its_begun_gi_an_form(committed):
     # Wolff prints agwadáhan, not giagwadáhan: gi- on the printed form is the begun one
     rows = dict((_label(t), t) for _, t in _rows(committed.card_fields("agwada", "fetch water").verb))
     assert "not begun agwadáhan · begun giagwadáhan" in rows["Circumstance · -an/gi-an"]
+
+
+# ── a card's English from the dictionary (tunatale-iiwm.5) ─────────────────────────────
+# When the model cannot gloss a new base card (offline, 2026-10-21: hibalo kept the
+# lesson's 'knew'), Wolff's first sense stands in: its first alternative, without his
+# s.t. / s.o. placeholders. A word the letters alone do not settle gets nothing.
+
+
+@pytest.mark.parametrize(
+    ("word", "gloss"),
+    [
+        ("hibalo", "know"),  # 'know s.t., how to do s.t.'
+        ("pasaylo", "forgive"),  # 'forgive, pardon'
+        ("kapoy", "tired"),  # 'tired, weary, exhausted through exertion'
+        ("naa", "be there (near you)"),  # a parenthetical is not an alternative
+        ("babaye", "woman"),
+        ("tulo", ""),  # three homographs, nothing to choose by
+        ("asdfgh", ""),
+    ],
+)
+def test_a_words_short_gloss_is_its_first_senses_first_alternative(committed, word, gloss):
+    assert committed.short_gloss(word) == gloss

@@ -847,9 +847,44 @@ class TestDictionaryGloss:
 
         assert item["translation"] == "cassava cake"
 
-    async def test_no_llm_keeps_the_lesson_gloss(self, api_app_state, monkeypatch):
+    async def test_no_llm_takes_the_dictionarys_gloss_and_says_so(self, api_app_state, monkeypatch, caplog):
+        # Live 2026-10-21 (tunatale-iiwm.5): the laptop was offline, the gloss call
+        # failed, and the base card hibalo silently kept nakahibalo's 'knew'.
+        _stub_word(monkeypatch, "nakahibalo", "hibalo", "VERB")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/items/base",
+                json={
+                    "surface": "nakahibalo",
+                    "lemma": "hibalo",
+                    "sentence": "Gahapon ra ko nakahibalo.",
+                    "language_code": "ceb",
+                    "translation": "knew",
+                },
+            )
+
+        assert resp.json()["item"]["translation"] == "know"
+        assert "base card 'hibalo': no gloss from the model; took the dictionary's 'know'" in caplog.text
+
+    async def test_the_models_gloss_still_comes_first(self, api_app_state, monkeypatch):
         _stub_word(monkeypatch, "babaye", "babaye", "NOUN")
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = "woman, girl"
+        app.state.llm = mock_llm
 
         item = await _add("babaye", "Daghan ang mga babaye.", "girls")
 
-        assert item["translation"] == "girls"
+        assert item["translation"] == "woman, girl"
+
+    async def test_a_word_the_dictionary_cannot_settle_keeps_the_lesson_gloss_loudly(
+        self, api_app_state, monkeypatch, caplog
+    ):
+        # tulo is three homographs (tuló 'three', túlò 'drip', tulô); with no English to
+        # choose by, the dictionary gives nothing and the lesson's gloss stays, with a warning
+        _stub_word(monkeypatch, "tulo", "tulo", "NUM")
+
+        item = await _add("tulo", "Tulo ka bata.", "three")
+
+        assert item["translation"] == "three"
+        assert "base card 'tulo': no gloss from the model or the dictionary; kept the lesson's 'three'" in caplog.text
