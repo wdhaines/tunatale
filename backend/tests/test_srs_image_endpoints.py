@@ -818,3 +818,99 @@ class TestSniffExtCoverage:
 
         riff_not_webp = b"RIFF" + b"\x00" * 4 + b"AVI " + b"\x00" * 100
         assert _sniff_ext(riff_not_webp) is None
+
+
+# -- LanGeek candidates (tunatale-iiwm.3) ----------------------------------------
+# The owner picks the sense, so every illustrated sense is offered with its
+# definition and no model is asked. Requests go to a respx-mocked endpoint set
+# through the setting the suite otherwise pins empty.
+
+_LANGEEK_API = "https://api.langeek.test/word/"
+
+
+def _langeek_fixture(name: str) -> list:
+    import json
+
+    return json.loads((Path(__file__).parent / "fixtures" / "langeek" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+class TestLangeekCandidates:
+    @respx.mock
+    async def test_every_illustrated_sense_is_offered_with_its_definition(self, api, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "langeek_api_url", _LANGEEK_API)
+        monkeypatch.setattr(settings, "pixabay_api_key", "")  # LanGeek needs no Pixabay key
+        api.add_collocation(_unit("banda", "band"), language_code="sl")
+        cid = _id_for_text(api, "banda")
+        route = respx.get(_LANGEEK_API).mock(return_value=httpx.Response(200, json=_langeek_fixture("band")))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(f"/api/srs/items/{cid}/image/langeek")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert (body["term"], body["status"]) == ("band", "ok")
+        assert [s["sense_id"] for s in body["senses"]] == [14799, 14807, 14808]
+        assert body["senses"][2]["definition"].startswith("a group of musicians")
+        assert body["senses"][0]["photo_url"].startswith("https://cdn.langeek.co/photo/")
+        assert route.calls.last.request.url.params["term"] == "band"
+
+    @respx.mock
+    async def test_a_typed_word_replaces_the_gloss(self, api, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "langeek_api_url", _LANGEEK_API)
+        api.add_collocation(_unit("srecen", "happy; glad"), language_code="sl")
+        cid = _id_for_text(api, "srecen")
+        route = respx.get(_LANGEEK_API).mock(return_value=httpx.Response(200, json=_langeek_fixture("happiness")))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(f"/api/srs/items/{cid}/image/langeek", params={"q": "  Happiness "})
+
+        assert resp.json()["term"] == "happiness"
+        assert [s["sense_id"] for s in resp.json()["senses"]] == [86262]
+        assert route.calls.last.request.url.params["term"] == "happiness"
+
+    async def test_a_gloss_with_no_lookup_word_asks_nothing(self, api):
+        api.add_collocation(_unit("tu", "(near you)"), language_code="sl")
+        cid = _id_for_text(api, "tu")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(f"/api/srs/items/{cid}/image/langeek")
+
+        assert resp.json() == {"term": "", "status": "no_results", "senses": []}
+
+    async def test_the_source_switched_off_says_so(self, api):
+        # The suite's pin: the endpoint is empty, so the source answers "disabled".
+        api.add_collocation(_unit(), language_code="sl")
+        cid = _id_for_text(api, "voda")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(f"/api/srs/items/{cid}/image/langeek")
+
+        assert resp.json() == {"term": "water", "status": "disabled", "senses": []}
+
+    async def test_a_cloze_card_has_no_picture_to_choose(self, api):
+        api.add_collocation(_cloze_unit(), language_code="sl")
+        cid = _id_for_text(api, "dan")
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.get(f"/api/srs/items/{cid}/image/langeek")
+
+        assert resp.status_code == 409
+
+    @respx.mock
+    async def test_picking_a_langeek_picture_stores_it_as_langeeks(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit("banda", "band"), language_code="sl")
+        cid = _id_for_text(api, "banda")
+        url = "https://cdn.langeek.co/photo/14808/original/?type=jpeg"
+        respx.get(url).mock(return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": url})
+
+        assert resp.status_code == 200
+        assert api.get_image_filename(cid).startswith("lgk_band_")
+        assert "image" in _dirty_fields(api, cid)

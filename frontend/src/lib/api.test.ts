@@ -2847,6 +2847,38 @@ describe("image methods", () => {
     expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/items/5/image/candidates?q=water`);
   });
 
+  it("fetchLangeekCandidates asks for the card's LanGeek senses", async () => {
+    const response = {
+      term: "band",
+      status: "ok",
+      senses: [
+        {
+          sense_id: 14808,
+          pos: "noun",
+          definition: "a group of musicians",
+          photo_url: "https://cdn.langeek.co/photo/14808/original/?type=jpeg",
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(response)));
+
+    const result = await api.fetchLangeekCandidates(1);
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/items/1/image/langeek`);
+    expect(result.senses[0].sense_id).toBe(14808);
+  });
+
+  it("fetchLangeekCandidates sends a typed word as q", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockOk({ term: "joy", status: "ok", senses: [] })),
+    );
+
+    await api.fetchLangeekCandidates(5, "joy & fun");
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/items/5/image/langeek?q=joy%20%26%20fun`);
+  });
+
   it("setItemImageFromUrl calls PUT with JSON body", async () => {
     const updated = makeSRSItemDetail({ id: 1, image_url: "http://x/new.jpg" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(updated)));

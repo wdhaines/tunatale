@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { SRSItemDetail, ImageCandidate, ImageCandidatesResponse } from '$lib/api';
+	import type { SRSItemDetail, ImageCandidate, LangeekCandidatesResponse } from '$lib/api';
 	import { api } from '$lib/api';
 	import { t } from '$lib/i18n/i18n.svelte';
 
@@ -16,6 +16,11 @@
 	let candidateError = $state<string | null>(null);
 	let noApiKey = $state(false);
 
+	// LanGeek's illustrated senses (tunatale-iiwm.3): the learner picks the
+	// sense, so each picture carries its definition. Null until it answers.
+	let langeek = $state<LangeekCandidatesResponse | null>(null);
+	let langeekFailed = $state(false);
+
 	let pasteUrl = $state('');
 	let pasteLoading = $state(false);
 
@@ -28,6 +33,21 @@
 
 	function handleBackdropClick(e: MouseEvent) {
 		if (e.target === e.currentTarget) onclose();
+	}
+
+	async function loadLangeek() {
+		langeekFailed = false;
+		try {
+			langeek = await api.fetchLangeekCandidates(item.id, candidateQuery || undefined);
+		} catch {
+			langeek = null;
+			langeekFailed = true;
+		}
+	}
+
+	async function search() {
+		loadLangeek();
+		loadCandidates();
 	}
 
 	async function loadCandidates() {
@@ -121,7 +141,7 @@
 	// and fire a Pixabay search — on every keystroke. Re-search is driven only
 	// by the explicit Search button / Enter key.
 	$effect(() => {
-		untrack(() => loadCandidates());
+		untrack(() => search());
 	});
 </script>
 
@@ -154,6 +174,26 @@
 			{/if}
 		</section>
 
+		{#if langeekFailed || (langeek && langeek.status !== 'disabled')}
+		<section class="langeek-section">
+			<h3>{t('imageEditModal.langeekCandidates')}</h3>
+			{#if langeekFailed || langeek?.status === 'api_error'}
+				<p class="muted">{t('imageEditModal.langeekUnavailable')}</p>
+			{:else if langeek && langeek.senses.length > 0}
+				<div class="langeek-grid">
+					{#each langeek.senses as sense (sense.sense_id)}
+						<button class="langeek-btn" onclick={() => selectCandidate(sense.photo_url)} disabled={busy} title={sense.definition}>
+							<img src={sense.photo_url} alt={sense.definition} />
+							<span class="definition">{sense.definition}</span>
+						</button>
+					{/each}
+				</div>
+			{:else if langeek}
+				<p class="muted">{t('imageEditModal.langeekNone', { term: langeek.term })}</p>
+			{/if}
+		</section>
+		{/if}
+
 		{#if !noApiKey}
 		<section class="candidates-section">
 			<h3>{t('imageEditModal.pixabayCandidates')}</h3>
@@ -162,9 +202,9 @@
 					type="text"
 					placeholder={t('imageEditModal.searchQuery')}
 					bind:value={candidateQuery}
-					onkeydown={(e) => { if (e.key === 'Enter') loadCandidates(); }}
+					onkeydown={(e) => { if (e.key === 'Enter') search(); }}
 				/>
-				<button onclick={loadCandidates} disabled={candidateLoading}>
+				<button onclick={search} disabled={candidateLoading}>
 					{candidateLoading ? t('imageEditModal.searching') : t('imageEditModal.search')}
 				</button>
 			</div>
@@ -306,6 +346,38 @@
 		cursor: pointer;
 		background: none;
 		aspect-ratio: 1;
+	}
+	.langeek-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+		gap: 0.5rem;
+	}
+	.langeek-btn {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		padding: 0.25rem;
+		border: 2px solid transparent;
+		border-radius: var(--radius);
+		cursor: pointer;
+		background: none;
+		color: var(--color-text);
+		text-align: left;
+	}
+	.langeek-btn:hover {
+		border-color: var(--color-primary);
+	}
+	.langeek-btn img {
+		width: 100%;
+		aspect-ratio: 1;
+		object-fit: contain;
+		background: #fff;
+		border-radius: var(--radius);
+	}
+	.definition {
+		font-size: 0.75rem;
+		line-height: 1.25;
+		color: var(--color-muted);
 	}
 	.candidate-btn:hover {
 		border-color: var(--color-primary);

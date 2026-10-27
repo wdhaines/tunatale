@@ -1772,6 +1772,62 @@
         "title": "ItemParadigm",
         "type": "object"
       },
+      "LangeekCandidatesResponse": {
+        "description": "Response of GET /api/srs/items/{item_id}/image/langeek.\n\n``status`` is langeek.search_langeek's: ok, no_results, api_error, or\ndisabled (the source switched off). ``term`` is the word looked up, empty\nwhen the card's gloss has none.",
+        "properties": {
+          "senses": {
+            "items": {
+              "$ref": "#/components/schemas/LangeekSenseCandidate"
+            },
+            "title": "Senses",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "term": {
+            "title": "Term",
+            "type": "string"
+          }
+        },
+        "required": [
+          "term",
+          "status",
+          "senses"
+        ],
+        "title": "LangeekCandidatesResponse",
+        "type": "object"
+      },
+      "LangeekSenseCandidate": {
+        "description": "One illustrated sense LanGeek offers for a card (tunatale-iiwm.3).",
+        "properties": {
+          "definition": {
+            "title": "Definition",
+            "type": "string"
+          },
+          "photo_url": {
+            "title": "Photo Url",
+            "type": "string"
+          },
+          "pos": {
+            "title": "Pos",
+            "type": "string"
+          },
+          "sense_id": {
+            "title": "Sense Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sense_id",
+          "pos",
+          "definition",
+          "photo_url"
+        ],
+        "title": "LangeekSenseCandidate",
+        "type": "object"
+      },
       "LanguageItem": {
         "description": "One element of LanguagesResponse.languages.",
         "properties": {
@@ -9085,6 +9141,65 @@
           }
         },
         "summary": "Get Image Candidates",
+        "tags": [
+          "srs-images"
+        ]
+      }
+    },
+    "/api/srs/items/{item_id}/image/langeek": {
+      "get": {
+        "description": "Every illustrated sense LanGeek has for the card's gloss, or for *q* (tunatale-iiwm.3).\n\nThe learner picks the sense, so all are offered with their definitions and\nno model is asked; the pick is stored through PUT /image like any URL.",
+        "operationId": "get_langeek_candidates_api_srs_items__item_id__image_langeek_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LangeekCandidatesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Langeek Candidates",
         "tags": [
           "srs-images"
         ]

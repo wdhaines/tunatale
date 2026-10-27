@@ -1450,6 +1450,28 @@ class ImageCandidatesResponse(BaseModel):
     candidates: list[ImageCandidate]
 
 
+class LangeekSenseCandidate(BaseModel):
+    """One illustrated sense LanGeek offers for a card (tunatale-iiwm.3)."""
+
+    sense_id: int
+    pos: str
+    definition: str
+    photo_url: str
+
+
+class LangeekCandidatesResponse(BaseModel):
+    """Response of GET /api/srs/items/{item_id}/image/langeek.
+
+    ``status`` is langeek.search_langeek's: ok, no_results, api_error, or
+    disabled (the source switched off). ``term`` is the word looked up, empty
+    when the card's gloss has none.
+    """
+
+    term: str
+    status: str
+    senses: list[LangeekSenseCandidate]
+
+
 # ── Batch 8: story/audio/card response models (BP ledger drain) ──────────────
 #
 # get_lesson and get_lesson_by_day serialize through the same
