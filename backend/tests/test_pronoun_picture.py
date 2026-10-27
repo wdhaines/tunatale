@@ -141,6 +141,14 @@ _TABLES: dict[str, dict[str, str]] = {
         "amo": "we_excl_poss",
         "inyo": "you_many_poss",
         "ila": "they_many_poss",
+        # The datives (tunatale-tofg.13)
+        "kanako": "i_dat",
+        "kanimo": "you_one_dat",
+        "kaniya": "third_one_dat",
+        "kanato": "we_incl_dat",
+        "kanamo": "we_excl_dat",
+        "kaninyo": "you_many_dat",
+        "kanila": "they_many_dat",
     },
 }
 
@@ -160,6 +168,8 @@ _PREDICATE = "___ ra."
 #: there: a postposed nato or a short ta cannot start the clause. The user
 #: accepted the sentence (2026-10-18).
 _OWN = "___ kining bag."
+#: The recipient sentence for datives (tunatale-tofg.13): "Give ___ the bag."
+_RECIPIENT = "Ihatag ___ ang bag."
 
 #: Each word's own (default) sense's sentence. The long genitives nako/nimo/nato
 #: have none on purpose: no slot takes the long genitive and refuses the short
@@ -182,6 +192,14 @@ _FRAMES: dict[str, dict[str, str]] = {
         "amo": _OWN,
         "inyo": _OWN,
         "ila": _OWN,
+        # The datives (tunatale-tofg.13)
+        "kanako": _RECIPIENT,
+        "kanimo": _RECIPIENT,
+        "kaniya": _RECIPIENT,
+        "kanato": _RECIPIENT,
+        "kanamo": _RECIPIENT,
+        "kaninyo": _RECIPIENT,
+        "kanila": _RECIPIENT,
     },
 }
 
@@ -393,6 +411,20 @@ class TestGlossGuard:
             "we_excl_poss": {"our", "ours"},
             "they_two_poss": {"their", "theirs"},
             "they_many_poss": {"their", "theirs"},
+            # The datives (tunatale-tofg.13): the dative's English is the object form
+            "i_dat": {"me"},
+            "you_one_dat": {"you"},
+            "you_two_dat": {"you"},
+            "you_many_dat": {"you"},
+            "he_dat": {"him"},
+            "she_dat": {"her"},
+            "third_one_dat": {"him", "her"},
+            "we_two_dat": {"us"},
+            "we_many_dat": {"us"},
+            "we_incl_dat": {"us"},
+            "we_excl_dat": {"us"},
+            "they_two_dat": {"them"},
+            "they_many_dat": {"them"},
         }
 
     def test_every_concept_has_keywords(self) -> None:
@@ -512,6 +544,14 @@ class TestDispatch:
             ("ninyo", "tl", "yours", "you_many_poss"),
             ("nila", "tl", "their", "they_many_poss"),
             ("NIYA", "tl", "her, hers", "third_one_poss"),
+            # The datives (tunatale-tofg.13): kanako, kanimo, kaniya, kanato, kanamo, kaninyo, kanila
+            ("kanako", "ceb", "to me, for me; me", "i_dat"),
+            ("kanimo", "ceb", "to you, for you (one person); you", "you_one_dat"),
+            ("kaniya", "ceb", "to him / her, for him / her; him, her", "third_one_dat"),
+            ("kanato", "ceb", "to us, for us (including you); us", "we_incl_dat"),
+            ("kanamo", "ceb", "to us, for us (not including you); us", "we_excl_dat"),
+            ("kaninyo", "ceb", "to you, for you (plural); you", "you_many_dat"),
+            ("kanila", "ceb", "to them, for them; them", "they_many_dat"),
         ],
     )
     def test_a_pronoun_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
@@ -552,6 +592,9 @@ class TestDispatch:
             ("iya", "ceb", "aunt"),
             ("ila", "ceb", "identify, recognize"),
             ("ato", "ceb", "we"),
+            # The dative guards: a nominative gloss on a dative word should not draw it
+            ("kanako", "ceb", "I"),
+            ("kanila", "ceb", "they"),
         ],
     )
     def test_anything_else_is_left_on_its_route(self, word, code, gloss) -> None:

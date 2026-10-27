@@ -97,6 +97,20 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "we_excl_poss": frozenset({"our", "ours"}),
     "they_two_poss": frozenset({"their", "theirs"}),
     "they_many_poss": frozenset({"their", "theirs"}),
+    # The dative's English is the object form, so the nominative words do not confirm it
+    "i_dat": frozenset({"me"}),
+    "you_one_dat": frozenset({"you"}),
+    "you_two_dat": frozenset({"you"}),
+    "you_many_dat": frozenset({"you"}),
+    "he_dat": frozenset({"him"}),
+    "she_dat": frozenset({"her"}),
+    "third_one_dat": frozenset({"him", "her"}),
+    "we_two_dat": frozenset({"us"}),
+    "we_many_dat": frozenset({"us"}),
+    "we_incl_dat": frozenset({"us"}),
+    "we_excl_dat": frozenset({"us"}),
+    "they_two_dat": frozenset({"them"}),
+    "they_many_dat": frozenset({"them"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")

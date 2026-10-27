@@ -119,6 +119,20 @@ SPATIAL_CONCEPTS: tuple[str, ...] = (
     # naa (Wolff anáa {1} "be there, near you"), drawn at your distance (the
     # user, 2026-10-22, over keeping its photo).
     "is_there_yours",
+    # Past/future/existential with time and genitive possessive forms (tunatale-tofg.5).
+    "is_here_mine",
+    "was_here_mine",
+    "was_here_both",
+    "was_there_yours",
+    "was_there_far",
+    "will_be_here_mine",
+    "will_be_here_both",
+    "will_be_there_yours",
+    "will_be_there_far",
+    "of_this_mine",
+    "of_this_both",
+    "of_that_yours",
+    "of_that_far",
 )
 
 #: The box outline, and every structural line with it. Chosen over the counting
@@ -600,6 +614,7 @@ _DEIXIS_BALL_R = 16.0
 _DEIXIS_X = {"both": 110.0, "mine": 40.0, "yours": 178.0, "far": 234.0}
 #: The pronoun pictures stand people on a ground two units higher than this one.
 _PEOPLE_DY = 2.0
+_TIME_ARROW_Y = 24.0
 
 
 def _people() -> str:
@@ -636,6 +651,50 @@ def _deixis(where: str, thing: bool, present: bool = False) -> list[str]:
     else:
         obj = _flag(x, height=62.0, pennant_w=22.0, pennant_h=18.0)
     return [_zones(), _people(), obj]
+
+
+#: Where a time arrow's dotted tether starts: just under the arrow.
+_TETHER_TOP_Y = 30.0
+
+
+def _absent_person(x: float) -> str:
+    """The figure _present draws, as an outline: background fill, dashed stroke."""
+    from app.cards.pronoun_scenes import _REF_STROKE, _person
+
+    person = _person(x, True)
+    person = person.replace(_DOT_FILL, _BG).replace(_REF_STROKE, _BOX_STROKE)
+    # _person's only stroke width is 2, so one replacement dashes every stroke.
+    person = person.replace('stroke-width="2"', 'stroke-width="2.5" stroke-dasharray="5 4"')
+    return f'<g class="absent" transform="translate(0 {_n(_PEOPLE_DY)})">{person}</g>'
+
+
+def _tether(x: float) -> str:
+    """The dotted line from the time arrow down to 12 units above the outline's head top."""
+    from app.cards.pronoun_scenes import _HEAD_CY, _HEAD_R
+
+    head_top = _PEOPLE_DY + _HEAD_CY - _HEAD_R
+    bottom = head_top - 12
+    return (
+        f'<line class="tether" x1="{_n(x)}" y1="{_n(_TETHER_TOP_Y)}" x2="{_n(x)}" y2="{_n(bottom)}" '
+        f'stroke="{_BOX_STROKE}" stroke-width="2.5" stroke-dasharray="3 3"/>'
+    )
+
+
+def _time_arrow_past(d: str) -> list[str]:
+    """Was here, has gone: the tail sits over the figure and the arrow points away."""
+    x = _DEIXIS_X[d]
+    tip = 150.0 if d == "far" else 254.0
+    arrow = _arrow(x, _TIME_ARROW_Y, tip, _TIME_ARROW_Y)
+    # The tether is painted before the people, so the speech bubble covers it where they cross.
+    return [_zones(), _tether(x), _people(), _absent_person(x), arrow]
+
+
+def _time_arrow_future(d: str) -> list[str]:
+    """Will be here: the tip sits over the figure and the arrow comes from where we are."""
+    x = _DEIXIS_X[d]
+    tail = _DEIXIS_X["both"] if d == "far" else 254.0
+    arrow = _arrow(tail, _TIME_ARROW_Y, x, _TIME_ARROW_Y)
+    return [_zones(), _tether(x), _people(), _absent_person(x), arrow]
 
 
 # ── A place in a line ────────────────────────────────────────────────────────
@@ -763,7 +822,35 @@ _SCENES: dict[str, Callable[[], list[str]]] = {
     "is_here_both": lambda: _deixis("both", thing=False, present=True),
     "is_there_far": lambda: _deixis("far", thing=False, present=True),
     "is_there_yours": lambda: _deixis("yours", thing=False, present=True),
+    "is_here_mine": lambda: _deixis("mine", thing=False, present=True),
+    "was_here_mine": lambda: _time_arrow_past("mine"),
+    "was_here_both": lambda: _time_arrow_past("both"),
+    "was_there_yours": lambda: _time_arrow_past("yours"),
+    "was_there_far": lambda: _time_arrow_past("far"),
+    "will_be_here_mine": lambda: _time_arrow_future("mine"),
+    "will_be_here_both": lambda: _time_arrow_future("both"),
+    "will_be_there_yours": lambda: _time_arrow_future("yours"),
+    "will_be_there_far": lambda: _time_arrow_future("far"),
+    "of_this_mine": lambda: _genitive("mine"),
+    "of_this_both": lambda: _genitive("both"),
+    "of_that_yours": lambda: _genitive("yours"),
+    "of_that_far": lambda: _genitive("far"),
 }
+
+
+def _genitive(d: str) -> list[str]:
+    """Of this, to this: the nominative thing, with a bag standing on top of it.
+
+    On top, not beside: at `mine` and `both` the ball stands next to a person,
+    and a bag beside it overlapped that person's body (owner review, 2026-10-27).
+    """
+    from app.cards.pronoun_scenes import _BAG_H, _bag_parts
+
+    parts = _deixis(d, thing=True)
+    # _bag_parts takes the body's TOP edge, so a bag standing on the ball starts a bag-height above its top.
+    bag = f'<g class="owned-bag">{_bag_parts(_DEIXIS_X[d], _G - 2 * _DEIXIS_BALL_R - _BAG_H)}</g>'
+    parts.append(bag)
+    return parts
 
 
 def render_spatial_svg(concept: str) -> bytes:

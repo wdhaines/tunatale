@@ -90,6 +90,20 @@ _CONCEPT_GLOSSES: dict[str, frozenset[str]] = {
     "is_here_both": frozenset({"here", "exists"}),
     "is_there_far": frozenset({"there", "yonder"}),
     "is_there_yours": frozenset({"there"}),
+    # Past/future/genitive (tunatale-tofg.5)
+    "is_here_mine": frozenset({"here"}),
+    "was_here_mine": frozenset({"was", "were", "past"}),
+    "was_here_both": frozenset({"was", "were", "past"}),
+    "was_there_yours": frozenset({"was", "were", "past"}),
+    "was_there_far": frozenset({"was", "were", "past"}),
+    "will_be_here_mine": frozenset({"will", "future", "come", "go", "goes"}),
+    "will_be_here_both": frozenset({"will", "future", "come", "go", "goes"}),
+    "will_be_there_yours": frozenset({"will", "future", "come", "go", "goes"}),
+    "will_be_there_far": frozenset({"will", "future", "come", "go", "goes"}),
+    "of_this_mine": frozenset({"of"}),
+    "of_this_both": frozenset({"of"}),
+    "of_that_yours": frozenset({"of"}),
+    "of_that_far": frozenset({"of"}),
 }
 
 _WORD = re.compile(r"[^\W\d_]+")
@@ -101,11 +115,21 @@ def load_spatial_words(language_code: str) -> dict[str, str]:
 
     Empty when the language registers no file: it has no drawn spatial words.
     """
+    return {word: senses[0] for word, senses in load_spatial_senses(language_code).items()}
+
+
+@cache
+def load_spatial_senses(language_code: str) -> dict[str, tuple[str, ...]]:
+    """Every word's concepts, in priority order: a string value is a one-sense word."""
     path = get_spatial_path(language_code)
     if path is None or not path.exists():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {str(word).casefold(): str(concept) for word, concept in data.get("words", {}).items()}
+    result: dict[str, tuple[str, ...]] = {}
+    for word, concept in data.get("words", {}).items():
+        senses = concept if isinstance(concept, list) else [concept]
+        result[str(word).casefold()] = tuple(str(c) for c in senses)
+    return result
 
 
 def is_spatial_word(text: str, language_code: str) -> bool:
@@ -124,8 +148,9 @@ def spatial_picture(text: str, language_code: str, gloss: str) -> NumberPicture 
     ``None`` means "take the route you were already on": not a spatial word, or
     one whose *gloss* does not confirm the spatial sense.
     """
-    concept = load_spatial_words(language_code).get(text.strip().casefold())
-    if concept is None or not gloss_matches(concept, gloss):
+    senses = load_spatial_senses(language_code).get(text.strip().casefold(), ())
+    concept = next((c for c in senses if gloss_matches(c, gloss)), None)
+    if concept is None:
         return None
     svg = render_spatial_svg(concept)
     return NumberPicture(f"spatial_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)
