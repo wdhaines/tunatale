@@ -538,6 +538,45 @@ class TestInflectionClozes:
         cloze = api_app_state.get_collocation_by_guid(guid)
         assert cloze.syntactic_unit.translation == "fallback gloss"
 
+    @pytest.mark.parametrize(
+        ("passed", "model", "stored"),
+        [
+            # Live 2026-10-22 (tunatale-yxeb): Mobilar 'will keep vigil' stored 'we will',
+            # the model having glossed the neighbour 'mi'. A gloss sharing no content word
+            # with the one passed in is the model reading the wrong word.
+            ("will keep vigil", "we will", "will keep vigil"),
+            ("will keep vigil", "tonight", "will keep vigil"),
+            # one shared content word, inflection aside, and the model's form-gloss wins
+            ("will keep vigil", "we will keep vigil", "we will keep vigil"),
+            ("keeps vigil", "will keep watch", "will keep watch"),
+            # a passed gloss with no content word ('be' for biti) cannot vouch for
+            # anything: the model's gloss of the form wins, as before
+            ("be", "you will be", "you will be"),
+        ],
+    )
+    async def test_the_models_gloss_must_share_a_word_with_the_one_passed(self, api_app_state, passed, model, stored):
+        from app.main import app
+
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = model
+        app.state.llm = mock_llm
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/api/srs/inflection-clozes",
+                json={
+                    "surface": "boste",
+                    "lemma": "biti",
+                    "feature": "verb:2pl",
+                    "sentence": "Kje boste ostali",
+                    "language_code": "sl",
+                    "translation": passed,
+                },
+            )
+        assert resp.status_code == 200
+        cloze = api_app_state.get_collocation_by_guid(compute_guid("boste", "sl", "morph:verb-2pl"))
+        assert cloze.syntactic_unit.translation == stored
+
     async def test_resolves_gloss_and_sentence_translation_from_lesson(self, api_app_state):
         """lesson_id → word gloss (token_glosses) + sentence_translation (metadata)."""
         from app.main import app
