@@ -1,0 +1,68 @@
+# The English an affix gets in a word glossed by its parts (tunatale-h0q3.26). Hand-written.
+# piece<TAB>root kind<TAB>label<TAB>Wolff sense
+#
+# The owner approved this wording on 2026-10-28 (https://claude.ai/artifact/WNCxM9XxVTpje6ANtoyiRm,
+# version 2): one short label per form, chosen by the kind of root it is on. A piece is spelled as
+# the affix decoder spells it (mu-, -un, gi-an). The root kind is a subject from
+# wolff_dictionary.decode_classes (what Wolff's class code makes the subject), or noun / adjective
+# for a root with no verb senses, or verb / adjective for pa-. A piece with no row here is silent.
+# The Wolff column cites his numbered sense, for the card's Details.
+# Wolff's general i- ('what is used or moved', which an a or b code adds to nearly every verb
+# and the Verb field shows dimmed) labels nothing: it would make every gi- ambiguous.
+# A noun with no verb sense labels nothing either (Wolff's mu- 2a, 'added to nouns'): the decoder
+# also 'finds' mi- + sor in misor, a form of address, and 'did + the south wind' is a confident
+# wrong line. An adjective stands in (mu- 3a, 'become [adj.]').
+mu-	the one doing it	will	mu- 1, 2
+mi-	the one doing it	did	mu- 1, 2
+ni-	the one doing it	did	mu- 1, 2
+mu-	the one it happens to	will become	mu- 3
+mi-	the one it happens to	became	mu- 3
+ni-	the one it happens to	became	mu- 3
+mu-	adjective	will become	mu- 3a
+mi-	adjective	became	mu- 3a
+ni-	adjective	became	mu- 3a
+mag-	the one doing it	will be	mag- 2
+nag-	the one doing it	is, or was	mag- 2
+ga-	the one doing it	is, or was	mag- 2
+mag-	the one it happens to	will be	mag- 3
+nag-	the one it happens to	is, or was	mag- 3
+ga-	the one it happens to	is, or was	mag- 3
+mag-	adjective	will be	mag- 3a
+nag-	adjective	is, or was	mag- 3a
+mag-	those doing it together	will, each other	mag- 5
+nag-	those doing it together	did, each other	mag- 5
+maka-	the one doing it	can / get to / happen to	maka- 1, 2, 3
+naka-	the one doing it	got to / happened to	maka- 2, 3
+ka-	the one doing it	can / got to	maka- 1, 2
+maN-	the one doing it	will, many or again	paN- 1a
+naN-	the one doing it	did, many or again	paN- 1a
+-un	what it is done to	will, to it	-un 1
+gi-	what it is done to	did, to it	-un 1
+-a	what it is done to	do it to it! (or: didn't)	-a = -un, dependent
+-un	who is affected	will, to it	-un 1
+gi-	who is affected	did, to it	-un 1
+-a	who is affected	do it to it! (or: didn't)	-a = -un, dependent
+-un	adjective	will make it	-un 1b
+gi-	adjective	made it	-un 1b
+ma-	what it is done to	can be	ma- 1
+na-	what it is done to	got	ma- 1
+ma-	the one it happens to	will become	ma- 3
+na-	the one it happens to	became	ma- 3
+-an	where or for whom it is done	will, for someone	-an 1
+gi-an	where or for whom it is done	did, for someone	-an 1
+-an	where it is done, or who it is done to	will, for someone	-an 1
+gi-an	where it is done, or who it is done to	did, for someone	-an 1
+-an	who or what it is done to	will, to someone	-an 2
+gi-an	who or what it is done to	did, to someone	-an 2
+-an	the reason for it	will, because of it	-an 5
+gi-an	the reason for it	did, because of it	-an 5
+-an	what it affects	will, happen to someone	-an 4
+gi-an	what it affects	did, happen to someone	-an 4
+-i	where or for whom it is done	do it for someone! (or: didn't)	-i = -an, dependent
+-i	where it is done, or who it is done to	do it for someone! (or: didn't)	-i = -an, dependent
+i-	what is moved or conveyed	will bring it	i- 1
+gi-	what is moved or conveyed	brought it	i- 1
+magka-	the one it happens to	more and more	magka-
+nagka-	the one it happens to	more and more	magka-
+pa-	verb	have someone	pa- 1
+pa-	adjective	make it	pa- 1a

@@ -53,6 +53,7 @@ from app.plugins.languages.ceb import affixes
 from app.plugins.languages.ceb.handbook_spelling import SpellingLexicon, convert_text, handbook_spelling
 from app.plugins.languages.ceb.wolff_dictionary import (
     CAUSE,
+    DIRECT,
     DOER,
     TOGETHER,
     UNDERGOER,
@@ -68,6 +69,7 @@ from app.plugins.languages.ceb.wolff_dictionary import (
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
 DECODED_PATH = Path(__file__).parent / "data" / "wolff_decoded.tsv"
+LABELS_PATH = Path(__file__).parent / "data" / "affix_labels.tsv"
 CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spelling"
 FIELD_NAMES = DICTIONARY_FIELDS
 _POS_NAMES = {"n": "noun", "v": "verb", "a": "adjective"}
@@ -340,6 +342,61 @@ class EnglishRelations:
 class Miss(NamedTuple):
     reason: str  # not-in-dictionary | english-unmatched | ambiguous
     candidates: tuple[str, ...]  # the candidates' Handbook spellings
+
+
+# ── a word glossed by its parts (tunatale-h0q3.26) ──────────────────────────────────────────
+# The owner's wording (affix_labels.tsv, approved 2026-10-28): "form label + root", one short
+# label per affix chosen by what Wolff's class code makes the subject, and the root's own
+# meaning first, then the verb sense that licensed the affix. Silent rather than guessing.
+
+
+class Part(NamedTuple):
+    text: str  # the affix as written (mo-, gi-…-an), or the root in Handbook spelling
+    gloss: str  # the affix's label, or the root's meaning
+    affix: bool
+
+
+@cache
+def _labels(path: Path = LABELS_PATH) -> dict[tuple[str, str], str]:
+    """(decoder piece, root kind) -> the approved label."""
+    rows = (line.split("\t") for line in path.read_text().splitlines() if line and not line.startswith("#"))
+    return {(piece, kind): label for piece, kind, label, _ in rows}
+
+
+# The chart pair a decoder piece belongs to, as decode_classes names it.
+_PIECE_PAIRS: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys(("mu-", "mi-", "ni-"), ("mo-/mi-",)),
+    **dict.fromkeys(("mag-", "nag-", "ga-"), ("mag-/nag-",)),
+    **dict.fromkeys(("maka-", "naka-", "ka-"), ("maka-/naka-",)),
+    **dict.fromkeys(("maN-", "naN-"), ("maN-/naN-",)),
+    **dict.fromkeys(("-un", "-a"), ("-on/gi-",)),
+    "gi-": ("-on/gi-", "i-/gi-"),
+    **dict.fromkeys(("-an", "gi-an", "-i"), ("-an/gi-an",)),
+    "i-": ("i-/gi-",),
+    **dict.fromkeys(("ma-", "na-"), ("ma-/na-",)),
+    **dict.fromkeys(("magka-", "nagka-"), ("magka-/nagka-",)),
+}
+# The decoder's spelling -> the Handbook's (Wolff writes u where the Handbook writes o).
+_PIECE_TEXT = {"mu-": "mo-", "-un": "-on", "gi-an": "gi-…-an"}
+_ROOT_FORMS = ("(←)", "(→)")  # a root's stress forms: other words with its letters
+
+
+def _licenses(cls: str) -> set[tuple[str, str]]:
+    """The (chart pair, subject) a sense's class code licenses, and the potential ma-/na- that
+    every direct passive has (Wolff, -un_1: 'Potential forms: past: na-; future ... ma-').
+    Wolff's general i- is licensed too, but affix_labels.tsv gives it no label."""
+    out = set()
+    for part in cls.split(";"):
+        out |= set(decode_classes(part.strip()))
+    if ("-on/gi-", DIRECT) in out:
+        out.add(("ma-/na-", DIRECT))
+    return out
+
+
+def _plain(gloss: str) -> str:
+    """Wolff's gloss without his s.t. / s.o. / s.w. placeholders or a closing stop."""
+    text = re.sub(r"\s+(?:s\.t|s\.o|k\.o|s\.w)\.?(?=[\s,;)]|$)", "", gloss)
+    return re.sub(r"\s+", " ", text).strip().rstrip(".;, ")
 
 
 @dataclass(frozen=True)
@@ -727,6 +784,117 @@ class WolffLexicon:
         letters = affixes.wolff_letters(word)
         form = next(c.surface for c in affixes.generate(root, affix) if affixes.strip_marks(c.surface) == letters)
         return onto_card(word, handbook_spelling(shifted(form, "←"), _NO_CORPUS).text)
+
+    def parts(self, word: str, english: str = "") -> list[Part] | None:
+        """*word* as its affixes and root, each glossed, in the word's order; None when the
+        decoder finds no affix, a piece has no approved label, or the readings differ."""
+        found = affixes.analyse(word, self._decoder, english)
+        if not found or not found[0].affix:
+            return None
+        affix = found[0].affix
+        pieces = affix.split("+")
+        inflections = [p for p in pieces if p != "pa-"]
+        # The decoder ranks the roots (by the English, then the entry), and its best root
+        # decides: falling through to a lower one when it reads nothing is a guess (pasusoa
+        # 'breastfeed' would read as sûsò 'pound'). Its own stress forms must then agree.
+        readings = self._readings(found[0].root, pieces, inflections)
+        # exactly one reading, and not one form that reads two ways (None)
+        if len(readings) != 1 or None in readings:
+            return None
+        (labels, (form, sense, shown)) = next(iter(readings.items()))
+        by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
+        root = Part(shown["hb"] or shown["wolff"], self._root_gloss(form, sense), False)
+        before = [p for p in pieces if p.endswith("-")]
+        after = [p for p in pieces if not p.endswith("-")]
+        label = by_piece | ({"pa-": labels[-1]} if "pa-" in pieces else {})
+        return [
+            *(Part(_PIECE_TEXT.get(p, p), label[p], True) for p in before),
+            root,
+            *(Part(_PIECE_TEXT.get(p, p), label[p], True) for p in after),
+        ]
+
+    def _readings(self, root: str, pieces: list[str], inflections: list[str]) -> dict:
+        """reading -> (the form that gives it, its licensing sense, the form as the word spells
+        it) over *root*'s forms and stress forms, a pointer ('suwat = sulat') followed. A root's
+        part of speech stands in only when no form reads as a verb (abut 'arrive' is a verb;
+        the homograph abut, a kind of grain, does not make mi- 'became')."""
+        candidates = []
+        for ei, rec in enumerate(self.entries):
+            if root not in rec["heads"]:
+                continue
+            for fi, form in enumerate(rec["forms"]):
+                if fi and form["label"] not in _ROOT_FORMS:
+                    continue
+                tei, tfi = self._resolve(ei, fi, letters_key(root)) or (ei, fi)
+                candidates.append((self.entries[tei], self.entries[tei]["forms"][tfi], form))
+        readings: dict = {}
+        for by_kind in (False, True):
+            for rec, form, shown in candidates:
+                reading = self._reading(rec, form, pieces, inflections, by_kind=by_kind)
+                if reading is not None:
+                    readings.setdefault(reading[0], (form, reading[1], shown))
+            if readings:
+                break
+        return readings
+
+    def _reading(self, rec: dict, form: dict, pieces: list[str], inflections: list[str], *, by_kind: bool):
+        """(labels, licensing sense) of *form* for the pieces, (None, None) when a piece has two
+        labels, or None when the form does not license them."""
+        verbs = [s for s in form["senses"] if s["pos"] == "v" and s["cls"]]
+        source = verbs
+        if "pa-" in pieces:
+            causative = next((f for f in rec["forms"] if "pa-" in re.split(r",\s*", f["label"])), None)
+            source = [s for s in (causative or form)["senses"] if s["pos"] == "v" and s["cls"]] or verbs
+        kind = None
+        if by_kind:
+            source = []
+            kind = "adjective" if form["senses"] and form["senses"][0]["pos"] == "a" else None
+        labels: list[str] = []
+        sense = None
+        for piece in inflections:
+            # Wolff lists a root's main sense first: the first sense that licenses the piece decides
+            found: dict[str, dict | None] = {}
+            for s in source:
+                for pair, subject in _licenses(s["cls"]):
+                    if pair in _PIECE_PAIRS.get(piece, ()) and (piece, subject) in _labels():
+                        found.setdefault(_labels()[(piece, subject)], s)
+                if found:
+                    break
+            if kind and not found and (piece, kind) in _labels():
+                found[_labels()[(piece, kind)]] = None
+            stative = _labels().get((piece, UNDERGOER))
+            if len(found) > 1 and piece in ("ma-", "na-") and stative in found:
+                # Wolff §7.12: a verb of state's ma-/na- is its own active, not a potential
+                found = {stative: found[stative]}
+            if not found:
+                return None
+            if len(found) > 1:
+                return (None, None)
+            ((label, licensing),) = found.items()
+            labels.append(label)
+            sense = sense or licensing
+        if "pa-" in pieces:
+            pa = "verb" if verbs else kind
+            if (("pa-", pa)) not in _labels():
+                return None
+            labels.append(_labels()[("pa-", pa)])
+            sense = verbs[0] if verbs else None
+        return tuple(labels), sense
+
+    def _root_gloss(self, form: dict, sense: dict | None) -> str:
+        """The root's own first meaning, then the verb sense that licensed the affix, unless
+        the first meaning already says it ('get and bring' covers 'get')."""
+        first = next((s for s in form["senses"] if s["gloss"]), None)
+        own = _plain(first["gloss"]) if first and first["pos"] != "v" else ""
+        verb = _plain(sense["gloss"]) if sense else ""
+        if verb and own and _words(verb) <= _words(own):
+            verb = ""
+        return " · ".join(filter(None, [own, verb])) or (_plain(first["gloss"]) if first else "")
+
+    def parts_line(self, word: str, english: str = "") -> str | None:
+        """*word* glossed by its parts, as the card and the reader show it: 'mo- will + ádto …'."""
+        parts = self.parts(word, english)
+        return None if parts is None else " + ".join(f"{p.text} {p.gloss}" for p in parts)
 
     def card_fields(self, cebuano: str, english: str) -> CardFields | Miss:
         hit = self.match(cebuano, english)
