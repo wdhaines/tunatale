@@ -48,6 +48,20 @@ def safe_stem(word: str, prefix: str) -> str:
     return f"{prefix}_{sanitized}"
 
 
+def audio_filename(word: str, source: str | None, language_code: str, data: bytes) -> str:
+    """A fetched clip's filename: ``<language>_<word>.mp3`` for a Forvo recording,
+    ``tts_<word>_<digest8>.mp3`` for a render.
+
+    One media dir serves every language and learner. A render named by its word
+    alone was one file for Tagalog's and Cebuano's 'gusto', and the second voice
+    replaced the first (tunatale-xj83); the digest is the pre-stage's own rule
+    (``audio_prestage``). A Forvo name already carries its language.
+    """
+    if source == "forvo":
+        return f"{safe_stem(word, language_code)}.mp3"
+    return f"{safe_stem(word, 'tts')}_{hashlib.sha256(data).hexdigest()[:8]}.mp3"
+
+
 def image_filename(english: str, data: bytes, ext: str | None, source: str | None = None) -> str:
     """A fetched picture's filename: ``img_<gloss>_<digest8>.<ext>``.
 
@@ -231,12 +245,9 @@ async def generate_vocab_media(
         return stored
 
     if media.audio_bytes is not None:
-        # Forvo audio gets the card language code as filename prefix (matches
-        # the sync fetch path in sync_engine); TTS audio uses "tts".
-        prefix = language_code if media.audio_source == "forvo" else "tts"
-        audio_filename = f"{safe_stem(word, prefix)}.mp3"
-        store_tt_media(db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_filename, media.audio_bytes)
-        stored["audio"] = audio_filename
+        audio_name = audio_filename(word, media.audio_source, language_code, media.audio_bytes)
+        store_tt_media(db, coll_id, f"audio_{media.audio_source or 'tts'}", audio_name, media.audio_bytes)
+        stored["audio"] = audio_name
 
     if media.image_bytes is not None:
         retry_urls = used_image_urls if used_image_urls is not None else set()

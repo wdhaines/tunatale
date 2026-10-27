@@ -980,7 +980,7 @@ class TestSyncCreateNew:
         assert len(stored) == 2  # audio + image
         audio_files = [s for s in stored if s[1].startswith("tts_")]
         assert len(audio_files) == 1
-        assert audio_files[0][1] == "tts_voda.mp3"
+        assert audio_files[0][1] == "tts_voda_ae0f38a7.mp3"  # sha256(b"tts_data")[:8], tunatale-xj83
 
     async def test_audio_field_contains_sound_tag(self):
         db = _make_db()
@@ -2361,7 +2361,7 @@ class TestCreateNewDefersMeteredAudio:
         _db, fields = await self._mint("no", media)
 
         assert "audio" not in media_kwargs[0]
-        assert fields["Audio"] == "[sound:tts_gabii.mp3]"
+        assert fields["Audio"] == "[sound:tts_gabii_5e758851.mp3]"
 
 
 # ── A second sense mints with its recognition card suspended (tunatale-ocv3) ──

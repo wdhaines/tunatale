@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 
 import pytest
@@ -124,8 +123,9 @@ def _seed_sentence_audio():
     import app.audio.cloze_tts as cloze_tts
 
     for sentence in ("Kje je banka?",):
-        digest = hashlib.sha256(sentence.encode("utf-8")).hexdigest()[:16]
-        (cloze_tts._MEDIA_DIR / f"tts_sentence_{digest}.mp3").write_bytes(b"\xff\xfbfake")
+        from app.languages import get_tts_voice
+
+        (cloze_tts._MEDIA_DIR / cloze_tts.sentence_filename(sentence, get_tts_voice("sl"))).write_bytes(b"\xff\xfbfake")
     yield
 
 

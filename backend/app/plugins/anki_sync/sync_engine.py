@@ -18,9 +18,9 @@ from app.cards.cloze_prestage import cloze_cache_key
 from app.cards.cloze_source import ClozeChoice, choose_cloze_sentence
 from app.cards.drawn_picture import drawn_picture
 from app.cards.media.audio_prestage import mint_audio_mode
+from app.cards.media.vocab_media import audio_filename as _audio_filename
 from app.cards.media.vocab_media import image_filename as _image_filename
 from app.cards.media.vocab_media import image_no_other_card_holds as _image_no_other_card_holds
-from app.cards.media.vocab_media import safe_stem as _safe_stem
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
 from app.common.guid import compute_guid
 from app.config import settings
@@ -1956,8 +1956,7 @@ class AnkiSync:
                 _copy_tt_media_to_anki(self._writer, existing_audio)
                 audio_tag = f"[sound:{existing_audio}]"
             elif media is not None and media.audio_bytes is not None:
-                prefix = self._language_code if media.audio_source == "forvo" else "tts"
-                audio_filename = f"{_safe_stem(word, prefix)}.mp3"
+                audio_filename = _audio_filename(word, media.audio_source, self._language_code, media.audio_bytes)
                 self._writer.store_media_file(audio_filename, media.audio_bytes)
                 audio_tag = f"[sound:{audio_filename}]"
                 _store_tt_media(
