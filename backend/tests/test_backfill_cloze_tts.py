@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from app.audio.backfill_cloze_tts import backfill_cloze_tts
+from app.audio.cloze_tts import sentence_filename
+from app.languages import get_tts_voice
 
 
 @pytest.fixture
@@ -295,7 +297,9 @@ def test_backfill_unclozes_source_sentence_before_tts(monkeypatch, db_path):
 
     db2 = SRSDatabase(db_path)
     coll_id = db2.get_collocation_by_lemma_with_id("sånn")[0]
-    assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_0b1066c0e69b24e9.mp3"
+    assert db2.get_sentence_audio_filename(coll_id) == sentence_filename(
+        "Jeg vil ha en sånn bil", get_tts_voice("no")
+    )  # the clean text was named
 
 
 def test_backfill_unclozes_hint_payload_before_tts(monkeypatch, db_path):
@@ -329,7 +333,9 @@ def test_backfill_unclozes_hint_payload_before_tts(monkeypatch, db_path):
 
     db2 = SRSDatabase(db_path)
     coll_id = db2.get_collocation_by_lemma_with_id("tenke")[0]
-    assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_87afd8f533341d9c.mp3"
+    assert db2.get_sentence_audio_filename(coll_id) == sentence_filename(
+        "Jeg tenker på deg", get_tts_voice("no")
+    )  # the clean text was named
 
 
 def test_inserted_sentence_media_row_path_is_relative(monkeypatch, db_path):
@@ -390,4 +396,6 @@ def test_backfill_clean_text_untouched(monkeypatch, db_path):
 
     db2 = SRSDatabase(db_path)
     coll_id = db2.get_collocation_by_lemma_with_id("vsak")[0]
-    assert db2.get_sentence_audio_filename(coll_id) == "tts_sentence_3fedfee1f3457d84.mp3"
+    assert db2.get_sentence_audio_filename(coll_id) == sentence_filename(
+        "Odprto je vsak dan", get_tts_voice("sl")
+    )  # the clean text was named

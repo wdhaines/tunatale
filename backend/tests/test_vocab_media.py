@@ -190,7 +190,9 @@ async def test_tts_audio_prefix(media_dir) -> None:
     out = await vocab_media.generate_vocab_media(
         db, 1, "voda", "water", llm=object(), pixabay_key="k", _query_fn=_query, _fetch_fn=_fetch
     )
-    assert out == {"audio": "tts_voda.mp3"}
+    # Hash-suffixed (tunatale-xj83): one media dir serves every language, and tl and
+    # ceb both have 'gusto'; a bare tts_<word>.mp3 let the second voice replace the first.
+    assert out == {"audio": "tts_voda_5e758851.mp3"}  # sha256(b"AUD")[:8]
     assert db.media[0][1] == "audio_tts"
 
 
@@ -545,7 +547,7 @@ class TestADuplicatePictureIsRetriedOnce:
 
         assert "image" not in out
         assert out["image_duplicate_of"] == 42
-        assert out["audio"] == "tts_båt.mp3"
+        assert out["audio"] == "tts_båt_5e758851.mp3"
 
     async def test_a_batch_callers_url_set_learns_the_barred_url(self, media_dir) -> None:
         """`POST /items/batch` shares one set across its cards. The barred URL
