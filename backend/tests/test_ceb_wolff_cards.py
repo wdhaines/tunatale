@@ -71,8 +71,8 @@ def test_the_verb_card(lexicon):
     assert isinstance(f, CardFields)
     assert f.spelling == "tán-aw"
     assert f.meaning.startswith("see, look at; size up, form an opinion on s.t.; see in s.o.; look after")
-    assert f.verb == "mo-/mi-, mag-/nag-, maka-/naka-, -on/gi-, -an/gi-an, i-/gi-, hi-an, ma-an/na-an"
-    assert "<li>mo-/mi-, mag-/nag-, maka-/naka-: the one doing it</li>" in f.details
+    assert "<b>Agent · perfective · mo-/mi-</b>" in f.verb and "<b>Circumstance · potential · ma-an/na-an</b>" in f.verb
+    assert "Who is the subject" not in f.details
     assert "<b>panán-aw</b> sense of sight" in f.details
     assert "<i>Motán-aw kog siní karóng gabîi</i> I’ll go see a movie tonight." in f.details
     assert "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972)" in f.dictionary_entry
@@ -651,8 +651,8 @@ def test_a_see_pointer_to_a_full_word_is_still_a_short_form(committed):
 def test_a_decoded_form_reads_the_sub_entry_its_hand_row_names(committed):
     f = committed.card_fields("kabalo", "can")
     assert f.spelling == "kabaló"
-    assert f.meaning == "know s.t., how to do s.t.; take care of a problem"
-    assert f.verb == "ma-/na-, maka-/naka-, -an/gi-an, i-/gi-"
+    assert f.meaning.endswith("Wolff, under hibaló: know s.t., how to do s.t.; take care of a problem</div>")
+    assert "<b>Stative · maka-/naka-</b>" in f.verb
     assert f.details.startswith(
         "<div>Not written out in Wolff: <b>ka-</b> + <b>baló</b>. He gives the meaning under <b>hibaló</b>."
         " His example writes the full form kahibaló.</div>"
@@ -840,11 +840,162 @@ def test_a_root_spelled_as_an_affix_still_takes_the_rule(committed, word, spelli
 @pytest.mark.parametrize(
     ("word", "english", "line"),
     [
-        ("delikado", "dangerous", "<li>maka-/naka-: what causes it</li>"),  # [B12; b5]
-        ("kalma", "calm", "<li>maka-/naka-: what causes it</li>"),  # [B; a12]: makakalma 'soothe'
-        ("hibalo", "know", "<li>ma-/na-, maka-/naka-: the one it happens to</li>"),  # [B1236; b]: B3 'come to know'
+        ("delikado", "dangerous", "Subject: what causes it."),  # [B12; b5]
+        ("kalma", "calm", "Subject: what causes it."),  # [B; a12]: makakalma 'soothe'
+        ("hibalo", "know", "Subject: the one it happens to."),  # [B1236; b]: B3 'come to know'
     ],
 )
 def test_a_verb_of_state_says_who_its_maka_belongs_to(committed, word, english, line):
     # Wolff §7.12 (class B maka- 'cause s.t. to become') against §7.121 (B3 'become')
-    assert line in committed.card_fields(word, english).details
+    rows = _rows(committed.card_fields(word, english).verb)
+    (maka,) = [t for _, t in rows if _label(t) == "Stative · maka-/naka-"]
+    assert line in maka
+
+
+# ── the verb, one row per affix (tunatale-h0q3.31; the owner approved the mockup
+# https://claude.ai/artifact/HiSVj2PmJoiiGYgkaezEgG on 2026-10-27) ─────────────────────
+#
+# The kind of verb in words; one row per affix, named by its row in the owner's affix
+# chart (trigger · aspect), with the forms on this word marked "not begun" / "begun",
+# what the affix means here and who the subject is; short forms; the general i- dimmed
+# at the bottom; a noun or adjective's verb use labelled "Also a verb"; rows grouped by
+# sense when Wolff gives senses different affixes; an inflected card word leads with its
+# own reading and its row is marked. Prefix forms are the prefix plus the word's own
+# spelling; a suffix form appears only as Wolff prints it (the generator's first guess
+# for hibalu + -an is hibad-an, and a wrong spelling is worse than none).
+
+_ROW = re.compile(r'<div class="wolff-row( [^"]*)?">(.*?)</div>')
+
+
+def _rows(verb: str) -> list[tuple[str, str]]:
+    """(classes, text) per affix row, in order."""
+    return [((m.group(1) or "").strip(), m.group(2)) for m in _ROW.finditer(verb)]
+
+
+def _label(text: str) -> str:
+    return re.match(r"<b>(.*?)</b>", text).group(1)
+
+
+def test_a_verb_of_state_says_so_and_its_maka_comes_to_be(committed):
+    f = committed.card_fields("hibalo", "know")
+    assert f.verb.startswith('<div class="wolff-kind">Verb of state: it happens to someone; nobody does it.</div>')
+    rows = _rows(f.verb)
+    assert [_label(t) for _, t in rows] == [
+        "Stative · ma-/na-",
+        "Stative · maka-/naka-",
+        "Circumstance · -an/gi-an",
+        "Instrument · i-/gi-",
+    ]
+    ma, maka, an, i = (t for _, t in rows)
+    assert "not begun mahibaló · begun nahibaló" in ma
+    assert "<i>Akóy mahibaló sa tanán</i> I’ll take care of everything." in ma
+    # hibalu is B3 (Wolff §7.121): maka- is 'become', its subject the one it happens to
+    assert "not begun makahibaló (short kahibaló) · begun nakahibaló" in maka
+    assert "come to be so. Subject: the one it happens to." in maka
+    assert "<i>Kahibaló ka bang molangóy?</i> Do you know how to swim?" in maka
+    assert "begun" not in an  # Wolff prints no -an form of it in an example: the affix alone
+    assert [c for c, _ in rows] == ["", "", "", "wolff-dim"]  # the general i-, dimmed, last
+    assert "Who is the subject" not in f.details  # each row says it now
+
+
+def test_an_adjectives_verb_use_is_labelled_and_its_maka_is_the_cause(committed):
+    f = committed.card_fields("delikado", "dangerous")
+    assert f.verb.startswith(
+        '<div class="wolff-kind">Also a verb: be unsafe, in danger. '
+        "Verb of state: it happens to someone; nobody does it.</div>"
+    )
+    rows = dict((_label(t), t) for _, t in _rows(f.verb))
+    assert "not begun madelikádo · begun nadelikádo" in rows["Stative · ma-/na-"]
+    # [B12; b5]: no 3, so maka- is 'cause to become' (Wolff §7.12), its subject the cause
+    assert "cause to become so. Subject: what causes it." in rows["Stative · maka-/naka-"]
+    assert "become more and more so." in rows["Stative · magka-/nagka-"]
+    # the verb's gloss moved to its label, so the Meaning keeps the adjective's
+    assert "be unsafe" not in f.meaning and f.meaning.startswith("perilous, in danger")
+
+
+def test_senses_with_their_own_affixes_get_their_own_group(committed):
+    f = committed.card_fields("tan-aw", "look, watch")
+    assert f.verb.startswith('<div class="wolff-kind">Action verb: someone does it.</div>')
+    heads = re.findall(r'<div class="wolff-h">(.*?)</div>', f.verb)
+    # 'wait and see' [a12] adds no affix the first group lacks, so it gets no group
+    assert heads == ["see, look at; size up, form an opinion on s.t.; look after", "see in s.o."]
+    first, second = f.verb.split('<div class="wolff-h">see in s.o.</div>')
+    labels = [_label(t) for _, t in _rows(first)]
+    assert labels == [
+        "Agent · perfective · mo-/mi-",
+        "Agent · progressive · mag-/nag-",
+        "Agent · potential · maka-/naka-",
+        "Patient · -on/gi-",
+        "Circumstance · -an/gi-an",
+        "Circumstance · by accident · hi-an",
+        "Instrument · i-/gi-",
+    ]
+    rows = dict((_label(t), t) for _, t in _rows(first))
+    assert "not begun motán-aw · begun mitán-aw" in rows["Agent · perfective · mo-/mi-"]
+    assert "<i>Motán-aw kog siné karóng gabîi</i>" in rows["Agent · perfective · mo-/mi-"]
+    assert "do it. Subject: the one doing it." in rows["Agent · perfective · mo-/mi-"]
+    # a suffix form Wolff prints is used, and the begun gi- form is the prefix's
+    assert "not begun tan-áwon · begun gitán-aw" in rows["Patient · -on/gi-"]
+    (see_in,) = _rows(second)
+    assert _label(see_in[1]) == "Circumstance · potential · ma-an/na-an"
+    assert "begun natan-awán" in see_in[1]
+
+
+def test_an_inflected_card_word_leads_with_its_own_reading(committed):
+    f = committed.card_fields("kabalo", "can")
+    assert f.meaning == (
+        "<b>kabaló</b> = ka- (short for maka-/naka-) + baló: know (how to); “can” + a verb"
+        '<div class="wolff-under">Wolff, under hibaló: know s.t., how to do s.t.; take care of a problem</div>'
+    )
+    (here,) = [t for c, t in _rows(f.verb) if c == "wolff-here"]
+    assert _label(here) == "Stative · maka-/naka-"
+    assert "(short kahibaló, kabaló ← this card)" in here
+
+
+def test_a_nouns_verb_use_is_labelled_and_its_i_is_its_own(committed):
+    f = committed.card_fields("lungon", "coffin")
+    assert f.meaning == "coffin"
+    assert f.verb.startswith(
+        '<div class="wolff-kind">Also a verb: bury in a coffin, as opposed to other modes of burial.</div>'
+    )
+    rows = _rows(f.verb)
+    # [c1]: i- is this verb's own (what is moved: the body), not the general one
+    assert [(c, _label(t)) for c, t in rows] == [
+        ("", "Instrument · i-/gi-"),
+        ("", "Patient · -on/gi-"),
+        ("", "Circumstance · -an/gi-an"),
+    ]
+    assert "Subject: what is moved or conveyed." in rows[0][1]
+
+
+@pytest.mark.parametrize(
+    ("codes", "kinds"),
+    [
+        (["A; ab2"], ["Action verb: someone does it."]),
+        (["B1236; b"], ["Verb of state: it happens to someone; nobody does it."]),
+        (["C; c6"], ["Mutual action: done together."]),
+        (["APB; a2"], ["Action verb: someone does it.", "Verb of state: it happens to someone; nobody does it."]),
+        (["c1"], []),
+        (["A", "A; b"], ["Action verb: someone does it."]),
+    ],
+)
+def test_the_kind_of_verb_comes_from_its_capital_classes(codes, kinds):
+    from app.plugins.languages.ceb.wolff_cards import verb_kinds
+
+    assert verb_kinds(codes) == kinds
+
+
+def test_one_affix_in_two_senses_with_two_subjects_gets_a_row_in_each(committed):
+    # The owner's stress test (card 45): oras takes mo- as a doer ('time s.t.', [A]) and as
+    # the one it happens to ('get to be [time]', [B256]). Dropping a repeated affix lost the second.
+    f = committed.card_fields("oras", "hour, time")
+    first, second = f.verb.split('<div class="wolff-h">be an hour, take an hour</div>')
+    assert "<b>Agent · perfective · mo-/mi-</b>" in first
+    assert [_label(t) for _, t in _rows(second)] == ["Stative · mo-/mi-", "Stative · ma-/na-"]
+    assert "come into the state, become so." in _rows(second)[0][1]
+
+
+def test_a_printed_an_form_gives_its_begun_gi_an_form(committed):
+    # Wolff prints agwadáhan, not giagwadáhan: gi- on the printed form is the begun one
+    rows = dict((_label(t), t) for _, t in _rows(committed.card_fields("agwada", "fetch water").verb))
+    assert "not begun agwadáhan · begun giagwadáhan" in rows["Circumstance · -an/gi-an"]

@@ -52,6 +52,11 @@ from app.cards.vocab_notetype import DICTIONARY_FIELDS
 from app.plugins.languages.ceb import affixes
 from app.plugins.languages.ceb.handbook_spelling import SpellingLexicon, convert_text, handbook_spelling
 from app.plugins.languages.ceb.wolff_dictionary import (
+    CAUSE,
+    DOER,
+    TOGETHER,
+    UNDERGOER,
+    USED,
     Entry,
     Form,
     decode_classes,
@@ -361,11 +366,117 @@ class Decoded(NamedTuple):
     label: str  # the sub-entry's label ('hi-/ha-')
     affix: str  # what the word adds to the root
     note: str  # a sentence for the card, or ""
+    reading: str = ""  # the card word's own meaning, which the Meaning field leads with
 
 
 def load_decoded(path: Path = DECODED_PATH) -> list[Decoded]:
     lines = path.read_text(encoding="utf-8").splitlines()
     return [Decoded(*line.split("\t")) for line in lines if line and not line.startswith("#")]
+
+
+# --- the verb, one row per affix (tunatale-h0q3.31) ---------------------------------------------
+#
+# The owner approved the wording on 2026-10-27 (https://claude.ai/artifact/HiSVj2PmJoiiGYgkaezEgG):
+# the kind of verb in words, then one row per affix named by its row in the owner's affix chart
+# (trigger · aspect, the terms settled 10-24/25: agent / patient / circumstance / instrument,
+# perfective / progressive / distributive, potential, and stative as its own band), with its forms
+# on this word as "not begun" / "begun", what it means here, and who the subject is.
+
+_KINDS = {
+    "A": "Action verb: someone does it.",
+    "B": "Verb of state: it happens to someone; nobody does it.",
+    "C": "Mutual action: done together.",
+}
+_AGENT_ASPECT = {
+    "mo-/mi-": "perfective",
+    "mag-/nag-": "progressive",
+    "maka-/naka-": "potential",
+    "maN-/naN-": "distributive",
+}
+_PASSIVE = {
+    "-on/gi-": "Patient",
+    "-an/gi-an": "Circumstance",
+    "i-/gi-": "Instrument",
+    "ma-/na-": "Patient · potential",
+    "ma-an/na-an": "Circumstance · potential",
+    "hi-an": "Circumstance · by accident",
+    "ika-/gika-": "Instrument · potential",
+}
+_STATIVE_SUBJECTS = frozenset({UNDERGOER, CAUSE, f"{UNDERGOER}, or {CAUSE}"})
+# What each affix means on this kind of verb. Agent: Wolff §6.1. Stative: §7.12 and the affix
+# entries (mu- {3} 'come into [such-and-such] a state', mag- {3} 'be in [such-and-such] a
+# state', magka- 'become more and more [so-and-so]'); maka-'s turns on its subject (§7.121).
+_ROLE = {
+    (DOER, "mo-/mi-"): "do it",
+    (DOER, "mag-/nag-"): "be doing it",
+    (DOER, "maka-/naka-"): "can, manage to, or happen to do it",
+    (DOER, "maN-/naN-"): "do it to many, or again and again",
+    (UNDERGOER, "mo-/mi-"): "come into the state, become so",
+    (UNDERGOER, "mag-/nag-"): "be in the state",
+    (UNDERGOER, "ma-/na-"): "get to be so",
+    (UNDERGOER, "maka-/naka-"): "come to be so",
+    (CAUSE, "maka-/naka-"): "cause to become so",
+    (f"{UNDERGOER}, or {CAUSE}", "maka-/naka-"): "come to be so, or cause it to be",
+    (UNDERGOER, "magka-/nagka-"): "become more and more so",
+    (UNDERGOER, "maN-/naN-"): "come into the state, become so",
+    (TOGETHER, "mag-/nag-"): "do it together",
+    (TOGETHER, "magka-/nagka-"): "manage to do it together",
+    (TOGETHER, "makig-/nakig-"): "do it with someone",
+}
+# Each affix pair as the prefixes that build its forms on the word: (not begun, begun). None:
+# a suffix moves the stress unpredictably, so that form is shown only as Wolff prints it.
+_PREFIXES: dict[str, tuple[str | None, str | None]] = {
+    "mo-/mi-": ("mo", "mi"),
+    "mag-/nag-": ("mag", "nag"),
+    "maka-/naka-": ("maka", "naka"),
+    "magka-/nagka-": ("magka", "nagka"),
+    "makig-/nakig-": ("makig", "nakig"),
+    "ma-/na-": ("ma", "na"),
+    "-on/gi-": (None, "gi"),
+    "i-/gi-": ("i", "gi"),
+    "ika-/gika-": ("ika", "gika"),
+}
+# A suffixed form the decoder finds in Wolff's printing: (its row, 0 not begun / 1 begun).
+_PRINTED_SLOT = {
+    "-un": ("-on/gi-", 0),
+    "-an": ("-an/gi-an", 0),
+    "gi-an": ("-an/gi-an", 1),
+    "ma-an": ("ma-an/na-an", 0),
+    "na-an": ("ma-an/na-an", 1),
+    "hi-an": ("hi-an", 0),
+}
+#: A short prefix and the pair it shortens (Wolff §6.1: ka- for maka-/naka-).
+_SHORT_OF = {"ka-": "maka-/naka-"}
+
+
+def verb_kinds(codes: Sequence[str]) -> list[str]:
+    """The kinds of verb Wolff's class codes name, by their capital letters (§7.11-7.13)."""
+    letters = {ch for code in codes for ch in re.findall(r"[ABC]", code)}
+    return [_KINDS[ch] for ch in sorted(letters)]
+
+
+def _row_label(affix: str, subject: str) -> str:
+    if subject == DOER:
+        return f"Agent · {_AGENT_ASPECT[affix]} · {affix}"
+    if subject in _STATIVE_SUBJECTS:
+        return f"Stative · {affix}"
+    if subject == TOGETHER:
+        return f"Mutual · {affix}"
+    return f"{_PASSIVE[affix]} · {affix}"
+
+
+def _prefixed(prefix: str, word: str) -> str:
+    """A prefix on a word: a hyphen after a consonant before a vowel (mag-ampo), none otherwise."""
+    hyphen = "-" if prefix[-1] not in "aeiou" and strip_marks(word[:1]).lower() in "aeiou" else ""
+    return f"{prefix}{hyphen}{word}"
+
+
+class _Row(NamedTuple):
+    affix: str
+    subject: str
+    not_begun: list[str]
+    begun: list[str]
+    short: list[str]
 
 
 class Attested(NamedTuple):
@@ -619,11 +730,12 @@ class WolffLexicon:
                 ),
                 dictionary_entry=self._dictionary_entry(hit),
             )
+        verb = self._verb(hit, _words(english))
         return CardFields(
             spelling=self._spelling(cebuano, hit.surface, hit.entry),
-            meaning=self._meaning(hit),
-            verb=self._verb(hit, _words(english)),
-            details=self._details(hit, cebuano),
+            meaning=self._meaning(hit, verb_shown=bool(verb)),
+            verb=verb,
+            details=self._details(hit, cebuano, subjects=not verb),
             dictionary_entry=self._dictionary_entry(hit),
         )
 
@@ -644,25 +756,118 @@ class WolffLexicon:
 
     # --- the tiers ----------------------------------------------------------------------------
 
-    def _meaning(self, hit: _Hit) -> str:
-        glosses = list(dict.fromkeys(s["gloss"] for s in self._senses(hit) if s["gloss"]))
+    def _meaning(self, hit: _Hit, *, verb_shown: bool = False) -> str:
+        senses = self._senses(hit)
+        if verb_shown and senses and senses[0]["pos"] != "v":
+            senses = [s for s in senses if s["pos"] != "v"]  # the verb's own glosses lead its label
+        glosses = list(dict.fromkeys(s["gloss"] for s in senses if s["gloss"]))
         more = "; …" if len(glosses) > _MEANING_SENSES else ""
-        return html.escape("; ".join(glosses[:_MEANING_SENSES])) + more
+        meaning = html.escape("; ".join(glosses[:_MEANING_SENSES])) + more
+        row = hit.decoded
+        if row is None or not row.reading:
+            return meaning
+        # An inflected card word leads with its own reading; the sense is Wolff's, under another word.
+        rec = self.entries[hit.entry]
+        affix = f"{row.affix} (short for {_SHORT_OF[row.affix]})" if row.affix in _SHORT_OF else row.affix
+        return (
+            f"<b>{html.escape(row.spelling)}</b> = {html.escape(affix)} + {html.escape(rec['forms'][0]['hb'] or '')}: "
+            f"{html.escape(row.reading)}"
+            f'<div class="wolff-under">Wolff, under {html.escape(rec["forms"][hit.form]["hb"] or "")}: {meaning}</div>'
+        )
 
     def _verb(self, hit: _Hit, card: set[str]) -> str:
-        """The affixes, when the card is the verb: its first sense is one, or its English
-        is a verb sense's (a noun card such as bátà 'child' gets no verb line)."""
+        """The verb, when the card is the verb: its first sense is one, or its English is a
+        verb sense's (a noun card such as bátà 'child' gets no verb line). The kind of verb,
+        then a row per affix, grouped by sense when senses take different affixes."""
         senses = self._senses(hit)
         verbs = [s for s in senses if s["pos"] == "v"]
         if not verbs or not (senses[0]["pos"] == "v" or any(card & _words(s["gloss"]) for s in verbs)):
             return ""
-        affixes: dict[str, str] = {}
+        lead = verb_kinds([s["cls"] or "" for s in verbs])
+        if senses[0]["pos"] != "v":
+            glosses = "; ".join(dict.fromkeys(s["gloss"] for s in verbs if s["gloss"]))
+            lead.insert(0, f"Also a verb: {glosses.rstrip('.')}.")
+        groups: dict[str, list[str]] = {}
         for s in verbs:
-            for affix, subject in decode_classes(s["cls"] or ""):
-                affixes.setdefault(affix, subject)
-        return ", ".join(affixes)
+            if s["cls"]:
+                groups.setdefault(s["cls"], []).append(s["gloss"])
+        # A later sense shows only the rows the earlier ones lack; an affix with another
+        # subject is another row (oras: mo- 'time s.t.' [A], and 'get to be [time]' [B]).
+        seen: set[tuple[str, str]] = set()
+        shown: list[tuple[str, list[_Row]]] = []
+        for cls, glosses in groups.items():
+            rows = [self._row(hit, a, subj) for a, subj in decode_classes(cls) if (a, subj) not in seen]
+            seen |= {(r.affix, r.subject) for r in rows}
+            if rows:
+                # the general i- (for someone, at a time), which nearly every verb has, goes last
+                rows.sort(key=lambda r: r.subject == USED)
+                shown.append(("; ".join(dict.fromkeys(g for g in glosses if g)), rows))
+        out = [f'<div class="wolff-kind">{html.escape(" ".join(lead))}</div>'] if lead else []
+        examples = [tuple(s["ex"]) for s in verbs if s["ex"]]
+        word = letters_key(hit.surface if hit.decoded is None else hit.decoded.spelling)
+        for gloss, rows in shown:
+            if len(shown) > 1:
+                out.append(f'<div class="wolff-h">{html.escape(gloss)}</div>')
+            out.extend(self._render_row(r, examples, word) for r in rows)
+        return "".join(out)
 
-    def _details(self, hit: _Hit, cebuano: str) -> str:
+    def _row(self, hit: _Hit, affix: str, subject: str) -> _Row:
+        form = self.entries[hit.entry]["forms"][hit.form]
+        base = form["hb"] or ""
+        pre_not, pre_begun = _PREFIXES.get(affix, (None, None))
+        row = _Row(
+            affix,
+            subject,
+            [_prefixed(pre_not, base)] if pre_not and base else [],
+            [_prefixed(pre_begun, base)] if pre_begun and base else [],
+            [_prefixed("ka", base)] if affix == "maka-/naka-" and base else [],
+        )
+        for (row_affix, begun), printed in self._printed_forms(hit.entry, hit.form):
+            if row_affix == affix and printed not in row.not_begun + row.begun:
+                (row.begun if begun else row.not_begun).insert(0, printed)
+        if affix == "-an/gi-an" and row.not_begun and not row.begun:
+            row.begun.append("gi" + row.not_begun[0])
+        if hit.decoded is not None and _SHORT_OF.get(hit.decoded.affix) == affix:
+            row.short.append(hit.decoded.spelling)
+        return row
+
+    def _printed_forms(self, ei: int, fi: int) -> list[tuple[tuple[str, int], str]]:
+        """The suffixed forms of *fi*'s word that Wolff prints in the entry, each with its row."""
+        rec = self.entries[ei]
+        form = rec["forms"][fi]
+        root = letters_key(form["wolff"] or "")
+        texts = [s["ex"][0] for s in form["senses"] if s["ex"]] + [a[0] for a in rec.get("attested", ())]
+        out: list[tuple[tuple[str, int], str]] = []
+        for tok in dict.fromkeys(t.lower() for text in texts for t in _TOKEN.findall(text)):
+            found = affixes.analyse(tok, self._decoder, "")
+            if found and letters_key(found[0].root) == root and found[0].affix in _PRINTED_SLOT:
+                out.append((_PRINTED_SLOT[found[0].affix], tok))
+        return out
+
+    def _render_row(self, row: _Row, examples: list[tuple[str, str]], word: str) -> str:
+        def mark(forms: list[str]) -> list[str]:
+            return [f"{f} ← this card" if letters_key(f) == word else f for f in forms]
+
+        here = word in {letters_key(f) for f in row.not_begun + row.begun + row.short}
+        cells = []
+        if row.not_begun:
+            short = f" (short {', '.join(mark(row.short))})" if row.short else ""
+            cells.append(f"not begun {', '.join(mark(row.not_begun))}{short}")
+        if row.begun:
+            cells.append(f"begun {', '.join(mark(row.begun))}")
+        body = "; ".join(filter(None, [" · ".join(cells), _ROLE.get((row.subject, row.affix), "")]))
+        text = f"<b>{html.escape(_row_label(row.affix, row.subject))}</b>"
+        text += f": {html.escape(body)}." if body else "."
+        text += f" Subject: {html.escape(row.subject)}."
+        forms = {letters_key(f) for f in row.not_begun + row.begun + row.short}
+        example = next((ex for ex in examples if forms & {letters_key(t) for t in _TOKEN.findall(ex[0])}), None)
+        if example is not None:
+            examples.remove(example)
+            text += f"<br><i>{html.escape(example[0])}</i> {html.escape(example[1])}"
+        cls = " wolff-here" if here else " wolff-dim" if row.subject == USED else ""
+        return f'<div class="wolff-row{cls}">{text}</div>'
+
+    def _details(self, hit: _Hit, cebuano: str, *, subjects: bool = True) -> str:
         rec = self.entries[hit.entry]
         form = rec["forms"][hit.form]
         out: list[str] = []
@@ -687,9 +892,10 @@ class WolffLexicon:
             gloss = next((s["gloss"] for s in _meanings(root) if s["gloss"]), "")
             out.append(f"<div>From the root <b>{html.escape(root['hb'])}</b> {html.escape(gloss)}</div>")
         out.append(self._sense_list(form))
-        subjects = self._subjects(form)
-        if subjects:
-            out.append('<div class="wolff-h">Who is the subject</div><ul>' + subjects + "</ul>")
+        # The verb's rows name each affix's subject; a card with no verb line keeps the list.
+        listed = self._subjects(form) if subjects else ""
+        if listed:
+            out.append('<div class="wolff-h">Who is the subject</div><ul>' + listed + "</ul>")
         related = [
             (f["hb"] or f["label"], next((s["gloss"] for s in f["senses"] if s["gloss"]), ""))
             for i, f in enumerate(rec["forms"])
