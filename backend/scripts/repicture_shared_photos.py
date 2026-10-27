@@ -26,7 +26,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app.cards.shared_photo_repair import apply_repictures, plan_shared_photos
+from app.cards.shared_photo_repair import apply_repictures, load_cards, plan_shared_photos, repicture_cards
 from app.config import settings
 from app.languages import resolve_language_context
 from app.srs.database import SRSDatabase
@@ -47,9 +47,27 @@ def main(argv: list[str] | None = None, *, _media_fn: Callable[..., Awaitable[An
     parser.add_argument("--language", required=True)
     parser.add_argument("--db", default=None, help="database URL (default: the language's configured DB)")
     parser.add_argument("--apply", action="store_true", help="fetch and write (default: dry run)")
+    parser.add_argument(
+        "--ids",
+        default=None,
+        help="comma-separated card ids to re-fetch instead of the shared photos (e.g. the cards an earlier run re-pictured)",
+    )
+    parser.add_argument(
+        "--langeek-only", action="store_true", help="keep a new picture only when LanGeek supplied it (with --ids)"
+    )
     args = parser.parse_args(argv)
 
     db = SRSDatabase(args.db or resolve_language_context(args.language, settings).db_url)
+    if args.ids:
+        cards = load_cards(db, [int(i) for i in args.ids.split(",")])
+        for c in cards:
+            print(f"  re-fetch: {c.collocation_id} {c.text} '{c.gloss}' {c.filename}")
+        only = "langeek" if args.langeek_only else None
+        print(f"{len(cards)} card(s) to re-fetch{' (LanGeek pictures only)' if only else ''}.")
+        if args.apply:
+            media_fn = _media_fn or _sync_media_fn(db, args.language)
+            _report(asyncio.run(repicture_cards(db, cards, media_fn, only_source=only)))
+        return 0
     plan = plan_shared_photos(db, args.language)
     others = [card for group in plan for card in group.others]
     for group in plan:
@@ -65,15 +83,18 @@ def main(argv: list[str] | None = None, *, _media_fn: Callable[..., Awaitable[An
         f"{sum(g.tied for g in plan)} tie(s), {uncached} LLM image quer(ies) not cached."
     )
     if args.apply and plan:
-        results = asyncio.run(apply_repictures(db, plan, _media_fn or _sync_media_fn(db, args.language)))
-        for r in results:
-            if r.new_filename is None:
-                print(f"  kept   {r.collocation_id} {r.text}: {r.reason}")
-            else:
-                print(f"  new    {r.collocation_id} {r.text}: {r.old_filename} -> {r.new_filename}")
-        done = sum(1 for r in results if r.new_filename is not None)
-        print(f"Re-pictured {done} of {len(results)}. Sync the language to carry them to Anki.")
+        _report(asyncio.run(apply_repictures(db, plan, _media_fn or _sync_media_fn(db, args.language))))
     return 0
+
+
+def _report(results) -> None:
+    for r in results:
+        if r.new_filename is None:
+            print(f"  kept   {r.collocation_id} {r.text}: {r.reason}")
+        else:
+            print(f"  new    {r.collocation_id} {r.text}: {r.old_filename} -> {r.new_filename}")
+    done = sum(1 for r in results if r.new_filename is not None)
+    print(f"Re-pictured {done} of {len(results)}. Sync the language to carry them to Anki.")
 
 
 if __name__ == "__main__":

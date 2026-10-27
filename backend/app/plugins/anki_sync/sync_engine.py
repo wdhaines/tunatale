@@ -1999,7 +1999,9 @@ class AnkiSync:
                         owner,
                     )
                 else:
-                    img_filename = _image_filename(english, image.image_bytes, image.image_ext)
+                    img_filename = _image_filename(
+                        english, image.image_bytes, image.image_ext, source=getattr(image, "image_source", None)
+                    )
                     self._writer.store_media_file(img_filename, image.image_bytes)
                     image_tag = f'<img src="{img_filename}">'
                     _store_tt_media(self._db, coll_id, "image", img_filename, image.image_bytes)

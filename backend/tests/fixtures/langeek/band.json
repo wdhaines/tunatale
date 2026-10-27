@@ -1,0 +1,703 @@
+[
+ {
+  "id": 14725,
+  "entry": "band",
+  "pronunciation": "bænd",
+  "secondPronunciation": "bænd",
+  "translation": {
+   "id": 14799,
+   "translation": "a narrow strip of material that can encircle, bind, or adorn various objects or parts of the body",
+   "wordPhoto": {
+    "updatedAt": "2021-02-20T12:35:04+0000",
+    "originalTitle": "ring",
+    "photoId": 15593,
+    "description": "",
+    "urlId": "ring",
+    "webTitle": "حلقه (انگشتر)",
+    "photo": "https://cdn.langeek.co/photo/15593/original/ring?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/15593/thumb/ring?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14799,
+     "translation": "a narrow strip of material that can encircle, bind, or adorn various objects or parts of the body",
+     "wordPhoto": {
+      "updatedAt": "2021-02-20T12:35:04+0000",
+      "originalTitle": "ring",
+      "photoId": 15593,
+      "description": "",
+      "urlId": "ring",
+      "webTitle": "حلقه (انگشتر)",
+      "photo": "https://cdn.langeek.co/photo/15593/original/ring?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/15593/thumb/ring?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14807,
+     "translation": "a group of people who come together for a particular purpose, often because they share common interests or beliefs",
+     "wordPhoto": {
+      "updatedAt": "2025-09-28T17:36:39+0000",
+      "originalTitle": "friendship",
+      "otherTitles": [],
+      "photoId": 65952,
+      "description": "",
+      "urlId": "friendship",
+      "webTitle": "دوستی",
+      "photo": "https://cdn.langeek.co/photo/65952/original/friendship?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/65952/thumb/friendship?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14808,
+     "translation": "a group of musicians and singers playing popular music",
+     "wordPhoto": {
+      "updatedAt": "2021-02-27T16:48:26+0000",
+      "originalTitle": "concert",
+      "photoId": 15961,
+      "description": "",
+      "urlId": "concert",
+      "webTitle": "کنسرت",
+      "photo": "https://cdn.langeek.co/photo/15961/original/concert?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/15961/thumb/concert?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14805,
+     "translation": "a range of frequencies between two limits",
+     "wordPhoto": null,
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14806,
+     "translation": "instrumentalists not including string players",
+     "wordPhoto": null,
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 208571,
+     "translation": "a group of animals",
+     "wordPhoto": null,
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14798,
+     "translation": "a restraint put around something to hold it together",
+     "wordPhoto": null,
+     "position": 1,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14803,
+     "translation": "a stripe or stripes of contrasting color",
+     "wordPhoto": null,
+     "position": 2,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14797,
+     "translation": "an adornment consisting of a strip of a contrasting color or material",
+     "wordPhoto": null,
+     "position": 3,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14796,
+     "translation": "a thin flat strip of flexible material that is worn around the body or one of the limbs (especially to decorate the body)",
+     "wordPhoto": null,
+     "position": 4,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14800,
+     "translation": "a strip of material attached to the leg of a bird to identify it (as in studies of bird migration)",
+     "wordPhoto": null,
+     "position": 5,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14801,
+     "translation": "a thin flat strip or loop of flexible material that goes around or over something else, typically to hold it together or as a decoration",
+     "wordPhoto": null,
+     "position": 6,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14802,
+     "translation": "a driving belt in machinery",
+     "wordPhoto": null,
+     "position": 7,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14804,
+     "translation": "a cord-like tissue connecting two larger parts of an anatomical structure",
+     "wordPhoto": null,
+     "position": 8,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 227899,
+     "translation": "a horizontal decorative or structural element that runs along the exterior or interior of a building, typically separating different sections or adding visual interest to the architecture",
+     "wordPhoto": null,
+     "position": 11,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 404718,
+     "translation": "a bundle of cash, typically in $1,000 increments; often used to emphasize wealth or spending power",
+     "wordPhoto": null,
+     "position": 12,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ],
+   "verb": [
+    {
+     "id": 14809,
+     "translation": "bind or tie together, as with a band",
+     "wordPhoto": null,
+     "position": 9,
+     "partOfSpeech": {
+      "partOfSpeechType": "verb"
+     }
+    },
+    {
+     "id": 14810,
+     "translation": "attach a ring to the foot of, in order to identify",
+     "wordPhoto": null,
+     "position": 10,
+     "partOfSpeech": {
+      "partOfSpeechType": "verb"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14733,
+  "entry": "bandage",
+  "pronunciation": "ˈbændɪdʒ",
+  "secondPronunciation": "ˈbændɪdʒ",
+  "translation": {
+   "id": 14819,
+   "translation": "a piece of cloth that is put around a wound to prevent infections",
+   "wordPhoto": {
+    "updatedAt": "2026-06-07T17:49:28+0000",
+    "originalTitle": "bandage",
+    "otherTitles": [],
+    "photoId": 73053,
+    "description": "",
+    "urlId": "bandage",
+    "webTitle": "بانداژ",
+    "photo": "https://cdn.langeek.co/photo/73053/original/bandage?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/73053/thumb/bandage?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14819,
+     "translation": "a piece of cloth that is put around a wound to prevent infections",
+     "wordPhoto": {
+      "updatedAt": "2026-06-07T17:49:28+0000",
+      "originalTitle": "bandage",
+      "otherTitles": [],
+      "photoId": 73053,
+      "description": "",
+      "urlId": "bandage",
+      "webTitle": "بانداژ",
+      "photo": "https://cdn.langeek.co/photo/73053/original/bandage?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/73053/thumb/bandage?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ],
+   "verb": [
+    {
+     "id": 14821,
+     "translation": "to cover a wound or part of the body with a piece of cloth for protection",
+     "wordPhoto": {
+      "updatedAt": "2022-06-15T17:38:15+0000",
+      "originalTitle": "tape",
+      "otherTitles": [],
+      "photoId": 25876,
+      "description": "",
+      "urlId": "",
+      "webTitle": "پانسمان کردن",
+      "photo": "https://cdn.langeek.co/photo/25876/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/25876/thumb?type=jpeg"
+     },
+     "position": 1,
+     "partOfSpeech": {
+      "partOfSpeechType": "verb"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14736,
+  "entry": "bandana",
+  "pronunciation": "ˌbænˈdænə",
+  "secondPronunciation": "bændˈɑːnɐ",
+  "translation": {
+   "id": 14824,
+   "translation": "a large piece of cloth with vibrant colors worn around the neck or head",
+   "wordPhoto": {
+    "updatedAt": "2022-05-31T11:44:34+0000",
+    "originalTitle": "bandana",
+    "otherTitles": [],
+    "photoId": 25377,
+    "description": "",
+    "urlId": "",
+    "webTitle": "دستمال سر یا گردن",
+    "photo": "https://cdn.langeek.co/photo/25377/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/25377/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14824,
+     "translation": "a large piece of cloth with vibrant colors worn around the neck or head",
+     "wordPhoto": {
+      "updatedAt": "2022-05-31T11:44:34+0000",
+      "originalTitle": "bandana",
+      "otherTitles": [],
+      "photoId": 25377,
+      "description": "",
+      "urlId": "",
+      "webTitle": "دستمال سر یا گردن",
+      "photo": "https://cdn.langeek.co/photo/25377/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/25377/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14739,
+  "entry": "bandeau",
+  "pronunciation": "bˈændoʊ",
+  "secondPronunciation": "bˈændə‍ʊ",
+  "translation": {
+   "id": 14827,
+   "translation": "a garment that covers the breasts of a woman and has no straps",
+   "wordPhoto": {
+    "updatedAt": "2022-06-06T09:34:28+0000",
+    "originalTitle": "bandeau",
+    "otherTitles": [],
+    "photoId": 25405,
+    "description": "",
+    "urlId": "",
+    "webTitle": "نیم‌تنه بدون‌بند",
+    "photo": "https://cdn.langeek.co/photo/25405/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/25405/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14827,
+     "translation": "a garment that covers the breasts of a woman and has no straps",
+     "wordPhoto": {
+      "updatedAt": "2022-06-06T09:34:28+0000",
+      "originalTitle": "bandeau",
+      "otherTitles": [],
+      "photoId": 25405,
+      "description": "",
+      "urlId": "",
+      "webTitle": "نیم‌تنه بدون‌بند",
+      "photo": "https://cdn.langeek.co/photo/25405/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/25405/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 208928,
+     "translation": "a fillet or narrow band worn around the head to keep the hair in place",
+     "wordPhoto": {
+      "updatedAt": "2022-05-31T11:47:39+0000",
+      "originalTitle": "bandeau",
+      "otherTitles": [],
+      "photoId": 25379,
+      "description": "",
+      "urlId": "",
+      "webTitle": "توربان",
+      "photo": "https://cdn.langeek.co/photo/25379/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/25379/thumb?type=jpeg"
+     },
+     "position": 1,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14728,
+  "entry": "band-aid",
+  "pronunciation": "ˈbændˌeɪd",
+  "secondPronunciation": "ˈbændˌeɪd",
+  "translation": {
+   "id": 14814,
+   "translation": "a small sticky strip used to cover and protect an injuriy, typically a cut",
+   "wordPhoto": {
+    "updatedAt": "2026-06-08T17:55:59+0000",
+    "originalTitle": "band-aid",
+    "otherTitles": [],
+    "photoId": 73127,
+    "description": "",
+    "urlId": "band-aid",
+    "webTitle": "چسب زخم",
+    "photo": "https://cdn.langeek.co/photo/73127/original/band-aid?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/73127/thumb/band-aid?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14814,
+     "translation": "a small sticky strip used to cover and protect an injuriy, typically a cut",
+     "wordPhoto": {
+      "updatedAt": "2026-06-08T17:55:59+0000",
+      "originalTitle": "band-aid",
+      "otherTitles": [],
+      "photoId": 73127,
+      "description": "",
+      "urlId": "band-aid",
+      "webTitle": "چسب زخم",
+      "photo": "https://cdn.langeek.co/photo/73127/original/band-aid?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/73127/thumb/band-aid?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 14813,
+     "translation": "hurried repair",
+     "wordPhoto": null,
+     "position": 1,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14731,
+  "entry": "band saw",
+  "pronunciation": "bˈænd sˈɔː",
+  "secondPronunciation": "bˈand sˈɔː",
+  "translation": {
+   "id": 14817,
+   "translation": "a cutting tool that uses a long, continuous blade with teeth along one edge to make straight or curved cuts in a variety of materials, such as wood, metal, or plastic",
+   "wordPhoto": {
+    "updatedAt": "2023-07-03T16:53:31+0000",
+    "originalTitle": "band saw",
+    "otherTitles": [],
+    "photoId": 41518,
+    "description": "",
+    "urlId": "",
+    "webTitle": "اره نواری",
+    "photo": "https://cdn.langeek.co/photo/41518/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/41518/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14817,
+     "translation": "a cutting tool that uses a long, continuous blade with teeth along one edge to make straight or curved cuts in a variety of materials, such as wood, metal, or plastic",
+     "wordPhoto": {
+      "updatedAt": "2023-07-03T16:53:31+0000",
+      "originalTitle": "band saw",
+      "otherTitles": [],
+      "photoId": 41518,
+      "description": "",
+      "urlId": "",
+      "webTitle": "اره نواری",
+      "photo": "https://cdn.langeek.co/photo/41518/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/41518/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14768,
+  "entry": "bandsman",
+  "pronunciation": "bˈændzmən",
+  "secondPronunciation": "bˈændzmən",
+  "translation": {
+   "id": 14859,
+   "translation": "a musician who plays in a band, typically referring to a military or brass band",
+   "wordPhoto": {
+    "updatedAt": "2023-04-26T10:35:39+0000",
+    "originalTitle": "bandsman",
+    "otherTitles": [],
+    "photoId": 39221,
+    "description": "",
+    "urlId": "",
+    "webTitle": "عضو دسته موسیقی",
+    "photo": "https://cdn.langeek.co/photo/39221/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/39221/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14859,
+     "translation": "a musician who plays in a band, typically referring to a military or brass band",
+     "wordPhoto": {
+      "updatedAt": "2023-04-26T10:35:39+0000",
+      "originalTitle": "bandsman",
+      "otherTitles": [],
+      "photoId": 39221,
+      "description": "",
+      "urlId": "",
+      "webTitle": "عضو دسته موسیقی",
+      "photo": "https://cdn.langeek.co/photo/39221/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/39221/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 14756,
+  "entry": "bandicoot",
+  "pronunciation": "ˈbændiˌkut/, /ˈbændɪˌkut",
+  "secondPronunciation": "bˈændɪkˌuːt",
+  "translation": {
+   "id": 14846,
+   "translation": "a small animal with long tail and nose that mainly eats insects and is usually found in Australia",
+   "wordPhoto": {
+    "updatedAt": "2022-04-13T12:25:13+0000",
+    "originalTitle": "bandicoot",
+    "otherTitles": [],
+    "photoId": 24044,
+    "description": "",
+    "urlId": "",
+    "webTitle": "باندیکوت",
+    "photo": "https://cdn.langeek.co/photo/24044/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/24044/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 14846,
+     "translation": "a small animal with long tail and nose that mainly eats insects and is usually found in Australia",
+     "wordPhoto": {
+      "updatedAt": "2022-04-13T12:25:13+0000",
+      "originalTitle": "bandicoot",
+      "otherTitles": [],
+      "photoId": 24044,
+      "description": "",
+      "urlId": "",
+      "webTitle": "باندیکوت",
+      "photo": "https://cdn.langeek.co/photo/24044/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/24044/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 222892,
+  "entry": "band clamp",
+  "pronunciation": "bˈænd klˈæmp",
+  "secondPronunciation": "bˈand klˈamp",
+  "translation": {
+   "id": 228592,
+   "translation": "a type of clamp that uses a flexible band or strap, typically made of nylon or metal, tightened with a ratchet mechanism to secure and hold irregularly shaped objects or assemblies during gluing, clamping, or assembly processes",
+   "wordPhoto": {
+    "updatedAt": "2023-06-20T17:52:41+0000",
+    "originalTitle": "band clamp",
+    "otherTitles": [],
+    "photoId": 41124,
+    "description": "",
+    "urlId": "",
+    "webTitle": "تنگ تسمه‌ای",
+    "photo": "https://cdn.langeek.co/photo/41124/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/41124/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 228592,
+     "translation": "a type of clamp that uses a flexible band or strap, typically made of nylon or metal, tightened with a ratchet mechanism to secure and hold irregularly shaped objects or assemblies during gluing, clamping, or assembly processes",
+     "wordPhoto": {
+      "updatedAt": "2023-06-20T17:52:41+0000",
+      "originalTitle": "band clamp",
+      "otherTitles": [],
+      "photoId": 41124,
+      "description": "",
+      "urlId": "",
+      "webTitle": "تنگ تسمه‌ای",
+      "photo": "https://cdn.langeek.co/photo/41124/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/41124/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "id": 219461,
+  "entry": "bandit territory",
+  "pronunciation": "bˈændɪt tˈɛɹɪtˌoːɹi",
+  "secondPronunciation": "bˈandɪt tˈɛɹɪtəɹˌi",
+  "translation": {
+   "id": 224400,
+   "translation": "a place in which rules and laws are not followed or obeyed",
+   "wordPhoto": {
+    "updatedAt": "2023-09-30T10:39:17+0000",
+    "originalTitle": "bandit territory",
+    "otherTitles": [],
+    "photoId": 43436,
+    "description": "",
+    "urlId": "",
+    "webTitle": "بی‌قانون",
+    "photo": "https://cdn.langeek.co/photo/43436/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/43436/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 224400,
+     "translation": "a place in which rules and laws are not followed or obeyed",
+     "wordPhoto": {
+      "updatedAt": "2023-09-30T10:39:17+0000",
+      "originalTitle": "bandit territory",
+      "otherTitles": [],
+      "photoId": 43436,
+      "description": "",
+      "urlId": "",
+      "webTitle": "بی‌قانون",
+      "photo": "https://cdn.langeek.co/photo/43436/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/43436/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ }
+]

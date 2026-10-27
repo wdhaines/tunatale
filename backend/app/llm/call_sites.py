@@ -35,6 +35,7 @@ class CallSite:
     WORD_GLOSS: Final = "word_gloss"
     MEDIA_QUERY: Final = "media_query"
     MEDIA_CHOOSE: Final = "media_choose"
+    MEDIA_SENSE: Final = "media_sense"
     REGLOSS: Final = "regloss"
     SRS_TRANSLATE: Final = "srs_translate"
     LEMMA_RESOLVE: Final = "lemma_resolve"
@@ -57,6 +58,7 @@ class CallSite:
             WORD_GLOSS,
             MEDIA_QUERY,
             MEDIA_CHOOSE,
+            MEDIA_SENSE,
             REGLOSS,
             SRS_TRANSLATE,
             LEMMA_RESOLVE,

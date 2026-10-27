@@ -1287,3 +1287,135 @@ class TestVariantFrontAudio:
         """The control: a phrase is not a variant list, so nothing is cut."""
         front = "hei, hvordan går det"
         assert await self._spoken(front, "no", forvo_finds=True) == {"forvo": front}
+
+
+# ── LanGeek first (tunatale-xsbh) ──────────────────────────────────────────────
+# The real langeek client runs against a MockTransport serving the recorded
+# responses; only its endpoint and throttle are handed in, so nothing here waits
+# or reaches the network.
+
+_LG_PHOTO = "https://cdn.langeek.co/photo/51927/original/?type=jpeg"
+
+
+def _langeek_client(entries: list | None, *, photo_status: int = 200):
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.example":
+            return httpx.Response(200, json=entries or [])
+        return httpx.Response(photo_status, content=b"LGK-IMG", headers={"content-type": "image/jpeg"})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _langeek_search():
+    from functools import partial
+
+    from app.cards.media.langeek import _Throttle, search_langeek
+
+    return partial(
+        search_langeek, api_url="https://api.example/word/", throttle=_Throttle(1.0, lambda: 0.0, lambda _s: None)
+    )
+
+
+def _fixture(name: str) -> list:
+    import json
+    from pathlib import Path
+
+    return json.loads((Path(__file__).parent / "fixtures" / "langeek" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+class _CountingSearch:
+    def __init__(self, result: PixabaySearch) -> None:
+        self.result, self.queries = result, []
+
+    def __call__(self, query, *, api_key, http_client=None, per_page=50):
+        self.queries.append(query)
+        return self.result
+
+
+class TestLangeekFirst:
+    async def _fetch(self, english, *, entries, image_query=None, used=None, photo_status=200, llm=None, **kw):
+        forvo_fn, tts_fn, _, dl_fn, norm_fn = _make_fakes(
+            forvo_returns=b"a", download_returns=(b"PX-IMG", "jpg", _IMG_URL)
+        )
+        search = _CountingSearch(PixabaySearch(hits=[_HIT_1], status="ok"))
+        result = await fetch_card_media(
+            "kalipay",
+            english,
+            pixabay_key="key",
+            http_client=_langeek_client(entries, photo_status=photo_status),
+            used_image_urls=used,
+            image_query=image_query,
+            llm=llm,
+            _forvo_fn=forvo_fn,
+            _tts_fn=tts_fn,
+            _search_fn=search,
+            _download_fn=dl_fn,
+            _normalize_fn=norm_fn,
+            _langeek_search_fn=_langeek_search(),
+            **kw,
+        )
+        return result, search
+
+    async def test_a_langeek_illustration_wins_and_pixabay_is_never_asked(self):
+        used: set[str] = set()
+        result, search = await self._fetch("happiness", entries=_fixture("happiness"), used=used)
+
+        assert (result.image_bytes, result.image_ext, result.image_url) == (b"LGK-IMG", "jpg", _LG_PHOTO)
+        assert (result.image_status, result.image_source, result.image_chooser) == ("ok", "langeek", "langeek")
+        assert search.queries == []
+        assert used == {_LG_PHOTO}
+
+    async def test_a_langeek_miss_leaves_the_pixabay_path_as_it_was(self):
+        result, search = await self._fetch("tree", entries=[])
+
+        assert (result.image_bytes, result.image_source, result.image_chooser) == (b"PX-IMG", "pixabay", "tag_overlap")
+        assert search.queries == ["tree"]
+
+    async def test_an_abstract_word_the_query_skips_still_gets_langeeks_drawing(self):
+        result, _ = await self._fetch("happiness", entries=_fixture("happiness"), image_query="")
+        assert (result.image_status, result.image_source) == ("ok", "langeek")
+
+    async def test_an_abstract_word_langeek_lacks_is_still_skipped(self):
+        result, search = await self._fetch("happiness", entries=[], image_query="")
+        assert (result.image_status, result.image_bytes, search.queries) == ("skipped", None, [])
+
+    async def test_an_illustration_already_used_this_run_is_not_reused(self):
+        result, _ = await self._fetch("happiness", entries=_fixture("happiness"), used={_LG_PHOTO})
+        assert result.image_source == "pixabay"
+
+    async def test_a_failed_download_falls_back_to_pixabay(self):
+        result, _ = await self._fetch("happiness", entries=_fixture("happiness"), photo_status=404)
+        assert result.image_source == "pixabay"
+
+    async def test_a_homograph_asks_the_model_with_the_cards_sentence(self):
+        class LLM:
+            prompts: list[str] = []
+
+            async def complete(self, prompt, **kwargs):
+                self.prompts.append(prompt)
+                return "3"
+
+        llm = LLM()
+        result, _ = await self._fetch("band", entries=_fixture("band"), llm=llm, source_sentence="Nindot ang banda.")
+
+        assert (result.image_source, result.image_chooser) == ("langeek", "langeek_llm")
+        assert "Sentence: Nindot ang banda." in llm.prompts[-1]
+        assert "3. (noun) a group of musicians and singers playing popular music" in llm.prompts[-1]
+
+    async def test_a_homograph_with_no_model_goes_to_pixabay(self):
+        result, _ = await self._fetch("band", entries=_fixture("band"))
+        assert result.image_source == "pixabay"
+
+    async def test_a_gloss_with_no_lookup_word_skips_langeek(self):
+        result, _ = await self._fetch("(near you)", entries=_fixture("happiness"))
+        assert result.image_source == "pixabay"
+
+
+def test_a_langeek_picture_is_named_lgk_and_a_pixabay_one_is_unchanged():
+    from app.cards.media.vocab_media import image_filename
+
+    assert image_filename("happiness", b"x", "jpg", source="langeek").startswith("lgk_happiness_")
+    assert image_filename("tree", b"x", "jpg") == image_filename("tree", b"x", "jpg", source="pixabay")
+    assert image_filename("tree", b"x", "jpg").startswith("img_tree_")

@@ -115,6 +115,7 @@ def _build_media_fn(llm, db, language_code: str):
             image_query=image_query,
             llm=llm,
             audio=audio,
+            source_sentence=source_sentence,
         )
 
     return _media_fn
