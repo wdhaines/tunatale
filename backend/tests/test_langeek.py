@@ -16,6 +16,7 @@ import pytest
 from app.cards.media.langeek import (
     LangeekSense,
     _Throttle,
+    base_forms,
     build_sense_choice_prompt,
     choose_langeek_sense,
     download_langeek,
@@ -68,6 +69,11 @@ def _search(term: str, body=None, *, status: int = 200, raw: bytes | None = None
         ("Happiness", "happiness"),
         ("over  there,  yonder", "over there"),
         ("", None),
+        # live misses, 2026-10-27: LanGeek's entries carry no punctuation
+        ("Bye!", "bye"),
+        ("where?", "where"),
+        ("don't!", "don't"),
+        ("?!", None),
     ],
 )
 def test_the_lookup_word_is_the_glosss_first_alternative(gloss, term):
@@ -276,3 +282,81 @@ async def test_several_senses_and_no_model_is_no_sense():
 
 async def test_no_senses_is_no_sense():
     assert await choose_langeek_sense("banda", "band", [], llm=_LLM("1")) is None
+
+
+# ── The word's base form, when the gloss is inflected ───────────────────────
+# Live misses, 2026-10-27: hibalo 'knew', sapatos 'shoes', pabuto 'fireworks',
+# apektado 'affected' found no entry, though LanGeek illustrates know, shoe.
+
+
+@pytest.mark.parametrize(
+    ("term", "forms"),
+    [
+        ("knew", ["know"]),
+        ("children", ["child"]),
+        ("shoes", ["shoe"]),
+        ("fireworks", ["firework"]),
+        ("cities", ["city"]),
+        ("boxes", ["box", "boxe"]),
+        ("affected", ["affect", "affecte"]),
+        ("liked", ["lik", "like"]),
+        ("stopped", ["stopp", "stoppe", "stop"]),
+        ("cooking", ["cook", "cooke"]),
+        ("glass", []),  # -ss is no plural
+        ("take long", []),  # a phrase: no guess at which word inflects
+        ("is", []),  # too short to strip
+    ],
+)
+def test_base_forms_are_the_irregular_form_then_the_stripped_endings(term, forms):
+    assert base_forms(term) == forms
+
+
+def _by_term(bodies: dict[str, list]):
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params["term"])
+        return httpx.Response(200, json=bodies.get(request.url.params["term"], []))
+
+    return handler, seen
+
+
+def _entry(word: str, sense_id: int) -> list:
+    return [
+        {"entry": word, "translations": {"verb": [{"id": sense_id, "translation": "d", "wordPhoto": {"photo": "u"}}]}}
+    ]
+
+
+def test_an_inflected_word_is_looked_up_by_its_base_form():
+    handler, seen = _by_term({"know": _entry("know", 7)})
+    result = search_langeek("knew", http_client=_client(handler), api_url=API, throttle=_NoWait())
+    assert (result.status, [s.sense_id for s in result.senses], seen) == ("ok", [7], ["knew", "know"])
+
+
+def test_the_base_forms_stop_at_the_first_entry():
+    handler, seen = _by_term({"affect": _entry("affect", 3)})
+    search_langeek("affected", http_client=_client(handler), api_url=API, throttle=_NoWait())
+    assert seen == ["affected", "affect"]
+
+
+def test_an_exact_entry_needs_no_second_request():
+    handler, seen = _by_term({"shoes": _entry("shoes", 1), "shoe": _entry("shoe", 2)})
+    result = search_langeek("shoes", http_client=_client(handler), api_url=API, throttle=_NoWait())
+    assert ([s.sense_id for s in result.senses], seen) == ([1], ["shoes"])
+
+
+def test_no_base_form_with_an_entry_is_still_no_results():
+    handler, seen = _by_term({})
+    result = search_langeek("stopped", http_client=_client(handler), api_url=API, throttle=_NoWait())
+    assert (result.status, seen) == ("no_results", ["stopped", "stopp", "stoppe", "stop"])
+
+
+def test_a_failed_search_tries_no_base_form():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.params["term"])
+        return httpx.Response(500)
+
+    result = search_langeek("knew", http_client=_client(handler), api_url=API, throttle=_NoWait())
+    assert (result.status, seen) == ("api_error", ["knew"])
