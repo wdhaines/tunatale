@@ -16,6 +16,7 @@ import json
 import re
 import unicodedata
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -71,7 +72,8 @@ def test_the_verb_card(lexicon):
     assert isinstance(f, CardFields)
     assert f.spelling == "tán-aw"
     assert f.meaning.startswith("see, look at; size up, form an opinion on s.t.; see in s.o.; look after")
-    assert "<b>Agent · perfective · mo-/mi-</b>" in f.verb and "<b>Circumstance · potential · ma-an/na-an</b>" in f.verb
+    labels = [r.label for r in _rows(f.verb)]
+    assert "Agent · perfective · mo-/mi-" in labels and "Circumstance · potential · ma-an/na-an" in labels
     assert "Who is the subject" not in f.details
     assert "<b>panán-aw</b> sense of sight" in f.details
     assert "<i>Motán-aw kog siní karóng gabîi</i> I’ll go see a movie tonight." in f.details
@@ -652,7 +654,7 @@ def test_a_decoded_form_reads_the_sub_entry_its_hand_row_names(committed):
     f = committed.card_fields("kabalo", "can")
     assert f.spelling == "kabaló"
     assert f.meaning.endswith("Wolff, under hibaló: know s.t., how to do s.t.; take care of a problem</div>")
-    assert "<b>Stative · maka-/naka-</b>" in f.verb
+    assert "Stative · maka-/naka-" in [r.label for r in _rows(f.verb)]
     assert f.details.startswith(
         "<div>Not written out in Wolff: <b>ka-</b> + <b>baló</b>. He gives the meaning under <b>hibaló</b>."
         " His example writes the full form kahibaló.</div>"
@@ -838,18 +840,18 @@ def test_a_root_spelled_as_an_affix_still_takes_the_rule(committed, word, spelli
 
 
 @pytest.mark.parametrize(
-    ("word", "english", "line"),
+    ("word", "english", "subject"),
     [
-        ("delikado", "dangerous", "Subject: what causes it."),  # [B12; b5]
-        ("kalma", "calm", "Subject: what causes it."),  # [B; a12]: makakalma 'soothe'
-        ("hibalo", "know", "Subject: the one it happens to."),  # [B1236; b]: B3 'come to know'
+        ("delikado", "dangerous", "what causes it"),  # [B12; b5]
+        ("kalma", "calm", "what causes it"),  # [B; a12]: makakalma 'soothe'
+        ("hibalo", "know", "the one it happens to"),  # [B1236; b]: B3 'come to know'
     ],
 )
-def test_a_verb_of_state_says_who_its_maka_belongs_to(committed, word, english, line):
+def test_a_verb_of_state_says_who_its_maka_belongs_to(committed, word, english, subject):
     # Wolff §7.12 (class B maka- 'cause s.t. to become') against §7.121 (B3 'become')
     rows = _rows(committed.card_fields(word, english).verb)
-    (maka,) = [t for _, t in rows if _label(t) == "Stative · maka-/naka-"]
-    assert line in maka
+    (maka,) = [r for r in rows if r.label == "Stative · maka-/naka-"]
+    assert maka.subject == subject
 
 
 # ── the verb, one row per affix (tunatale-h0q3.31; the owner approved the mockup
@@ -864,37 +866,64 @@ def test_a_verb_of_state_says_who_its_maka_belongs_to(committed, word, english, 
 # spelling; a suffix form appears only as Wolff prints it (the generator's first guess
 # for hibalu + -an is hibad-an, and a wrong spelling is worse than none).
 
-_ROW = re.compile(r'<div class="wolff-row( [^"]*)?">(.*?)</div>')
+_TR = re.compile(r'<tr class="([^"]*)">(.*?)</tr>')
+_TRIGGER = re.compile(r'<td colspan="3"><b>(.*?)</b> · subject: (.*?)</td>')
+_CELLS = re.compile(r'<td><b>(.*?)</b>(?:<div class="wolff-role">(.*?)</div>)?</td><td>(.*?)</td><td>(.*?)</td>')
+_EXAMPLE = re.compile(
+    r'<td colspan="3"><details><summary>Example</summary>'
+    r'<div class="wolff-ceb">(.*?)</div><div class="wolff-en">(.*?)</div></details></td>'
+)
 
 
-def _rows(verb: str) -> list[tuple[str, str]]:
-    """(classes, text) per affix row, in order."""
-    return [((m.group(1) or "").strip(), m.group(2)) for m in _ROW.finditer(verb)]
+class _VRow(NamedTuple):
+    cls: str  # "", "wolff-here" or "wolff-dim"
+    label: str  # the row's name in the owner's chart: its trigger, then its own head
+    role: str  # what the affix means here
+    not_begun: str  # the cell as rendered, short form included
+    begun: str
+    subject: str  # from the trigger row above it
+    example: tuple[str, str] | None  # (Cebuano, English) folded under it
 
 
-def _label(text: str) -> str:
-    return re.match(r"<b>(.*?)</b>", text).group(1)
+def _rows(verb: str) -> list[_VRow]:
+    """Each affix row of the Verb field's tables, in order, with the trigger it sits under."""
+    rows: list[_VRow] = []
+    trigger = subject = ""
+    for m in _TR.finditer(verb):
+        cls, body = m.group(1), m.group(2)
+        if cls == "wolff-trigger":
+            trigger, subject = _TRIGGER.fullmatch(body).groups()
+        elif cls == "wolff-ex":
+            rows[-1] = rows[-1]._replace(example=_EXAMPLE.fullmatch(body).groups())
+        else:
+            head, role, not_begun, begun = _CELLS.fullmatch(body).groups()
+            label = " · ".join(filter(None, [trigger, head]))
+            rows.append(
+                _VRow(cls.removeprefix("wolff-row").strip(), label, role or "", not_begun, begun, subject, None)
+            )
+    return rows
 
 
 def test_a_verb_of_state_says_so_and_its_maka_comes_to_be(committed):
     f = committed.card_fields("hibalo", "know")
     assert f.verb.startswith('<div class="wolff-kind">Verb of state: it happens to someone; nobody does it.</div>')
     rows = _rows(f.verb)
-    assert [_label(t) for _, t in rows] == [
+    assert [r.label for r in rows] == [
         "Stative · ma-/na-",
         "Stative · maka-/naka-",
         "Circumstance · -an/gi-an",
         "Instrument · i-/gi-",
     ]
-    ma, maka, an, i = (t for _, t in rows)
-    assert "not begun mahibaló · begun nahibaló" in ma
-    assert "<i>Akóy mahibaló sa tanán</i> I’ll take care of everything." in ma
+    ma, maka, an, i = rows
+    assert (ma.not_begun, ma.begun) == ("mahibaló", "nahibaló")
+    assert ma.example == ("Akóy mahibaló sa tanán.", "I’ll take care of everything.")
     # hibalu is B3 (Wolff §7.121): maka- is 'become', its subject the one it happens to
-    assert "not begun makahibaló (short kahibaló) · begun nakahibaló" in maka
-    assert "come to be so. Subject: the one it happens to." in maka
-    assert "<i>Kahibaló ka bang molangóy?</i> Do you know how to swim?" in maka
-    assert "begun" not in an  # Wolff prints no -an form of it in an example: the affix alone
-    assert [c for c, _ in rows] == ["", "", "", "wolff-dim"]  # the general i-, dimmed, last
+    assert (maka.not_begun, maka.begun) == ('makahibaló<div class="wolff-short">short kahibaló</div>', "nakahibaló")
+    assert (maka.role, maka.subject) == ("come to be so", "the one it happens to")
+    # a question keeps its own mark: no full stop after it
+    assert maka.example == ("Kahibaló ka bang molangóy?", "Do you know how to swim?")
+    assert (an.not_begun, an.begun) == ("", "")  # Wolff prints no -an form of it in an example
+    assert [r.cls for r in rows] == ["", "", "", "wolff-dim"]  # the general i-, dimmed, last
     assert "Who is the subject" not in f.details  # each row says it now
 
 
@@ -904,11 +933,12 @@ def test_an_adjectives_verb_use_is_labelled_and_its_maka_is_the_cause(committed)
         '<div class="wolff-kind">Also a verb: be unsafe, in danger. '
         "Verb of state: it happens to someone; nobody does it.</div>"
     )
-    rows = dict((_label(t), t) for _, t in _rows(f.verb))
-    assert "not begun madelikádo · begun nadelikádo" in rows["Stative · ma-/na-"]
+    rows = {r.label: r for r in _rows(f.verb)}
+    assert (rows["Stative · ma-/na-"].not_begun, rows["Stative · ma-/na-"].begun) == ("madelikádo", "nadelikádo")
     # [B12; b5]: no 3, so maka- is 'cause to become' (Wolff §7.12), its subject the cause
-    assert "cause to become so. Subject: what causes it." in rows["Stative · maka-/naka-"]
-    assert "become more and more so." in rows["Stative · magka-/nagka-"]
+    maka = rows["Stative · maka-/naka-"]
+    assert (maka.role, maka.subject) == ("cause to become so", "what causes it")
+    assert rows["Stative · magka-/nagka-"].role == "become more and more so"
     # the verb's gloss moved to its label, so the Meaning keeps the adjective's
     assert "be unsafe" not in f.meaning and f.meaning.startswith("perilous, in danger")
 
@@ -920,7 +950,7 @@ def test_senses_with_their_own_affixes_get_their_own_group(committed):
     # 'wait and see' [a12] adds no affix the first group lacks, so it gets no group
     assert heads == ["see, look at; size up, form an opinion on s.t.; look after", "see in s.o."]
     first, second = f.verb.split('<div class="wolff-h">see in s.o.</div>')
-    labels = [_label(t) for _, t in _rows(first)]
+    labels = [r.label for r in _rows(first)]
     assert labels == [
         "Agent · perfective · mo-/mi-",
         "Agent · progressive · mag-/nag-",
@@ -930,15 +960,16 @@ def test_senses_with_their_own_affixes_get_their_own_group(committed):
         "Circumstance · by accident · hi-an",
         "Instrument · i-/gi-",
     ]
-    rows = dict((_label(t), t) for _, t in _rows(first))
-    assert "not begun motán-aw · begun mitán-aw" in rows["Agent · perfective · mo-/mi-"]
-    assert "<i>Motán-aw kog siné karóng gabîi</i>" in rows["Agent · perfective · mo-/mi-"]
-    assert "do it. Subject: the one doing it." in rows["Agent · perfective · mo-/mi-"]
+    rows = {r.label: r for r in _rows(first)}
+    mo = rows["Agent · perfective · mo-/mi-"]
+    assert (mo.not_begun, mo.begun) == ("motán-aw", "mitán-aw")
+    assert mo.example[0] == "Motán-aw kog siné karóng gabîi."
+    assert (mo.role, mo.subject) == ("do it", "the one doing it")
     # a suffix form Wolff prints is used, and the begun gi- form is the prefix's
-    assert "not begun tan-áwon · begun gitán-aw" in rows["Patient · -on/gi-"]
+    assert (rows["Patient · -on/gi-"].not_begun, rows["Patient · -on/gi-"].begun) == ("tan-áwon", "gitán-aw")
     (see_in,) = _rows(second)
-    assert _label(see_in[1]) == "Circumstance · potential · ma-an/na-an"
-    assert "begun natan-awán" in see_in[1]
+    assert see_in.label == "Circumstance · potential · ma-an/na-an"
+    assert see_in.begun == "natan-awán"
 
 
 def test_an_inflected_card_word_leads_with_its_own_reading(committed):
@@ -947,9 +978,9 @@ def test_an_inflected_card_word_leads_with_its_own_reading(committed):
         "<b>kabaló</b> = ka- (short for maka-/naka-) + baló: know (how to); “can” + a verb"
         '<div class="wolff-under">Wolff, under hibaló: know s.t., how to do s.t.; take care of a problem</div>'
     )
-    (here,) = [t for c, t in _rows(f.verb) if c == "wolff-here"]
-    assert _label(here) == "Stative · maka-/naka-"
-    assert "(short kahibaló, kabaló ← this card)" in here
+    (here,) = [r for r in _rows(f.verb) if r.cls == "wolff-here"]
+    assert here.label == "Stative · maka-/naka-"
+    assert here.not_begun == 'makahibaló<div class="wolff-short">short kahibaló, kabaló ← this card</div>'
 
 
 def test_a_nouns_verb_use_is_labelled_and_its_i_is_its_own(committed):
@@ -960,12 +991,12 @@ def test_a_nouns_verb_use_is_labelled_and_its_i_is_its_own(committed):
     )
     rows = _rows(f.verb)
     # [c1]: i- is this verb's own (what is moved: the body), not the general one
-    assert [(c, _label(t)) for c, t in rows] == [
+    assert [(r.cls, r.label) for r in rows] == [
         ("", "Instrument · i-/gi-"),
         ("", "Patient · -on/gi-"),
         ("", "Circumstance · -an/gi-an"),
     ]
-    assert "Subject: what is moved or conveyed." in rows[0][1]
+    assert rows[0].subject == "what is moved or conveyed"
 
 
 @pytest.mark.parametrize(
@@ -990,15 +1021,82 @@ def test_one_affix_in_two_senses_with_two_subjects_gets_a_row_in_each(committed)
     # the one it happens to ('get to be [time]', [B256]). Dropping a repeated affix lost the second.
     f = committed.card_fields("oras", "hour, time")
     first, second = f.verb.split('<div class="wolff-h">be an hour, take an hour</div>')
-    assert "<b>Agent · perfective · mo-/mi-</b>" in first
-    assert [_label(t) for _, t in _rows(second)] == ["Stative · mo-/mi-", "Stative · ma-/na-"]
-    assert "come into the state, become so." in _rows(second)[0][1]
+    assert "Agent · perfective · mo-/mi-" in [r.label for r in _rows(first)]
+    assert [r.label for r in _rows(second)] == ["Stative · mo-/mi-", "Stative · ma-/na-"]
+    assert _rows(second)[0].role == "come into the state, become so"
 
 
 def test_a_printed_an_form_gives_its_begun_gi_an_form(committed):
     # Wolff prints agwadáhan, not giagwadáhan: gi- on the printed form is the begun one
-    rows = dict((_label(t), t) for _, t in _rows(committed.card_fields("agwada", "fetch water").verb))
-    assert "not begun agwadáhan · begun giagwadáhan" in rows["Circumstance · -an/gi-an"]
+    rows = {r.label: r for r in _rows(committed.card_fields("agwada", "fetch water").verb)}
+    an = rows["Circumstance · -an/gi-an"]
+    assert (an.not_begun, an.begun) == ("agwadáhan", "giagwadáhan")
+
+
+# ── the verb as a table (tunatale-iiwm.7; the owner chose layout B3 on 2026-10-28,
+# https://claude.ai/artifact/BNYg64G6TGe8xMaL4QB7qB) ─────────────────────────────────
+# One table per sense, so the not-begun and begun columns line up across triggers; a
+# trigger row says the subject once; each example folds under the row whose form it uses.
+
+
+def test_a_sense_is_one_table_whose_columns_are_not_begun_and_begun(committed):
+    f = committed.card_fields("pasaylo", "forgive")
+    assert f.verb.count('<table class="wolff-verb">') == 1
+    assert "<thead><tr><th></th><th>not begun</th><th>begun</th></tr></thead>" in f.verb
+    # two senses with their own affixes, two tables
+    assert committed.card_fields("hatod", "take someone somewhere").verb.count('<table class="wolff-verb">') == 2
+
+
+def test_a_trigger_row_says_the_subject_once_for_the_rows_under_it(committed):
+    f = committed.card_fields("pasaylo", "forgive")
+    assert re.findall(r'<tr class="wolff-trigger">(.*?)</tr>', f.verb) == [
+        '<td colspan="3"><b>Agent</b> · subject: the one doing it</td>',
+        '<td colspan="3"><b>Patient</b> · subject: what it is done to</td>',
+    ]
+    assert [(r.label, r.role, r.not_begun, r.begun) for r in _rows(f.verb)] == [
+        ("Agent · perfective · mo-/mi-", "do it", "mopasáylo", "mipasáylo"),
+        ("Agent · progressive · mag-/nag-", "be doing it", "magpasáylo", "nagpasáylo"),
+        (
+            "Agent · potential · maka-/naka-",
+            "can, manage to, or happen to do it",
+            'makapasáylo<div class="wolff-short">short kapasáylo</div>',
+            "nakapasáylo",
+        ),
+        ("Patient · -on/gi-", "", "", "gipasáylo"),
+    ]
+
+
+def test_an_example_folds_under_the_row_whose_form_it_uses(committed):
+    f = committed.card_fields("pasaylo", "forgive")
+    rows = _rows(f.verb)
+    # Wolff's comma between the Cebuano and the English is gone, so the Cebuano gets its own stop
+    assert [r.example for r in rows] == [
+        None,
+        (
+            "Ang presidénte nagpasáylo ug dóse ka binilánggò karóng Pasku.",
+            "The president pardoned twelve prisoners this Christmas.",
+        ),
+        None,
+        None,
+    ]
+    # the example row comes right after the progressive row, folded
+    progressive = f.verb.index("<b>progressive · mag-/nag-</b>")
+    assert f.verb.index('<tr class="wolff-ex"><td colspan="3"><details><summary>Example</summary>') > progressive
+    assert f.verb.index('<tr class="wolff-ex">') < f.verb.index("<b>potential · maka-/naka-</b>")
+
+
+def test_examples_fold_under_their_rows_in_each_sense(committed):
+    f = committed.card_fields("hatod", "take someone somewhere")
+    first, second = f.verb.split('<div class="wolff-h">send a telegram</div>')
+    assert [(r.label, r.example and r.example[0]) for r in _rows(first) if r.example] == [
+        ("Agent · potential · maka-/naka-", "Kanáng ímong pagkagastadóra makapahatód (makahatód) nátò sa kawád-on."),
+        ("Instrument · i-/gi-", "Anús-a kahâ ihatód ngánhi sa gobyérno ang karsáda?"),
+        ("Circumstance · -an/gi-an", "Hátdan ta kag pagkâon."),
+    ]
+    assert [(r.cls, r.label, r.subject) for r in _rows(second)] == [
+        ("", "Circumstance · -an/gi-an", "who or what it is done to"),
+        ("wolff-dim", "Instrument · i-/gi-", "what is used or moved"),
+    ]
 
 
 # ── a card's English from the dictionary (tunatale-iiwm.5) ─────────────────────────────

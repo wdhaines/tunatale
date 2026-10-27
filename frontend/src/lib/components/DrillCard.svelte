@@ -557,6 +557,66 @@
 		padding: 0.2rem 0.5rem;
 		text-align: center;
 	}
+	/* The Cebuano Verb field (tunatale-iiwm.7, the owner's layout B3): one table
+	   per sense, so the not-begun and begun forms line up in their columns; a
+	   trigger row names the subject once; each example folds under its row. */
+	.extra-value :global(table.wolff-verb) {
+		width: 100%;
+		table-layout: fixed;
+		margin: 0.35rem 0 0.25rem;
+	}
+	.extra-value :global(table.wolff-verb th),
+	.extra-value :global(table.wolff-verb td) {
+		border: 0;
+		border-top: 1px solid var(--color-border);
+		padding: 0.3rem 0.4rem 0.3rem 0;
+		text-align: left;
+		vertical-align: top;
+		overflow-wrap: anywhere;
+	}
+	.extra-value :global(table.wolff-verb th) {
+		border-top: 0;
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--color-muted);
+	}
+	.extra-value :global(table.wolff-verb td:first-child) {
+		width: 40%;
+	}
+	.extra-value :global(.wolff-trigger td) {
+		border-top: 0;
+		padding-top: 0.7rem;
+	}
+	.extra-value :global(.wolff-role),
+	.extra-value :global(.wolff-short) {
+		font-size: 0.82rem;
+		color: var(--color-muted);
+	}
+	.extra-value :global(.wolff-here td) {
+		background: var(--color-highlight);
+	}
+	.extra-value :global(.wolff-dim td) {
+		color: var(--color-muted);
+	}
+	.extra-value :global(.wolff-ex td) {
+		border-top: 0;
+		padding: 0 0 0.5rem 0.75rem;
+		font-size: 0.88rem;
+	}
+	.extra-value :global(.wolff-ex summary) {
+		cursor: pointer;
+		color: var(--color-primary);
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+	.extra-value :global(.wolff-ceb) {
+		font-style: italic;
+	}
+	.extra-value :global(.wolff-en) {
+		color: var(--color-muted);
+	}
 	.extra-value :global(h2) {
 		font-size: 1.05rem;
 		margin: 0.4rem 0 0.2rem;
