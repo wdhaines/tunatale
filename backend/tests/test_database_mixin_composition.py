@@ -123,4 +123,4 @@ def test_public_method_count_pinned() -> None:
     #  dictionary layers written into TT directly — tunatale-h0q3.2)
     # +list_shared_photo_groups (photographs two or more cards already share,
     #  for the one-off repair that re-pictures the less common word — tunatale-jlwy)
-    assert count == 145
+    assert count == 146

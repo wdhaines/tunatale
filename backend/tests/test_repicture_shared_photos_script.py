@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.cards.media import vocab_media
 from app.common.guid import compute_guid
 from app.config import settings
@@ -160,3 +162,28 @@ def test_copy_from_hands_another_decks_langeek_pictures_across(tmp_path, capsys)
     assert "  new    1 nanay: img_nanay.jpg -> lgk_mother_0000aaaa.jpg" in out
     assert "  kept   2 inahan: not in the other deck" in out
     assert _image(db, "nanay") == "lgk_mother_0000aaaa.jpg"
+
+
+def test_unchanged_since_skips_a_card_re_pictured_after_the_list(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _mothers(url)
+    with db._get_conn() as conn:
+        conn.execute("UPDATE media SET created_at = '2026-10-27 12:00:00' WHERE collocation_id = 1")
+        conn.execute("UPDATE media SET created_at = '2026-10-27 15:30:00' WHERE collocation_id = 2")
+        conn.commit()
+
+    args = ["--language", "ceb", "--db", url, "--ids", "1,2", "--langeek-only", "--apply"]
+    assert main([*args, "--unchanged-since", "2026-10-27 14:15:00"], _media_fn=_langeek_or_pixabay) == 0
+
+    out = capsys.readouterr().out
+    assert "  skip   2 inahan: picture changed since 2026-10-27 14:15:00 (by hand?)" in out
+    assert "1 card(s) to re-fetch (LanGeek pictures only)." in out
+    assert _image(db, "inahan") == "img_inahan.jpg"
+
+
+def test_unchanged_since_must_be_a_utc_timestamp(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    _mothers(url)
+    with pytest.raises(SystemExit):
+        main(["--language", "ceb", "--db", url, "--ids", "1", "--unchanged-since", "yesterday"])
+    assert "'yesterday' is not 'YYYY-MM-DD HH:MM:SS' (UTC)" in capsys.readouterr().err

@@ -19,6 +19,17 @@ class DbMediaMixin:
             ).fetchone()
         return row["filename"] if row is not None else None
 
+    def get_image_written_at(self, collocation_id: int) -> str | None:
+        """When a collocation's current image row was written (UTC, SQLite's
+        ``datetime('now')`` form), or None. Every swap, by hand or by a repair,
+        drops the old row and writes a new one, so this is when the picture last changed."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT created_at FROM media WHERE collocation_id = ? AND kind = 'image' ORDER BY id DESC LIMIT 1",
+                (collocation_id,),
+            ).fetchone()
+        return row["created_at"] if row is not None else None
+
     def mark_image_unavailable(self, collocation_id: int) -> None:
         """Record that this word's image search came back empty.
 
