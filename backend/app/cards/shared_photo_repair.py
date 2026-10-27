@@ -26,6 +26,7 @@ points at, through the dirty flag and the ordinary push: no Anki file is opened.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
 
@@ -178,3 +179,45 @@ async def _repicture(
     if card.linked:
         db.add_dirty_field_by_id(card.collocation_id, "image")
     return Repicture(card.collocation_id, card.text, card.filename, filename, None)
+
+
+def copy_pictures(db: Any, source_db: Any, cards: list[SharedCard]) -> list[Repicture]:
+    """Give each card the LanGeek picture its own note shows in *source_db*.
+
+    A second learner's deck is copied from the owner's, so its notes share the
+    owner's GUIDs, and one media dir serves every learner. Once the owner's deck
+    has LanGeek pictures, the copy needs no LanGeek search and no sense-choice
+    LLM call of its own: the owner's choice is the same word in the same
+    meaning. A card whose note the other deck lacks, means something else there,
+    or shows a non-LanGeek picture there keeps its own; so does one whose
+    picture another card in *db* already shows (``image_digest_owner``).
+    """
+    results = []
+    for card in cards:
+
+        def kept(reason: str, card: SharedCard = card) -> Repicture:
+            return Repicture(card.collocation_id, card.text, card.filename, None, reason)
+
+        source_id = source_db.get_collocation_id_by_guid(db.get_guid_by_collocation_id(card.collocation_id))
+        if source_id is None:
+            results.append(kept("not in the other deck"))
+            continue
+        _, source_item, _ = source_db.get_collocation_by_id(source_id)
+        if source_item.syntactic_unit.translation != card.gloss:
+            results.append(kept(f"the other deck's card means '{source_item.syntactic_unit.translation}'"))
+            continue
+        filename = source_db.get_image_filename(source_id)
+        if filename is None or not filename.startswith("lgk_"):
+            results.append(kept("the other deck's picture is not LanGeek's"))
+            continue
+        data = (vocab_media._MEDIA_DIR / filename).read_bytes()
+        owner = db.image_digest_owner(hashlib.sha256(data).hexdigest(), exclude_collocation_id=card.collocation_id)
+        if owner is not None:
+            results.append(kept(f"card {owner} already shows it"))
+            continue
+        vocab_media._drop_image_rows(db, card.collocation_id, "image")
+        vocab_media.store_tt_media(db, card.collocation_id, "image", filename, data)
+        if card.linked:
+            db.add_dirty_field_by_id(card.collocation_id, "image")
+        results.append(Repicture(card.collocation_id, card.text, card.filename, filename, None))
+    return results
