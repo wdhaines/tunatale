@@ -86,7 +86,8 @@ def test_the_parts_are_in_the_words_order_and_say_which_is_the_affix(lexicon):
 
 def test_the_english_it_came_with_does_not_override_a_settled_reading(lexicon):
     # the meaning ranks the decoder's candidates; one reading stays one reading
-    assert lexicon.parts_line("gikaon", "they ate the rice") == "gi- did, to it + kâon eat"
+    # (EnglishRelations' base map lacks 'ate' and 'saw'; 'eaten' is in it)
+    assert lexicon.parts_line("gikaon", "it was eaten") == "gi- did, to it + kâon eat"
 
 
 # ── only a verb's inflection reads (measured 2026-10-28 on the owner's 815 one-word cards) ───
@@ -176,3 +177,41 @@ def test_a_card_wolff_cannot_settle_stays_unsettled(lexicon):
 def test_a_two_letter_root_is_the_decoders_not_cebuanos(lexicon):
     # nawa 'may it be' is a particle, not na- + wa 'left hand'
     assert lexicon.parts_line("nawa") is None
+
+
+# ── precision on Wolff's own lessons (measured 2026-10-28: 59 build-up rows of Lessons 1-4,
+# about 12 wrong) ─────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("word", "english"),
+    [
+        # -a on a noun is Wolff's 'that particular', not the patient's command
+        ("baláya", "house"),
+        ("kwartóha", "particular room"),
+        ("dyípa", "particular jeep"),
+        # the English the word came with agrees with none of the senses that take the affix:
+        # kítà's maka- is 'earn', hádlok's ma- 'can be scared'
+        ("nakakitâ", "see"),
+        ("mahádlok", "am afraid (of something in the future)"),
+    ],
+)
+def test_silent_where_the_lesson_shows_the_reading_is_wrong(lexicon, word, english):
+    assert lexicon.parts_line(word, english) is None
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "line"),
+    [
+        ("mòábang", "will rent", "mo- will + ábang rent"),
+        ("subáya", "follow", "súbay follow, go along a certain way + -a do it to it! (or: didn't)"),
+        ("mohúnong", "stop", "mo- will + húnong stop, cease forward motion, cause something to do so"),
+    ],
+)
+def test_a_reading_the_lesson_agrees_with_still_shows(lexicon, word, english, line):
+    assert lexicon.parts_line(word, english) == line
+
+
+def test_ma_on_an_adjective_root_is_the_adjective_with_no_english_to_go_by(lexicon):
+    # the reader's word may come with no gloss: mainit is still 'hot', not 'will become hot'
+    assert lexicon.parts_line("mainit") is None
