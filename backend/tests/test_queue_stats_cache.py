@@ -1517,3 +1517,65 @@ class TestResolveNewCardDisplayOrder:
             )
         val, source = resolve_new_card_gather_priority(db)
         assert (val, source) == (0, "default")
+
+
+# ---- Absent-field regression for the daily caps (2026-10-27) ----
+#
+# The owner set the Norwegian preset's new cards/day to 0; Anki showed 0 new, TT
+# kept serving 10. Field 9 at 0 is not on the wire (proto3 implicit presence), the
+# reader returned None, and refresh_daily_new_cap skipped the write, so the cached
+# 10 survived every sync. Measured on a copy of the live tt_collection: field 9
+# absent, field 10 (reviews/day 250) present. The same reader must not invent a 0
+# for a field whose absence means "unknown" (desired retention, field 37).
+
+
+def _caps_conn(blob: bytes) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE deck_config (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, config BLOB)")
+    conn.execute("CREATE TABLE decks (id INTEGER, name TEXT, mtime_secs INTEGER, usn INTEGER, conf INTEGER, kind BLOB)")
+    # a modern collection's col row carries no legacy dconf, so the readers go to deck_config
+    conn.execute("CREATE TABLE col (decks TEXT, dconf TEXT)")
+    conn.execute("INSERT INTO col VALUES ('{}', '')")
+    conn.execute("INSERT INTO deck_config VALUES (1, 'Norwegian', 0, -1, ?)", (blob,))
+    conn.execute("INSERT INTO decks VALUES (1, '0. Norwegian', 0, -1, 1, ?)", (make_deck_kind_blob(1),))
+    conn.commit()
+    return conn
+
+
+class TestDailyCapsAbsentMeansZero:
+    def test_absent_new_per_day_writes_zero_over_a_stale_cap(self):
+        from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("daily_new_cap", "10")  # the stale value the owner saw
+        refresh_daily_new_cap(db, _caps_conn(pb_varint_field(10, 250)), "0. Norwegian")
+        assert db.get_anki_state_cache("daily_new_cap")[0] == "0"
+
+    def test_absent_reviews_per_day_writes_zero_over_a_stale_cap(self):
+        from app.srs.anki_mirror.queue_stats import refresh_daily_review_cap
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("daily_review_cap", "250")
+        refresh_daily_review_cap(db, _caps_conn(pb_varint_field(9, 10)), "0. Norwegian")
+        assert db.get_anki_state_cache("daily_review_cap")[0] == "0"
+
+    def test_present_caps_still_win(self):
+        from app.srs.anki_mirror.queue_stats import refresh_daily_new_cap, refresh_daily_review_cap
+
+        db = SRSDatabase(":memory:")
+        conn = _caps_conn(pb_varint_field(9, 10) + pb_varint_field(10, 250))
+        refresh_daily_new_cap(db, conn, "0. Norwegian")
+        refresh_daily_review_cap(db, conn, "0. Norwegian")
+        assert (db.get_anki_state_cache("daily_new_cap")[0], db.get_anki_state_cache("daily_review_cap")[0]) == (
+            "10",
+            "250",
+        )
+
+    def test_an_absent_retention_is_still_unknown_not_zero(self):
+        from app.srs.anki_mirror.queue_stats import refresh_desired_retention
+
+        db = SRSDatabase(":memory:")
+        db.set_anki_state_cache("desired_retention", "0.9")
+        refresh_desired_retention(db, _caps_conn(pb_varint_field(9, 10)), "0. Norwegian")
+        assert db.get_anki_state_cache("desired_retention")[0] == "0.9"
