@@ -390,3 +390,36 @@ def test_preposed_starts_a_sub_entry():
     e = parse_entry("sila they. Muadtu sila. íla, iláha preposed gen.: their, by them. Ang ílang amahan, Their father.")
     assert [(f.label, f.form) for f in e.subs] == [("íla, iláha", "íla")]
     assert e.subs[0].senses[0].gloss == "preposed gen.: their, by them"
+
+
+# ── a phrase sense's English (tunatale-h0q3.22) ─────────────────────────────────────────────
+# Wolff writes '— sa lawalawa spiderweb.': the phrase, then its gloss, with no separator. A
+# rare English word (spiderweb, crowbar) is not among the 20,000 commonest, so it was read as
+# Cebuano, glued into the phrase, respelled ('spidérweb'), and the gloss came out empty. A word
+# is English when English uses it (wordfreq zipf >= 2) and the Cebuano news corpus hardly does.
+
+
+@pytest.mark.parametrize(
+    ("paragraph", "phrase", "gloss"),
+    [
+        ("balay n house. — sa lawalawa spiderweb.", "sa lawalawa", "spiderweb"),
+        ("bukad v [A; b] bloom. — ug ngábil thick-lipped.", "ug ngábil", "thick-lipped"),
+        (
+            "bug-at a heavy. — ang nawung long-faced, unsmiling. v [B; b6] become heavy.",
+            "ang nawung",
+            "long-faced, unsmiling",
+        ),
+        # controls: a loan word opening the phrase stays in it; a Cebuano phrase is untouched
+        ("adbans n advance. — gard advance guard.", "gard", "advance guard"),
+        ("búkal_1 v [A] boil. — ang dugô be furious.", "ang dugô", "be furious"),
+        # a headword in Wolff's 1972 spelling (batu, today's bato, which the corpus counts) stays Cebuano
+        ("isdà n fish. — sa batu fish found in rocky places.", "sa batu", "fish found in rocky places"),
+        # a Wolff headword stays Cebuano though English has it too (animas)
+        ("kalag n soul. — sa animas thin as a soul in purgatory.", "sa animas", "thin as a soul in purgatory"),
+        # a headword with a glottal hyphen is no English compound: lut-ud is Cebuano
+        ("antulánga n hibiscus. — nga lut-ud double petaled hibiscus.", "nga lut-ud", "double petaled hibiscus"),
+    ],
+)
+def test_a_phrase_sense_ends_where_its_english_begins(paragraph, phrase, gloss):
+    (sense,) = [s for s in parse_entry(paragraph).root.senses if s.phrase is not None]
+    assert (sense.phrase, sense.gloss) == (phrase, gloss)
