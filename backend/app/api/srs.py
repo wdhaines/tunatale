@@ -60,6 +60,7 @@ from app.api.models import (
 )
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.field_map import upos_for_disambig
+from app.cards.media.langeek import base_forms
 from app.cards.pronoun_picture import pronoun_gloss
 from app.common.guid import compute_guid
 from app.config import settings
@@ -3189,6 +3190,73 @@ async def _analyze_surface(db, language_code: str, sentence: str, surface: str):
     return next((ta for ta in analyses if ta.surface.casefold() == surface.casefold()), None)
 
 
+# Words that name nothing in an English gloss: a gloss made only of these ('we will')
+# cannot be checked against another, and cannot vouch for one ('be').
+_GLOSS_FUNCTION_WORDS = frozenset(
+    [
+        "i",
+        "you",
+        "he",
+        "she",
+        "it",
+        "we",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "my",
+        "your",
+        "his",
+        "its",
+        "our",
+        "their",
+        "will",
+        "would",
+        "shall",
+        "be",
+        "is",
+        "are",
+        "am",
+        "was",
+        "were",
+        "been",
+        "being",
+        "to",
+        "the",
+        "a",
+        "an",
+        "of",
+        "not",
+        "do",
+        "does",
+        "did",
+        "have",
+        "has",
+        "had",
+        "can",
+        "let",
+        "let's",
+        "s.o",
+        "s.t",
+    ]
+)
+
+
+def _content_words(gloss: str) -> set[str]:
+    """*gloss*'s content words, each with its base forms (keeps -> keep)."""
+    words = {w for w in re.findall(r"[a-z.']+", gloss.casefold()) if w not in _GLOSS_FUNCTION_WORDS}
+    return words | {base for w in words for base in base_forms(w)}
+
+
+def _gloss_fits(passed: str, model: str) -> bool:
+    """Whether the model's gloss of a form can stand for the gloss passed in: it shares a
+    content word with it, or the passed gloss has none to share."""
+    need = _content_words(passed)
+    return not need or bool(need & _content_words(model))
+
+
 async def _dictionary_gloss(
     request: Request, *, surface: str, front: str, language_code: str, upos: str | None, sentence: str
 ) -> str:
@@ -3736,8 +3804,19 @@ async def create_inflection_cloze(body: InflectionClozeRequest, request: Request
             feature=body.feature,
             sentence=body.sentence,
         )
-        if gloss:
+        # A gloss passed in that names something (Mobilar 'will keep vigil') vouches for
+        # the word: the model's must share one of its content words, or it glossed a
+        # neighbour ('we will', from the 'mi' after it; tunatale-yxeb). A passed gloss
+        # with none ('be' for biti) vouches for nothing, and the model's form-gloss wins.
+        if gloss and _gloss_fits(word_translation, gloss):
             word_translation = gloss
+        elif gloss:
+            _logger.warning(
+                "inflection cloze %r: kept %r over the model's %r, which shares no word with it",
+                body.surface,
+                word_translation,
+                gloss,
+            )
 
     # 4. Build + create (mirrors /listen morphology-cloze block)
     disambig = f"morph:{body.feature.replace(':', '-')}"
