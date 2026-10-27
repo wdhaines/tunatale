@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.cards.media import vocab_media
-from app.cards.shared_photo_repair import apply_repictures, plan_shared_photos
+from app.cards.shared_photo_repair import Repicture, apply_repictures, plan_shared_photos
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction
 from app.models.syntactic_unit import SyntacticUnit
@@ -313,3 +313,87 @@ def test_load_cards_reads_each_card_as_the_repair_does() -> None:
         0.0,
         False,
     )
+
+
+# ── Copying another learner's LanGeek pictures ─────────────────────────────────
+# A learner's deck copied from the owner's shares its GUIDs, and one media dir
+# serves every learner, so the owner's LanGeek pictures can be handed across with
+# no LanGeek search and no sense-choice LLM call.
+
+
+def _owner_with_lgk(text: str = "nanay", *, translation: str = "mother", data: bytes = b"LGK-mother") -> SRSDatabase:
+    owner = SRSDatabase(":memory:")
+    _card(owner, text, image=f"lgk_{translation}_0000aaaa.jpg", data=data, translation=translation)
+    return owner
+
+
+def test_a_card_takes_the_other_decks_langeek_picture_and_the_push_is_flagged() -> None:
+    from app.cards.shared_photo_repair import copy_pictures, load_cards
+
+    owner = _owner_with_lgk()
+    learner = SRSDatabase(":memory:")
+    nanay = _card(learner, "nanay", image="img_mother.jpg", data=b"PX-mother")
+
+    results = copy_pictures(learner, owner, load_cards(learner, [nanay]))
+
+    assert results == [Repicture(nanay, "nanay", "img_mother.jpg", "lgk_mother_0000aaaa.jpg", None)]
+    assert learner.get_image_filename(nanay) == "lgk_mother_0000aaaa.jpg"
+    assert _dirty(learner, "nanay") == ["image"]
+    # The file is the owner's, byte for byte: nothing was fetched.
+    assert (vocab_media._MEDIA_DIR / "lgk_mother_0000aaaa.jpg").read_bytes() == b"LGK-mother"
+
+
+def test_a_card_with_no_anki_note_takes_it_without_a_dangling_flag() -> None:
+    from app.cards.shared_photo_repair import copy_pictures, load_cards
+
+    owner = _owner_with_lgk()
+    learner = SRSDatabase(":memory:")
+    nanay = _card(learner, "nanay", image="img_mother.jpg", data=b"PX-mother", note_id=None)
+
+    (result,) = copy_pictures(learner, owner, load_cards(learner, [nanay]))
+
+    assert result.new_filename == "lgk_mother_0000aaaa.jpg"
+    assert _dirty(learner, "nanay") == []
+
+
+@pytest.mark.parametrize(
+    ("owner_text", "owner_gloss", "owner_image", "reason"),
+    [
+        ("iring", "cat", "lgk_cat_0000aaaa.jpg", "not in the other deck"),
+        ("nanay", "mom", "lgk_mom_0000aaaa.jpg", "the other deck's card means 'mom'"),
+        ("nanay", "mother", "img_mother_0000aaaa.jpg", "the other deck's picture is not LanGeek's"),
+        ("nanay", "mother", None, "the other deck's picture is not LanGeek's"),
+    ],
+    ids=["absent", "other-meaning", "pixabay", "no-picture"],
+)
+def test_a_card_keeps_its_photo_unless_the_same_word_and_meaning_has_a_langeek_one(
+    owner_text, owner_gloss, owner_image, reason
+) -> None:
+    from app.cards.shared_photo_repair import copy_pictures, load_cards
+
+    owner = SRSDatabase(":memory:")
+    _card(owner, owner_text, image=owner_image, data=b"OWNER", translation=owner_gloss)
+    learner = SRSDatabase(":memory:")
+    nanay = _card(learner, "nanay", image="img_mother.jpg", data=b"PX-mother")
+
+    (result,) = copy_pictures(learner, owner, load_cards(learner, [nanay]))
+
+    assert (result.new_filename, result.reason) == (None, reason)
+    assert learner.get_image_filename(nanay) == "img_mother.jpg"
+    assert _dirty(learner, "nanay") == []
+
+
+def test_a_picture_another_card_in_this_deck_shows_is_not_copied() -> None:
+    # The owner's deck may give two words one illustration that this deck already
+    # shows on a third card; the one-photo-one-card rule holds per deck.
+    from app.cards.shared_photo_repair import copy_pictures, load_cards
+
+    owner = _owner_with_lgk()
+    learner = SRSDatabase(":memory:")
+    iloy = _card(learner, "iloy", image="lgk_mother_0000aaaa.jpg", data=b"LGK-mother")
+    nanay = _card(learner, "nanay", image="img_mother.jpg", data=b"PX-mother")
+
+    (result,) = copy_pictures(learner, owner, load_cards(learner, [nanay]))
+
+    assert result.reason == f"card {iloy} already shows it"
+    assert learner.get_image_filename(nanay) == "img_mother.jpg"

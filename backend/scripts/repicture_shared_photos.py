@@ -4,6 +4,9 @@
     uv run python scripts/repicture_shared_photos.py --language ceb            # dry run: the plan
     uv run python scripts/repicture_shared_photos.py --language ceb --apply    # fetch and write
 
+``--ids … --copy-from <owner DB URL>`` hands a learner's deck the owner's LanGeek
+pictures for the same notes, with no fetch at all.
+
 Then sync the language: the ordinary push writes each new picture into its Anki
 note. In each group the most common word (the language's frequency source) keeps
 its photo; a tie keeps the oldest card's. Every other card is re-fetched through
@@ -26,7 +29,13 @@ import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from app.cards.shared_photo_repair import apply_repictures, load_cards, plan_shared_photos, repicture_cards
+from app.cards.shared_photo_repair import (
+    apply_repictures,
+    copy_pictures,
+    load_cards,
+    plan_shared_photos,
+    repicture_cards,
+)
 from app.config import settings
 from app.languages import resolve_language_context
 from app.srs.database import SRSDatabase
@@ -55,6 +64,11 @@ def main(argv: list[str] | None = None, *, _media_fn: Callable[..., Awaitable[An
     parser.add_argument(
         "--langeek-only", action="store_true", help="keep a new picture only when LanGeek supplied it (with --ids)"
     )
+    parser.add_argument(
+        "--copy-from",
+        default=None,
+        help="database URL of a deck to copy each card's LanGeek picture from (with --ids): no fetch, no LLM call",
+    )
     args = parser.parse_args(argv)
 
     db = SRSDatabase(args.db or resolve_language_context(args.language, settings).db_url)
@@ -62,6 +76,11 @@ def main(argv: list[str] | None = None, *, _media_fn: Callable[..., Awaitable[An
         cards = load_cards(db, [int(i) for i in args.ids.split(",")])
         for c in cards:
             print(f"  re-fetch: {c.collocation_id} {c.text} '{c.gloss}' {c.filename}")
+        if args.copy_from:
+            print(f"{len(cards)} card(s) to re-fetch (copied from the other deck).")
+            if args.apply:
+                _report(copy_pictures(db, SRSDatabase(args.copy_from), cards))
+            return 0
         only = "langeek" if args.langeek_only else None
         print(f"{len(cards)} card(s) to re-fetch{' (LanGeek pictures only)' if only else ''}.")
         if args.apply:

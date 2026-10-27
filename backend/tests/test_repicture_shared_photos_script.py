@@ -137,3 +137,26 @@ def test_ids_without_langeek_only_take_any_new_picture(tmp_path, capsys) -> None
 
     assert "Re-pictured 1 of 1." in capsys.readouterr().out
     assert _image(db, "inahan").startswith("img_mother_")
+
+
+def test_copy_from_hands_another_decks_langeek_pictures_across(tmp_path, capsys) -> None:
+    owner_url = f"sqlite:///{tmp_path / 'owner.db'}"
+    owner = SRSDatabase(owner_url)
+    owner.add_collocation(
+        SyntacticUnit(text="nanay", translation="mother", word_count=1, difficulty=1, source="corpus"), "ceb"
+    )
+    owner_id = owner.get_collocation_id_by_guid(compute_guid("nanay", "ceb", ""))
+    vocab_media.store_tt_media(owner, owner_id, "image", "lgk_mother_0000aaaa.jpg", b"LGK")
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _mothers(url)
+
+    assert main(["--language", "ceb", "--db", url, "--ids", "1,2", "--copy-from", owner_url]) == 0
+    out = capsys.readouterr().out
+    assert "2 card(s) to re-fetch (copied from the other deck)." in out
+    assert _image(db, "nanay") == "img_nanay.jpg"  # a dry run writes nothing
+
+    assert main(["--language", "ceb", "--db", url, "--ids", "1,2", "--copy-from", owner_url, "--apply"]) == 0
+    out = capsys.readouterr().out
+    assert "  new    1 nanay: img_nanay.jpg -> lgk_mother_0000aaaa.jpg" in out
+    assert "  kept   2 inahan: not in the other deck" in out
+    assert _image(db, "nanay") == "lgk_mother_0000aaaa.jpg"
