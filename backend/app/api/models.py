@@ -974,6 +974,7 @@ class TranscriptWord(BaseModel):
     srs_item_id: int | None
     translation: str | None
     gloss: str | None
+    parts: str | None = None  # the word glossed by its parts (tunatale-h0q3.26)
     collocation_span_id: int | None
     collocation_start: bool
     collocation_srs_state: str | None

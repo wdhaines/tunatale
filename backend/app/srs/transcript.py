@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels, upos_for_disambig
-from app.languages import card_surface_variants, get_phrase_match_exact_form, get_variant_separator
+from app.languages import card_surface_variants, get_phrase_match_exact_form, get_variant_separator, parts_line
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import deserialize_extras
@@ -38,6 +38,9 @@ class WordToken:
     # sense, and a lesson may use another ('gang' = hall on the card, "time" in
     # every line). `translation` stays card-first because card creation reads it.
     gloss: str | None = None
+    # The word glossed by its parts, from the language's dictionary (tunatale-h0q3.26):
+    # "mo- will + ádto there · go". None when it has none or does not read it as one verb.
+    parts: str | None = None
     collocation_span_id: int | None = None  # DB id of multi-word collocation this token belongs to
     collocation_start: bool = False  # True if this is the first token in its collocation span
     collocation_srs_state: str | None = None  # SRS state of the enclosing collocation
@@ -866,6 +869,7 @@ def extract_transcript(
                         srs_item_id=resolved_item_id,
                         translation=translation,
                         gloss=gloss,
+                        parts=parts_line(lesson.language_code, surface, gloss or translation or ""),
                         card_type=card_type,
                         active_state=active_state_val,
                         active_direction=active_direction_str,

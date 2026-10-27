@@ -5363,6 +5363,17 @@
             ],
             "title": "Overdue Ratio"
           },
+          "parts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parts"
+          },
           "prefix_punct": {
             "title": "Prefix Punct",
             "type": "string"

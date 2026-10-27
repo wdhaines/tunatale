@@ -43,7 +43,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache, cached_property
 from pathlib import Path
 from typing import NamedTuple
@@ -354,13 +354,28 @@ class Part(NamedTuple):
     text: str  # the affix as written (mo-, gi-…-an), or the root in Handbook spelling
     gloss: str  # the affix's label, or the root's meaning
     affix: bool
+    cite: str = ""  # an affix's Wolff sense, for the card's Details ('mu- 1, 2')
+
+
+def _label_rows(path: Path = LABELS_PATH) -> list[list[str]]:
+    return [line.split("\t") for line in path.read_text().splitlines() if line and not line.startswith("#")]
 
 
 @cache
-def _labels(path: Path = LABELS_PATH) -> dict[tuple[str, str], str]:
+def _labels() -> dict[tuple[str, str], str]:
     """(decoder piece, root kind) -> the approved label."""
-    rows = (line.split("\t") for line in path.read_text().splitlines() if line and not line.startswith("#"))
-    return {(piece, kind): label for piece, kind, label, _ in rows}
+    return {(piece, kind): label for piece, kind, label, _ in _label_rows()}
+
+
+@cache
+def _cites() -> dict[tuple[str, str], str]:
+    """(decoder piece, label) -> the Wolff sense(s) it stands for ('mu- 3 or mu- 3a')."""
+    out: dict[tuple[str, str], list[str]] = {}
+    for piece, _, label, wolff in _label_rows():
+        out.setdefault((piece, label), [])
+        if wolff not in out[(piece, label)]:
+            out[(piece, label)].append(wolff)
+    return {key: " or ".join(cites) for key, cites in out.items()}
 
 
 # The chart pair a decoder piece belongs to, as decode_classes names it.
@@ -378,6 +393,14 @@ _PIECE_PAIRS: dict[str, tuple[str, ...]] = {
 }
 # The decoder's spelling -> the Handbook's (Wolff writes u where the Handbook writes o).
 _PIECE_TEXT = {"mu-": "mo-", "-un": "-on", "gi-an": "gi-…-an"}
+# The pieces that only a verb carries. Wolff's derivational affixes make nouns with the same
+# letters as ka- (maka-'s short form), -an and -on, and a bare pa-: kalinaw 'peace', tunghaan
+# 'school', baybayon 'beach', paagi 'way'. Measured 2026-10-28 on the owner's 815 one-word
+# cards: read as a verb's inflection, 30 of the 36 that got a line were wrong.
+_VERBAL = frozenset(
+    ("mu-", "mi-", "ni-", "mag-", "nag-", "ga-", "maka-", "naka-", "maN-", "naN-", "gi-", "gi-an", "i-", "ma-", "na-",
+     "magka-", "nagka-", "-a", "-i")
+)  # fmt: skip
 _ROOT_FORMS = ("(←)", "(→)")  # a root's stress forms: other words with its letters
 
 
@@ -393,9 +416,15 @@ def _licenses(cls: str) -> set[tuple[str, str]]:
     return out
 
 
+_PLACEHOLDERS = {"s.t": "something", "s.o": "someone", "s.w": "somewhere", "k.o": "a kind of"}
+
+
 def _plain(gloss: str) -> str:
-    """Wolff's gloss without his s.t. / s.o. / s.w. placeholders or a closing stop."""
-    text = re.sub(r"\s+(?:s\.t|s\.o|k\.o|s\.w)\.?(?=[\s,;)]|$)", "", gloss)
+    """Wolff's gloss with his placeholders said in words mid-phrase ('together with s.o. else'
+    -> 'someone else') and dropped at the end of one ('write s.t.' -> 'write'), and no
+    closing stop."""
+    text = re.sub(r"\b(s\.t|s\.o|s\.w|k\.o)\.?(?= [a-z])", lambda m: _PLACEHOLDERS[m.group(1)], gloss)
+    text = re.sub(r"\s+(?:s\.t|s\.o|k\.o|s\.w)\.?(?=[\s,;)]|$)", "", text)
     return re.sub(r"\s+", " ", text).strip().rstrip(".;, ")
 
 
@@ -793,6 +822,12 @@ class WolffLexicon:
             return None
         affix = found[0].affix
         pieces = affix.split("+")
+        if not _VERBAL & set(pieces):
+            return None  # a derived noun's affix (ka-, -an, -on, a bare pa-), not a verb's
+        if len([p for p in pieces if p != "pa-"]) > 1:
+            return None  # a verb carries one inflection: ma- with -on makes an adjective (malipayon)
+        if len(affixes.strip_marks(found[0].root).replace("-", "")) < 3:
+            return None  # the decoder's, not Cebuano's: nawa 'may it be' is no na- + wa 'left hand'
         inflections = [p for p in pieces if p != "pa-"]
         # The decoder ranks the roots (by the English, then the entry), and its best root
         # decides: falling through to a lower one when it reads nothing is a guess (pasusoa
@@ -801,6 +836,8 @@ class WolffLexicon:
         # exactly one reading, and not one form that reads two ways (None)
         if len(readings) != 1 or None in readings:
             return None
+        if "ma-" in pieces and self._adjective_first(found[0].root):
+            return None  # Wolff's ma-_2: on an adjective root, ma- makes the adjective (mainit 'hot')
         (labels, (form, sense, shown)) = next(iter(readings.items()))
         by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
         root = Part(shown["hb"] or shown["wolff"], self._root_gloss(form, sense), False)
@@ -808,10 +845,15 @@ class WolffLexicon:
         after = [p for p in pieces if not p.endswith("-")]
         label = by_piece | ({"pa-": labels[-1]} if "pa-" in pieces else {})
         return [
-            *(Part(_PIECE_TEXT.get(p, p), label[p], True) for p in before),
+            *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in before),
             root,
-            *(Part(_PIECE_TEXT.get(p, p), label[p], True) for p in after),
+            *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in after),
         ]
+
+    def _adjective_first(self, root: str) -> bool:
+        """Whether *root*'s main entry opens with an adjective sense (ínit 'hot, warm')."""
+        senses = next(r for r in self.entries if root in r["heads"])["forms"][0]["senses"]
+        return bool(senses) and senses[0]["pos"] == "a"
 
     def _readings(self, root: str, pieces: list[str], inflections: list[str]) -> dict:
         """reading -> (the form that gives it, its licensing sense, the form as the word spells
@@ -896,7 +938,35 @@ class WolffLexicon:
         parts = self.parts(word, english)
         return None if parts is None else " + ".join(f"{p.text} {p.gloss}" for p in parts)
 
+    def _parts_fields(self, cebuano: str, english: str) -> tuple[str, str]:
+        """The parts line for a card's Meaning and its Wolff senses for Details, or ("", "")."""
+        word = cebuano.split(",")[0].strip()
+        parts = self.parts(word, english) if word and " " not in word else None
+        if parts is None:
+            return "", ""
+        line = " + ".join(f"{p.text} {p.gloss}" for p in parts)
+        cites = "; ".join(f"{p.text} = {p.cite}" for p in parts if p.affix)
+        return (
+            f'<div class="wolff-parts">{html.escape(line)}</div>',
+            f'<div class="wolff-parts-cite">Wolff\u2019s senses: {html.escape(cites)}</div>',
+        )
+
     def card_fields(self, cebuano: str, english: str) -> CardFields | Miss:
+        fields = self._card_fields(cebuano, english)
+        lead, cite = self._parts_fields(cebuano, english)
+        if not lead:
+            return fields
+        if isinstance(fields, Miss):
+            if fields.reason != "not-in-dictionary":
+                return fields
+            # an inflected word Wolff does not list: the line is all the dictionary can say
+            return CardFields(spelling="", meaning=lead, verb="", details=cite, dictionary_entry="")
+        # A hand-decoded form (wolff_decoded.tsv) leads with its own approved reading; its one
+        # row, kabalo, is ka- (maka-'s short form), which is no verb's inflection here, so the
+        # two leads never meet.
+        return replace(fields, meaning=lead + fields.meaning, details=fields.details + cite)
+
+    def _card_fields(self, cebuano: str, english: str) -> CardFields | Miss:
         hit = self.match(cebuano, english)
         if hit == Miss("not-in-dictionary", ()):
             word = cebuano.split(",")[0].strip()

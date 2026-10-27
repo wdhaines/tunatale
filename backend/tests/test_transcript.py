@@ -2940,6 +2940,35 @@ class TestDirectionBands:
         assert off_span.collocation_produce_band is None
 
 
+class TestPartsLine:
+    """``WordToken.parts``: a lesson word glossed by its parts, from the language's
+    dictionary (tunatale-h0q3.26; Cebuano, from Wolff). The reader's popup shows it
+    under the gloss. A language with no dictionary, and a word the dictionary does
+    not read as one verb, carry None."""
+
+    def setup_method(self):
+        self.db = SRSDatabase(":memory:")
+        self.lemmatizer = LowercaseLemmatizer()
+
+    def test_a_cebuano_verb_carries_its_parts(self):
+        lesson = _make_lesson([("female-1", "Moadto ko.")], lang="ceb")
+        word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0]
+        assert word.parts == "mo- will + ádto there (far away, future) · go, bring to a place"
+
+    def test_a_cebuano_word_that_is_not_one_verb_carries_none(self):
+        lesson = _make_lesson([("female-1", "Kalinaw.")], lang="ceb")
+        word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0]
+        assert word.parts is None
+
+    def test_a_language_with_no_dictionary_carries_none(self):
+        lesson = _make_lesson([("female-1", "en gang til")], lang="no")
+        assert [w.parts for w in extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words] == [
+            None,
+            None,
+            None,
+        ]
+
+
 class TestLessonGloss:
     """``WordToken.gloss`` is the lesson's OWN in-context gloss, carried beside
     the card's translation rather than hidden behind it (bd tunatale-ceuc).

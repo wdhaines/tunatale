@@ -332,6 +332,9 @@ export interface WordToken {
   // The lesson's own in-context gloss, shown before the card's `translation`
   // (see wordGloss). Optional: offline-cached transcripts predate the field.
   gloss?: string | null;
+  // The word glossed by its parts, from the language's dictionary ("mo- will + ádto
+  // there · go"; tunatale-h0q3.26). Optional: older cached transcripts lack it.
+  parts?: string | null;
   collocation_span_id: number | null;
   collocation_start: boolean;
   collocation_srs_state: string | null;

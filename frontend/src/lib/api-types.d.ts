@@ -4688,6 +4688,8 @@ export interface components {
       lemma: string;
       /** Overdue Ratio */
       overdue_ratio: number | null;
+      /** Parts */
+      parts?: string | null;
       /** Prefix Punct */
       prefix_punct: string;
       /** Produce Band */

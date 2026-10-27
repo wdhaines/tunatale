@@ -1,6 +1,6 @@
 """Cebuano language plugin."""
 
-from functools import cache
+from functools import cache, lru_cache
 from pathlib import Path
 
 from app.cards.field_map import BackFieldSpec, NotetypeProfile
@@ -35,6 +35,15 @@ def _wolff_note_fields(word: str, english: str) -> dict[str, str]:
 
     fields = load_lexicon().card_fields(word, english)
     return {} if isinstance(fields, Miss) else fields.as_note_fields()
+
+
+@lru_cache(maxsize=20_000)
+def _wolff_parts(word: str, english: str) -> str | None:
+    """*word* glossed by its parts from Wolff (tunatale-h0q3.26), or None. Cached: the
+    decoder takes ~7 ms a word, and every lesson page load rebuilds its transcript."""
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon
+
+    return load_lexicon().parts_line(word, english)
 
 
 def _wolff_gloss(word: str) -> str:
@@ -162,6 +171,8 @@ register(
         dictionary_fields_fn=_wolff_note_fields,
         # A new card's English when the model cannot gloss it (offline, tunatale-iiwm.5).
         dictionary_gloss_fn=_wolff_gloss,
+        # A lesson word glossed by its parts, for the reader's popup (tunatale-h0q3.26).
+        parts_fn=_wolff_parts,
         # The style guide's first job is keeping Tagalog OUT: close kin, and
         # dominant in training data (tunatale-u8nz.4). All three data files are
         # orchestrator-drafted and not yet native-checked (tunatale-u8nz.9).

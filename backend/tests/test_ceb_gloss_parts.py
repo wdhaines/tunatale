@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.plugins.languages.ceb.wolff_cards import load_lexicon
+from app.plugins.languages.ceb.wolff_cards import CardFields, Miss, load_lexicon
 
 
 @pytest.fixture(scope="module")
@@ -87,3 +87,92 @@ def test_the_parts_are_in_the_words_order_and_say_which_is_the_affix(lexicon):
 def test_the_english_it_came_with_does_not_override_a_settled_reading(lexicon):
     # the meaning ranks the decoder's candidates; one reading stays one reading
     assert lexicon.parts_line("gikaon", "they ate the rice") == "gi- did, to it + kâon eat"
+
+
+# ── only a verb's inflection reads (measured 2026-10-28 on the owner's 815 one-word cards) ───
+# Wolff's derivational affixes make nouns with the same letters: ka- (kalinaw 'peace'), -an
+# (tunghaan 'school'), -on (baybayon 'beach'), a bare pa- (paagi 'way'). Read as the verb's
+# inflection, 30 of the 36 cards that got a line were wrong. A line needs a verb's inflection.
+
+
+@pytest.mark.parametrize(
+    ("word", "english"),
+    [
+        ("kalinaw", "peace"),
+        ("kaopisina", "colleague"),
+        ("kaayo", "very"),
+        ("tunghaan", "school"),
+        ("orasan", "clock"),
+        ("atubangan", "front"),
+        ("selpon", "cell phone"),
+        ("baybayon", "beach"),
+        ("pabuto", "fireworks"),
+        ("paagi", "way, means"),
+        ("pangalan", "name"),
+        # Wolff's ma-_2 makes an adjective of an adjective root: mainit is 'hot', not 'will become hot'
+        ("mainit", "warm"),
+        # ma-...-on makes adjectives too: a verb carries one inflection, never ma- and -on
+        ("malipayon", "happy"),
+    ],
+)
+def test_a_derived_noun_is_not_read_as_a_verb(lexicon, word, english):
+    assert lexicon.parts_line(word, english) is None
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "line"),
+    [
+        ("moinom", "will drink", "mo- will + inóm drink"),
+        # ma- on a verb of state still reads: túlog opens with its verb sense, not an adjective
+        ("matulog", "will sleep", "ma- will become + túlog go, put to sleep"),
+        # Wolff's 's.o. together with s.o. else': a placeholder mid-phrase becomes a word, at the end it goes
+        ("miuban", "went along", "mi- did + ubán companion, someone together with someone else · go with, accompany"),
+    ],
+)
+def test_a_verb_card_still_reads(lexicon, word, english, line):
+    assert lexicon.parts_line(word, english) == line
+
+
+# ── on the card: the line leads the Meaning field (owner, 2026-10-28: "Into meaning is fine") ──
+# A field change is data-only (no new notetype field, no full upload). Wolff's sense numbers
+# go to Details, as the approved wording says.
+
+
+def test_an_inflected_card_wolff_does_not_list_gets_the_line_as_its_meaning(lexicon):
+    f = lexicon.card_fields("moinom", "will drink")
+    assert isinstance(f, CardFields)
+    assert f.meaning == '<div class="wolff-parts">mo- will + inóm drink</div>'
+    assert f.details == '<div class="wolff-parts-cite">Wolff\u2019s senses: mo- = mu- 1, 2</div>'
+    assert (f.spelling, f.verb, f.dictionary_entry) == ("", "", "")
+
+
+def test_the_line_leads_a_meaning_wolff_gives(lexicon):
+    f = lexicon.card_fields("milakaw", "walked")
+    assert f.meaning.startswith('<div class="wolff-parts">mi- did + lakáw walk</div>')
+    assert '<div class="wolff-parts-cite">Wolff\u2019s senses: mi- = mu- 1, 2</div>' in f.details
+
+
+def test_a_stacked_word_cites_each_affix(lexicon):
+    f = lexicon.card_fields("pakan-a", "feed (them)!")
+    assert f.details.endswith(
+        '<div class="wolff-parts-cite">Wolff\u2019s senses: pa- = pa- 1; -a = -a = -un, dependent</div>'
+    )
+
+
+def test_a_card_with_no_line_is_unchanged(lexicon):
+    # a root, and a word the decoder reads as a derived noun
+    assert "wolff-parts" not in lexicon.card_fields("tan-aw", "watch; look").meaning
+    tung = lexicon.card_fields("tunghaan", "school")
+    assert not isinstance(tung, CardFields) or "wolff-parts" not in tung.meaning
+
+
+def test_a_card_wolff_cannot_settle_stays_unsettled(lexicon):
+    # Wolff prints motágò and motagô: the card's lookup is ambiguous, so the card gets no
+    # fields, though the parts line alone would read (it is for the reader)
+    assert lexicon.parts_line("motago", "will hide") is not None
+    assert lexicon.card_fields("motago", "will hide") == Miss("ambiguous", ("motágò", "motagô"))
+
+
+def test_a_two_letter_root_is_the_decoders_not_cebuanos(lexicon):
+    # nawa 'may it be' is a particle, not na- + wa 'left hand'
+    assert lexicon.parts_line("nawa") is None

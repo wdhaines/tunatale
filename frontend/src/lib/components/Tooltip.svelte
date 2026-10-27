@@ -418,6 +418,7 @@
 		!suppressed &&
 			Boolean(
 				translation ||
+					word?.parts ||
 					masteryLabel ||
 					masterySides ||
 					dueLabel ||
@@ -459,6 +460,7 @@
 			{#if masteryLabel}<span class="tt-mastery">{masteryLabel}</span>{/if}
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if cardTranslation}<span class="tt-card-translation">{t('tooltip.cardTranslation', { translation: cardTranslation })}</span>{/if}
+			{#if word?.parts}<span class="tt-parts">{word.parts}</span>{/if}
 			{#if masterySides}<span class="tt-sides">{#each masterySides as line (line)}<span class="tt-side">{line}</span>{/each}</span>{/if}
 			{#if ratings}
 				<span class="tt-rate">
@@ -682,6 +684,13 @@
 		margin-left: 6px;
 		opacity: 0.8;
 		font-size: 11px;
+	}
+	/* A word glossed by its parts (tunatale-h0q3.26): "mo- will + ádto there · go". */
+	.tt-parts {
+		display: block;
+		margin-top: 2px;
+		font-size: 11px;
+		opacity: 0.85;
 	}
 	.tt-card-translation {
 		display: block;
