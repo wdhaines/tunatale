@@ -471,6 +471,12 @@ def _prefixed(prefix: str, word: str) -> str:
     return f"{prefix}{hyphen}{word}"
 
 
+def _stopped(sentence: str) -> str:
+    """A Cebuano example as a sentence. Wolff writes 'Cebuano, English.': the parser drops
+    the comma between them, which leaves the Cebuano with no stop of its own."""
+    return sentence if sentence.endswith((".", "?", "!", "…")) else f"{sentence}."
+
+
 class _Row(NamedTuple):
     affix: str
     subject: str
@@ -821,7 +827,24 @@ class WolffLexicon:
         for gloss, rows in shown:
             if len(shown) > 1:
                 out.append(f'<div class="wolff-h">{html.escape(gloss)}</div>')
-            out.extend(self._render_row(r, examples, word) for r in rows)
+            out.append(self._table(rows, examples, word))
+        return "".join(out)
+
+    def _table(self, rows: list[_Row], examples: list[tuple[str, str]], word: str) -> str:
+        """One sense's rows as a table, so the forms line up in their columns across triggers;
+        a trigger row names the subject once for the rows under it (owner's layout B3)."""
+        out = ['<table class="wolff-verb"><thead><tr><th></th><th>not begun</th><th>begun</th></tr></thead><tbody>']
+        under = None
+        for row in rows:
+            trigger, _, _ = _row_label(row.affix, row.subject).partition(" · ")
+            if (trigger, row.subject) != under:
+                under = (trigger, row.subject)
+                out.append(
+                    f'<tr class="wolff-trigger"><td colspan="3"><b>{html.escape(trigger)}</b>'
+                    f" · subject: {html.escape(row.subject)}</td></tr>"
+                )
+            out.append(self._render_row(row, examples, word))
+        out.append("</tbody></table>")
         return "".join(out)
 
     def _row(self, hit: _Hit, affix: str, subject: str) -> _Row:
@@ -858,27 +881,28 @@ class WolffLexicon:
         return out
 
     def _render_row(self, row: _Row, examples: list[tuple[str, str]], word: str) -> str:
-        def mark(forms: list[str]) -> list[str]:
-            return [f"{f} ← this card" if letters_key(f) == word else f for f in forms]
+        def mark(forms: list[str]) -> str:
+            return ", ".join(f"{f} ← this card" if letters_key(f) == word else f for f in forms)
 
         here = word in {letters_key(f) for f in row.not_begun + row.begun + row.short}
-        cells = []
-        if row.not_begun:
-            short = f" (short {', '.join(mark(row.short))})" if row.short else ""
-            cells.append(f"not begun {', '.join(mark(row.not_begun))}{short}")
-        if row.begun:
-            cells.append(f"begun {', '.join(mark(row.begun))}")
-        body = "; ".join(filter(None, [" · ".join(cells), _ROLE.get((row.subject, row.affix), "")]))
-        text = f"<b>{html.escape(_row_label(row.affix, row.subject))}</b>"
-        text += f": {html.escape(body)}." if body else "."
-        text += f" Subject: {html.escape(row.subject)}."
+        _, _, head = _row_label(row.affix, row.subject).partition(" · ")
+        role = _ROLE.get((row.subject, row.affix), "")
+        cell = f"<b>{html.escape(head)}</b>"
+        cell += f'<div class="wolff-role">{html.escape(role)}</div>' if role else ""
+        not_begun = html.escape(mark(row.not_begun))
+        not_begun += f'<div class="wolff-short">short {html.escape(mark(row.short))}</div>' if row.short else ""
+        cls = " wolff-here" if here else " wolff-dim" if row.subject == USED else ""
+        out = f'<tr class="wolff-row{cls}"><td>{cell}</td><td>{not_begun}</td><td>{html.escape(mark(row.begun))}</td></tr>'
         forms = {letters_key(f) for f in row.not_begun + row.begun + row.short}
         example = next((ex for ex in examples if forms & {letters_key(t) for t in _TOKEN.findall(ex[0])}), None)
         if example is not None:
             examples.remove(example)
-            text += f"<br><i>{html.escape(example[0])}</i> {html.escape(example[1])}"
-        cls = " wolff-here" if here else " wolff-dim" if row.subject == USED else ""
-        return f'<div class="wolff-row{cls}">{text}</div>'
+            out += (
+                '<tr class="wolff-ex"><td colspan="3"><details><summary>Example</summary>'
+                f'<div class="wolff-ceb">{html.escape(_stopped(example[0]))}</div>'
+                f'<div class="wolff-en">{html.escape(example[1])}</div></details></td></tr>'
+            )
+        return out
 
     def _details(self, hit: _Hit, cebuano: str, *, subjects: bool = True) -> str:
         rec = self.entries[hit.entry]

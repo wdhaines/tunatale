@@ -56,6 +56,33 @@ DICTIONARY_CSS = (
     ".wolff-cite { font-size: 13px; color: #777; }\n"
 )
 
+# The Verb field's table (tunatale-iiwm.7, the owner's layout B3): one table per sense so
+# the not-begun and begun columns line up, a trigger row naming the subject, each example
+# folded under its row. Colours are relative to the text so Anki's night mode reads too.
+# The first and last lines delimit the block for ``refresh_dictionary_css``, which brings
+# a notetype made before it (or with an older copy of it) up to date.
+VERB_TABLE_CSS = (
+    "/* tt:verb-table */\n"
+    "table.wolff-verb { width: 100%; border-collapse: collapse; margin: 6px 0 4px; text-align: left; font-size: 15px; }\n"
+    "table.wolff-verb th { font-size: 11px; font-weight: bold; letter-spacing: .06em; text-transform: uppercase;"
+    " opacity: .65; text-align: left; padding: 2px 6px 4px 0; }\n"
+    "table.wolff-verb td { padding: 5px 6px 5px 0; border-top: 1px solid rgba(128, 128, 128, .3); vertical-align: top; }\n"
+    "table.wolff-verb td:first-child { width: 40%; }\n"
+    ".verb .wolff-kind, .verb .wolff-h { text-align: left; }\n"
+    ".wolff-trigger td { border-top: 0; padding-top: 12px; }\n"
+    ".wolff-role, .wolff-short { font-size: 13px; opacity: .7; }\n"
+    ".wolff-here td { background: rgba(255, 196, 0, .22); }\n"
+    ".wolff-dim td { opacity: .6; }\n"
+    ".wolff-ex td { border-top: 0; padding: 0 0 8px 12px; font-size: 14px; }\n"
+    ".wolff-ex summary { cursor: pointer; color: #36c; font-size: 12px; }\n"
+    ".nightMode .wolff-ex summary { color: #8ab4f8; }\n"
+    ".nightMode .verb, .nightMode .wolff-h { color: #ccc; }\n"
+    ".wolff-ceb { font-style: italic; }\n"
+    ".wolff-en { opacity: .75; }\n"
+    "/* /tt:verb-table */\n"
+)
+DICTIONARY_CSS += VERB_TABLE_CSS
+
 
 @dataclass(frozen=True)
 class VocabNotetype:
