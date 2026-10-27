@@ -198,6 +198,27 @@ class DbMediaMixin:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def list_shared_photo_groups(self) -> list[tuple[str, list[int]]]:
+        """Photographs held by two or more non-cloze cards: ``(sha256, [collocation ids])``.
+
+        The rows ``image_digest_owner`` refuses to create, as they stand today
+        (tunatale-jlwy): written before that guard existed, or by a path that had
+        none. Drawn pictures (``.svg``) are left out, because two words on one
+        drawing is a decision the drawn families record themselves (a synonym
+        pair such as ania / nia). A cloze row is left out because a cloze note
+        has no Image field, so its leftover image shows nowhere. Ids ascend.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT m.sha256, m.collocation_id FROM media m JOIN collocations c ON c.id = m.collocation_id "
+                "WHERE m.kind = 'image' AND m.filename NOT LIKE '%.svg' AND c.card_type != 'cloze' "
+                "ORDER BY m.sha256, m.collocation_id"
+            ).fetchall()
+        groups: dict[str, list[int]] = {}
+        for row in rows:
+            groups.setdefault(row["sha256"], []).append(row["collocation_id"])
+        return [(sha, ids) for sha, ids in groups.items() if len(ids) > 1]
+
     def image_digest_owner(self, sha256: str, *, exclude_collocation_id: int) -> int | None:
         """Which OTHER card already holds an image with these exact bytes?
 
