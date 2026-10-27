@@ -688,6 +688,19 @@ class WolffLexicon:
             return Miss("ambiguous", tuple(dict.fromkeys(h.surface for h in top)))
         return top[0]
 
+    def short_gloss(self, word: str) -> str:
+        """Wolff's first sense of *word*, short enough for a card's English: its first
+        alternative, without his s.t. / s.o. placeholders ('know s.t., how to do s.t.' ->
+        'know'). "" when the letters alone do not settle the entry (tulo is three words).
+
+        The stand-in when the model cannot gloss a new card (tunatale-iiwm.5)."""
+        hit = self.match(word, "")
+        senses = [s for s in self._senses(hit) if s["gloss"]] if isinstance(hit, _Hit) else []
+        if not senses:
+            return ""
+        first = re.split(r",\s*(?![^()]*\))", senses[0]["gloss"])[0]
+        return re.sub(r"\s+(?:s\.t|s\.o|k\.o|s\.w)\.?(?=\s|$)", "", first).strip()
+
     @cached_property
     def _decoder(self) -> affixes.Lexicon:
         return affixes.lexicon(self.entries)

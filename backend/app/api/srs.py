@@ -66,6 +66,7 @@ from app.config import settings
 from app.generation.grammar_lesson import contrast_cards
 from app.languages import (
     card_surface_variants,
+    dictionary_gloss,
     format_vocab_headword,
     get_gender_article,
     get_language,
@@ -3309,12 +3310,19 @@ async def create_base_card(body: CreateBaseCardRequest, request: Request) -> dic
     # curated ones (og, si) must not be re-glossed away.
     translation = body.translation
     if card_type == "vocab":
-        translation = (
-            await _dictionary_gloss(
-                request, surface=body.surface, front=front, language_code=lang, upos=upos, sentence=body.sentence
-            )
-            or translation
+        gloss = await _dictionary_gloss(
+            request, surface=body.surface, front=front, language_code=lang, upos=upos, sentence=body.sentence
         )
+        # No model (offline, 2026-10-21) used to keep the lesson's in-context gloss
+        # silently, and the base card hibalo kept nakahibalo's 'knew' (tunatale-iiwm.5).
+        # The language's dictionary stands in, and either fallback says so.
+        if not gloss and (gloss := dictionary_gloss(lang, front)):
+            _logger.warning("base card %r: no gloss from the model; took the dictionary's %r", front, gloss)
+        elif not gloss:
+            _logger.warning(
+                "base card %r: no gloss from the model or the dictionary; kept the lesson's %r", front, translation
+            )
+        translation = gloss or translation
         # A listed pronoun's gloss is the pronoun table's (kami is "we (not
         # including you)", not "we"), under the same tag gate as the pronoun veto:
         # a listed word the tagger read as something else is not that pronoun.

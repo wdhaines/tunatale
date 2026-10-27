@@ -281,6 +281,10 @@ class LanguageConfig:
     # mapping means the dictionary does not settle the word, and the card is
     # minted without them. ``None`` (the default): the language has no dictionary.
     dictionary_fields_fn: Callable[[str, str], Mapping[str, str]] | None = None
+    # Function giving a word's short dictionary gloss, "" when the dictionary does
+    # not settle it: a new card's English when the model cannot gloss it
+    # (tunatale-iiwm.5). ``None`` (the default): the language has no dictionary.
+    dictionary_gloss_fn: Callable[[str], str] | None = None
     # Infinitive-marker word prepended to a VERB headword when minting a TT vocab
     # card ("å" + lemma → "å lyve", matching the convention already used across
     # the user's Anki collection). None (the default) means the language has no
@@ -779,6 +783,12 @@ def dictionary_note_fields(code: str, word: str, english: str) -> dict[str, str]
     """
     fn = _facet(code, "dictionary_fields_fn", None)
     return dict(fn(word, english)) if fn is not None else {}
+
+
+def dictionary_gloss(code: str, word: str) -> str:
+    """*word*'s short gloss from *code*'s dictionary, or "" (no dictionary, or not settled)."""
+    fn = _facet(code, "dictionary_gloss_fn", None)
+    return fn(word) if fn is not None else ""
 
 
 def get_l2_css_class(code: str) -> str:
