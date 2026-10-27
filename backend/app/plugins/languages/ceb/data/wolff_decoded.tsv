@@ -7,5 +7,6 @@
 # (2026-10-23): the decoder finds the root but not which sub-entry has the sense ('can' matches no gloss).
 #
 # Columns: the card's word; its Handbook spelling; Wolff's head; the label of the sub-entry with the sense
-# (as the lexicon stores it, 'hi-/ha-'); the affix the word adds; a sentence for the card, or empty.
-kabalo	kabaló	balu	hi-/ha-	ka-	His example writes the full form kahibaló.
+# (as the lexicon stores it, 'hi-/ha-'); the affix the word adds; a sentence for the card, or empty; the
+# word's own reading, which the card's Meaning leads with (owner-approved wording, tunatale-h0q3.31).
+kabalo	kabaló	balu	hi-/ha-	ka-	His example writes the full form kahibaló.	know (how to); “can” + a verb
