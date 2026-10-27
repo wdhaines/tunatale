@@ -133,6 +133,7 @@ def _read_config_value_from_deck_config_table(
     proto_field: int,
     wire_type: int,
     legacy_keys: tuple[str, str] | None = None,
+    absent: int | None = None,
 ) -> int | float | None:
     """Read a deck-config value from Anki's collection.
 
@@ -141,6 +142,11 @@ def _read_config_value_from_deck_config_table(
 
     For VARINT fields (*wire_type* 0) returns ``int | None``.
     For FIXED32 fields (*wire_type* 5) returns ``float | None``.
+
+    *absent* is what a VARINT field missing from a found config means. DeckConfig.Config
+    is proto3 with implicit presence, so a value at its default (0) is not on the wire:
+    pass ``absent=0`` for a field where 0 is a real setting (new cards/day). Left None,
+    a missing field reads as unknown, for fields whose 0 means nothing (tunatale-6kl).
     """
     # Legacy JSON path (pre-2.1.55 Anki)
     if legacy_keys is not None:
@@ -192,7 +198,8 @@ def _read_config_value_from_deck_config_table(
     config_blob = bytes(config_row[0]) if isinstance(config_row[0], memoryview) else config_row[0]
 
     if wire_type == _WIRE_TYPE_VARINT:
-        return find_varint_field(config_blob, proto_field)
+        found = find_varint_field(config_blob, proto_field)
+        return absent if found is None else found
     if wire_type == _WIRE_TYPE_FIXED32:
         return find_fixed32_field(config_blob, proto_field)
     return None
@@ -311,7 +318,14 @@ def _read_new_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) -> int
     format (deck_config table, Anki =2.1.55).
     """
     return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=_NEW_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT, legacy_keys=("new", "perDay")
+        conn,
+        deck_name,
+        proto_field=_NEW_PER_DAY_FIELD,
+        wire_type=_WIRE_TYPE_VARINT,
+        legacy_keys=("new", "perDay"),
+        # 0 new cards/day is a real setting, and proto3 leaves it off the wire: the
+        # owner's Norwegian preset at 0 read as None, and a stale 10 survived (2026-10-27)
+        absent=0,
     )
 
 
@@ -330,7 +344,12 @@ def _read_reviews_per_day_from_anki(conn: sqlite3.Connection, deck_name: str) ->
     but reads rev.perDay instead of new.perDay.
     """
     return _read_config_value_from_deck_config_table(
-        conn, deck_name, proto_field=_REVIEWS_PER_DAY_FIELD, wire_type=_WIRE_TYPE_VARINT, legacy_keys=("rev", "perDay")
+        conn,
+        deck_name,
+        proto_field=_REVIEWS_PER_DAY_FIELD,
+        wire_type=_WIRE_TYPE_VARINT,
+        legacy_keys=("rev", "perDay"),
+        absent=0,  # as new cards/day: 0 is a real setting and is not on the wire
     )
 
 
