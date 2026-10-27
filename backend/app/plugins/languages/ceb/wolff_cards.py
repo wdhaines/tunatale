@@ -832,11 +832,13 @@ class WolffLexicon:
         # The decoder ranks the roots (by the English, then the entry), and its best root
         # decides: falling through to a lower one when it reads nothing is a guess (pasusoa
         # 'breastfeed' would read as sûsò 'pound'). Its own stress forms must then agree.
-        readings = self._readings(found[0].root, pieces, inflections)
+        if set(pieces) <= {"-a", "-i"} and self._first_pos(found[0].root) == "n":
+            return None  # on a noun, -a is Wolff's 'that particular' (baláya), not the command
+        readings = self._readings(found[0].root, pieces, inflections, english)
         # exactly one reading, and not one form that reads two ways (None)
         if len(readings) != 1 or None in readings:
             return None
-        if "ma-" in pieces and self._adjective_first(found[0].root):
+        if "ma-" in pieces and self._first_pos(found[0].root) == "a":
             return None  # Wolff's ma-_2: on an adjective root, ma- makes the adjective (mainit 'hot')
         (labels, (form, sense, shown)) = next(iter(readings.items()))
         by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
@@ -850,12 +852,21 @@ class WolffLexicon:
             *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in after),
         ]
 
-    def _adjective_first(self, root: str) -> bool:
-        """Whether *root*'s main entry opens with an adjective sense (ínit 'hot, warm')."""
+    def _first_pos(self, root: str) -> str | None:
+        """The part of speech *root*'s main entry opens with (ínit 'hot, warm': a)."""
         senses = next(r for r in self.entries if root in r["heads"])["forms"][0]["senses"]
-        return bool(senses) and senses[0]["pos"] == "a"
+        return senses[0]["pos"] if senses else None
 
-    def _readings(self, root: str, pieces: list[str], inflections: list[str]) -> dict:
+    def _agreeing(self, senses: list[dict], english: str) -> list[dict]:
+        """*senses*, kept to those the word's English agrees with when it came with some
+        (the same word, a related one, or one its definition holds: EnglishRelations, as a
+        card's match uses). A lesson's 'see' rules out kítà's 'earn'; no English, no filter."""
+        if not english.strip():
+            return senses
+        card = _words(english)
+        return [s for s in senses if any(self.relations.score(english, card, s["gloss"]))]
+
+    def _readings(self, root: str, pieces: list[str], inflections: list[str], english: str = "") -> dict:
         """reading -> (the form that gives it, its licensing sense, the form as the word spells
         it) over *root*'s forms and stress forms, a pointer ('suwat = sulat') followed. A root's
         part of speech stands in only when no form reads as a verb (abut 'arrive' is a verb;
@@ -872,14 +883,16 @@ class WolffLexicon:
         readings: dict = {}
         for by_kind in (False, True):
             for rec, form, shown in candidates:
-                reading = self._reading(rec, form, pieces, inflections, by_kind=by_kind)
+                reading = self._reading(rec, form, pieces, inflections, english, by_kind=by_kind)
                 if reading is not None:
                     readings.setdefault(reading[0], (form, reading[1], shown))
             if readings:
                 break
         return readings
 
-    def _reading(self, rec: dict, form: dict, pieces: list[str], inflections: list[str], *, by_kind: bool):
+    def _reading(
+        self, rec: dict, form: dict, pieces: list[str], inflections: list[str], english: str = "", *, by_kind: bool
+    ):
         """(labels, licensing sense) of *form* for the pieces, (None, None) when a piece has two
         labels, or None when the form does not license them."""
         verbs = [s for s in form["senses"] if s["pos"] == "v" and s["cls"]]
@@ -896,7 +909,7 @@ class WolffLexicon:
         for piece in inflections:
             # Wolff lists a root's main sense first: the first sense that licenses the piece decides
             found: dict[str, dict | None] = {}
-            for s in source:
+            for s in self._agreeing(source, english):
                 for pair, subject in _licenses(s["cls"]):
                     if pair in _PIECE_PAIRS.get(piece, ()) and (piece, subject) in _labels():
                         found.setdefault(_labels()[(piece, subject)], s)
