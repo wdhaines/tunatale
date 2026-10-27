@@ -268,3 +268,48 @@ async def test_two_others_in_one_run_cannot_land_on_one_new_photo() -> None:
     assert [(r.collocation_id, r.reason) for r in results] == [(nanay, None), (iloy, None)]
     assert db.get_image_filename(nanay) != db.get_image_filename(iloy)
     assert plan_shared_photos(db, "ceb", zipf=_zipf({"inahan": 5.0})) == []
+
+
+# ── Re-fetching named cards for a LanGeek picture (tunatale-xsbh) ──────────────
+
+
+def _sourced(data: bytes, url: str, source: str):
+    return SimpleNamespace(image_bytes=data, image_url=url, image_ext="jpg", image_source=source)
+
+
+async def test_only_a_langeek_picture_replaces_a_card_when_asked_for_one() -> None:
+    from app.cards.shared_photo_repair import load_cards, repicture_cards
+
+    db = SRSDatabase(":memory:")
+    nanay = _card(db, "nanay", image="img_mother_aaaa.jpg", data=b"PHOTO-a")
+    iloy = _card(db, "iloy", image="img_mother_bbbb.jpg", data=b"PHOTO-b")
+    cards = load_cards(db, [nanay, iloy])
+    media_fn = _FakeMediaFn(
+        _sourced(b"LGK-mother", "https://lgk/1", "langeek"),
+        _sourced(b"PX-other", "https://px/7", "pixabay"),
+    )
+
+    results = await repicture_cards(db, cards, media_fn, only_source="langeek")
+
+    assert [(r.collocation_id, r.reason) for r in results] == [(nanay, None), (iloy, "langeek had none")]
+    assert db.get_image_filename(nanay).startswith("lgk_mother_")
+    assert db.get_image_filename(iloy) == "img_mother_bbbb.jpg"
+    assert _dirty(db, "iloy") == []
+
+
+def test_load_cards_reads_each_card_as_the_repair_does() -> None:
+    from app.cards.shared_photo_repair import load_cards
+
+    db = SRSDatabase(":memory:")
+    nanay = _card(db, "nanay", image="img_mother.jpg", note_id=None)
+
+    (card,) = load_cards(db, [nanay])
+
+    assert (card.collocation_id, card.text, card.gloss, card.filename, card.zipf, card.linked) == (
+        nanay,
+        "nanay",
+        "mother",
+        "img_mother.jpg",
+        0.0,
+        False,
+    )

@@ -1,0 +1,59 @@
+[
+ {
+  "id": 86180,
+  "entry": "happiness",
+  "pronunciation": "ˈhæpiˌnəs",
+  "secondPronunciation": "ˈhæpiˌnəs",
+  "translation": {
+   "id": 86262,
+   "translation": "the feeling of being happy and well",
+   "wordPhoto": {
+    "updatedAt": "2024-06-19T09:07:44+0000",
+    "originalTitle": "Happiness",
+    "otherTitles": [],
+    "photoId": 51927,
+    "description": "",
+    "urlId": "",
+    "webTitle": "شادی",
+    "photo": "https://cdn.langeek.co/photo/51927/original/?type=jpeg",
+    "photoThumbnail": "https://cdn.langeek.co/photo/51927/thumb?type=jpeg"
+   },
+   "position": 0,
+   "partOfSpeech": {
+    "partOfSpeechType": "noun"
+   }
+  },
+  "translations": {
+   "noun": [
+    {
+     "id": 86262,
+     "translation": "the feeling of being happy and well",
+     "wordPhoto": {
+      "updatedAt": "2024-06-19T09:07:44+0000",
+      "originalTitle": "Happiness",
+      "otherTitles": [],
+      "photoId": 51927,
+      "description": "",
+      "urlId": "",
+      "webTitle": "شادی",
+      "photo": "https://cdn.langeek.co/photo/51927/original/?type=jpeg",
+      "photoThumbnail": "https://cdn.langeek.co/photo/51927/thumb?type=jpeg"
+     },
+     "position": 0,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    },
+    {
+     "id": 86261,
+     "translation": "emotions experienced when in a state of well-being",
+     "wordPhoto": null,
+     "position": 1,
+     "partOfSpeech": {
+      "partOfSpeechType": "noun"
+     }
+    }
+   ]
+  }
+ }
+]

@@ -97,3 +97,43 @@ def test_the_live_media_generator_is_the_syncs_own(tmp_path) -> None:
     # Built, not called: calling it would reach Groq and Pixabay.
     fn = _sync_media_fn(SRSDatabase(f"sqlite:///{tmp_path / 'ceb.db'}"), "ceb")
     assert fn.__qualname__ == "_build_media_fn.<locals>._media_fn"
+
+
+async def _langeek_or_pixabay(word, english, *, used_image_urls, source_sentence="", grammar="", audio="full"):
+    source = "langeek" if word == "nanay" else "pixabay"
+    return SimpleNamespace(
+        image_bytes=b"NEW-" + word.encode(), image_url=f"https://x/{word}", image_ext="jpg", image_source=source
+    )
+
+
+def test_ids_re_fetch_named_cards_keeping_only_langeek_pictures(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _mothers(url)
+
+    assert main(["--language", "ceb", "--db", url, "--ids", "1,2"]) == 0
+    out = capsys.readouterr().out
+    assert "  re-fetch: 1 nanay 'mother' img_nanay.jpg" in out
+    assert "2 card(s) to re-fetch." in out
+
+    assert (
+        main(
+            ["--language", "ceb", "--db", url, "--ids", "1,2", "--langeek-only", "--apply"],
+            _media_fn=_langeek_or_pixabay,
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "2 card(s) to re-fetch (LanGeek pictures only)." in out
+    assert "  new    1 nanay: img_nanay.jpg -> lgk_mother_" in out
+    assert "  kept   2 inahan: langeek had none" in out
+    assert _image(db, "inahan") == "img_inahan.jpg"
+
+
+def test_ids_without_langeek_only_take_any_new_picture(tmp_path, capsys) -> None:
+    url = f"sqlite:///{tmp_path / 'ceb.db'}"
+    db = _mothers(url)
+
+    assert main(["--language", "ceb", "--db", url, "--ids", "2", "--apply"], _media_fn=_langeek_or_pixabay) == 0
+
+    assert "Re-pictured 1 of 1." in capsys.readouterr().out
+    assert _image(db, "inahan").startswith("img_mother_")

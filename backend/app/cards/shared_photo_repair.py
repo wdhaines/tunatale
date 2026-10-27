@@ -26,7 +26,6 @@ points at, through the dirty flag and the ordinary push: no Anki file is opened.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
 
@@ -62,6 +61,28 @@ class Repicture(NamedTuple):
     reason: str | None  # why it kept it; None when re-pictured
 
 
+def load_cards(db: Any, ids: list[int], *, zipf: Callable[[str], float] = lambda _word: 0.0) -> list[SharedCard]:
+    """The cards *ids* name, as the repair reads them (each must have a picture)."""
+    cards = []
+    for coll_id in ids:
+        _, item, _guid = db.get_collocation_by_id(coll_id)
+        unit = item.syntactic_unit
+        cards.append(
+            SharedCard(
+                coll_id,
+                unit.text,
+                unit.translation,
+                db.get_image_filename(coll_id),
+                zipf(unit.text.casefold()),
+                item.anki_note_id is not None,
+                db.get_image_query(unit.text, unit.translation, IMAGE_QUERY_MODEL_VERSION) is not None,
+                unit.source_sentence or "",
+                unit.grammar or "",
+            )
+        )
+    return cards
+
+
 def plan_shared_photos(db: Any, language_code: str, *, zipf: Callable[[str], float] | None = None) -> list[SharedGroup]:
     """Every photograph two or more cards in *db* share, with the card that keeps it.
 
@@ -71,23 +92,7 @@ def plan_shared_photos(db: Any, language_code: str, *, zipf: Callable[[str], flo
     rank = zipf or zipf_for(language_code) or (lambda _word: 0.0)
     plan = []
     for sha, ids in db.list_shared_photo_groups():
-        cards = []
-        for coll_id in ids:
-            _, item, _guid = db.get_collocation_by_id(coll_id)
-            unit = item.syntactic_unit
-            cards.append(
-                SharedCard(
-                    coll_id,
-                    unit.text,
-                    unit.translation,
-                    db.get_image_filename(coll_id),
-                    rank(unit.text.casefold()),
-                    item.anki_note_id is not None,
-                    db.get_image_query(unit.text, unit.translation, IMAGE_QUERY_MODEL_VERSION) is not None,
-                    unit.source_sentence or "",
-                    unit.grammar or "",
-                )
-            )
+        cards = load_cards(db, ids, zipf=rank)
         # Highest zipf first; ids ascend within a zipf, so a tie keeps the oldest.
         ordered = sorted(cards, key=lambda c: -c.zipf)
         keeper = ordered[0]
@@ -106,27 +111,44 @@ async def apply_repictures(
     store is visible to the next card's digest check, so two cards in one run
     cannot land on one new photo.
     """
+    return await repicture_cards(db, [card for group in plan for card in group.others], media_fn)
+
+
+async def repicture_cards(
+    db: Any, cards: list[SharedCard], media_fn: Callable[..., Awaitable[Any]], *, only_source: str | None = None
+) -> list[Repicture]:
+    """Re-fetch each card's picture and store it when it is new (see :func:`apply_repictures`).
+
+    *only_source* keeps a new picture only when that source supplied it: after
+    LanGeek arrived (tunatale-xsbh), cards re-pictured from Pixabay the same day
+    were re-fetched for a LanGeek illustration, and a Pixabay answer left them as
+    they were rather than swapping one stock photo for another.
+    """
     used_image_urls: set[str] = set()
     results = []
-    for group in plan:
-        for card in group.others:
+    for card in cards:
 
-            async def fetch(card: SharedCard = card) -> Any:
-                return await media_fn(
-                    card.text,
-                    card.gloss,
-                    used_image_urls=used_image_urls,
-                    source_sentence=card.source_sentence,
-                    grammar=card.grammar,
-                    audio="none",
-                )
+        async def fetch(card: SharedCard = card) -> Any:
+            return await media_fn(
+                card.text,
+                card.gloss,
+                used_image_urls=used_image_urls,
+                source_sentence=card.source_sentence,
+                grammar=card.grammar,
+                audio="none",
+            )
 
-            results.append(await _repicture(db, card, fetch, used_image_urls))
+        results.append(await _repicture(db, card, fetch, used_image_urls, only_source=only_source))
     return results
 
 
 async def _repicture(
-    db: Any, card: SharedCard, fetch: Callable[[], Awaitable[Any]], used_image_urls: set[str]
+    db: Any,
+    card: SharedCard,
+    fetch: Callable[[], Awaitable[Any]],
+    used_image_urls: set[str],
+    *,
+    only_source: str | None = None,
 ) -> Repicture:
     def kept(reason: str) -> Repicture:
         return Repicture(card.collocation_id, card.text, card.filename, None, reason)
@@ -142,8 +164,15 @@ async def _repicture(
     )
     if accepted is None:
         return kept(f"still a duplicate of card {owner}")
-    digest = hashlib.sha256(accepted.image_bytes).hexdigest()
-    filename = f"{vocab_media.safe_stem(card.gloss, 'img')}_{digest[:8]}.{accepted.image_ext or 'jpg'}"
+    source = getattr(accepted, "image_source", None)
+    if only_source is not None and source != only_source:
+        return kept(f"{only_source} had none")
+    filename = vocab_media.image_filename(
+        card.gloss,
+        accepted.image_bytes,
+        accepted.image_ext,
+        source=source,
+    )
     vocab_media._drop_image_rows(db, card.collocation_id, "image")
     vocab_media.store_tt_media(db, card.collocation_id, "image", filename, accepted.image_bytes)
     if card.linked:

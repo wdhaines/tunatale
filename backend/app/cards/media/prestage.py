@@ -45,7 +45,7 @@ from typing import Any, NamedTuple
 from app.cards.drawn_picture import drawn_picture
 from app.srs.function_words import is_function_word
 
-from .vocab_media import safe_stem, store_tt_media
+from .vocab_media import image_filename, store_tt_media
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +392,12 @@ async def prestage_production_images(
         # "avgjørelse" are both "decision") and the bare form had the second write
         # overwrite the first word's picture in place, silently changing a card
         # the learner already knew.
-        filename = f"{safe_stem(unit.translation, 'img')}_{digest_full[:8]}.{media.image_ext or 'jpg'}"
+        filename = image_filename(
+            unit.translation,
+            media.image_bytes,
+            media.image_ext,
+            source=getattr(media, "image_source", None),
+        )
         store_tt_media(db, cand.collocation_id, "image", filename, media.image_bytes)
         if cand.collocation_id in repair_ids:
             # The card is already in Anki with an empty Image field, so the

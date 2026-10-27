@@ -48,14 +48,15 @@ def safe_stem(word: str, prefix: str) -> str:
     return f"{prefix}_{sanitized}"
 
 
-def image_filename(english: str, data: bytes, ext: str | None) -> str:
+def image_filename(english: str, data: bytes, ext: str | None, source: str | None = None) -> str:
     """A fetched picture's filename: ``img_<gloss>_<digest8>.<ext>``.
 
     The digest is what keeps two cards with one English gloss from resolving to
     one file — the bare ``img_<gloss>.<ext>`` had the second write replace the
     first card's picture on disk.
     """
-    return f"{safe_stem(english, 'img')}_{hashlib.sha256(data).hexdigest()[:8]}.{ext or 'jpg'}"
+    prefix = "lgk" if source == "langeek" else "img"
+    return f"{safe_stem(english, prefix)}_{hashlib.sha256(data).hexdigest()[:8]}.{ext or 'jpg'}"
 
 
 def _drop_image_rows(db: Any, coll_id: int, kind: str) -> None:
@@ -93,12 +94,12 @@ def store_tt_media(db: Any, coll_id: int, kind: str, filename: str, data: bytes)
     )
 
 
-def replace_item_image(db: Any, coll_id: int, english: str, data: bytes, ext: str) -> str:
+def replace_item_image(db: Any, coll_id: int, english: str, data: bytes, ext: str, source: str | None = None) -> str:
     """Replace a card's TT image: delete old media row, store new, flag dirty.
 
     Returns the new filename.
     """
-    filename = f"{safe_stem(english, 'img')}_{hashlib.sha256(data).hexdigest()[:8]}.{ext}"
+    filename = image_filename(english, data, ext, source=source)
     _drop_image_rows(db, coll_id, "image")
     store_tt_media(db, coll_id, "image", filename, data)
     db.add_dirty_field_by_id(coll_id, "image")
@@ -220,6 +221,7 @@ async def generate_vocab_media(
             used_image_urls=used_image_urls,
             image_query=image_query,
             llm=llm,
+            source_sentence=source_sentence,
         )
     except Exception as exc:  # noqa: BLE001 — media is best-effort; never block card creation
         logger.warning("vocab media generation failed for %r: %s", word, exc)
@@ -251,6 +253,7 @@ async def generate_vocab_media(
                 image_query=image_query,
                 llm=llm,
                 audio="none",
+                source_sentence=source_sentence,
             )
 
         image, owner = await image_no_other_card_holds(db, coll_id, media, used_image_urls=retry_urls, refetch=_refetch)
@@ -277,7 +280,9 @@ async def generate_vocab_media(
             # card the learner already knew. Measured 2026-09-06: 3 Slovene files
             # whose bytes no longer matched their recorded sha256, all three
             # bare-named.
-            img_filename = image_filename(english, image.image_bytes, image.image_ext)
+            img_filename = image_filename(
+                english, image.image_bytes, image.image_ext, source=getattr(image, "image_source", None)
+            )
             store_tt_media(db, coll_id, "image", img_filename, image.image_bytes)
             stored["image"] = img_filename
 

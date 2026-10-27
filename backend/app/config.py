@@ -182,6 +182,9 @@ class Settings(BaseSettings):
 
     anki_model_name: str = ""
     pixabay_api_key: str = ""
+    # LanGeek's picture dictionary, tried before Pixabay (app.cards.media.langeek,
+    # tunatale-xsbh). Empty turns the source off without a request.
+    langeek_api_url: str = "https://api.langeek.co/v1/cs/en/word/"
     # How many production-card images to pre-stage in the background after a sync
     # (app.cards.media.prestage). Promotion mints PRODUCTIONS_PER_SYNC=10 per sync,
     # so a larger number here drains the backlog while keeping every mint free of a

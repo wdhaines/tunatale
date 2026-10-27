@@ -1211,7 +1211,7 @@ print(CallSite.compose('prestage', 'cloze_judge'))
 ```
 
 ```output
-['glossing', 'lemma_resolve', 'media_choose', 'media_query', 'planner', 'regloss', 'srs_translate', 'story', 'translate_term', 'word_gloss']
+['glossing', 'lemma_resolve', 'media_choose', 'media_query', 'media_sense', 'planner', 'regloss', 'srs_translate', 'story', 'translate_term', 'word_gloss']
 ['api', 'prestage'] ['cloze_generate', 'cloze_judge', 'cloze_translate']
 prestage.cloze_judge
 ```

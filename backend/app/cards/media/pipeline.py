@@ -15,6 +15,7 @@ from app.languages import card_surface_variants, get_ipa_for_card_words, get_pho
 
 from .choose_llm import choose_image_hit
 from .forvo import ForvoOutcome, ForvoResult, fetch_forvo_pronunciation
+from .langeek import choose_langeek_sense, download_langeek, langeek_term, search_langeek
 from .normalize import normalize_audio
 from .pixabay import PixabaySearch, _tag_overlap, best_hit, build_query, download_hit, search_pixabay
 from .tts import generate_tts_audio
@@ -40,6 +41,7 @@ class MediaResult:
     image_status: str | None = None
     image_query_used: str | None = None
     image_chooser: str | None = None
+    image_source: str | None = None
 
 
 def _compute_retry_query(primary_query: str, english: str) -> str | None:
@@ -60,6 +62,38 @@ def _has_overlap(hits: list[dict], query: str) -> bool:
     """True if any hit's tags overlap the query tokens (delegates to pixabay._tag_overlap)."""
     tokens = frozenset(query.lower().split())
     return any(_tag_overlap(tokens, hit.get("tags", "")) > 0 for hit in hits)
+
+
+async def _langeek_image(
+    word: str,
+    english: str,
+    used_image_urls: set[str] | None,
+    *,
+    llm: Any,
+    source_sentence: str,
+    http_client: Any,
+    search_fn: Callable[..., Any],
+    download_fn: Callable[..., Any],
+    choose_fn: Callable[..., Awaitable[Any]],
+) -> tuple[tuple[bytes, str, str], str] | None:
+    """LanGeek's illustration for the card, with how its sense was chosen, or ``None``.
+
+    ``None`` sends the caller on to Pixabay: no lookup word, nothing illustrated,
+    every illustration already used this run, no sense the card means, or a
+    failed download.
+    """
+    term = langeek_term(english)
+    if term is None:
+        return None
+    found = await anyio.to_thread.run_sync(partial(search_fn, term, http_client=http_client))
+    senses = [s for s in found.senses if s.photo_url not in (used_image_urls or ())]
+    sense = await choose_fn(word, english, senses, llm=llm, source_sentence=source_sentence) if senses else None
+    if sense is None:
+        return None
+    image = await anyio.to_thread.run_sync(partial(download_fn, sense, http_client=http_client))
+    if image is None:
+        return None
+    return image, "langeek" if len(senses) == 1 else "langeek_llm"
 
 
 def _card_word_readings(word: str, language_code: str) -> dict[str, str] | None:
@@ -83,12 +117,16 @@ async def fetch_card_media(
     llm: Any = None,
     forvo_enabled: bool | None = None,
     audio: AudioMode = "full",
+    source_sentence: str = "",
     _forvo_fn: Callable[..., ForvoResult] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _search_fn: Callable[..., Any] | None = None,
     _download_fn: Callable[..., Any] | None = None,
     _choose_fn: Callable[..., Awaitable[Any]] | None = None,
     _normalize_fn: Callable[..., bytes] | None = None,
+    _langeek_search_fn: Callable[..., Any] | None = None,
+    _langeek_download_fn: Callable[..., Any] | None = None,
+    _langeek_choose_fn: Callable[..., Awaitable[Any]] | None = None,
 ) -> MediaResult:
     """Fetch audio and image for a vocabulary card.
 
@@ -109,6 +147,9 @@ async def fetch_card_media(
     download_fn = _download_fn or download_hit
     choose_fn = _choose_fn or choose_image_hit
     norm_fn = _normalize_fn or normalize_audio
+    langeek_search_fn = _langeek_search_fn or search_langeek
+    langeek_download_fn = _langeek_download_fn or download_langeek
+    langeek_choose_fn = _langeek_choose_fn or choose_langeek_sense
     if language_code is None:
         from app.config import settings
 
@@ -164,6 +205,26 @@ async def fetch_card_media(
     if result.audio_bytes is not None and normalize:
         result.audio_bytes = await anyio.to_thread.run_sync(norm_fn, result.audio_bytes)
 
+    # LanGeek first, and BEFORE the "" skip below: the abstract words that skip
+    # gives up on are the ones its drawn illustrations exist for (tunatale-xsbh).
+    langeek = await _langeek_image(
+        word,
+        english,
+        used_image_urls,
+        llm=llm,
+        source_sentence=source_sentence,
+        http_client=http_client,
+        search_fn=langeek_search_fn,
+        download_fn=langeek_download_fn,
+        choose_fn=langeek_choose_fn,
+    )
+    if langeek is not None:
+        (result.image_bytes, result.image_ext, result.image_url), result.image_chooser = langeek
+        result.image_status, result.image_source = "ok", "langeek"
+        if used_image_urls is not None:
+            used_image_urls.add(result.image_url)
+        return result
+
     # image_query == "" is the explicit "abstract word, no image" skip sentinel.
     if image_query == "":
         result.image_status = "skipped"
@@ -217,6 +278,7 @@ async def fetch_card_media(
         if download_result is not None:
             result.image_bytes, result.image_ext, result.image_url = download_result
             result.image_status = "ok"
+            result.image_source = "pixabay"
             if used_image_urls is not None and result.image_url is not None:
                 used_image_urls.add(result.image_url)
         else:
