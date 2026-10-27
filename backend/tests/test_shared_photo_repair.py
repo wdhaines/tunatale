@@ -397,3 +397,43 @@ def test_a_picture_another_card_in_this_deck_shows_is_not_copied() -> None:
 
     assert result.reason == f"card {iloy} already shows it"
     assert learner.get_image_filename(nanay) == "img_mother.jpg"
+
+
+# ── Cards changed by hand since their list was made ──────────────────────────────────
+# The owner, 2026-10-27, fixing LanGeek pictures by hand: "Will the script not update
+# these?" A batch's ids are fixed when the list is made; without a guard, a card the
+# owner re-pictured afterwards is re-fetched and replaced. Every swap writes a new
+# image row, so the row's created_at says whether it changed after the list.
+
+
+def _written_at(db: SRSDatabase, coll_id: int, when: str) -> None:
+    with db._get_conn() as conn:
+        conn.execute("UPDATE media SET created_at = ? WHERE collocation_id = ? AND kind = 'image'", (when, coll_id))
+        conn.commit()
+
+
+def test_a_card_re_pictured_after_the_list_is_left_alone() -> None:
+    from app.cards.shared_photo_repair import load_cards, unchanged_since
+
+    db = SRSDatabase(":memory:")
+    old = _card(db, "nanay", image="img_mother.jpg", data=b"PX-a")
+    fixed = _card(db, "iloy", image="lgk_mother_bbbb.jpg", data=b"HAND", translation="mom")
+    _written_at(db, old, "2026-10-27 12:00:00")
+    _written_at(db, fixed, "2026-10-27 15:30:00")  # the owner's hand fix, after the list
+
+    keep, skipped = unchanged_since(db, load_cards(db, [old, fixed]), "2026-10-27 14:15:00")
+
+    assert [c.collocation_id for c in keep] == [old]
+    assert [c.collocation_id for c in skipped] == [fixed]
+
+
+def test_a_card_written_exactly_at_the_list_time_is_kept() -> None:
+    from app.cards.shared_photo_repair import load_cards, unchanged_since
+
+    db = SRSDatabase(":memory:")
+    card = _card(db, "nanay", image="img_mother.jpg", data=b"PX-a")
+    _written_at(db, card, "2026-10-27 14:15:00")
+
+    keep, skipped = unchanged_since(db, load_cards(db, [card]), "2026-10-27 14:15:00")
+
+    assert ([c.collocation_id for c in keep], skipped) == ([card], [])

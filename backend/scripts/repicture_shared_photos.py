@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from app.cards.shared_photo_repair import (
@@ -35,6 +36,7 @@ from app.cards.shared_photo_repair import (
     load_cards,
     plan_shared_photos,
     repicture_cards,
+    unchanged_since,
 )
 from app.config import settings
 from app.languages import resolve_language_context
@@ -49,6 +51,15 @@ def _sync_media_fn(db: SRSDatabase, language_code: str) -> Callable[..., Awaitab
     return _build_media_fn(
         LLMClient(groq_api_key=settings.groq_api_key, groq_model=settings.llm_model), db, language_code
     )
+
+
+def _utc_timestamp(value: str) -> str:
+    """The --unchanged-since value, checked: media rows store SQLite's UTC form."""
+    try:
+        datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not 'YYYY-MM-DD HH:MM:SS' (UTC)") from exc
+    return value
 
 
 def main(argv: list[str] | None = None, *, _media_fn: Callable[..., Awaitable[Any]] | None = None) -> int:
@@ -69,11 +80,21 @@ def main(argv: list[str] | None = None, *, _media_fn: Callable[..., Awaitable[An
         default=None,
         help="database URL of a deck to copy each card's LanGeek picture from (with --ids): no fetch, no LLM call",
     )
+    parser.add_argument(
+        "--unchanged-since",
+        default=None,
+        type=_utc_timestamp,
+        help="UTC 'YYYY-MM-DD HH:MM:SS' the --ids list was made: skip a card re-pictured after it (by hand)",
+    )
     args = parser.parse_args(argv)
 
     db = SRSDatabase(args.db or resolve_language_context(args.language, settings).db_url)
     if args.ids:
         cards = load_cards(db, [int(i) for i in args.ids.split(",")])
+        if args.unchanged_since:
+            cards, skipped = unchanged_since(db, cards, args.unchanged_since)
+            for c in skipped:
+                print(f"  skip   {c.collocation_id} {c.text}: picture changed since {args.unchanged_since} (by hand?)")
         for c in cards:
             print(f"  re-fetch: {c.collocation_id} {c.text} '{c.gloss}' {c.filename}")
         if args.copy_from:

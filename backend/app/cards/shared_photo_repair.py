@@ -102,6 +102,22 @@ def plan_shared_photos(db: Any, language_code: str, *, zipf: Callable[[str], flo
     return plan
 
 
+def unchanged_since(db: Any, cards: list[SharedCard], since: str) -> tuple[list[SharedCard], list[SharedCard]]:
+    """*cards* split into those whose picture is unchanged since *since* and those
+    re-pictured after it.
+
+    A batch's ids are fixed when its list is made (tunatale-iiwm.4, iiwm.6); the
+    owner then fixed some pictures by hand (2026-10-27: "Will the script not update
+    these?"). A card whose image row is newer than the list was changed on purpose
+    and is left alone. *since* is UTC in SQLite's ``YYYY-MM-DD HH:MM:SS`` form.
+    """
+    keep, skipped = [], []
+    for card in cards:
+        written = db.get_image_written_at(card.collocation_id)
+        (skipped if written is not None and written > since else keep).append(card)
+    return keep, skipped
+
+
 async def apply_repictures(
     db: Any, plan: list[SharedGroup], media_fn: Callable[..., Awaitable[Any]]
 ) -> list[Repicture]:
