@@ -8,6 +8,7 @@ import { makeSRSItemDetail } from "../../test/factories";
 vi.mock("$lib/api", () => ({
   api: {
     fetchImageCandidates: vi.fn(),
+    fetchLangeekCandidates: vi.fn(),
     setItemImageFromUrl: vi.fn(),
     uploadItemImage: vi.fn(),
     removeItemImage: vi.fn(),
@@ -18,6 +19,7 @@ import { api } from "$lib/api";
 import ImageEditModal from "./ImageEditModal.svelte";
 
 const mockFetchCandidates = vi.mocked(api.fetchImageCandidates);
+const mockFetchLangeek = vi.mocked(api.fetchLangeekCandidates);
 const mockSetFromUrl = vi.mocked(api.setItemImageFromUrl);
 const mockUpload = vi.mocked(api.uploadItemImage);
 const mockRemove = vi.mocked(api.removeItemImage);
@@ -30,6 +32,7 @@ describe("ImageEditModal", () => {
       status: "ok",
       candidates: [],
     });
+    mockFetchLangeek.mockResolvedValue({ term: "", status: "disabled", senses: [] });
   });
 
   it("renders current image when item.image_url is set", () => {
@@ -460,5 +463,118 @@ describe("ImageEditModal", () => {
     const input = getByPlaceholderText("Search query");
     await fireEvent.input(input, { target: { value: "coffee" } });
     expect((input as HTMLInputElement).value).toBe("coffee");
+  });
+
+  // ── LanGeek (tunatale-iiwm.3) ──────────────────────────────────────────────
+
+  const BAND = [
+    {
+      sense_id: 14799,
+      pos: "noun",
+      definition: "a narrow strip of material",
+      photo_url: "https://cdn.langeek.co/photo/14799/original/?type=jpeg",
+    },
+    {
+      sense_id: 14808,
+      pos: "noun",
+      definition: "a group of musicians",
+      photo_url: "https://cdn.langeek.co/photo/14808/original/?type=jpeg",
+    },
+  ];
+
+  it("offers each LanGeek sense with its definition, above the Pixabay candidates", async () => {
+    mockFetchLangeek.mockResolvedValue({ term: "band", status: "ok", senses: BAND });
+    const item = makeSRSItemDetail({ id: 7, text: "banda" });
+
+    const { findByText, getByText, container } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+
+    expect(await findByText("a group of musicians")).toBeTruthy();
+    expect(getByText("a narrow strip of material")).toBeTruthy();
+    expect(mockFetchLangeek).toHaveBeenCalledWith(7, undefined);
+    const headings = [...container.querySelectorAll("h3")].map((h) => h.textContent);
+    expect(headings.indexOf("LanGeek illustrations")).toBeLessThan(
+      headings.indexOf("Pixabay candidates"),
+    );
+  });
+
+  it("picking a LanGeek sense sets its picture", async () => {
+    const onupdated = vi.fn();
+    mockFetchLangeek.mockResolvedValue({ term: "band", status: "ok", senses: BAND });
+    mockSetFromUrl.mockResolvedValue(makeSRSItemDetail({ id: 7 }));
+    const item = makeSRSItemDetail({ id: 7, text: "banda" });
+
+    const { findByTitle } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated },
+    });
+    await fireEvent.click(await findByTitle("a group of musicians"));
+
+    await waitFor(() => {
+      expect(mockSetFromUrl).toHaveBeenCalledWith(7, BAND[1].photo_url);
+      expect(onupdated).toHaveBeenCalled();
+    });
+  });
+
+  it("LanGeek still offers pictures when Pixabay has no key", async () => {
+    mockFetchCandidates.mockRejectedValue(new Error("409 Pixabay API key not configured"));
+    mockFetchLangeek.mockResolvedValue({ term: "band", status: "ok", senses: BAND });
+    const item = makeSRSItemDetail({ id: 7, text: "banda" });
+
+    const { findByText, queryByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+
+    expect(await findByText("a group of musicians")).toBeTruthy();
+    await waitFor(() => expect(queryByText("Pixabay candidates")).toBeNull());
+  });
+
+  it.each([
+    ["no_results", "No LanGeek illustration for “band”"],
+    ["api_error", "LanGeek unavailable — try again shortly"],
+  ])("a LanGeek %s says so", async (status, message) => {
+    mockFetchLangeek.mockResolvedValue({ term: "band", status, senses: [] });
+    const item = makeSRSItemDetail({ id: 7 });
+
+    const { findByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+
+    expect(await findByText(message)).toBeTruthy();
+  });
+
+  it("a failed LanGeek request says LanGeek is unavailable", async () => {
+    mockFetchLangeek.mockRejectedValue(new Error("network down"));
+    const item = makeSRSItemDetail({ id: 7 });
+
+    const { findByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+
+    expect(await findByText("LanGeek unavailable — try again shortly")).toBeTruthy();
+  });
+
+  it("LanGeek switched off shows no LanGeek section", async () => {
+    const item = makeSRSItemDetail({ id: 7 });
+    const { queryByText, findByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+
+    await findByText("Pixabay candidates");
+    expect(queryByText("LanGeek illustrations")).toBeNull();
+  });
+
+  it("Search looks the typed word up in LanGeek too", async () => {
+    mockFetchLangeek.mockResolvedValue({ term: "band", status: "ok", senses: BAND });
+    const item = makeSRSItemDetail({ id: 7 });
+
+    const { getByPlaceholderText, getByText, findByText } = render(ImageEditModal, {
+      props: { item, onclose: vi.fn(), onupdated: vi.fn() },
+    });
+    await findByText("a group of musicians");
+    await fireEvent.input(getByPlaceholderText("Search query"), { target: { value: "orchestra" } });
+    await fireEvent.click(getByText("Search"));
+
+    await waitFor(() => expect(mockFetchLangeek).toHaveBeenLastCalledWith(7, "orchestra"));
   });
 });

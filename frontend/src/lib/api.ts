@@ -698,6 +698,8 @@ export type PresetChangeResult = components["schemas"]["PresetChangeResponse"];
 export type ImageCandidate = components["schemas"]["ImageCandidate"];
 
 export type ImageCandidatesResponse = components["schemas"]["ImageCandidatesResponse"];
+export type LangeekSenseCandidate = components["schemas"]["LangeekSenseCandidate"];
+export type LangeekCandidatesResponse = components["schemas"]["LangeekCandidatesResponse"];
 
 /**
  * The `Idempotency-Key` header, or nothing at all when there is no key.
@@ -1545,6 +1547,11 @@ export class TunaTaleAPI {
   async fetchImageCandidates(id: number, query?: string): Promise<ImageCandidatesResponse> {
     const qs = query ? `?q=${encodeURIComponent(query)}` : "";
     return this.request(`/api/srs/items/${id}/image/candidates${qs}`);
+  }
+
+  async fetchLangeekCandidates(id: number, query?: string): Promise<LangeekCandidatesResponse> {
+    const qs = query ? `?q=${encodeURIComponent(query)}` : "";
+    return this.request(`/api/srs/items/${id}/image/langeek${qs}`);
   }
 
   async setItemImageFromUrl(id: number, url: string): Promise<SRSItemDetail> {

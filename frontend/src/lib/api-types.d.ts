@@ -1854,6 +1854,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/srs/items/{item_id}/image/langeek": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Langeek Candidates
+     * @description Every illustrated sense LanGeek has for the card's gloss, or for *q* (tunatale-iiwm.3).
+     *
+     *     The learner picks the sense, so all are offered with their definitions and
+     *     no model is asked; the pick is stored through PUT /image like any URL.
+     */
+    get: operations["get_langeek_candidates_api_srs_items__item_id__image_langeek_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/items/{item_id}/image/upload": {
     parameters: {
       query?: never;
@@ -3159,6 +3182,36 @@ export interface components {
       english: string;
       /** Root */
       root: string;
+    };
+    /**
+     * LangeekCandidatesResponse
+     * @description Response of GET /api/srs/items/{item_id}/image/langeek.
+     *
+     *     ``status`` is langeek.search_langeek's: ok, no_results, api_error, or
+     *     disabled (the source switched off). ``term`` is the word looked up, empty
+     *     when the card's gloss has none.
+     */
+    LangeekCandidatesResponse: {
+      /** Senses */
+      senses: components["schemas"]["LangeekSenseCandidate"][];
+      /** Status */
+      status: string;
+      /** Term */
+      term: string;
+    };
+    /**
+     * LangeekSenseCandidate
+     * @description One illustrated sense LanGeek offers for a card (tunatale-iiwm.3).
+     */
+    LangeekSenseCandidate: {
+      /** Definition */
+      definition: string;
+      /** Photo Url */
+      photo_url: string;
+      /** Pos */
+      pos: string;
+      /** Sense Id */
+      sense_id: number;
     };
     /**
      * LanguageItem
@@ -7227,6 +7280,39 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ImageCandidatesResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_langeek_candidates_api_srs_items__item_id__image_langeek_get: {
+    parameters: {
+      query?: {
+        q?: string | null;
+      };
+      header?: never;
+      path: {
+        item_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LangeekCandidatesResponse"];
         };
       };
       /** @description Validation Error */

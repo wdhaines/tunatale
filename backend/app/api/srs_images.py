@@ -1,5 +1,5 @@
-"""Image-update endpoints: replace a card's TT-side image via Pixabay pick,
-pasted URL, file upload, or remove."""
+"""Image-update endpoints: replace a card's TT-side image via a LanGeek or
+Pixabay pick, pasted URL, file upload, or remove."""
 
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
-from app.api.models import ImageCandidatesResponse, ImageItemResponse
+from app.api.models import ImageCandidatesResponse, ImageItemResponse, LangeekCandidatesResponse
 from app.cards.media import pixabay as _pixabay_mod
+from app.cards.media.langeek import langeek_term, search_langeek
 from app.cards.media.pixabay import PixabaySearch
 from app.cards.media.query_llm import IMAGE_QUERY_MODEL_VERSION
 from app.cards.media.vocab_media import _drop_image_rows, replace_item_image
@@ -121,6 +122,31 @@ async def get_image_candidates(
     }
 
 
+@router.get("/items/{item_id}/image/langeek", response_model=LangeekCandidatesResponse)
+async def get_langeek_candidates(
+    item_id: int,
+    request: Request,
+    q: Annotated[str | None, Query()] = None,
+):
+    """Every illustrated sense LanGeek has for the card's gloss, or for *q* (tunatale-iiwm.3).
+
+    The learner picks the sense, so all are offered with their definitions and
+    no model is asked; the pick is stored through PUT /image like any URL.
+    """
+    db = request.state.srs_db
+    _coll_id, item, _lang = _resolve_item(db, item_id)
+    term = " ".join(q.split()).casefold() if q else langeek_term(item.syntactic_unit.translation)
+    if not term:
+        return {"term": "", "status": "no_results", "senses": []}
+    found = await anyio.to_thread.run_sync(partial(search_langeek, term))
+    return {"term": term, "status": found.status, "senses": [s._asdict() for s in found.senses]}
+
+
+#: The host LanGeek serves its illustrations from: a pick from there is stored
+#: as LanGeek's (lgk_*), so it can be found again if their terms change.
+_LANGEEK_IMAGE_HOST = "cdn.langeek.co"
+
+
 class _UrlBody(BaseModel):
     url: str
 
@@ -167,7 +193,8 @@ async def put_image_from_url(
     if ext is None:
         raise HTTPException(status_code=422, detail="Content is not an image")
 
-    replace_item_image(db, coll_id, item.syntactic_unit.translation, image_bytes, ext)
+    source = "langeek" if parsed.hostname == _LANGEEK_IMAGE_HOST else None
+    replace_item_image(db, coll_id, item.syntactic_unit.translation, image_bytes, ext, source=source)
 
     return _item_response(db, coll_id, item)
 
