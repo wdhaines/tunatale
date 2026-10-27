@@ -33,6 +33,35 @@ describe("Tooltip", () => {
     expect(tooltip.querySelector(".tt-card-translation")!.textContent).toBe("card: hall");
   });
 
+  // tunatale-h0q3.26: a Cebuano verb glossed by its parts, under the gloss.
+  it("renders the word's parts on their own line", () => {
+    const word = makeWordToken({ surface: "moadto", parts: "mo- will + ádto there · go" });
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: "will go", word, childText: "moadto" },
+    });
+    const tooltip = getByRole("tooltip");
+    expect(tooltip.querySelector(".tt-translation")!.textContent).toBe("will go");
+    expect(tooltip.querySelector(".tt-parts")!.textContent).toBe("mo- will + ádto there · go");
+  });
+
+  it("opens for the parts alone when the word has no gloss", () => {
+    const word = makeWordToken({ surface: "moadto", parts: "mo- will + ádto there · go" });
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: null, word, childText: "moadto" },
+    });
+    expect(getByRole("tooltip").querySelector(".tt-parts")!.textContent).toBe(
+      "mo- will + ádto there · go",
+    );
+  });
+
+  it("renders no parts line for a word without one", () => {
+    const word = makeWordToken({ surface: "gang", parts: null });
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: "time", word, childText: "gang" },
+    });
+    expect(getByRole("tooltip").querySelector(".tt-parts")).toBeNull();
+  });
+
   it("renders no card line when none is given", () => {
     const { getByRole } = render(TooltipTest, {
       props: { translation: "time", childText: "gang" },
