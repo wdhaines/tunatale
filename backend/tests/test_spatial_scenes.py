@@ -108,6 +108,20 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     # naa (Wolff anáa {1} "be there, near you"; the user, 2026-10-22: "Draw
     # near-you"): the lit person in your zone, not mine.
     "is_there_yours": (0, False, False),
+    # Past/future/existential with time and genitive possessive forms (tunatale-tofg.5).
+    "is_here_mine": (0, False, False),
+    "was_here_mine": (0, False, True),
+    "was_here_both": (0, False, True),
+    "was_there_yours": (0, False, True),
+    "was_there_far": (0, False, True),
+    "will_be_here_mine": (0, False, True),
+    "will_be_here_both": (0, False, True),
+    "will_be_there_yours": (0, False, True),
+    "will_be_there_far": (0, False, True),
+    "of_this_mine": (0, True, False),
+    "of_this_both": (0, True, False),
+    "of_that_yours": (0, True, False),
+    "of_that_far": (0, True, False),
 }
 
 #: The brief's measured WCAG ratios. Each is RE-COMPUTED from the fills and
@@ -124,7 +138,16 @@ _MEASURED: dict[tuple[str, str], float] = {
 
 DEIXIS_THINGS = ("this_both", "this_mine", "that_yours", "that_far")
 DEIXIS_PLACES = ("here_both", "here_mine", "there_yours", "there_far")
-DEIXIS_PRESENT = ("is_here_both", "is_there_far", "is_there_yours")
+DEIXIS_PRESENT = ("is_here_both", "is_there_far", "is_there_yours", "is_here_mine")
+DEIXIS_PAST = ("was_here_mine", "was_here_both", "was_there_yours", "was_there_far")
+DEIXIS_FUTURE = ("will_be_here_mine", "will_be_here_both", "will_be_there_yours", "will_be_there_far")
+DEIXIS_GEN = ("of_this_mine", "of_this_both", "of_that_yours", "of_that_far")
+
+
+def _SAME_DISTANCE(xs: tuple[str, ...], ys: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Every pair from *xs* and *ys* at the same distance (the word after the last underscore)."""
+    return [(a, b) for a in xs for b in ys if a.rsplit("_", 1)[1] == b.rsplit("_", 1)[1]]
+
 
 #: The pairs whose render must fail the other's predicate. The reason the
 #: oracle table exists at all: two neighbours that both satisfy one predicate
@@ -226,6 +249,32 @@ _DISCRIMINATED: tuple[tuple[str, str], ...] = (
     ("is_here_both", "is_there_yours"),
     ("is_there_yours", "is_there_far"),
     ("is_there_far", "is_there_yours"),
+    # Past/future/genitive discrimination (tunatale-tofg.5)
+    *((a, b) for a in DEIXIS_PAST for b in DEIXIS_FUTURE),
+    *((a, b) for a in DEIXIS_FUTURE for b in DEIXIS_PAST),
+    *_SAME_DISTANCE(DEIXIS_PAST, DEIXIS_PRESENT),
+    *((b, a) for a, b in _SAME_DISTANCE(DEIXIS_PAST, DEIXIS_PRESENT)),
+    *_SAME_DISTANCE(DEIXIS_FUTURE, DEIXIS_PRESENT),
+    *((b, a) for a, b in _SAME_DISTANCE(DEIXIS_FUTURE, DEIXIS_PRESENT)),
+    *_SAME_DISTANCE(DEIXIS_GEN, DEIXIS_THINGS),
+    *((b, a) for a, b in _SAME_DISTANCE(DEIXIS_GEN, DEIXIS_THINGS)),
+    *((a, b) for a in DEIXIS_PAST for b in DEIXIS_PAST if a != b),
+    *((a, b) for a in DEIXIS_FUTURE for b in DEIXIS_FUTURE if a != b),
+    *((a, b) for a in DEIXIS_GEN for b in DEIXIS_GEN if a != b),
+    ("of_this_mine", "this_mine"),
+    ("this_mine", "of_this_mine"),
+    ("of_this_both", "this_both"),
+    ("this_both", "of_this_both"),
+    ("of_that_yours", "that_yours"),
+    ("that_yours", "of_that_yours"),
+    ("of_that_far", "that_far"),
+    ("that_far", "of_that_far"),
+    ("is_here_mine", "here_mine"),
+    ("here_mine", "is_here_mine"),
+    ("is_here_mine", "this_mine"),
+    ("this_mine", "is_here_mine"),
+    ("is_here_mine", "is_here_both"),
+    ("is_here_both", "is_here_mine"),
 )
 
 
@@ -299,6 +348,9 @@ class Picture(NamedTuple):
     trails: list[Arrow]  # a dotted path: the way travelled, or the way still to go
     zones: dict[str, tuple[float, float]]  # "mine"/"yours" -> (centre x, half-width) on the floor
     presents: list[Present]  # a lit person standing somewhere: someone who IS there
+    absents: list[Present]  # an outline person
+    tethers: list[Arrow]  # tether lines
+    owned_bags: list[ET.Element]  # bag groups
 
 
 def _root(svg: bytes) -> ET.Element:
@@ -390,6 +442,9 @@ def _parse(svg: bytes) -> Picture:
             if owner in _classes(el)
         },
         presents=[_present_of(el) for el in _by_class(svg, "present")],
+        absents=[_present_of(el) for el in _by_class(svg, "absent")],
+        tethers=_lines(svg, "tether"),
+        owned_bags=_by_class(svg, "owned-bag"),
     )
 
 
@@ -924,42 +979,35 @@ def _where(p: Picture) -> tuple[str, str] | None:
     person (someone who is there), exactly one of them. Two zones are required,
     overlapping, mine to the left under the speaker.
     """
-    if set(p.zones) != {"mine", "yours"} or p.blocks or p.arrow is not None:
+    if set(p.zones) != {"mine", "yours"} or p.blocks or p.arrow is not None or p.tethers:
         return None
     if (p.ball is not None) + len(p.poles) + len(p.presents) != 1:
         return None
     if p.ball is not None:
-        lo, hi = p.ball.cx - p.ball.r, p.ball.cx + p.ball.r
         if not _on_ground(p):
             return None
+        return _classify_zone(p, p.ball.cx, p.ball.r, p.ground)
     elif p.presents:
         person = p.presents[0]
         if not _touches(person.feet, p.ground):
             return None
-        lo, hi = person.cx - person.half, person.cx + person.half
+        return _classify_zone(p, person.cx, person.half, person.feet)
     else:
         pole = p.poles[0]
         if not _touches(max(pole.y1, pole.y2), p.ground):
             return None
-        lo = hi = pole.x1
-    (mine_c, mine_r), (yours_c, yours_r) = p.zones["mine"], p.zones["yours"]
-    if not (mine_c < yours_c and mine_c + mine_r > yours_c - yours_r):
-        return None
-    sides = []
-    for c, r in ((mine_c, mine_r), (yours_c, yours_r)):
-        if c - r + _CLEAR <= lo and hi <= c + r - _CLEAR:
-            sides.append("in")
-        elif hi + _CLEAR < c - r or lo - _CLEAR > c + r:
-            sides.append("out")
-        else:
-            return None
-    return sides[0], sides[1]
+        # pole is a line; zone classification treats it as a point at its x position
+        # For a pole, r=0 (it's a point) and feet is the ground y coordinate
+        return _classify_zone(p, pole.x1, 0, p.ground)
 
 
 def _deixis(kind: str, mine: str, yours: str) -> Callable[[Picture], bool]:
     """*kind* is the object: "thing" (the ball), "place" (the flag) or "present" (a lit person)."""
 
     def predicate(p: Picture) -> bool:
+        # A bag is the genitive's mark: a picture with one is not the bare nominative.
+        if p.owned_bags:
+            return False
         drawn = "thing" if p.ball is not None else "present" if p.presents else "place"
         return drawn == kind and _where(p) == (mine, yours)
 
@@ -1010,11 +1058,120 @@ _PREDICATES: dict[str, Callable[[Picture], bool]] = {
 }
 
 
+def _classify_zone(p: Picture, cx: float, r: float, feet: float) -> tuple[str, str] | None:
+    if set(p.zones) != {"mine", "yours"} or p.blocks:
+        return None
+    if r > 0 and not _touches(feet, p.ground):
+        return None
+    # For r=0 (point), lo=hi=cx; treat as checking if point is in/out
+    lo, hi = cx - r, cx + r
+    (mine_c, mine_r), (yours_c, yours_r) = p.zones["mine"], p.zones["yours"]
+    if not (mine_c < yours_c and mine_c + mine_r > yours_c - yours_r):
+        return None
+    sides = []
+    for c, rz in ((mine_c, mine_r), (yours_c, yours_r)):
+        if c - rz + _CLEAR <= lo and hi <= c + rz - _CLEAR:
+            sides.append("in")
+        elif hi + _CLEAR < c - rz or lo - _CLEAR > c + rz:
+            sides.append("out")
+        else:
+            return None
+    return sides[0], sides[1]
+
+
+def _time(when: str, mine: str, yours: str) -> Callable[[Picture], bool]:
+    def predicate(p: Picture) -> bool:
+        if p.blocks or p.poles or p.ball is not None or p.presents or len(p.absents) != 1:
+            return False
+        absent = p.absents[0]
+        where = _classify_zone(p, absent.cx, absent.half, absent.feet)
+        if where != (mine, yours):
+            return False
+        if p.arrow is None or len(p.tethers) != 1:
+            return False
+        # horizontal arrow whose whole extent lies above every figure's top
+        # Present has cx, half, feet - head top is at feet - 2*half (rough approximation)
+        head_top = absent.feet - 2 * absent.half
+        if abs(_dy(p.arrow)) > _TOUCH:  # horizontal
+            return False
+        # arrow above every figure's top
+        if not (min(p.arrow.y1, p.arrow.y2) < head_top):  # above head top
+            return False
+        tether = p.tethers[0]
+        if abs(_dx(tether)) > _TOUCH or _dy(tether) <= 0:  # vertical going down (dy > 0)
+            return False
+        if when == "past":
+            # tether's top touches the arrow's TAIL
+            if abs(tether.x1 - p.arrow.x1) > _TOUCH:  # tail
+                return False
+            if abs(tether.x1 - absent.cx) > _TOUCH:
+                return False
+            # arrow end NOT tethered is farther from the figure than the tethered end
+            tethered_dist = abs(p.arrow.x1 - absent.cx)
+            untethered_dist = abs(p.arrow.x2 - absent.cx)
+            if untethered_dist <= tethered_dist:
+                return False
+        elif when == "future":
+            # tether hangs from the tip
+            if abs(tether.x1 - p.arrow.x2) > _TOUCH:
+                return False
+            if abs(tether.x1 - absent.cx) > _TOUCH:
+                return False
+            tethered_dist = abs(p.arrow.x2 - absent.cx)
+            untethered_dist = abs(p.arrow.x1 - absent.cx)
+            if untethered_dist <= tethered_dist:
+                return False
+        return True
+
+    return predicate
+
+
+def _of(mine: str, yours: str) -> Callable[[Picture], bool]:
+    def predicate(p: Picture) -> bool:
+        # The nominative thing picture's predicate holds once the bag is set aside.
+        if not _deixis("thing", mine, yours)(p._replace(owned_bags=[])):
+            return False
+        if len(p.owned_bags) != 1:
+            return False
+        # exactly one owned-bag group
+        bag = p.owned_bags[0]
+        if p.ball is None:
+            return False
+        # find any rect in bag group
+        bag_rects = [el for el in bag.iter() if el.tag == f"{_SVG}rect"]
+        if not bag_rects:
+            return False
+        br = _rect_of(bag_rects[0])
+        # stands on top of the ball, centred on it: beside it, it overlapped a person
+        return _touches(br.y + br.h, p.ball.cy - p.ball.r) and abs(br.x + br.w / 2 - p.ball.cx) <= _TOUCH
+
+    return predicate
+
+
+_PREDICATES.update(
+    {
+        "is_here_mine": _deixis("present", "in", "out"),
+        "was_here_mine": _time("past", "in", "out"),
+        "was_here_both": _time("past", "in", "in"),
+        "was_there_yours": _time("past", "out", "in"),
+        "was_there_far": _time("past", "out", "out"),
+        "will_be_here_mine": _time("future", "in", "out"),
+        "will_be_here_both": _time("future", "in", "in"),
+        "will_be_there_yours": _time("future", "out", "in"),
+        "will_be_there_far": _time("future", "out", "out"),
+        "of_this_mine": _of("in", "out"),
+        "of_this_both": _of("in", "in"),
+        "of_that_yours": _of("out", "in"),
+        "of_that_far": _of("out", "out"),
+    }
+)
+
+
 # ── The table, read row by row ─────────────────────────────────────────────
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    """Thirty-nine ids, and the renderer refuses everything outside this list."""
+    """Fifty-three ids, and the renderer refuses everything outside this list."""
     assert SPATIAL_CONCEPTS == (
         "up",
         "down",
@@ -1056,6 +1213,19 @@ def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
         "is_here_both",
         "is_there_far",
         "is_there_yours",
+        "is_here_mine",
+        "was_here_mine",
+        "was_here_both",
+        "was_there_yours",
+        "was_there_far",
+        "will_be_here_mine",
+        "will_be_here_both",
+        "will_be_there_yours",
+        "will_be_there_far",
+        "of_this_mine",
+        "of_this_both",
+        "of_that_yours",
+        "of_that_far",
     )
     assert set(_SHAPES) == set(SPATIAL_CONCEPTS)
     assert set(_PREDICATES) == set(SPATIAL_CONCEPTS)

@@ -25,8 +25,13 @@ from app.srs.function_words import is_function_word
 LANGS = tuple(sorted(c for c in known_language_codes() if get_spatial_path(c) is not None))
 
 
-def _words(code: str) -> dict[str, str]:
+def _words(code: str) -> dict[str, str | list[str]]:
     return json.loads(get_spatial_path(code).read_text(encoding="utf-8"))["words"]
+
+
+def _senses(value: str | list[str]) -> list[str]:
+    """A word's concepts in priority order: a string is one sense, a list is several."""
+    return value if isinstance(value, list) else [value]
 
 
 class TestDataFiles:
@@ -35,7 +40,7 @@ class TestDataFiles:
 
     @pytest.mark.parametrize("code", LANGS)
     def test_every_word_names_a_concept_the_renderer_can_draw(self, code) -> None:
-        unknown = {w: c for w, c in _words(code).items() if c not in SPATIAL_CONCEPTS}
+        unknown = {w: c for w, c in _words(code).items() if any(s not in SPATIAL_CONCEPTS for s in _senses(c))}
         assert unknown == {}
 
     @pytest.mark.parametrize("code", LANGS)
@@ -62,10 +67,19 @@ class TestDataFiles:
     #: anía, túa = atúa, náa = anáa; the user, 2026-10-22: "Share the drawing").
     _SYNONYMS_MAY_SHARE: dict[str, dict[str, list[str]]] = {
         "sl": {"beside": ["poleg", "zraven"]},
+        # The Cebuano groups below are words that share a FIRST concept (tunatale-tofg.5):
+        # the picture a word is drawn with on a gloss only its first sense names.
         "ceb": {
             "is_here_both": ["ania", "nia"],
             "is_there_far": ["atua", "tua"],
             "is_there_yours": ["anaa", "naa"],
+            "this_mine": ["kari", "kiri", "ri"],
+            "this_both": ["kani", "kini"],
+            "is_here_mine": ["adia", "dia"],
+            "was_there_yours": ["diha", "dinha"],
+            "of_this_mine": ["iri", "niari", "niiri"],
+            "of_this_both": ["ani", "ini", "niani", "niini"],
+            "of_that_yours": ["ana", "niana"],
         },
     }
 
@@ -73,13 +87,17 @@ class TestDataFiles:
     def test_no_two_words_share_a_picture(self, code) -> None:
         """A picture card must not be ambiguous: distinct words, distinct drawings.
 
+        A word's picture is its FIRST listed concept, the one the gloss guard
+        tries first (a multi-sense word is drawn with a later concept only on a
+        gloss the first does not match, and the card's gloss names one sense).
+
         The user found inn and innenfor on one picture (2026-09-29); six groups
         of Norwegian words, two Cebuano pairs (kilid/tupad, taliwala/tunga) and
         two Slovene ones (nad/zgoraj, pod/spodaj) shared one then. The only
         sharing left is the user's recorded synonym exception above.
         """
-        words = _words(code)
-        shared = {c: sorted(w for w, k in words.items() if k == c) for c in set(words.values())}
+        first = {w: _senses(c)[0] for w, c in _words(code).items()}
+        shared = {c: sorted(w for w, k in first.items() if k == c) for c in set(first.values())}
         assert {c: ws for c, ws in shared.items() if len(ws) > 1} == self._SYNONYMS_MAY_SHARE.get(code, {})
 
     def test_a_language_without_a_file_has_no_spatial_words(self) -> None:
@@ -270,6 +288,33 @@ class TestDispatch:
     )
     def test_anything_else_is_left_on_its_route(self, word, code, gloss) -> None:
         assert spatial_picture(word, code, gloss) is None
+
+    @pytest.mark.parametrize(
+        ("word", "gloss", "concept"),
+        [
+            # A word with several senses is drawn as the sense its gloss names (tunatale-tofg.5).
+            ("didto", "over there", "there_far"),
+            ("didto", "was there (far, past)", "was_there_far"),
+            ("dinhi", "here (near you and me)", "here_both"),
+            ("diri", "was here (near me)", "was_here_mine"),
+            ("adto", "there (far, future); go there", "will_be_there_far"),
+            ("adto", "of that (far)", "of_that_far"),
+            ("anhi", "here; come here", "will_be_here_both"),
+            ("ari", "will be here (future; near me, not near you)", "will_be_here_mine"),
+            ("ari", "of this (near me)", "of_this_mine"),
+            ("niini", "of this; to this", "of_this_both"),
+            ("dia", "is here (near me, not you)", "is_here_mine"),
+            ("ngadto", "there (far)", "there_far"),
+        ],
+    )
+    def test_a_multi_sense_word_is_drawn_as_the_sense_its_gloss_names(self, word, gloss, concept) -> None:
+        picture = spatial_picture(word, "ceb", gloss)
+        assert picture is not None
+        assert picture.filename.startswith(f"spatial_{concept}_")
+
+    @pytest.mark.parametrize(("word", "gloss"), [("adto", "far"), ("ari", "mine")])
+    def test_no_sense_whose_guard_the_gloss_misses_is_drawn(self, word, gloss) -> None:
+        assert spatial_picture(word, "ceb", gloss) is None
 
 
 class TestDrawnPicture:

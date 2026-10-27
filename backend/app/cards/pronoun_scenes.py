@@ -78,6 +78,7 @@ language lives, and what keeps this module clear of one.
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 from xml.sax.saxutils import escape
 
@@ -120,12 +121,28 @@ PRONOUN_CONCEPTS: tuple[str, ...] = (
     "you_many_poss",
     "they_two_poss",
     "they_many_poss",
+    "i_dat",
+    "you_one_dat",
+    "he_dat",
+    "she_dat",
+    "third_one_dat",
+    "we_two_dat",
+    "we_many_dat",
+    "we_incl_dat",
+    "we_excl_dat",
+    "you_two_dat",
+    "you_many_dat",
+    "they_two_dat",
+    "they_many_dat",
 )
 
 #: The suffix that turns a concept into its possessive. One suffix, one rule: the
 #: scene is looked up under the nominative name, so there is exactly one layout
 #: in this module and "his" cannot drift away from "he".
 _POSSESSIVE = "_poss"
+
+#: The suffix that turns a concept into its dative: the dative is 'to / for <referent>'
+_DATIVE = "_dat"
 
 #: The outline of a *filled* figure. The only colour new in this module for the
 #: nominative cast: the pale fill's own outline would be invisible against it, so
@@ -419,6 +436,87 @@ def _owned_mark(x: float, y: float, owned: str) -> str:
     return f'<circle cx="{_n(cx)}" cy="{_n(cy)}" r="{_OWNED_R}"{stroke}/><path d="{d}"{stroke}/>'
 
 
+def _arrow(x1: float, y1: float, x2: float, y2: float) -> str:
+    """A shaft from tail ``(x1, y1)`` to a head whose TIP is at ``(x2, y2)``.
+
+    Local copy of spatial_scenes._arrow using paths instead of lines,
+    to avoid conflict with the ground line detection in tests.
+    """
+    import math
+
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    ux, uy = dx / length, dy / length
+    _ARROW_HEAD_LEN = 10
+    _ARROW_HEAD_HALF = 4
+    base_x, base_y = x2 - _ARROW_HEAD_LEN * ux, y2 - _ARROW_HEAD_LEN * uy
+    left_x, left_y = base_x - uy * _ARROW_HEAD_HALF, base_y + ux * _ARROW_HEAD_HALF
+    right_x, right_y = base_x + uy * _ARROW_HEAD_HALF, base_y - ux * _ARROW_HEAD_HALF
+    return (
+        '<g class="arrow">'
+        f'<path d="M{_n(x1)} {_n(y1)} L{_n(x2)} {_n(y2)}" '
+        f'stroke="{_ACCENT}" stroke-width="6" stroke-linecap="round" fill="none"/>'
+        f'<polygon class="head" points="{_n(left_x)},{_n(left_y)} {_n(x2)},{_n(y2)} {_n(right_x)},{_n(right_y)}" '
+        f'fill="{_ACCENT}"/>'
+        "</g>"
+    )
+
+
+# ── The dative's gift (tunatale-tofg.13) ────────────────────────────────────
+# A dative is the nominative scene plus ONE gift: a bag with no ownership mark,
+# and an arrow from it to the referent. The gift lies OUTSIDE the translated
+# group, in viewBox coordinates, so every number a test reads off it is the
+# number a learner sees. Its layout is per family, and the families are read off
+# the lit referent:
+#   - the speaker is lit: the arrow leaves at 30 degrees up and to the right.
+#     The speaker's own bubble is above it, so a steeper arrow would cross the
+#     bubble's corner. The bag sits well to the right of the bubble.
+#   - a listener or an outsider is lit: the arrow leaves at 45 degrees, reaching
+#     _GIFT_FAR. At 30 degrees the arrow from the first listener passed within
+#     15 units of the second listener's head centre (head 12 plus half the shaft
+#     3), which is touching; at 45 it clears by about 6.
+#   In both, the bag's bottom sits just above the heads, so it reads as held in
+#   the air over the group rather than resting on anybody.
+# The tail is the bag's top-left corner, and the tip is _GIFT_TIP units from the
+# referent's head centre, inside the head: the arrow points AT the referent.
+
+#: How far the arrow's tip is from the referent's head centre.
+_GIFT_TIP = 9
+
+#: How far the arrow's tail, which is the bag's corner, is from the referent's
+#: head, for a referent inside the conversation and for one outside it.
+_GIFT_NEAR = 80
+_GIFT_FAR = 57
+
+#: The unit vectors (pointing up and to the right) the arrow leaves a head along.
+_SPEAKER_UP = (math.cos(math.radians(30)), -math.sin(math.radians(30)))
+_LISTENER_UP = (math.cos(math.radians(45)), -math.sin(math.radians(45)))
+
+
+def _gift(scene: _Scene, inside_x: list[float], outside_x: list[float], dx: float) -> str:
+    """The bag a dative hands over and the arrow from it to the referent.
+
+    The referent is the speaker if lit, else the leftmost lit listener, else the
+    leftmost lit outsider — the one nearest the bag's side of the cast, so the
+    arrow crosses as few other heads as the layout allows. Every coordinate is
+    in viewBox units: ``dx`` is the group's own translate, added here because
+    the gift is not inside that group.
+    """
+    lit_inside = [x for i, x in enumerate(inside_x) if f"L{i}" in scene.lit]
+    lit_outside = [x for i, x in enumerate(outside_x) if f"O{i}" in scene.lit]
+    if "S" in scene.lit:
+        target, (ux, uy), reach = _SPEAKER_X, _SPEAKER_UP, _GIFT_NEAR
+    elif lit_inside:
+        target, (ux, uy), reach = lit_inside[0], _LISTENER_UP, _GIFT_FAR
+    else:
+        target, (ux, uy), reach = lit_outside[0], _LISTENER_UP, _GIFT_FAR
+    head_x, head_y = dx + target, _HEAD_CY
+    tail_x, tail_y = head_x + reach * ux, head_y + reach * uy
+    tip_x, tip_y = head_x + _GIFT_TIP * ux, head_y + _GIFT_TIP * uy
+    # _bag_parts takes the bag's centre x, and the tail is its left edge.
+    return f'<g class="gift">{_bag_parts(tail_x + _BAG_W / 2, tail_y)}{_arrow(tail_x, tail_y, tip_x, tip_y)}</g>'
+
+
 def _bag(x: float, y: float, owned: str | None = None) -> str:
     """A bag hanging at ``(x, y)`` — the one thing a possessive render adds.
 
@@ -535,12 +633,13 @@ def render_pronoun_svg(concept: str, owned: str | None = None, frame: str | None
             f"{concept!r} is not a renderable pronoun concept; expected one of {', '.join(PRONOUN_CONCEPTS)}"
         )
     possessive = concept.endswith(_POSSESSIVE)
+    dative = concept.endswith(_DATIVE)
     if owned is not None and not (possessive and owned in OWNED_KINDS):
         raise ValueError(
             f"owned={owned!r} cannot be drawn into {concept!r}; expected None, or one of "
             f"{', '.join(OWNED_KINDS)} on a possessive concept"
         )
-    scene = _SCENES[concept[: -len(_POSSESSIVE)] if possessive else concept]
+    scene = _SCENES[concept[: -len(_POSSESSIVE)] if possessive else (concept[: -len(_DATIVE)] if dative else concept)]
     # A listener is always drawn even when none is the referent: "we, and not
     # them" needs an inside to be outside of.
     listeners = max(1, sum(1 for role in scene.lit if role.startswith("L")))
@@ -585,6 +684,10 @@ def render_pronoun_svg(concept: str, owned: str | None = None, frame: str | None
             parts.append(_bag(outside_x[-1] + _CAT_BAG_DX, _G - _BAG_H, owned))
         else:
             parts += [_bag(x, _G - _BAG_CARRY_DY, owned) for x in lit_x]
+    # The dative's gift is the nominative scene plus one bag and an arrow, painted
+    # last and outside the translated group (see _gift). No dative of the cat
+    # exists, so the gift never has to stand on the ground.
+    gift = _gift(scene, inside_x, outside_x, dx) if dative else ""
     sentence = ""
     height = _H
     if frame is not None:
@@ -599,6 +702,6 @@ def render_pronoun_svg(concept: str, owned: str | None = None, frame: str | None
         f'<rect x="0" y="0" width="{_W}" height="{height}" fill="{_BG}"/>'
         f'<line x1="8" y1="{_G}" x2="{_W - 8}" y2="{_G}" stroke="{_BOX_STROKE}" stroke-width="1.5" '
         f'opacity="0.5"/>'
-        f'<g transform="translate({_n(dx)} 0)">{"".join(parts)}</g>{sentence}</svg>'
+        f'<g transform="translate({_n(dx)} 0)">{"".join(parts)}</g>{gift}{sentence}</svg>'
     )
     return svg.encode("utf-8")

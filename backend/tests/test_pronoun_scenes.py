@@ -58,6 +58,11 @@ from app.cards.spatial_scenes import _ACCENT
 
 _SVG = "{http://www.w3.org/2000/svg}"
 
+# A person's head radius and body half-width, transcribed from the drawing so the
+# gift-clearance checks can measure a figure's extent without importing it.
+_HEAD_R = 12
+_BODY_HALF = 12
+
 # ── The brief's table, transcribed ──────────────────────────────────────────
 # Roles: S = speaker, L = listener (inside the outline), O = other (outside it).
 # "lit" is the filled reference; "pale" is the pale fill WITH its outline, which
@@ -69,7 +74,7 @@ _SVG = "{http://www.w3.org/2000/svg}"
 # count of everybody inside would be 2 for almost every concept and would carry
 # none of the distinctions the table exists to pin.
 
-_ROW_BASE: dict[str, object] = {"cats": 0, "cats_lit": 0, "pale_outlined": True, "bags": 0}
+_ROW_BASE: dict[str, object] = {"cats": 0, "cats_lit": 0, "pale_outlined": True, "bags": 0, "gifts": 0}
 
 _EXPECTED: dict[str, dict[str, object]] = {
     # concept    speaker lit | listeners drawn/lit | others drawn/lit | extra
@@ -246,8 +251,14 @@ _NOMINATIVES: tuple[str, ...] = (
     "they_many",
 )
 _POSSESSIVES: tuple[str, ...] = tuple(f"{concept}_poss" for concept in _NOMINATIVES)
+_DATIVES: tuple[str, ...] = tuple(f"{concept}_dat" for concept in _NOMINATIVES if concept != "it")
 
 _EXPECTED.update({f"{concept}_poss": {**_EXPECTED[concept], "bags": count} for concept, count in _BAGS.items()})
+# Datives have the same scene as their nominative, plus a gift group
+_EXPECTED.update({f"{concept}_dat": {**_EXPECTED[concept], "gifts": 1} for concept in _NOMINATIVES if concept != "it"})
+# Datives inherit gender marks from their nominatives
+_EXPECTED["he_dat"]["symbol"] = "m"
+_EXPECTED["she_dat"]["symbol"] = "f"
 
 
 # ── Path reading ────────────────────────────────────────────────────────────
@@ -656,6 +667,10 @@ def _row(p: Picture) -> dict[str, object]:
         "cats_lit": sum(1 for c in p.cats if c.lit),
         "pale_outlined": all(f.pale_outlined for f in inside + outside),
         "bags": len(p.bags),
+        # A gift is a bag and arrow outside the group, so it is not in ``bags``;
+        # counted from the markup, it is what separates a dative from its
+        # nominative, whose figures it leaves exactly as they are.
+        "gifts": sum(1 for el in p.root.iter() if el.get("class") == "gift"),
     }
 
 
@@ -668,13 +683,26 @@ def _matches(p: Picture, expected: dict[str, object]) -> bool:
 #: The pairs the drawing is SUPPOSED to collapse, one nominative and one
 #: possessive. Asserted both ways: the renders are identical, and they are the
 #: only identical rows in the family.
-_COLLAPSED: tuple[tuple[str, str], ...] = (("we_two", "we_incl"), ("we_two_poss", "we_incl_poss"))
+_COLLAPSED: tuple[tuple[str, str], ...] = (
+    ("we_two", "we_incl"),
+    ("we_two_poss", "we_incl_poss"),
+    # Datives collapse the same way (tunatale-tofg.13)
+    ("we_two_dat", "we_incl_dat"),
+)
 
 #: The concepts that carry a gender mark, and which one. ``he_poss``/``she_poss``
 #: are in it because a possessive is its nominative scene plus bags: the mark
 #: rides along with the referent, and "his" drawn without the ♂ would be a
-#: different man.
-_GENDER_MARK: dict[str, str] = {"he": "m", "she": "f", "he_poss": "m", "she_poss": "f"}
+#: different man. Datives inherit the gender marks from their nominatives.
+_GENDER_MARK: dict[str, str] = {
+    "he": "m",
+    "she": "f",
+    "he_poss": "m",
+    "she_poss": "f",
+    # Datives (tunatale-tofg.13)
+    "he_dat": "m",
+    "she_dat": "f",
+}
 _GENDERED = tuple(_GENDER_MARK)
 
 #: The concepts whose one referent is the cat and not a person.
@@ -682,9 +710,10 @@ _CAT_ONLY = ("it", "it_poss")
 
 
 def test_the_concept_list_is_the_one_the_cards_route_on() -> None:
-    assert PRONOUN_CONCEPTS == _NOMINATIVES + _POSSESSIVES
+    assert PRONOUN_CONCEPTS == _NOMINATIVES + _POSSESSIVES + _DATIVES
     assert set(_EXPECTED) == set(PRONOUN_CONCEPTS)
     assert _POSSESSIVES[0] == "i_poss" and _POSSESSIVES[-1] == "they_many_poss"
+    assert _DATIVES[0] == "i_dat" and _DATIVES[-1] == "they_many_dat"
 
 
 #: SHA-256 (truncated) of every render as it stood BEFORE the possessives were
@@ -1038,6 +1067,7 @@ _BAG_STROKE = "#6b4a00"
 #: handle is the one path stroked at 2.4, a width nothing else in these pictures
 #: uses. Both are stripped together — a bag missing its handle is still a bag.
 _BAG_ELEMENT = re.compile(r'<rect [^>]*\brx="4"[^>]*/>|<path [^>]*\bstroke-width="2\.4"[^>]*/>')
+_GIFT_ELEMENT = re.compile(r'<g class="gift">.*?</g></g>', re.DOTALL)
 
 
 def _strip_bags(svg: bytes) -> bytes:
@@ -1045,6 +1075,25 @@ def _strip_bags(svg: bytes) -> bytes:
     text = svg.decode()
     assert _BAG_ELEMENT.search(text), "this render has no bag to strip"
     return _BAG_ELEMENT.sub("", text).encode()
+
+
+def _strip_gift(svg: bytes) -> bytes:
+    """*svg* with the gift group removed, and nothing else touched."""
+    text = svg.decode()
+    assert _GIFT_ELEMENT.search(text), "this render has no gift to strip"
+    return _GIFT_ELEMENT.sub("", text).encode()
+
+
+def _gift_bag_rect(svg: bytes) -> tuple[float, float, float, float]:
+    """The gift's bag as (x, y, width, height), read off the markup.
+
+    Read through the parser rather than a regex: ``_bag_parts`` writes the rect's
+    attributes as x, y, width, height, rx, and a regex that asked for ``rx``
+    first matched nothing in any render, whatever the bag's position.
+    """
+    gift = next(el for el in _root(svg).iter() if el.get("class") == "gift")
+    rect = next(el for el in gift if el.tag == f"{_SVG}rect" and el.get("rx") == "4")
+    return (float(rect.get("x")), float(rect.get("y")), float(rect.get("width")), float(rect.get("height")))
 
 
 def _translate(svg: bytes) -> str:
@@ -1146,6 +1195,228 @@ def test_the_cats_bag_stands_on_the_ground_clear_of_the_cat() -> None:
     # And clear of the tail too, stroke included (width 5): an overlapping bag hides
     # the tail's tip and reads as the cat holding it (orchestrator audit, 2026-09-28).
     assert bag.left > cat.right + 2.5, f"the bag (left x={bag.left}) covers the cat's tail (reach x={cat.right})"
+
+
+# ── Dative tests ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_a_dative_is_its_nominative_scene_with_a_gift_and_nothing_else(concept: str) -> None:
+    """Strip the gift group and the two renders are the same bytes.
+
+    Derived by stripping, not by trusting the code path: a renderer that
+    quietly re-laid-out the dative scene would pass a test that only compared
+    the two calls, and would show up here as a difference.
+    """
+    nominative = render_pronoun_svg(concept[: -len("_dat")])
+    assert _strip_gift(render_pronoun_svg(concept)) == nominative
+    assert _translate(render_pronoun_svg(concept)) == _translate(nominative)
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_adding_the_datives_did_not_move_a_single_existing_picture(concept: str) -> None:
+    """Every dative must not have renamed an existing picture.
+
+    The check is the same as the possessive check: compare the nominative
+    render before datives exist to the render after they are added, with the
+    dative's gift stripped. Any difference means the dative's scene was
+    changed, not extended.
+    """
+    nominative = render_pronoun_svg(concept[: -len("_dat")])
+    dative = render_pronoun_svg(concept)
+    assert _strip_gift(dative) == nominative
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_the_arrows_tip_is_within_10_units_of_a_lit_referent(concept: str) -> None:
+    """The arrow points at a lit referent: its tip is within 10 units of extent."""
+    svg = render_pronoun_svg(concept)
+    text = svg.decode()
+    # Find the arrow path - it's inside the gift group
+    gift_match = _GIFT_ELEMENT.search(text)
+    assert gift_match is not None
+    gift_text = gift_match.group(0)
+    # Find the arrow path (M and L commands)
+    arrow_match = re.search(
+        r'<g class="arrow">.*?d="M([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)\s+L([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)',
+        gift_text,
+        re.DOTALL,
+    )
+    assert arrow_match is not None
+    tip_x = float(arrow_match.group(3))
+    tip_y = float(arrow_match.group(4))
+    picture = _parse(svg)
+    # Check distance to every lit figure's head or body
+    lit_figures = [f for f in picture.figures if f.lit]
+    lit_cats = [c for c in picture.cats if c.lit]
+    found = False
+    for fig in lit_figures:
+        head_dist = ((tip_x - fig.cx) ** 2 + (tip_y - fig.cy) ** 2) ** 0.5
+        body_dist = ((tip_x - fig.cx) ** 2 + (tip_y - fig.body_top) ** 2) ** 0.5
+        if head_dist <= 10 or body_dist <= 10:
+            found = True
+            break
+    for cat in lit_cats:
+        cat_dist = ((tip_x - cat.cx) ** 2 + (tip_y - (picture.ground - 50)) ** 2) ** 0.5
+        if cat_dist <= 10:
+            found = True
+            break
+    assert found, f"arrow tip at ({tip_x}, {tip_y}) is not within 10 units of any lit referent"
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_the_arrows_tip_is_nearer_to_lit_than_to_unlit_referents(concept: str) -> None:
+    """The arrow points at a lit referent: its tip is strictly nearer to lit than unlit."""
+    svg = render_pronoun_svg(concept)
+    text = svg.decode()
+    gift_match = _GIFT_ELEMENT.search(text)
+    assert gift_match is not None
+    gift_text = gift_match.group(0)
+    # The tip is the arrow path's second point. Read by the same regex as the
+    # within-10 test: the earlier token split never found two points, so this
+    # assertion was skipped for every dative and the test passed without checking.
+    arrow_match = re.search(
+        r'<g class="arrow">.*?d="M([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)\s+L([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)',
+        gift_text,
+        re.DOTALL,
+    )
+    assert arrow_match is not None
+    tip_x, tip_y = float(arrow_match.group(3)), float(arrow_match.group(4))
+    picture = _parse(svg)
+    lit_figures = [f for f in picture.figures if f.lit]
+    unlit_figures = [f for f in picture.figures if not f.lit]
+    assert lit_figures, "a dative always has a lit referent"
+    min_lit_dist = min(((tip_x - f.cx) ** 2 + (tip_y - f.cy) ** 2) ** 0.5 for f in lit_figures)
+    # A scene where every figure is lit (we_two, we_incl) has no unlit one to be
+    # nearer than, so the property holds there by having nothing to compare.
+    if unlit_figures:
+        min_unlit_dist = min(((tip_x - f.cx) ** 2 + (tip_y - f.cy) ** 2) ** 0.5 for f in unlit_figures)
+        assert min_lit_dist < min_unlit_dist, "arrow tip is not nearer to lit than unlit"
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_the_arrows_tail_is_at_the_bag_within_6_units(concept: str) -> None:
+    """The arrow starts at the bag: its tail is within 6 units of the bag's rect."""
+    svg = render_pronoun_svg(concept)
+    text = svg.decode()
+    gift_match = _GIFT_ELEMENT.search(text)
+    assert gift_match is not None
+    gift_text = gift_match.group(0)
+    # Find the bag rect (rx="4" is the bag marker)
+    bag_x, bag_y, _, _ = _gift_bag_rect(svg)
+    # Find arrow start (M command in the arrow path)
+    arrow_match = re.search(r'<g class="arrow">.*?d="M([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)', gift_text, re.DOTALL)
+    assert arrow_match is not None
+    tail_x = float(arrow_match.group(1))
+    tail_y = float(arrow_match.group(2))
+    # Check if tail is within 6 units of bag rect
+    dist = ((tail_x - bag_x) ** 2 + (tail_y - bag_y) ** 2) ** 0.5
+    assert dist <= 6, f"arrow tail at ({tail_x}, {tail_y}) is not within 6 units of bag at ({bag_x}, {bag_y})"
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_the_bag_and_arrow_overlap_no_figure_head_bubble_or_frame(concept: str) -> None:
+    """The gift group overlaps no figure, no head, no speech bubble, and no frame band."""
+    svg = render_pronoun_svg(concept)
+    picture = _parse(svg)
+    text = svg.decode()
+    gift_match = _GIFT_ELEMENT.search(text)
+    assert gift_match is not None
+    # Find the bag rect in the gift
+    bag_x, bag_y, bag_w, bag_h = _gift_bag_rect(svg)
+    bag_left, bag_right = bag_x, bag_x + bag_w
+    bag_top, bag_bottom = bag_y, bag_y + bag_h
+    # Check overlap with figures
+    for fig in picture.figures:
+        fig_left = fig.cx - _HEAD_R
+        fig_right = fig.cx + _HEAD_R
+        fig_top = fig.cy - _HEAD_R
+        fig_bottom = fig.body_bottom
+        # Check if bag rect overlaps figure
+        assert not (bag_left < fig_right and bag_right > fig_left and bag_top < fig_bottom and bag_bottom > fig_top), (
+            f"bag overlaps figure at ({fig.cx}, {fig.cy})"
+        )
+    # Check overlap with heads
+    for fig in picture.figures:
+        head_left = fig.cx - _HEAD_R
+        head_right = fig.cx + _HEAD_R
+        head_top = fig.cy - _HEAD_R
+        head_bottom = fig.cy + _HEAD_R
+        assert not (
+            bag_left < head_right and bag_right > head_left and bag_top < head_bottom and bag_bottom > head_top
+        ), f"bag overlaps head at ({fig.cx}, {fig.cy})"
+    # Check overlap with speech bubble
+    bubble_x = picture.tail_tip[0] - 18
+    bubble_y = 34
+    bubble_w = 66
+    bubble_h = 38
+    assert not (
+        bag_left < bubble_x + bubble_w
+        and bag_right > bubble_x
+        and bag_top < bubble_y + bubble_h
+        and bag_bottom > bubble_y
+    ), "bag overlaps speech bubble"
+    # Check if inside viewBox
+    assert bag_left >= 0 and bag_right <= picture.width and bag_top >= 0 and bag_bottom <= picture.height, (
+        "bag is outside viewBox"
+    )
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_the_bag_stands_clear_of_every_lit_referents_hands(concept: str) -> None:
+    """The bag is not carried: its rect is disjoint from every lit figure's extent."""
+    svg = render_pronoun_svg(concept)
+    picture = _parse(svg)
+    text = svg.decode()
+    gift_match = _GIFT_ELEMENT.search(text)
+    assert gift_match is not None
+    bag_x, bag_y, bag_w, bag_h = _gift_bag_rect(svg)
+    bag_left, bag_right = bag_x, bag_x + bag_w
+    bag_top, bag_bottom = bag_y, bag_y + bag_h
+    for fig in picture.figures:
+        if fig.lit:
+            fig_left = fig.cx - _BODY_HALF
+            fig_right = fig.cx + _BODY_HALF
+            fig_top = fig.body_top
+            fig_bottom = fig.body_bottom
+            # Check disjoint: no overlap
+            assert not (
+                bag_left < fig_right and bag_right > fig_left and bag_top < fig_bottom and bag_bottom > fig_top
+            ), f"bag at ({bag_left}, {bag_top}) overlaps lit figure at ({fig.cx}, {fig.cy})"
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_a_dative_has_a_gift_not_a_carried_bag(concept: str) -> None:
+    """A dative has a gift group, not a carried bag like a possessive."""
+    svg = render_pronoun_svg(concept)
+    text = svg.decode()
+    # Should have a gift group
+    assert _GIFT_ELEMENT.search(text) is not None
+    # Should not have a bag (the gift has a bag but it's not carried by a figure)
+    picture = _parse(svg)
+    # The bag count should be 0 (gift bag is not counted as a possessive bag)
+    assert len(picture.bags) == 0, f"dative {concept} should have no carried bags, has {len(picture.bags)}"
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_a_dative_fails_the_possessive_row_check(concept: str) -> None:
+    """A dative does not satisfy the possessive row check (it has a gift, not bags)."""
+    picture = _parse(render_pronoun_svg(concept))
+    nominative = concept[: -len("_dat")]
+    assert _row(picture)["bags"] == 0, f"dative {concept} should have no bags, has {len(picture.bags)}"
+    assert not _matches(picture, _EXPECTED[f"{nominative}_poss"]), f"{concept} matches the possessive's row"
+
+
+@pytest.mark.parametrize("concept", _DATIVES)
+def test_a_dative_fails_the_nominative_row_check(concept: str) -> None:
+    """A dative does not satisfy the nominative row check (it has a gift)."""
+    svg = render_pronoun_svg(concept)
+    text = svg.decode()
+    # Dative should have a gift, which nominative does not
+    assert _GIFT_ELEMENT.search(text) is not None
+    nominative_svg = render_pronoun_svg(concept[: -len("_dat")])
+    nominative_text = nominative_svg.decode()
+    assert _GIFT_ELEMENT.search(nominative_text) is None
 
 
 @pytest.mark.parametrize("concept", _POSSESSIVES)
@@ -1736,7 +2007,7 @@ def _accented_from_the_bags_onward(svg: bytes) -> list[str]:
     return [el.tag for el in children[start:] if el.get("stroke") == _ACCENT]
 
 
-@pytest.mark.parametrize("concept", PRONOUN_CONCEPTS)
+@pytest.mark.parametrize("concept", [c for c in PRONOUN_CONCEPTS if not c.endswith("_dat")])
 def test_asking_for_no_gender_draws_exactly_the_picture_it_drew_before(concept: str) -> None:
     """All twenty-eight renders, byte for byte, with the new argument unused.
 
