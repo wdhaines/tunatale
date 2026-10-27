@@ -255,6 +255,68 @@ def test_affixes_hyphens_doubling_and_clitics():
     assert choose_vowels("librug", _lex(freq={"libro": 210}, es=["libro"])) == ("librog", "unknown")
 
 
+#: The analyser's ties and nasal prefixes (tunatale-h0q3.30). Each obscure headword
+#: here really is one of Wolff's (naku 'oh my', pangus, himul ...), and each won
+#: its word before: o landed in a syllable that is not the root's last.
+_ROOT_SPLIT_LEX = {
+    "entries": {
+        "kuha": "take",
+        "naku": "oh my",
+        "duha": "two",
+        "mudu": "x",
+        "pangu": "x",
+        "kusi": "kick",
+        "pangus": "x",
+        "buhi": "alive",
+        "nimu": "x",
+        "bulag": "separate",
+        "himul": "x",
+        "lubi": "coconut",
+        "abut": "reach",
+        "ku": "I",
+        "pisti": "plague",
+    },
+    "freq": {
+        "kuha": 8364,
+        "naku": 110,
+        "duha": 14855,
+        "pangu": 244,
+        "kusi": 7,
+        "pangus": 128,
+        "buhi": 1718,
+        "nimo": 4499,
+        "bulag": 305,
+        "lubi": 265,
+        "abot": 900,
+        "ko": 90000,
+    },
+    "es": ["peste"],
+}
+
+
+@pytest.mark.parametrize(
+    ("word", "vowels"),
+    [
+        ("nakuha", "nakuha"),  # na- + kuha, not naku + -ha: fewer suffix letters wins the tie
+        ("muduha", "moduha"),  # mu- + duha; the prefix mu- is written mo-
+        ("panguha", "panguha"),  # paN- + kuha (N + k -> ng), not pangu + -ha
+        ("pangusi", "pangusi"),  # paN- + kusi, not pangus + -i
+        ("manimuhi", "manimuhi"),  # paniN- + buhi (N + b -> m), not nimu + -hi
+        ("mahimulag", "mahimulag"),  # mahiN- + bulag, not himul + -a + ug
+        ("kalubinhan", "kalubinhan"),  # ka- + lubi + -nhan
+        ("kuha", "kuha"),  # a bare headword beats ku + -ha, however common ku is
+        ("abutun", "aboton"),  # control: the root's o survives a suffix
+    ],
+)
+def test_the_root_split_puts_o_only_in_the_roots_last_syllable(word, vowels):
+    assert choose_vowels(word, _lex(**_ROOT_SPLIT_LEX)) == (vowels, "native")
+
+
+def test_a_nasal_prefix_never_restores_a_loan_look_alike():
+    # pam + (p)isti would read as Spanish peste and write paméste: a guess, so no split.
+    assert choose_vowels("pamisti", _lex(**_ROOT_SPLIT_LEX)) == ("pamisti", "unknown")
+
+
 def test_words_without_vowels_and_stray_marks():
     lex = _lex()
     assert handbook_spelling("ng", lex).text == "ng"

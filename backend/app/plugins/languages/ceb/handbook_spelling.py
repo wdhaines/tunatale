@@ -125,7 +125,7 @@ _PREFIXES = sorted(
     key=len,
     reverse=True,
 )
-_DERIV = ["anan", "hanan", "an", "han", "un", "hun", "a", "ha", "i", "hi"]
+_DERIV = ["anan", "hanan", "nhan", "an", "han", "un", "hun", "a", "ha", "i", "hi"]
 _CLITIC = ["ng", "y", "s", "g"]  # linker, existential/subject y, contracted sa / ug
 
 
@@ -260,8 +260,52 @@ def _root_ok(root: str, lex: SpellingLexicon) -> tuple[bool, bool] | None:
     return (wolff, loan) if (wolff or loan) else None
 
 
+#: Prefixes ending in Wolff's N, which assimilates to the root's first sound and
+#: replaces it (Intro §6.2: paN-, hiN-, paniN- ...): N + vowel or k -> ng, N + p or
+#: b -> m, N + t, d or s -> n. So pangusì is paN- + kusì and mahimulag is
+#: mahiN- + bulag; without this the analyser reads them as obscure roots
+#: (pangus + -i, himul + -a) and puts the o in the wrong syllable (h0q3.30).
+_NASAL_BASES = ("pa", "ma", "na", "hi", "mahi", "nahi", "pani", "mani", "nani")
+_NASAL_RESTORES = (("ng", ("k", "")), ("m", ("p", "b")), ("n", ("t", "d", "s")))
+
+
+def _root_freq(root: str, lex: SpellingLexicon) -> int:
+    """How often the corpus uses *root*, under either spelling of its last syllable.
+
+    The corpus is modern spelling, so Wolff's abut is counted as abot.
+    """
+    return max(lex.freq.get(root, 0), lex.freq.get(_last_syllable_o(root), 0))
+
+
+def _splits(b2: str) -> list[tuple[str, str, str]]:
+    """Every (prefix, root, restored consonant) split of an affix-stripped base."""
+    pres = [""]
+    for p1 in _PREFIXES:
+        if b2.startswith(p1):
+            pres.append(p1)
+            pres.extend(p1 + "|" + p2 for p2 in _PREFIXES if b2[len(p1) :].startswith(p2))
+    out = [(pre, b2[len(pre.replace("|", "")) :], "") for pre in pres]
+    for base in _NASAL_BASES:
+        for nasal, restores in _NASAL_RESTORES:
+            head = base + nasal
+            rest = b2[len(head) :]
+            if b2.startswith(head) and rest[:1] in ("a", "i", "u"):
+                out.extend((head, c + rest, c) for c in restores)
+    return out
+
+
 def _analyse(base: str, lex: SpellingLexicon):
-    """base (lowercase, no accents) -> (prefix, root, suffix, clitic, kind, doubled), or None."""
+    """base (lowercase, no accents) -> (prefix, root, suffix, clitic, kind, doubled, restored), or None.
+
+    *restored* is the consonant a nasal prefix replaced (see ``_NASAL_BASES``):
+    part of the root, absent from the written word.
+
+    Among the splits that find a root, one of Wolff's headwords beats a loan
+    sound-match, then the word itself with no affix (kuha is kuha, not ku + -ha),
+    then the longer root, then the root the corpus uses more. Length with no
+    frequency had obscure headwords win the ties: nakuha read as naku (110) + -ha, not
+    na- + kuha (8364); Muduha as mudu (0) + -ha, not mu- + duha (h0q3.30).
+    """
     best = None
     for cl in ["", *_CLITIC]:
         if cl and not base.endswith(cl):
@@ -271,13 +315,7 @@ def _analyse(base: str, lex: SpellingLexicon):
             if dv and not b1.endswith(dv):
                 continue
             b2 = b1[: len(b1) - len(dv)]
-            pres = [""]
-            for p1 in _PREFIXES:
-                if b2.startswith(p1):
-                    pres.append(p1)
-                    pres.extend(p1 + "|" + p2 for p2 in _PREFIXES if b2[len(p1) :].startswith(p2))
-            for pre in pres:
-                r = b2[len(pre.replace("|", "")) :]
+            for pre, r, restored in _splits(b2):
                 hy = ""
                 if pre and r.startswith("-"):
                     r, hy = r[1:], "-"
@@ -289,13 +327,16 @@ def _analyse(base: str, lex: SpellingLexicon):
                         doubled = True
                 if ok and cl in ("s", "g") and not ok[0]:
                     ok = None  # contracted sa / ug follows real words (kwártus), not loan look-alikes
+                if ok and restored and (ok[1] or not ok[0]):
+                    ok = None  # an assimilated split needs a native headword: a loan look-alike guesses vowels
                 if ok:
                     kind = "loan" if ok[1] else "wolff"
                     # a split whose root is one of Wolff's headwords beats a longer
                     # Spanish-only match (librung = libru + ng, not 'lebrón' + g)
-                    score = (ok[0], len(r), -len(pre), -len(dv) - len(cl))
+                    bare = not (pre or dv or cl)
+                    score = (ok[0], bare, -len(dv) - len(cl), len(r), _root_freq(r, lex), -len(pre))
                     if best is None or score > best[0]:
-                        best = (score, (pre + hy, r, dv, cl, kind, doubled))
+                        best = (score, (pre + hy, r, dv, cl, kind, doubled, restored))
     return best[1] if best else None
 
 
@@ -336,7 +377,7 @@ def choose_vowels(base: str, lex: SpellingLexicon) -> tuple[str, str]:
         if n >= 20 and n > 3 * lex.freq.get(rule, 0) and len(alts) <= 256:
             return best, "unknown-corpus"
         return rule, "unknown"
-    pre, r, dv, cl, kind, doubled = a
+    pre, r, dv, cl, kind, doubled, restored = a
     pre2, dv2 = _affix_o(pre, dv)
     if kind == "loan" and not doubled:
         loan = lex.loans[sound_key(r)]
@@ -361,7 +402,7 @@ def choose_vowels(base: str, lex: SpellingLexicon) -> tuple[str, str]:
         how = "native+doubled"
     else:
         r2, how = _last_syllable_o(r), "native"
-    return pre2 + r2 + dv2 + cl, how
+    return pre2 + r2[len(restored) :] + dv2 + cl, how
 
 
 # --- stress and glottal stop ------------------------------------------------------------------
