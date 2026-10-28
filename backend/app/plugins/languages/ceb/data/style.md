@@ -56,6 +56,10 @@ normal one; the long form belongs to writing and careful speech. In dialogue wri
 - "sad" or "pud" for "usab" (also): "Ako sad." "Maayo pud."
 - the short pronouns right after the first word of the clause: "Moadto ko", "Asa ta?",
   "Gusto ka?", "Taga-asa mo?"
+- the particles BEFORE the short pronoun, the reverse of Tagalog: "Asa man ka?", "Wala pa ko.",
+  "Mikaon na ba ka?", "Okay ra ko." (not "Asa ka man?", not "Mikaon ka na ba?"). Among the
+  particles: "na"/"pa" first, then "ra", then "man"/"ba", then the rest ("lang", "sad"/"pud").
+  A conjunction such as "kay" does not count as the first word: "Kay nagdali man ko."
 Keep the LONG form where Cebuano requires it:
 - a pronoun that IS the predicate, or the whole answer: "Ako ang mobayad." "Kinsa? — Ako."
 - a pronoun put first for emphasis: "Ako, di ko gusto."
