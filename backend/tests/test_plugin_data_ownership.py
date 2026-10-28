@@ -194,3 +194,13 @@ def test_calendar_vocabulary_lives_in_the_plugin_dir() -> None:
 def test_en_and_unknown_calendar_paths_are_none() -> None:
     assert get_calendar_path("en") is None
     assert get_calendar_path("xx") is None
+
+
+def test_ceb_style_notes_put_particles_before_short_pronouns() -> None:
+    """Cebuano's particles come before the short pronouns ("Asa man ka?"), the reverse of
+    Tagalog's "Kumain ka na ba?". Tanangkingsing (2009, §6.2) finds particle-first about 25:1;
+    the rule guards the generator against Tagalog drift. A clause-opening conjunction such as
+    "kay" is not the clause's first word, so the cluster follows the word after it."""
+    notes = get_style_notes("ceb")
+    for example in ("Asa man ka?", "Wala pa ko.", "Mikaon na ba ka?", "Kay nagdali man ko."):
+        assert example in notes
