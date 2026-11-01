@@ -437,7 +437,7 @@ def test_a_short_form_keeps_its_notes_when_the_full_form_has_none(committed):
 
 def test_a_homograph_with_no_gloss_is_not_listed(committed):
     # 'mu see ámù' lands on an entry with no senses: an empty line told nothing apart
-    for english in ("you (plural); your (one person)", "your; by you (one person)"):
+    for english in ("you (plural)", "your; by you (one person)"):
         assert not re.search(r"<b>[^<]*</b> </li>", committed.card_fields("mo", english).details)
 
 
@@ -637,7 +637,7 @@ def test_a_starred_pointer_to_a_sub_entry_reads_as_before(committed):
 def test_a_see_pointer_to_a_full_word_is_still_a_short_form(committed):
     """'ta' points at kita with 'see' too, but kita is a word said bare: ta is
     short for it, and only a starred root is where a word comes from."""
-    details = committed.card_fields("ta", "we (including you); our (including you)").details
+    details = committed.card_fields("ta", "we (including you)").details
     assert "Short form of <b>kitá</b>" in details
     assert "From the root <b>kitá</b>" not in details
 

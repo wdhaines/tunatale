@@ -186,6 +186,22 @@ class PlannerExample:
     story_guidance: str
 
 
+@dataclass(frozen=True)
+class ShortFormPair:
+    """A short word and its long partner (tunatale-0rlg).
+
+    ``shares_card``: the two are interchangeable and one card holds both. Otherwise
+    the short form has its own grammar and its own card, and the keys say which
+    sense of each word the pair is (``mo`` keyed ``genitive`` shortens ``nimo``).
+    """
+
+    short: str
+    long: str
+    shares_card: bool
+    short_key: str = ""
+    long_key: str = ""
+
+
 @dataclass
 class LanguageConfig:
     """Per-language wiring.
@@ -280,7 +296,10 @@ class LanguageConfig:
     # Cebuano fills them from Wolff's dictionary, tunatale-h0q3.2). An empty
     # mapping means the dictionary does not settle the word, and the card is
     # minted without them. ``None`` (the default): the language has no dictionary.
-    dictionary_fields_fn: Callable[[str, str], Mapping[str, str]] | None = None
+    dictionary_fields_fn: Callable[[str, str, str], Mapping[str, str]] | None = None
+    # A word's short/long pairs (tunatale-0rlg): which comma headwords are one word
+    # (``shares_card``), and which second senses a Short form line tells apart.
+    short_form_pairs_fn: Callable[[], tuple[ShortFormPair, ...]] | None = None
     # Function giving a word's short dictionary gloss, "" when the dictionary does
     # not settle it: a new card's English when the model cannot gloss it
     # (tunatale-iiwm.5). ``None`` (the default): the language has no dictionary.
@@ -778,15 +797,21 @@ def get_vocab_notetype(code: str) -> VocabNotetype | None:
     return _facet(code, "vocab_notetype", None)
 
 
-def dictionary_note_fields(code: str, word: str, english: str) -> dict[str, str]:
-    """The dictionary fields a minted *code* card for *word* / *english* carries.
+def dictionary_note_fields(code: str, word: str, english: str, disambig: str = "") -> dict[str, str]:
+    """The dictionary fields a minted *code* card for *word* / *english* / *disambig* carries.
 
     Keyed by Anki note field name. Empty for a language with no dictionary and
     for a word its dictionary does not settle — a card is then minted without
     them, never with a guess.
     """
     fn = _facet(code, "dictionary_fields_fn", None)
-    return dict(fn(word, english)) if fn is not None else {}
+    return dict(fn(word, english, disambig)) if fn is not None else {}
+
+
+def short_form_pairs(code: str) -> tuple[ShortFormPair, ...]:
+    """*code*'s short/long word pairs; ``()`` for a language that lists none."""
+    fn = _facet(code, "short_form_pairs_fn", None)
+    return fn() if fn is not None else ()
 
 
 def dictionary_gloss(code: str, word: str) -> str:

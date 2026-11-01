@@ -92,3 +92,26 @@ def test_refresh_replaces_layers_that_differ_and_keeps_other_extras(db_path, cap
         BackField("Note", "n", "details"),
         *dictionary_extras("ceb", "tan-aw", "to look"),
     )
+
+
+def test_a_keyed_card_gets_the_short_form_of_its_own_sense(tmp_path, capsys):
+    """tunatale-0rlg: the owner mo says nímo, the subject mo says kamó. Written the
+    way a learner 2 card was before the field: extras empty, key set."""
+    db_path = tmp_path / "ceb.db"
+    db = SRSDatabase(str(db_path))
+    db.add_collocation(
+        SyntacticUnit(
+            text="mo",
+            translation="your; by you (one person)",
+            word_count=1,
+            difficulty=1,
+            source="user",
+            disambig_key="genitive",
+        ),
+        language_code="ceb",
+    )
+    row = db.list_vocab_for_extras("ceb")[0]
+    db.set_extras(row.id, ())
+    assert main(["--db", str(db_path), "--language", "ceb", "--apply"]) == 0
+    extras = db.list_vocab_for_extras("ceb")[0].extras
+    assert BackField("Short form", "short for nímo", "headword") in extras

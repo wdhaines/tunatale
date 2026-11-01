@@ -887,18 +887,19 @@ class TestCuratedGlosses:
         [
             ("kami", "we (not including you)"),
             ("mi", "we (not including you)"),
-            ("ta", "we (including you); our (including you)"),
-            ("ko", "I; my, by me"),
+            ("ta", "we (including you)"),
+            ("ko", "I"),
             ("ka", "you (one person)"),
-            ("mo", "you (plural); your (one person)"),
+            ("mo", "you (plural)"),
             ("nimo", "your; by you (one person)"),
             ("Kami", "we (not including you)"),
             ("ato", "our, ours (including you); by us"),
             ("imo", "your, yours (one person); by you"),
             ("inyo", "your, yours (plural); by you"),
             ("ila", "their, theirs; by them"),
-            # ako's own card shows the bare word, so it names both senses (R2).
-            ("ako", "I; my, mine"),
+            # Each card names its own sense only (tunatale-0rlg): the Short form
+            # line and the Spelling's marks tell the fronts apart, not the gloss.
+            ("ako", "I"),
         ],
     )
     def test_cebuano_words_have_their_gloss(self, word, gloss) -> None:
@@ -966,10 +967,10 @@ class TestFrames:
     def test_any_other_key_is_the_words_own_sense(self, disambig) -> None:
         """Only a listed key changes the sense. A word class the deck put in the
         field, or nothing, draws the word's own picture."""
-        picture = pronoun_picture("ko", "ceb", "I; my, by me", disambig)
+        picture = pronoun_picture("ko", "ceb", "I", disambig)
         assert picture is not None
         assert picture.svg == render_pronoun_svg("i", frame=_SUBJECT)
-        assert pronoun_gloss("ko", "ceb", disambig) == "I; my, by me"
+        assert pronoun_gloss("ko", "ceb", disambig) == "I"
 
     def test_the_key_is_stripped_like_the_word(self) -> None:
         assert pronoun_picture("Mo ", "ceb", "your", " genitive ") == pronoun_picture("mo", "ceb", "your", "genitive")

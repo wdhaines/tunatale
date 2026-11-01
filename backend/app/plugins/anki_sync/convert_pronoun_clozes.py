@@ -11,7 +11,7 @@ so another language opts in by data.
 
     retire   capture the cloze's history, grave its note, delete the TT row
     ...      sync: the grave reaches AnkiWeb
-    add      the new subject and owner cards, the both-senses glosses
+    add      the new subject and owner cards, each subject card's gloss
     ...      sync (twice: the pre-stage draws, then the mint)
     inherit  the captured history onto the minted subject card
     ...      sync: the history reaches Anki
@@ -119,9 +119,9 @@ def gloss_updates(tt_conn: sqlite3.Connection, language_code: str) -> list[tuple
     """``(id, text, old, new)`` for each subject card of a word with a second sense
     whose gloss is not the table's.
 
-    Only those words: their subject gloss now names both senses, because the
-    subject card's recognition side shows the bare word (the owner's R2). Any
-    other pronoun's gloss is left as the owner set it.
+    Only those words: their subject gloss once named both senses (the owner's R2),
+    and now names the card's own (tunatale-0rlg). Any other pronoun's gloss is left
+    as the owner set it.
     """
     updates = []
     for text in sorted({text for text, _ in load_senses(language_code)}):

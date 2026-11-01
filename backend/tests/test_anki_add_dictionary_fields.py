@@ -26,7 +26,10 @@ from app.srs.anki_mirror.protobuf_wire import find_len_field
 MID = 1790361065576
 OTHER_MID = 1790000000001
 NOW_MS = 1_800_000_000_000
-BASE = dataclasses.replace(CEBUANO_VOCAB, dictionary=False)
+# The notetype as this migration leaves it: the Short form field is the later
+# migration's (add_short_form_field, tunatale-0rlg).
+LAYERED = dataclasses.replace(CEBUANO_VOCAB, short_form=False)
+BASE = dataclasses.replace(LAYERED, dictionary=False)
 
 # As read from the live notetype (2026-10-18).
 LIVE_RECOGNITION_QFMT = '{{Audio}}<div class="cebuano">{{Cebuano}}</div>'
@@ -99,7 +102,7 @@ def _css(conn: sqlite3.Connection, mid: int) -> str:
 def _fresh() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.executescript(_SCHEMA)
-    create_vocab_notetype(conn, CEBUANO_VOCAB, MID, 50)
+    create_vocab_notetype(conn, LAYERED, MID, 50)
     return conn
 
 
@@ -111,21 +114,21 @@ def test_the_base_notetype_matches_the_live_one():
 class TestAddDictionaryFields:
     def test_appends_the_five_fields_after_disambigkey(self):
         conn = _make_conn()
-        assert add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS) == "created"
+        assert add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS) == "created"
         names = [r[0] for r in conn.execute("SELECT name FROM fields WHERE ntid=? ORDER BY ord", (MID,))]
-        assert tuple(names) == CEBUANO_VOCAB.field_names
+        assert tuple(names) == LAYERED.field_names
         assert tuple(names[-5:]) == DICTIONARY_FIELDS
 
     def test_templates_and_css_end_up_exactly_as_a_new_notetype_has_them(self):
         conn = _make_conn()
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         fresh = _fresh()
         assert _templates(conn, MID) == _templates(fresh, MID)
         assert _css(conn, MID) == _css(fresh, MID)
 
     def test_every_note_gains_five_empty_trailing_fields_and_keeps_its_own(self):
         conn = _make_conn()
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         for row in conn.execute("SELECT id, flds, sfld FROM notes WHERE mid=?", (MID,)):
             i = row["id"] - 1000
             assert row["flds"].split("\x1f") == [f"pulong{i}", f"word {i}", "", "", "", "", "", "", "", "", "", ""]
@@ -133,14 +136,14 @@ class TestAddDictionaryFields:
 
     def test_marks_touched_notes_dirty_and_leaves_others_alone(self):
         conn = _make_conn()
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         touched = conn.execute("SELECT DISTINCT usn, mod FROM notes WHERE mid=?", (MID,)).fetchall()
         assert [tuple(r) for r in touched] == [(-1, NOW_MS // 1000)]
         assert tuple(conn.execute("SELECT usn, mod FROM notes WHERE id=9000").fetchone()) == (7, 100)
 
     def test_bumps_templates_notetype_and_col_schema_but_not_col_usn(self):
         conn = _make_conn()
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         tmpl = conn.execute("SELECT DISTINCT mtime_secs, usn FROM templates WHERE ntid=?", (MID,)).fetchall()
         assert [tuple(r) for r in tmpl] == [(NOW_MS // 1000, -1)]
         assert tuple(conn.execute("SELECT mtime_secs, usn FROM notetypes WHERE id=?", (MID,)).fetchone()) == (
@@ -153,7 +156,7 @@ class TestAddDictionaryFields:
     def test_other_notetypes_do_not_move(self):
         conn = _make_conn()
         before = (_templates(conn, OTHER_MID), _css(conn, OTHER_MID))
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         assert (_templates(conn, OTHER_MID), _css(conn, OTHER_MID)) == before
         assert conn.execute("SELECT COUNT(*) FROM fields WHERE ntid=?", (OTHER_MID,)).fetchone()[0] == 7
         assert tuple(conn.execute("SELECT mtime_secs, usn FROM notetypes WHERE id=?", (OTHER_MID,)).fetchone()) == (
@@ -164,20 +167,20 @@ class TestAddDictionaryFields:
     def test_touches_no_card_rows(self):
         conn = _make_conn()
         before = [tuple(r) for r in conn.execute("SELECT * FROM cards ORDER BY id")]
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         assert [tuple(r) for r in conn.execute("SELECT * FROM cards ORDER BY id")] == before
 
     def test_idempotent(self):
         conn = _make_conn()
-        add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
-        assert add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS + 1000) == "exists"
+        add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
+        assert add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS + 1000) == "exists"
         assert conn.execute("SELECT scm FROM col").fetchone()[0] == NOW_MS
         assert all(r[0].count("\x1f") == 11 for r in conn.execute("SELECT flds FROM notes WHERE mid=?", (MID,)))
 
     def test_raises_for_a_missing_notetype(self):
         conn = _make_conn()
         with pytest.raises(ValueError, match="not found"):
-            add_dictionary_fields(conn, dataclasses.replace(CEBUANO_VOCAB, name="Nope"), now_ms=NOW_MS)
+            add_dictionary_fields(conn, dataclasses.replace(LAYERED, name="Nope"), now_ms=NOW_MS)
 
     def test_raises_for_a_notetype_without_layers(self):
         with pytest.raises(ValueError, match="no dictionary layers"):
@@ -189,7 +192,7 @@ class TestAddDictionaryFields:
         conn = _make_conn()
         conn.execute("UPDATE fields SET name = 'Gloss' WHERE ntid=? AND ord=1", (MID,))
         with pytest.raises(ValueError, match="roster"):
-            add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+            add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         assert conn.execute("SELECT scm FROM col").fetchone()[0] == 1000
 
     def test_refuses_a_template_without_the_word_and_changes_nothing(self):
@@ -201,7 +204,7 @@ class TestAddDictionaryFields:
             (build_template_config("{{Cebuano}}", "{{FrontSide}}"), MID),
         )
         with pytest.raises(ValueError, match="word"):
-            add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+            add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
         assert conn.execute("SELECT COUNT(*) FROM fields WHERE ntid=?", (MID,)).fetchone()[0] == 7
         assert conn.execute("SELECT DISTINCT usn FROM notes WHERE mid=?", (MID,)).fetchall()[0][0] == 7
 
@@ -209,11 +212,11 @@ class TestAddDictionaryFields:
         conn = _make_conn()
         conn.execute("UPDATE templates SET config = X'' WHERE ntid=? AND ord=1", (MID,))
         with pytest.raises(ValueError, match="template text"):
-            add_dictionary_fields(conn, CEBUANO_VOCAB, now_ms=NOW_MS)
+            add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS)
 
     def test_defaults_now_ms_to_wall_clock(self):
         conn = _make_conn()
-        add_dictionary_fields(conn, CEBUANO_VOCAB)
+        add_dictionary_fields(conn, LAYERED)
         assert conn.execute("SELECT scm FROM col").fetchone()[0] > 1_700_000_000_000
 
 
@@ -241,6 +244,13 @@ class TestRun:
         assert _field_count(db_path) == 12
         out = capsys.readouterr().out
         assert "Upload to AnkiWeb" in out and "normalize_usns" in out and "--bootstrap" in out
+
+    def test_a_notetype_already_past_this_migration_reports_exists(self, tmp_path):
+        """The Short form field came later: this migration must not read it as a roster it cannot extend."""
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(_SCHEMA)
+        create_vocab_notetype(conn, CEBUANO_VOCAB, MID, 50)
+        assert add_dictionary_fields(conn, LAYERED, now_ms=NOW_MS) == "exists"
 
     def test_second_run_reports_exists(self, tmp_path, capsys):
         db_path = _build_collection_file(tmp_path)

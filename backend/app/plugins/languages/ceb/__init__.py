@@ -4,12 +4,13 @@ from functools import cache, lru_cache
 from pathlib import Path
 
 from app.cards.field_map import BackFieldSpec, NotetypeProfile
-from app.cards.vocab_notetype import CEBUANO_VOCAB
+from app.cards.vocab_notetype import CEBUANO_VOCAB, SHORT_FORM_FIELD
 from app.languages import LanguageConfig, register
 from app.models.language import NARRATOR_VOICE, Language
 from app.plugins.languages.ceb.a1_morphology import CEBUANO_A1_MORPHOLOGY
 from app.plugins.languages.ceb.phoneme_plan import create_phoneme_planner
 from app.plugins.languages.ceb.preprocessor import CebuanoPreprocessor
+from app.plugins.languages.ceb.short_forms import short_form_line, short_form_pairs
 from app.plugins.languages.ceb.syllabify import syllabify_cebuano_word
 from app.plugins.languages.ceb.take_check import take_check_config
 
@@ -29,12 +30,14 @@ def _spelling_variants() -> dict[str, str]:
     return pairs
 
 
-def _wolff_note_fields(word: str, english: str) -> dict[str, str]:
-    """Wolff's layers for a card, by note field name; ``{}`` when the entry is not settled."""
+def _wolff_note_fields(word: str, english: str, disambig: str = "") -> dict[str, str]:
+    """Wolff's layers for a card, by note field name; ``{}`` when neither they nor a short form apply."""
     from app.plugins.languages.ceb.wolff_cards import Miss, load_lexicon
 
     fields = load_lexicon().card_fields(word, english)
-    return {} if isinstance(fields, Miss) else fields.as_note_fields()
+    layers = {} if isinstance(fields, Miss) else fields.as_note_fields()
+    line = short_form_line(word, english, disambig)
+    return {**layers, SHORT_FORM_FIELD: line} if line else layers
 
 
 @lru_cache(maxsize=20_000)
@@ -159,6 +162,7 @@ register(
                 # on the back, the rest behind Details, the entry innermost.
                 back_fields=(
                     BackFieldSpec("Spelling", "Spelling", "headword"),
+                    BackFieldSpec(SHORT_FORM_FIELD, SHORT_FORM_FIELD, "headword"),
                     BackFieldSpec("Meaning", "Meaning", "summary"),
                     BackFieldSpec("Verb", "Verb", "summary"),
                     BackFieldSpec("Details", "Details", "details"),
@@ -169,6 +173,7 @@ register(
         # The same fields on a card TT mints, filled from Wolff when the card's
         # English settles the entry.
         dictionary_fields_fn=_wolff_note_fields,
+        short_form_pairs_fn=short_form_pairs,
         # A new card's English when the model cannot gloss it (offline, tunatale-iiwm.5).
         dictionary_gloss_fn=_wolff_gloss,
         # A lesson word glossed by its parts, for the reader's popup (tunatale-h0q3.26).
@@ -196,9 +201,9 @@ register(
         # per-word map would wrap every word in <phoneme> and change audio
         # nobody has listened to.
         ipa_for_drill_phrases=True,
-        # The short form goes on the card front, 'dili, di' (tunatale-0iri, the
-        # owner 2026-10-16: short forms "seem quite common"; Wolff course 3 F 1:
-        # most common in rapid speech). Only a listed pair is read as one word.
+        # A comma front reads as one word only for a listed pair (tunatale-0iri).
+        # Since tunatale-0rlg such a card's front is the long form and the short
+        # form has its own line, but a deck may still hold a comma front.
         variant_separator=",",
         variant_pairs_fn=_spelling_variants,
         # Enunciated lines carry the whole line's reading (tunatale-tyfk, the

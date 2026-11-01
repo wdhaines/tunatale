@@ -214,11 +214,43 @@ def load_senses(language_code: str) -> dict[tuple[str, str], tuple[str, str, str
 def is_second_sense(text: str, language_code: str, disambig: str) -> bool:
     """True if the card ``(text, disambig)`` is a word's second sense (:func:`load_senses`).
 
-    Its recognition front is the same bare word as the first sense's, whose gloss
-    names both senses, so the second note's recognition card is a duplicate and
-    starts suspended (the owner's R2, tunatale-ocv3).
+    Any other key, empty or a word class a deck put in the field, is the word's
+    own sense.
     """
     return (text.strip().casefold(), disambig.strip()) in load_senses(language_code)
+
+
+def load_short_forms(language_code: str) -> tuple[tuple[str, str, str, str], ...]:
+    """The table's short pronouns: ``(short, short_key, long, long_key)`` (tunatale-0rlg).
+
+    A clitic is a card of its own, keyed by sense where a word has two: ``mo``
+    shortens ``kamo``, and ``mo`` keyed ``genitive`` shortens ``nimo``.
+    """
+    return tuple(
+        (str(row["short"]), str(row.get("short_key", "")), str(row["long"]), str(row.get("long_key", "")))
+        for row in _load_data(language_code).get("short_forms", [])
+    )
+
+
+def has_short_form(text: str, language_code: str, disambig: str) -> bool:
+    """True if the sense ``(text, disambig)`` is one side of a short pronoun pair."""
+    card = (text.strip().casefold(), disambig.strip())
+    return any(
+        card in ((short, short_key), (long, long_key))
+        for short, short_key, long, long_key in load_short_forms(language_code)
+    )
+
+
+def second_sense_starts_suspended(text: str, language_code: str, disambig: str) -> bool:
+    """True if a new card ``(text, disambig)`` starts with its recognition suspended.
+
+    A second sense's recognition front is the first sense's bare word, so it would
+    be a duplicate (the owner's R2, tunatale-ocv3), unless a Short form line tells
+    the two fronts apart (tunatale-0rlg): owner ``mo`` reads "short for nímo", the
+    subject "short for kamó". ``ako`` keyed ``possessive`` has no short form, so it
+    stays suspended.
+    """
+    return is_second_sense(text, language_code, disambig) and not has_short_form(text, language_code, disambig)
 
 
 def has_second_sense(text: str, language_code: str) -> bool:

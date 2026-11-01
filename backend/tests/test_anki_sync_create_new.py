@@ -2121,7 +2121,7 @@ class TestCreateNewDrawsNumbers:
         from app.cards.pronoun_picture import pronoun_picture
 
         db = _make_db()
-        for key, gloss in (("", "you (plural); your (one person)"), ("genitive", "your; by you (one person)")):
+        for key, gloss in (("", "you (plural)"), ("genitive", "your; by you (one person)")):
             unit = SyntacticUnit(
                 text="mo", translation=gloss, word_count=1, difficulty=1, source="user", disambig_key=key
             )
@@ -2412,19 +2412,39 @@ def _states(db: SRSDatabase, coll_id: int) -> dict[str, str]:
 
 
 class TestSecondSenseMintsSuspended:
+    """A second sense whose front is the first sense's bare word starts with its
+    recognition suspended (tunatale-ocv3). One whose Short form line tells the two
+    fronts apart does not (tunatale-0rlg): owner ``mo`` says "short for nímo" where
+    the subject says "short for kamó"."""
+
     def test_the_second_senses_recognition_starts_suspended(self):
         db = _make_db()
-        subject = _add_sense(db, "ko", "I; my, by me", "")
-        owner = _add_sense(db, "ko", "my; by me", "genitive")
+        subject = _add_sense(db, "ako", "I", "")
+        owner = _add_sense(db, "ako", "my, mine; by me", "possessive")
 
         assert _states(db, owner) == {"recognition": "suspended", "production": "new"}
         assert _states(db, subject) == {"recognition": "new", "production": "new"}  # the control
+
+    @pytest.mark.parametrize(
+        ("word", "gloss", "key"),
+        [
+            ("ko", "my; by me", "genitive"),
+            ("mo", "your; by you (one person)", "genitive"),
+            ("ta", "our (including you); by us", "genitive"),
+            ("kita", "we (including you)", "pronoun"),
+        ],
+    )
+    def test_a_second_sense_its_short_form_line_tells_apart_is_not_suspended(self, word, gloss, key):
+        db = _make_db()
+        owner = _add_sense(db, word, gloss, key)
+
+        assert _states(db, owner) == {"recognition": "new", "production": "new"}
 
     def test_a_key_the_table_does_not_list_is_an_ordinary_card(self):
         """Read off the table: a word class in DisambigKey, or a language with no
         senses, is not a second sense."""
         db = _make_db()
-        noun = _add_sense(db, "ko", "a thing", "noun")
+        noun = _add_sense(db, "ako", "a thing", "noun")
         norwegian = _add_sense(db, "løfte", "a promise", "noun", language_code="no")
 
         assert _states(db, noun) == {"recognition": "new", "production": "new"}
@@ -2433,10 +2453,10 @@ class TestSecondSenseMintsSuspended:
     def test_adding_it_again_leaves_an_unsuspended_card_alone(self):
         """Only a new row starts suspended: the owner may un-suspend it."""
         db = _make_db()
-        owner = _add_sense(db, "ta", "our (including you); by us", "genitive")
+        owner = _add_sense(db, "ako", "my, mine; by me", "possessive")
         db.set_suspended(owner, False, Direction.RECOGNITION)
 
-        _add_sense(db, "ta", "our (including you); by us", "genitive")
+        _add_sense(db, "ako", "my, mine; by me", "possessive")
 
         assert _states(db, owner)["recognition"] == "new"
 
@@ -2444,8 +2464,8 @@ class TestSecondSenseMintsSuspended:
         """Through the real writer: sync_create_new mints both notes, and the
         sync_push that run_full_sync runs next carries ``queue = -1``."""
         db = _make_db()
-        subject = _add_sense(db, "mo", "you (plural); your (one person)", "")
-        owner = _add_sense(db, "mo", "your; by you (one person)", "genitive")
+        subject = _add_sense(db, "ako", "I", "")
+        owner = _add_sense(db, "ako", "my, mine; by me", "possessive")
         conn = _make_cebuano_collection_conn()
         sync = AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb")
 
@@ -2479,7 +2499,7 @@ def _make_cebuano_collection_conn(*, dictionary: bool = True):
 
     from app.cards.vocab_notetype import CEBUANO_VOCAB
 
-    vocab = CEBUANO_VOCAB if dictionary else dataclasses.replace(CEBUANO_VOCAB, dictionary=False)
+    vocab = CEBUANO_VOCAB if dictionary else dataclasses.replace(CEBUANO_VOCAB, dictionary=False, short_form=False)
     conn = _make_dual_collection_conn()
     conn.execute("INSERT INTO decks VALUES (?, ?, 0, 0, x'')", (_CEB_DECK_ID, _CEB_DECK))
     conn.execute("INSERT INTO notetypes VALUES (?, ?, 0, 0, x'')", (_CEB_VOCAB_MID, vocab.name))
@@ -2519,6 +2539,33 @@ class TestSyncCreateNewCebuanoDictionary:
         expected = dictionary_note_fields("ceb", "maayo", "good")
         assert {k: fields[k] for k in expected} == expected
         assert fields["Details"] and fields["Dictionary entry"]
+
+    @pytest.mark.parametrize(
+        ("text", "gloss", "key", "line"),
+        [
+            ("mo", "your; by you (one person)", "genitive", "short for nímo"),
+            ("kamo", "you (plural)", "", "short form: mo"),
+            ("dili", "no; not", "", "short form: dì"),
+        ],
+    )
+    async def test_a_minted_note_names_its_short_form(self, text, gloss, key, line):
+        """tunatale-0rlg: the Short form line is written at mint, by sense."""
+        db = _make_db()
+        _add_sense(db, text, gloss, key)
+        conn = _make_cebuano_collection_conn()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb").sync_create_new(
+            deck_name=_CEB_DECK, model_name="Cebuano Vocabulary"
+        )
+        assert _ceb_note_fields(conn)["Short form"] == line
+
+    async def test_a_note_with_no_short_form_leaves_the_field_empty(self):
+        db = _make_db()
+        _add_item(db, "maayo", "good")
+        conn = _make_cebuano_collection_conn()
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb").sync_create_new(
+            deck_name=_CEB_DECK, model_name="Cebuano Vocabulary"
+        )
+        assert _ceb_note_fields(conn)["Short form"] == ""
 
     async def test_a_word_wolff_does_not_settle_is_minted_without_layers(self):
         db = _make_db()

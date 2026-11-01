@@ -13,8 +13,8 @@ What these tests are about:
   row still exists: the mint would find the old note by guid and link to it.
 - History is captured from the cloze's production direction before the delete,
   and written only onto a production direction that already has its Anki card.
-- The ta gloss is brought to the table's both-senses gloss (the owner's R2) and
-  flagged dirty so the push carries it.
+- A subject card's gloss is brought to the table's, which names that card's own
+  sense (tunatale-0rlg), and flagged dirty so the push carries it.
 
 The graves, the TT delete and the inheritance write are the number migration's
 own primitives (``migrate_number_clozes``), tested there.
@@ -116,7 +116,7 @@ class TestPlanNewCards:
             conn.commit()
             units = plan_new_cards(conn, LANG, converted=["ka", "ko"])
         assert {(u.text, u.disambig_key, u.translation) for u in units} == {
-            ("ko", "", "I; my, by me"),
+            ("ko", "", "I"),
             ("ka", "", "you (one person)"),
             ("ko", "genitive", "my; by me"),
             ("mo", "genitive", "your; by you (one person)"),
@@ -158,15 +158,13 @@ class TestPlanNewCards:
 
 
 class TestGlossUpdates:
-    def test_a_subject_card_with_a_second_sense_takes_the_both_senses_gloss(self) -> None:
+    def test_a_subject_card_with_a_second_sense_takes_its_own_senses_gloss(self) -> None:
+        """tunatale-0rlg: the both-senses gloss R2 wrote is brought back to the
+        card's own sense; ta and ako already carry theirs (the control)."""
         db, ids = _deck()
-        ta = db.get_collocation_id_by_guid(compute_guid("ta", LANG, ""))
-        ako = db.get_collocation_id_by_guid(compute_guid("ako", LANG, ""))
+        mo = db.get_collocation_id_by_guid(compute_guid("mo", LANG, ""))
         with db._get_conn() as conn:
-            assert gloss_updates(conn, LANG) == [
-                (ako, "ako", "I", "I; my, mine"),
-                (ta, "ta", "we (including you)", "we (including you); our (including you)"),
-            ]
+            assert gloss_updates(conn, LANG) == [(mo, "mo", "you (plural); your (one person)", "you (plural)")]
 
     def test_a_word_without_a_second_sense_is_left_to_the_owner(self) -> None:
         """ikaw's gloss is the owner's business: only the R2 words are brought in line."""

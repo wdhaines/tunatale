@@ -30,16 +30,17 @@ def _note(**values: str) -> AnkiNote:
     )
 
 
-def test_the_profile_tiers_the_five_fields():
+def test_the_profile_tiers_the_fields():
     profile = get_profile(CEBUANO_VOCAB.name, "ceb")
     assert [(b.field_name, b.label, b.tier) for b in profile.back_fields] == [
         ("Spelling", "Spelling", "headword"),
+        ("Short form", "Short form", "headword"),
         ("Meaning", "Meaning", "summary"),
         ("Verb", "Verb", "summary"),
         ("Details", "Details", "details"),
         ("Dictionary entry", "Dictionary entry", "deep"),
     ]
-    assert {b.field_name for b in profile.back_fields} == set(DICTIONARY_FIELDS)
+    assert {b.field_name for b in profile.back_fields} == {*DICTIONARY_FIELDS, "Short form"}
 
 
 def test_a_filled_note_pulls_into_tiered_extras():

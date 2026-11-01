@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         labels = {spec.label for spec in get_profile(vocab.name, args.language).back_fields}
         plan, refresh, misses, already = [], [], [], 0
         for row in rows:
-            layers = dictionary_extras(args.language, row.text, row.translation)
+            layers = dictionary_extras(args.language, row.text, row.translation, row.disambig_key)
             others = tuple(e for e in row.extras if e.label not in labels)
             if not layers:
                 misses.append(row)

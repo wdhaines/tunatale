@@ -117,3 +117,29 @@ class TestAtCreation:
         kept = (BackField("Spelling", "edited", "headword"),)
         db.set_extras(row.id, kept)
         assert self._add(db, "lami", "tasty").extras == kept
+
+
+def test_the_extras_name_the_short_form_of_the_cards_own_sense():
+    """tunatale-0rlg: the same headword tier as Spelling, and the sense picks the long word."""
+    subject = dictionary_extras("ceb", "mo", "you (plural)")
+    owner = dictionary_extras("ceb", "mo", "your; by you (one person)", "genitive")
+    assert BackField("Short form", "short for kamó", "headword") in subject
+    assert BackField("Short form", "short for nímo", "headword") in owner
+
+
+def test_a_card_added_with_a_key_gets_its_own_senses_extras():
+    db = SRSDatabase(":memory:")
+    db.add_collocation(
+        SyntacticUnit(
+            text="mo",
+            translation="your; by you (one person)",
+            word_count=1,
+            difficulty=1,
+            source="user",
+            disambig_key="genitive",
+        ),
+        language_code="ceb",
+    )
+    row = db.list_vocab_for_extras("ceb")[0]
+    assert row.disambig_key == "genitive"
+    assert BackField("Short form", "short for nímo", "headword") in row.extras
