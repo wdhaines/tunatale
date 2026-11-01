@@ -9,6 +9,7 @@ overwritten: the owner may have corrected it by hand.
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from pathlib import Path
 
@@ -237,3 +238,44 @@ class TestRefresh:
         out = capsys.readouterr().out
         assert result.updates == 1
         assert "tan-aw\tSpelling: tán-aw (sic) -> " in out
+
+
+def _note(conn: sqlite3.Connection, nid: int, **values: str) -> None:
+    conn.execute(
+        "INSERT INTO notes VALUES (?, ?, ?, 100, 7, '', ?, ?, 0, 0, '')",
+        (nid, f"g{nid}", MID, _flds(**values), f"w{nid}"),
+    )
+
+
+class TestShortForm:
+    """tunatale-0rlg: the sense is the note's DisambigKey, and the line is written like any layer."""
+
+    def test_the_note_key_picks_the_long_word(self):
+        conn = _make_conn()
+        _note(conn, 10, Cebuano="mo", English="you (plural)")
+        _note(conn, 11, Cebuano="mo", English="your; by you (one person)", DisambigKey="genitive")
+        by_id = {u.note_id: u for u in plan_backfill(conn, CEBUANO_VOCAB, "ceb").updates}
+        assert by_id[10].fields["Short form"] == "short for kamó"
+        assert by_id[11].fields["Short form"] == "short for nímo"
+
+    def test_a_word_wolff_cannot_settle_still_gets_its_line(self):
+        """The line never waits on him: this note would otherwise be a Miss."""
+        conn = _make_conn()
+        _note(conn, 10, Cebuano="inday", English="zzz no such sense")
+        update = next(u for u in plan_backfill(conn, CEBUANO_VOCAB, "ceb").updates if u.note_id == 10)
+        assert update.fields["Short form"] == "short form: day"
+
+    def test_a_notetype_before_the_field_is_filled_without_it(self):
+        """Backfill can run between the two migrations: a field the notetype lacks is not written."""
+        before = dataclasses.replace(CEBUANO_VOCAB, short_form=False)
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(_SCHEMA)
+        conn.execute("INSERT INTO col VALUES (1, 0, 100, 1000, 18, 0, 5, 0, '{}', '{}', '{}', '{}', '{}')")
+        create_vocab_notetype(conn, before, MID, 50)
+        flds = "\x1f".join(("dili", "no; not", *[""] * 10))
+        conn.execute("INSERT INTO notes VALUES (1, 'g1', ?, 100, 7, '', ?, 'dili', 0, 0, '')", (MID, flds))
+        plan = plan_backfill(conn, before, "ceb")
+        assert "Short form" not in plan.updates[0].fields
+        assert plan.updates[0].fields["Spelling"]
+        apply_backfill(conn, plan, now_ms=NOW_MS)

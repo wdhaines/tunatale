@@ -96,6 +96,7 @@ def test_cebuano_carries_the_dictionary_fields_after_the_shared_roster():
         "Note",
         "DisambigKey",
         *DICTIONARY_FIELDS,
+        "Short form",
     )
 
 
@@ -115,13 +116,13 @@ def test_the_ceb_card_renderer_writes_exactly_the_notetypes_fields():
 
 
 def test_spelling_sits_under_the_word_on_the_recognition_front_and_the_production_back():
-    from app.cards.vocab_notetype import CEBUANO_VOCAB, SPELLING_BLOCK
+    from app.cards.vocab_notetype import CEBUANO_VOCAB, SHORT_FORM_BLOCK, SPELLING_BLOCK
 
     conn = _make_notetype_conn()
     create_vocab_notetype(conn, CEBUANO_VOCAB, mid=1, now_ts=1)
     (rq, ra), (pq, pa) = _templates(conn, 1)
     word = '<div class="cebuano">{{Cebuano}}</div>'
-    assert rq == "{{Audio}}" + word + SPELLING_BLOCK
+    assert rq == "{{Audio}}" + word + SPELLING_BLOCK + SHORT_FORM_BLOCK
     assert word + SPELLING_BLOCK in pa
     # The recognition back repeats its front through {{FrontSide}}, and the
     # production front is the picture: neither gets a second copy.
@@ -170,7 +171,7 @@ def test_dictionary_css_is_added_only_with_the_layers():
     create_vocab_notetype(conn, CEBUANO_VOCAB, mid=1, now_ts=1)
     create_vocab_notetype(conn, NORWEGIAN_VOCAB, mid=2, now_ts=1)
     css = {r[0]: find_len_field(bytes(r[1]), 3).decode() for r in conn.execute("SELECT id, config FROM notetypes")}
-    assert css[1].endswith(DICTIONARY_CSS)
+    assert DICTIONARY_CSS in css[1]
     assert DICTIONARY_CSS not in css[2]
 
 
@@ -184,3 +185,48 @@ def test_with_dictionary_refuses_a_template_without_exactly_one_word_div():
     word = '<div class="cebuano">{{Cebuano}}</div>'
     with pytest.raises(ValueError, match="word"):
         with_dictionary(CEBUANO_VOCAB, "{{Image}}", word + word, recognition=False)
+
+
+def test_cebuano_carries_the_short_form_field_last():
+    """Appended last, so a notetype minted before it gains it without moving a field (tunatale-0rlg)."""
+    from app.cards.vocab_notetype import CEBUANO_VOCAB, SHORT_FORM_FIELD
+
+    assert SHORT_FORM_FIELD == "Short form"
+    assert CEBUANO_VOCAB.field_names[-1] == "Short form"
+
+
+def test_only_a_notetype_that_asks_for_it_has_the_short_form_field():
+    from app.cards.vocab_notetype import NORWEGIAN_VOCAB, SHORT_FORM_FIELD, SLOVENE_VOCAB, TAGALOG_VOCAB
+
+    for vocab in (SLOVENE_VOCAB, NORWEGIAN_VOCAB, TAGALOG_VOCAB):
+        assert SHORT_FORM_FIELD not in vocab.field_names
+
+
+def test_the_short_form_line_sits_under_the_word_on_both_cards():
+    """On the recognition front, where it tells mo from mo, and the production back."""
+    from app.cards.vocab_notetype import CEBUANO_VOCAB, SHORT_FORM_BLOCK, SPELLING_BLOCK
+
+    assert "{{#Short form}}" in SHORT_FORM_BLOCK and "{{/Short form}}" in SHORT_FORM_BLOCK
+    conn = _make_notetype_conn()
+    create_vocab_notetype(conn, CEBUANO_VOCAB, mid=1, now_ts=1)
+    (rq, ra), (pq, pa) = _templates(conn, 1)
+    under_the_word = CEBUANO_VOCAB.word_div + SPELLING_BLOCK + SHORT_FORM_BLOCK
+    assert rq.count(under_the_word) == 1
+    assert pa.count(under_the_word) == 1
+    assert SHORT_FORM_BLOCK not in ra  # it repeats through {{FrontSide}}
+    assert SHORT_FORM_BLOCK not in pq  # the production front must not give the word away
+
+
+def test_a_notetype_without_the_field_has_no_short_form_block_or_css():
+    import dataclasses
+
+    from app.cards.vocab_notetype import CEBUANO_VOCAB, SHORT_FORM_BLOCK, SHORT_FORM_CSS
+    from app.srs.anki_mirror.protobuf_wire import find_len_field
+
+    conn = _make_notetype_conn()
+    create_vocab_notetype(conn, dataclasses.replace(CEBUANO_VOCAB, short_form=False), mid=1, now_ts=1)
+    create_vocab_notetype(conn, dataclasses.replace(CEBUANO_VOCAB, name="With"), mid=2, now_ts=1)
+    assert not any(SHORT_FORM_BLOCK in side for pair in _templates(conn, 1) for side in pair)
+    css = {r[0]: find_len_field(bytes(r[1]), 3).decode() for r in conn.execute("SELECT id, config FROM notetypes")}
+    assert SHORT_FORM_CSS not in css[1]
+    assert css[2].endswith(SHORT_FORM_CSS)

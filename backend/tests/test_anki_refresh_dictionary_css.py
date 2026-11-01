@@ -37,6 +37,9 @@ LIVE_DICTIONARY_CSS = (
     ".wolff-cite { font-size: 13px; color: #777; }\n"
 )
 
+# The CSS block order this tool keeps: its verb block last, before the later Short form rule.
+LAYERED = dataclasses.replace(CEBUANO_VOCAB, short_form=False)
+
 _SCHEMA = """
     CREATE TABLE col (id INTEGER, crt INTEGER, mod INTEGER, scm INTEGER, ver INTEGER, dty INTEGER,
         usn INTEGER, ls INTEGER, conf TEXT, models TEXT, decks TEXT, dconf TEXT, tags TEXT);
@@ -66,10 +69,10 @@ def _set_css(conn: sqlite3.Connection, mid: int, css: str) -> None:
 def _populate(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     conn.execute("INSERT INTO col VALUES (1, 0, 100, 1000, 18, 0, 5, 0, '{}', '{}', '{}', '{}', '{}')")
-    create_vocab_notetype(conn, CEBUANO_VOCAB, MID, 50)
+    create_vocab_notetype(conn, LAYERED, MID, 50)
     # the live notetype: its own CSS, then the dictionary block as it was appended, no verb table
     _set_css(conn, MID, _css(conn, MID).replace(VERB_TABLE_CSS, "").split(".spelling")[0] + LIVE_DICTIONARY_CSS)
-    create_vocab_notetype(conn, dataclasses.replace(CEBUANO_VOCAB, name="Other Vocabulary"), OTHER_MID, 50)
+    create_vocab_notetype(conn, dataclasses.replace(LAYERED, name="Other Vocabulary"), OTHER_MID, 50)
     conn.execute("UPDATE notetypes SET usn = 0, mtime_secs = 50")
     conn.execute("INSERT INTO notes VALUES (1000, 'g', ?, 100, 7, '', 'x', 'x', 0, 0, '')", (MID,))
     conn.execute("INSERT INTO cards VALUES (2000, 1000, 1, 0, 100, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '')")
@@ -85,7 +88,7 @@ def _make_conn() -> sqlite3.Connection:
 def _new_notetype_css() -> str:
     conn = sqlite3.connect(":memory:")
     conn.executescript(_SCHEMA)
-    create_vocab_notetype(conn, CEBUANO_VOCAB, MID, 50)
+    create_vocab_notetype(conn, LAYERED, MID, 50)
     return _css(conn, MID)
 
 

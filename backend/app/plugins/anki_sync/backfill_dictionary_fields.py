@@ -91,14 +91,15 @@ def plan_backfill(conn: sqlite3.Connection, vocab: VocabNotetype, language_code:
         by_name = dict(zip(names, flds.split(_FIELD_SEP), strict=False))
         word = extract_l2(by_name.get(vocab.l2_field, ""), vocab.l2_css_class)
         english = extract_translation(by_name.get("English", ""))
-        found = dictionary_note_fields(language_code, word, english)
+        found = dictionary_note_fields(language_code, word, english, by_name.get("DisambigKey", "").strip())
         if not found:
             plan.misses.append(Miss(nid, word, english))
             continue
         fill = {
             k: v
             for k, v in found.items()
-            if v and (not by_name.get(k, "").strip() or (refresh and by_name.get(k, "") != v))
+            # A field the notetype lacks yet (the Short form line before its migration) waits.
+            if v and k in names and (not by_name.get(k, "").strip() or (refresh and by_name.get(k, "") != v))
         }
         if fill:
             old = {k: by_name[k] for k in fill if by_name.get(k, "").strip()}

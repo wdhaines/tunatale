@@ -817,10 +817,10 @@ def test_curated_pronoun_gloss_overrides_the_llm():
 
 
 def test_a_pronoun_with_a_second_sense_keeps_the_lessons_gloss():
-    """ako is "I" and, preposed, "my": the table's "I; my, mine" names both, so it
-    told the reader less than the lesson's own gloss did on every 'ako' (the
-    user, 2026-10-22: "Use lesson's gloss"). A word with a second sense keeps the
-    pass's in-context gloss; kami, with one sense, still takes the table's."""
+    """ako is "I" and, preposed, "my": the table's gloss is one card's sense, so it
+    tells the reader less than the lesson's own gloss does on an 'ako' in the other
+    (the user, 2026-10-22: "Use lesson's gloss"). A word with a second sense keeps
+    the pass's in-context gloss; kami, with one sense, still takes the table's."""
     from app.generation.story import build_lesson_from_story
     from app.languages import get_language
 
@@ -851,7 +851,7 @@ def test_a_pronoun_with_a_second_sense_the_llm_skipped_takes_the_tables_gloss():
     story = _ceb_story([{"word": "kape", "translation": "coffee"}])
     story["scenes"][0]["lines"][0]["text"] = "Ako ang kape."
     glosses = build_lesson_from_story(story, language=get_language("ceb")).generation_metadata["token_glosses"]
-    assert glosses["ako"] == "I; my, mine"
+    assert glosses["ako"] == "I"
 
 
 def test_curated_function_word_gloss_fills_a_word_the_llm_skipped():

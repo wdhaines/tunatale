@@ -33,8 +33,18 @@ _TAIL_FIELDS: tuple[str, ...] = ("English", "Audio", "Image", "Grammar", "Note",
 # and inside it the verbatim entry, open on demand, as on the Norwegian cards.
 DICTIONARY_FIELDS: tuple[str, ...] = ("Spelling", "Meaning", "Verb", "Details", "Dictionary entry")
 
+#: A word's short/long partner (tunatale-0rlg), appended after the dictionary's
+#: layers by ``anki_sync.add_short_form_field``. Its own flag, because a notetype
+#: can have the layers without it: that is the live one until the migration runs.
+SHORT_FORM_FIELD = "Short form"
+
 #: Under the word, only when the note has a spelling.
 SPELLING_BLOCK = '{{#Spelling}}<div class="spelling">{{Spelling}}</div>{{/Spelling}}'
+
+#: Under the spelling, only on a word in a short/long pair.
+SHORT_FORM_BLOCK = '{{#Short form}}<div class="short-form">{{Short form}}</div>{{/Short form}}'
+
+SHORT_FORM_CSS = ".short-form { font-size: 16px; color: #555; margin-top: 2px; }\n"
 
 #: The end of each back. The entry is always present on a matched note, so it
 #: gates the disclosure; Details is then never empty in practice.
@@ -92,11 +102,17 @@ class VocabNotetype:
     l2_field: str  # field ord 0 — the L2 word + the note's sort field
     l2_css_class: str  # CSS class wrapping the L2 word in the card templates
     dictionary: bool = False  # carries DICTIONARY_FIELDS and their template blocks
+    short_form: bool = False  # carries SHORT_FORM_FIELD and its block, under the spelling
 
     @property
     def field_names(self) -> tuple[str, ...]:
         """Field names in ord order (L2 first = sort field)."""
-        return (self.l2_field, *_TAIL_FIELDS, *(DICTIONARY_FIELDS if self.dictionary else ()))
+        return (
+            self.l2_field,
+            *_TAIL_FIELDS,
+            *(DICTIONARY_FIELDS if self.dictionary else ()),
+            *((SHORT_FORM_FIELD,) if self.short_form else ()),
+        )
 
     @property
     def word_div(self) -> str:
@@ -108,7 +124,9 @@ SLOVENE_VOCAB = VocabNotetype(name="Slovene Vocabulary", l2_field="Slovene", l2_
 NORWEGIAN_VOCAB = VocabNotetype(name="Norwegian Vocabulary", l2_field="Norwegian", l2_css_class="norwegian")
 TAGALOG_VOCAB = VocabNotetype(name="Tagalog Vocabulary", l2_field="Tagalog", l2_css_class="tagalog")
 # Wolff's dictionary in Handbook spelling (tunatale-h0q3.2).
-CEBUANO_VOCAB = VocabNotetype(name="Cebuano Vocabulary", l2_field="Cebuano", l2_css_class="cebuano", dictionary=True)
+CEBUANO_VOCAB = VocabNotetype(
+    name="Cebuano Vocabulary", l2_field="Cebuano", l2_css_class="cebuano", dictionary=True, short_form=True
+)
 
 
 # ── Card templates + CSS (parametrised by the L2 field/class) ─────────────
@@ -173,7 +191,7 @@ def with_dictionary(vocab: VocabNotetype, qfmt: str, afmt: str, *, recognition: 
     side = qfmt if recognition else afmt
     if side.count(word) != 1:
         raise ValueError(f"template does not write the word as {word!r} exactly once — refusing to guess its layout")
-    side = side.replace(word, word + SPELLING_BLOCK)
+    side = side.replace(word, word + SPELLING_BLOCK + (SHORT_FORM_BLOCK if vocab.short_form else ""))
     if recognition:
         return side, afmt + DICTIONARY_BLOCK
     return qfmt, side + DICTIONARY_BLOCK
@@ -223,7 +241,11 @@ def create_vocab_notetype(conn, vocab: VocabNotetype, mid: int, now_ts: int) -> 
     ``col.mod`` bump (a notetype insert is a schema change — see
     ``.claude/rules/anki-sync.md``). Rows carry ``usn = -1``.
     """
-    css = _css(vocab.l2_css_class) + (DICTIONARY_CSS if vocab.dictionary else "")
+    css = (
+        _css(vocab.l2_css_class)
+        + (DICTIONARY_CSS if vocab.dictionary else "")
+        + (SHORT_FORM_CSS if vocab.short_form else "")
+    )
     conn.execute(
         "INSERT INTO notetypes (id, name, mtime_secs, usn, config) VALUES (?, ?, ?, -1, ?)",
         (mid, vocab.name, now_ts, build_notetype_config(css)),

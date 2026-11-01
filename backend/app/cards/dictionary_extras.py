@@ -14,13 +14,13 @@ from app.languages import dictionary_note_fields, get_vocab_notetype
 from app.models.syntactic_unit import BackField
 
 
-def dictionary_extras(code: str, word: str, english: str) -> tuple[BackField, ...]:
-    """The extras the pull would make for *word* / *english*; ``()`` when there are none."""
+def dictionary_extras(code: str, word: str, english: str, disambig: str = "") -> tuple[BackField, ...]:
+    """The extras the pull would make for *word* / *english* / *disambig*; ``()`` when there are none."""
     vocab = get_vocab_notetype(code)
     profile = get_profile(vocab.name, code) if vocab is not None and vocab.dictionary else None
     if profile is None:
         return ()
-    fields = dictionary_note_fields(code, word, english)
+    fields = dictionary_note_fields(code, word, english, disambig)
     return tuple(
         BackField(label=spec.label, html=fields[spec.field_name], tier=spec.tier)
         for spec in profile.back_fields

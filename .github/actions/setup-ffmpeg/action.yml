@@ -73,7 +73,12 @@ runs:
         # ⚠️ ORDER IS LOAD-BEARING: the image version goes LAST so `prefix`
         # below can match every image. Putting it in the middle (as v2 did) makes
         # a prefix impossible and is what split the cache across the fleet.
-        echo "prefix=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-v3-" >> "$GITHUB_OUTPUT"
+        # ⚠️ THE PREFIX STOPS AT THE OS: a closure never crosses a release. When
+        # ubuntu-latest moved to 26.04 (2026-11-01, PR 389), a prefix with no OS
+        # restored ubuntu24's .debs; dpkg half-installed them and left unmet
+        # dependencies that the apt fallback could not get past, so the job died
+        # the same way on a rerun.
+        echo "prefix=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-v3-${ImageOS:-noimage}-" >> "$GITHUB_OUTPUT"
         echo "value=ffmpeg-apt-${RUNNER_OS}-${RUNNER_ARCH}-v3-${ImageOS:-noimage}-${ImageVersion:-noversion}" \
           >> "$GITHUB_OUTPUT"
 
@@ -108,7 +113,7 @@ runs:
         # main (run 32286105649: e2e and hostile-hour both died at 372s on the
         # mirror).
         #
-        # The prefix restores the newest cache from ANY image while the exact key
+        # The prefix restores the newest cache from any image OF THIS OS while the exact key
         # still misses, so actions/cache saves a fresh entry for this image. The
         # result is warm on every run AND still refreshed per image — which is
         # what v2 was trying to buy. A closure from a neighbouring image is

@@ -2027,7 +2027,7 @@ class AnkiSync:
             # tunatale-h0q3.2). Fields the notetype lacks are dropped by
             # create_note, so this is safe before the notetype is migrated.
             fields = {
-                **dictionary_note_fields(self._language_code, word, english),
+                **dictionary_note_fields(self._language_code, word, english, item.syntactic_unit.disambig_key or ""),
                 mint_l2_field: word,
                 "English": english,
                 "Audio": audio_tag,

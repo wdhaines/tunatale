@@ -36,6 +36,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sqlite3
 import time
 from pathlib import Path
@@ -55,7 +56,8 @@ def _dictionary_vocab(language_code: str) -> VocabNotetype:
     vocab = get_vocab_notetype(language_code)
     if vocab is None or not vocab.dictionary:
         raise ValueError(f"Language {language_code!r} mints into a notetype with no dictionary layers")
-    return vocab
+    # The Short form field is add_short_form_field's, after this migration.
+    return dataclasses.replace(vocab, short_form=False)
 
 
 def add_dictionary_fields(conn: sqlite3.Connection, vocab: VocabNotetype, *, now_ms: int | None = None) -> str:
@@ -74,7 +76,7 @@ def add_dictionary_fields(conn: sqlite3.Connection, vocab: VocabNotetype, *, now
     mid, nt_config = row[0], bytes(row[1] or b"")
 
     names = tuple(r[0] for r in conn.execute("SELECT name FROM fields WHERE ntid = ? ORDER BY ord", (mid,)))
-    if names == vocab.field_names:
+    if set(vocab.field_names) <= set(names):
         return "exists"
     new_fields = vocab.field_names[len(names) :]
     if vocab.field_names[: len(names)] != names or not new_fields:

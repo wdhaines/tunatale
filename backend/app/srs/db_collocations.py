@@ -10,7 +10,7 @@ import sqlite3
 from typing import NamedTuple
 
 from app.cards.dictionary_extras import dictionary_extras
-from app.cards.pronoun_picture import is_second_sense
+from app.cards.pronoun_picture import second_sense_starts_suspended
 from app.common.guid import compute_guid
 from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
@@ -37,6 +37,7 @@ class ExtrasRow(NamedTuple):
     translation: str
     extras: tuple[BackField, ...]
     anki_note_id: int | None
+    disambig_key: str = ""
 
 
 class DbCollocationsMixin:
@@ -47,7 +48,7 @@ class DbCollocationsMixin:
 
         New rows get both recognition and production direction rows (defaults),
         except that a new vocab row which is a word's second sense
-        (:func:`is_second_sense`) starts its recognition direction SUSPENDED and
+        (:func:`second_sense_starts_suspended`) starts its recognition direction SUSPENDED and
         dirty, so the mint's sync_push carries ``queue = -1`` to Anki: its front is
         the bare word the first sense already shows (tunatale-ocv3).
         A new vocab row with no extras of its own gets the language's dictionary
@@ -91,7 +92,7 @@ class DbCollocationsMixin:
                 is_new = True
                 extras = unit.extras
                 if not extras and unit.card_type == "vocab":
-                    extras = dictionary_extras(language_code, unit.text, unit.translation)
+                    extras = dictionary_extras(language_code, unit.text, unit.translation, disambig)
                 conn.execute(
                     """
                     INSERT INTO collocations
@@ -145,7 +146,9 @@ class DbCollocationsMixin:
             today_due_at = due_at_rollover_utc(anki_today()).isoformat()
             suspended = (
                 {Direction.RECOGNITION}
-                if is_new and unit.card_type == "vocab" and is_second_sense(unit.text, language_code, disambig)
+                if is_new
+                and unit.card_type == "vocab"
+                and second_sense_starts_suspended(unit.text, language_code, disambig)
                 else set()
             )
             for direction in directions:
@@ -191,12 +194,19 @@ class DbCollocationsMixin:
         """Every vocab card of *language_code*, with its extras (tunatale-h0q3.2)."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT id, text, translation, extras, anki_note_id FROM collocations "
+                "SELECT id, text, translation, extras, anki_note_id, disambig_key FROM collocations "
                 "WHERE language_code = ? AND card_type = 'vocab' ORDER BY id",
                 (language_code,),
             ).fetchall()
         return [
-            ExtrasRow(r["id"], r["text"], r["translation"], deserialize_extras(r["extras"]), r["anki_note_id"])
+            ExtrasRow(
+                r["id"],
+                r["text"],
+                r["translation"],
+                deserialize_extras(r["extras"]),
+                r["anki_note_id"],
+                r["disambig_key"] or "",
+            )
             for r in rows
         ]
 
