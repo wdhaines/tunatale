@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getListens: vi.fn(),
     markAsListened: vi.fn(),
@@ -12,7 +12,7 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { listenedStore } from "./listened.svelte";
 
 const mockApi = vi.mocked(api);

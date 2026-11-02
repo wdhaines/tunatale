@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { TranscriptData } from '$lib/api';
-	import { lessonMastery } from '$lib/mastery';
-	import type { MasteryResult, SideResult } from '$lib/mastery';
+	import type { TranscriptData } from '#lib/api.js';
+	import { lessonMastery } from '#lib/mastery.js';
+	import type { MasteryResult, SideResult } from '#lib/mastery.js';
 	import Tooltip from './Tooltip.svelte';
 
 	/**

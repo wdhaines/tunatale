@@ -22,7 +22,7 @@ import Page from "./+page.svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
     listCurricula: vi.fn(),
@@ -36,12 +36,12 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-vi.mock("$lib/stores/listened.svelte", () => ({
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false) },
 }));
 
-import { api } from "$lib/api";
-import { unpinReviewWords } from "$lib/reviewDraft";
+import { api } from "#lib/api.js";
+import { unpinReviewWords } from "#lib/reviewDraft.js";
 const mockListCurricula = vi.mocked(api.listCurricula);
 const mockGetCurriculumProgress = vi.mocked(api.getCurriculumProgress);
 const mockListSessions = vi.mocked(api.listReviewSessions);

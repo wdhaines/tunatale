@@ -17,7 +17,7 @@
 // submit cannot work either.
 
 import { goto } from "$app/navigation";
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 
 const LOGIN_PATH = "/login";
 const INVITE_PATH = "/invite";

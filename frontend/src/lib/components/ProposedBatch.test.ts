@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import ProposedBatch from "./ProposedBatch.svelte";
-import type { ProposedBatch as Batch } from "$lib/api";
+import type { ProposedBatch as Batch } from "#lib/api.js";
 
 const proposed: Batch = {
   start_day: 3,

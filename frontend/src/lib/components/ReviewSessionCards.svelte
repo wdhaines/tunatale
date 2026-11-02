@@ -1,13 +1,13 @@
 <script lang="ts">
-	import CardList from '$lib/components/CardList.svelte';
-	import type { CardRow } from '$lib/components/CardList.svelte';
-	import { formatSessionDate } from '$lib/reading/sessionDate';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import CardList from '#lib/components/CardList.svelte';
+	import type { CardRow } from '#lib/components/CardList.svelte';
+	import { formatSessionDate } from '#lib/reading/sessionDate.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	// Only the fields a row reads: home's session shape (bd tunatale-e6fq) carries
 	// these five and not the API's `language_code`, and both lists render here.
 	type Session = Pick<
-		Awaited<ReturnType<typeof import('$lib/api').api.listReviewSessions>>[number],
+		Awaited<ReturnType<typeof import('#lib/api.js').api.listReviewSessions>>[number],
 		'id' | 'session_date' | 'title' | 'review_requested' | 'review_used'
 	>;
 

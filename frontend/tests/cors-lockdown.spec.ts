@@ -57,7 +57,7 @@ import { expect, PORTS, test } from './fixtures';
  *    thing this spec does that no other spec does.
  *
  * This costs no coverage: the worker's own behaviour is covered by
- * `offline-audio.spec.ts` and `$lib/sw/audio-cache`'s unit tests. If the SEGV
+ * `offline-audio.spec.ts` and `#lib/sw/audio-cache.js`'s unit tests. If the SEGV
  * recurs *here* with workers blocked, the hypothesis is dead — say so in the
  * bead rather than adding a retry.
  */

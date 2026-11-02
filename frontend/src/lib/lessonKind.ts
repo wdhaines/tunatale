@@ -1,4 +1,4 @@
-import type { ReadableLesson } from "$lib/api";
+import type { ReadableLesson } from "#lib/api.js";
 
 /**
  * Whether a lesson is ONLY an affix drill: a grammar lesson (bd tunatale-ve4p.5).

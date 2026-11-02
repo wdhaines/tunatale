@@ -1,28 +1,28 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { setClientLogEnabled, flushClientLog } from '$lib/clientLog';
-	import { setMediaTraceEnabled, setMediaTraceSource } from '$lib/mediaTrace';
-	import { startTouchTrace } from '$lib/touchTrace';
-	import favicon from '$lib/assets/favicon.png';
-	import logo from '$lib/assets/logo.png';
-	import { page } from '$app/stores';
-	import SyncButton from '$lib/components/SyncButton.svelte';
-	import LanguageSelector from '$lib/components/LanguageSelector.svelte';
-	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
-	import { languageStore } from '$lib/stores/language.svelte';
-	import { syncStore } from '$lib/stores/sync.svelte';
-	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
-	import { themeStore } from '$lib/stores/theme.svelte';
-	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
-	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
-	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
-	import { listenedStore } from '$lib/stores/listened.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
-	import { setParkedHandler, setUnauthorizedHandler } from '$lib/api';
-	import { parkedStore } from '$lib/stores/parked.svelte';
-	import LlmHealthBanner from '$lib/components/LlmHealthBanner.svelte';
-	import PresetChangeBanner from '$lib/components/PresetChangeBanner.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { setClientLogEnabled, flushClientLog } from '#lib/clientLog.js';
+	import { setMediaTraceEnabled, setMediaTraceSource } from '#lib/mediaTrace.js';
+	import { startTouchTrace } from '#lib/touchTrace.js';
+	import favicon from '#lib/assets/favicon.png';
+	import logo from '#lib/assets/logo.png';
+	import { page } from '$app/state';
+	import SyncButton from '#lib/components/SyncButton.svelte';
+	import LanguageSelector from '#lib/components/LanguageSelector.svelte';
+	import QueueStatsWidget from '#lib/components/QueueStatsWidget.svelte';
+	import { languageStore } from '#lib/stores/language.svelte.js';
+	import { syncStore } from '#lib/stores/sync.svelte.js';
+	import { queueStatsStore } from '#lib/stores/queueStats.svelte.js';
+	import { themeStore } from '#lib/stores/theme.svelte.js';
+	import { prefetchPrefStore } from '#lib/stores/prefetchPref.svelte.js';
+	import { listenCountdownPref } from '#lib/stores/listenCountdownPref.svelte.js';
+	import { llmHealthStore } from '#lib/stores/llmHealth.svelte.js';
+	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import { authStore } from '#lib/stores/auth.svelte.js';
+	import { setParkedHandler, setUnauthorizedHandler } from '#lib/api.js';
+	import { parkedStore } from '#lib/stores/parked.svelte.js';
+	import LlmHealthBanner from '#lib/components/LlmHealthBanner.svelte';
+	import PresetChangeBanner from '#lib/components/PresetChangeBanner.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let { children } = $props();
 
@@ -184,7 +184,7 @@
 		}
 	});
 
-	const path = $derived($page.url.pathname);
+	const path = $derived(page.url.pathname);
 	const onLessons = $derived(path === '/' || path.startsWith('/c/'));
 	const onReview = $derived(path === '/review');
 	const onCards = $derived(path.startsWith('/cards'));

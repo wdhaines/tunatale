@@ -5,7 +5,7 @@
 // Default is Dialogue · Natural · English-off — the plain listening start point.
 
 import { createLocalPref } from "./localPref.svelte";
-import { isSectionType, type SectionType } from "$lib/sectionTypes";
+import { isSectionType, type SectionType } from "#lib/sectionTypes.js";
 
 export type PlayerPhase = "key_phrases" | "dialogue";
 
@@ -56,7 +56,7 @@ function enunciatedLevel(current: string | undefined): string {
 //
 // Keyed by the shared SectionType union rather than switched on a string, so
 // this is the declared INVERSE of LessonPlayer::resolveSectionType and stays
-// exhaustive in both directions: a token added to `$lib/sectionTypes` without a
+// exhaustive in both directions: a token added to `#lib/sectionTypes.js` without a
 // row here, or a row keyed on a token that does not exist, is a compile error.
 // (A switch could not say that — an unlisted token would fall through to
 // returning nothing at all.)

@@ -1,5 +1,5 @@
-import { api } from "$lib/api";
-import type { ActivityEvent } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { ActivityEvent } from "#lib/api.js";
 
 function createLlmActivityStore() {
   let events = $state<ActivityEvent[]>([]);

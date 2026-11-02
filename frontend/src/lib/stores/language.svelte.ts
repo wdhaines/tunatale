@@ -4,7 +4,7 @@
 // connection. `options` is populated from GET /api/languages so the selector only
 // offers configured languages; single-language deployments just show one.
 
-import { api, LANGUAGE_STORAGE_KEY, type LanguageOption } from "$lib/api";
+import { api, LANGUAGE_STORAGE_KEY, type LanguageOption } from "#lib/api.js";
 
 function createLanguageStore() {
   let code = $state<string>("");

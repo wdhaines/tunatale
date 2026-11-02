@@ -4,8 +4,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import DrillForms from "./DrillForms.svelte";
-import { captionBlurPref } from "$lib/stores/captionBlurPref.svelte";
-import type { LessonDrill } from "$lib/api";
+import { captionBlurPref } from "#lib/stores/captionBlurPref.svelte.js";
+import type { LessonDrill } from "#lib/api.js";
 
 const drill: LessonDrill = {
   pattern: "mo-mi",

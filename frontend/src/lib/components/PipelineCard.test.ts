@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import PipelineCard from "./PipelineCard.svelte";
-import type { PipelineDayState, PipelineStatus } from "$lib/api";
+import type { PipelineDayState, PipelineStatus } from "#lib/api.js";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { retryPipelineDay: vi.fn() },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 
 const mockRetry = vi.mocked(api.retryPipelineDay);
 

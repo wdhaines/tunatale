@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { ActivityEvent, RateLimitStatus } from '$lib/api';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { ActivityEvent, RateLimitStatus } from '#lib/api.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		events: ActivityEvent[];

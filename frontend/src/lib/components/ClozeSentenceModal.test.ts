@@ -11,14 +11,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { makeSRSItemDetail } from "../../test/factories";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     proposeClozeSentence: vi.fn(),
     setClozeSentence: vi.fn(),
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import ClozeSentenceModal from "./ClozeSentenceModal.svelte";
 
 const mockPropose = vi.mocked(api.proposeClozeSentence);

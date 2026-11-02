@@ -1,6 +1,6 @@
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { error } from "@sveltejs/kit";
-import type { LessonAudio } from "$lib/api";
+import type { LessonAudio } from "#lib/api.js";
 import type { PageLoad } from "./$types";
 
 export const ssr = false;

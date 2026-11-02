@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
-	import CardList from '$lib/components/CardList.svelte';
-	import type { CardRow } from '$lib/components/CardList.svelte';
-	import ReviewSessionCards from '$lib/components/ReviewSessionCards.svelte';
-	import { listenedStore } from '$lib/stores/listened.svelte';
-	import { languageStore } from '$lib/stores/language.svelte';
-	import { pinReviewWords, pinnedReviewWords, unpinReviewWords } from '$lib/reviewDraft';
-	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { orderSessions } from '$lib/reading/nextReviewSession';
-	import { leadCurriculum, recentLessons } from '$lib/reading/recentLessons';
+	import { api } from '#lib/api.js';
+	import CardList from '#lib/components/CardList.svelte';
+	import type { CardRow } from '#lib/components/CardList.svelte';
+	import ReviewSessionCards from '#lib/components/ReviewSessionCards.svelte';
+	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import { languageStore } from '#lib/stores/language.svelte.js';
+	import { pinReviewWords, pinnedReviewWords, unpinReviewWords } from '#lib/reviewDraft.js';
+	import ManualStoryPanel from '#lib/components/ManualStoryPanel.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { orderSessions } from '#lib/reading/nextReviewSession.js';
+	import { leadCurriculum, recentLessons } from '#lib/reading/recentLessons.js';
 
 	// How many recent lessons and sessions home lists before "All …" takes over.
 	const RECENT_COUNT = 3;
@@ -213,7 +213,7 @@
 	// Manual mode. The words are pinned, not just displayed: nothing server-side
 	// remembers the draft prompt, so the import has to be told them — and pinned
 	// outside this component, because the learner leaves the page to write the
-	// story and comes back to a fresh mount ($lib/reviewDraft).
+	// story and comes back to a fresh mount (#lib/reviewDraft).
 	async function copyDraftPrompt() {
 		const r = await api.getReviewSessionDraftPrompt();
 		pinReviewWords(r.review_words);

@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/svelte";
 import TranscriptPlaceholder from "./TranscriptPlaceholder.svelte";
-import type { LessonDetail } from "$lib/api";
+import type { LessonDetail } from "#lib/api.js";
 
 const lessonWithDialogue: LessonDetail = {
   id: "l1",

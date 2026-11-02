@@ -1,18 +1,18 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import type { ProposedBatch, ReviewPressure } from '$lib/api';
+	import { api } from '#lib/api.js';
+	import type { ProposedBatch, ReviewPressure } from '#lib/api.js';
 	import { onDestroy, onMount } from 'svelte';
-	import PlannerChat from '$lib/components/PlannerChat.svelte';
-	import ProposedBatchView from '$lib/components/ProposedBatch.svelte';
-	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
-	import PipelineCard from '$lib/components/PipelineCard.svelte';
-	import LlmActivityLog from '$lib/components/LlmActivityLog.svelte';
-	import { appendTurn, commitEvent, type ChatMessage } from '$lib/planner';
-	import { pipelineStore } from '$lib/stores/pipeline.svelte';
-	import { llmActivityStore } from '$lib/stores/llmActivity.svelte';
-	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
+	import PlannerChat from '#lib/components/PlannerChat.svelte';
+	import ProposedBatchView from '#lib/components/ProposedBatch.svelte';
+	import RateLimitWidget from '#lib/components/RateLimitWidget.svelte';
+	import PipelineCard from '#lib/components/PipelineCard.svelte';
+	import LlmActivityLog from '#lib/components/LlmActivityLog.svelte';
+	import { appendTurn, commitEvent, type ChatMessage } from '#lib/planner.js';
+	import { pipelineStore } from '#lib/stores/pipeline.svelte.js';
+	import { llmActivityStore } from '#lib/stores/llmActivity.svelte.js';
+	import { rateLimitStore } from '#lib/stores/rateLimit.svelte.js';
 	import type { PageData } from './$types';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let { data }: { data: PageData } = $props();
 

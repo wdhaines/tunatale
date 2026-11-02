@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { QueueStats } from '$lib/api';
+	import type { QueueStats } from '#lib/api.js';
 
 	let { stats, currentState = null }: { stats: QueueStats; currentState?: string | null } = $props();
 

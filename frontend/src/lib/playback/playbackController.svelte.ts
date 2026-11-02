@@ -1,8 +1,8 @@
 import { untrack } from "svelte";
-import type { Cue, CueRef, LessonAudio } from "$lib/api";
-import { mediaTrace, mediaTraceSource } from "$lib/mediaTrace";
+import type { Cue, CueRef, LessonAudio } from "#lib/api.js";
+import { mediaTrace, mediaTraceSource } from "#lib/mediaTrace.js";
 import { createKeepAlive, type KeepAlive } from "./keepAlive";
-import type { SectionType } from "$lib/sectionTypes";
+import type { SectionType } from "#lib/sectionTypes.js";
 
 // The hands-free pass sequence, in order of playback. One const so a later
 // change is a single edit. Matches LessonPlayer.svelte's pill model

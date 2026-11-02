@@ -8,16 +8,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getPresetChange: vi.fn(),
     dismissPresetChange: vi.fn(),
   },
 }));
 
-import { api } from "$lib/api";
-import { syncStore } from "$lib/stores/sync.svelte";
-import PresetChangeBanner from "$lib/components/PresetChangeBanner.svelte";
+import { api } from "#lib/api.js";
+import { syncStore } from "#lib/stores/sync.svelte.js";
+import PresetChangeBanner from "#lib/components/PresetChangeBanner.svelte";
 
 const mockGet = vi.mocked(api.getPresetChange);
 const mockDismiss = vi.mocked(api.dismissPresetChange);

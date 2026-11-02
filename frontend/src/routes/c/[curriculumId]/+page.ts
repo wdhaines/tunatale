@@ -1,4 +1,4 @@
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { error } from "@sveltejs/kit";
 import type { PageLoad } from "./$types";
 

@@ -1,4 +1,4 @@
-import type { PeerSyncResult } from "$lib/api";
+import type { PeerSyncResult } from "#lib/api.js";
 
 function createSyncStore() {
   let lastResult = $state<PeerSyncResult | null>(null);

@@ -6,13 +6,13 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 
 const mockGoto = vi.fn();
-const mockInvalidateAll = vi.fn(() => Promise.resolve());
+const mockRefreshAll = vi.fn(() => Promise.resolve());
 vi.mock("$app/navigation", () => ({
   goto: (...args: unknown[]) => mockGoto(...args),
-  invalidateAll: () => mockInvalidateAll(),
+  refreshAll: () => mockRefreshAll(),
 }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getLessonByDay: vi.fn(),
     getCurriculumProgress: vi.fn().mockResolvedValue([]),
@@ -24,15 +24,15 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-vi.mock("$lib/stores/listened.svelte", () => ({
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false) },
 }));
 
-vi.mock("$lib/stores/pipeline.svelte", () => ({
+vi.mock("#lib/stores/pipeline.svelte.js", () => ({
   pipelineStore: { start: vi.fn(), stop: vi.fn(), status: null, error: "" },
 }));
 
-vi.mock("$lib/stores/llmActivity.svelte", () => ({
+vi.mock("#lib/stores/llmActivity.svelte.js", () => ({
   llmActivityStore: {
     events: [],
     currentLine: "",
@@ -42,7 +42,7 @@ vi.mock("$lib/stores/llmActivity.svelte", () => ({
   },
 }));
 
-vi.mock("$lib/stores/rateLimit.svelte", () => ({
+vi.mock("#lib/stores/rateLimit.svelte.js", () => ({
   rateLimitStore: {
     status: null,
     probeError: "",
@@ -53,12 +53,12 @@ vi.mock("$lib/stores/rateLimit.svelte", () => ({
   },
 }));
 
-vi.mock("$lib/components/RateLimitWidget.svelte", () => ({
+vi.mock("#lib/components/RateLimitWidget.svelte", () => ({
   default: (_props: unknown) => "<span>LLM —</span>",
 }));
 
-import { api } from "$lib/api";
-import { pipelineStore } from "$lib/stores/pipeline.svelte";
+import { api } from "#lib/api.js";
+import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
 
 const mockGetLessonByDay = vi.mocked(api.getLessonByDay);
@@ -127,7 +127,7 @@ describe("/c/[curriculumId] page", () => {
   });
 
   it("ensures rate-limit store is fresh on mount (widget lives here now)", async () => {
-    const { rateLimitStore } = await import("$lib/stores/rateLimit.svelte");
+    const { rateLimitStore } = await import("#lib/stores/rateLimit.svelte.js");
     render(Page, { props: { data: { curriculum } } });
     await waitFor(() => {
       expect(vi.mocked(rateLimitStore.ensureFresh)).toHaveBeenCalled();
@@ -355,7 +355,7 @@ describe("/c/[curriculumId] page", () => {
   });
 
   it("loads and maps getCurriculumProgress into progress state", async () => {
-    const { api: mockApi } = await import("$lib/api");
+    const { api: mockApi } = await import("#lib/api.js");
     vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([
       { day: 1, position: 1, lesson_id: "l1" },
     ]);
@@ -367,7 +367,7 @@ describe("/c/[curriculumId] page", () => {
   });
 
   it("silently ignores getCurriculumProgress failure", async () => {
-    const { api: mockApi } = await import("$lib/api");
+    const { api: mockApi } = await import("#lib/api.js");
     vi.mocked(mockApi.getCurriculumProgress).mockRejectedValueOnce(new Error("Network error"));
 
     const { getByText } = render(Page, { props: { data: { curriculum } } });
@@ -375,7 +375,7 @@ describe("/c/[curriculumId] page", () => {
   });
 
   it("renders the LLM activity current line when events exist", async () => {
-    const { llmActivityStore } = await import("$lib/stores/llmActivity.svelte");
+    const { llmActivityStore } = await import("#lib/stores/llmActivity.svelte.js");
     Object.defineProperty(llmActivityStore, "events", {
       value: [
         {
@@ -605,13 +605,13 @@ describe("Delete curriculum", () => {
 
 describe("load function for /c/[curriculumId]", () => {
   it("throws 404 when curriculum is not found", async () => {
-    vi.doMock("$lib/api", () => ({
+    vi.doMock("#lib/api.js", () => ({
       api: {
         getCurriculum: vi.fn().mockRejectedValue(new Error("Not Found")),
       },
     }));
     const { load } = await import("./+page");
-    const { api: mockApi } = await import("$lib/api");
+    const { api: mockApi } = await import("#lib/api.js");
     vi.mocked(mockApi.getCurriculum).mockRejectedValue(new Error("Not Found"));
     await expect(load({ params: { curriculumId: "nonexistent" } } as never)).rejects.toBeDefined();
   });

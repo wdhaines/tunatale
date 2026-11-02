@@ -24,11 +24,11 @@
  * places this module knows nothing about, and taking them over would have
  * turned a behaviour extraction into a rewrite of that page.
  */
-import { api } from "$lib/api";
-import type { GradeRating, TranscriptData, WordToken } from "$lib/api";
-import { confirmDialog } from "$lib/components/ConfirmDialog.svelte";
-import { queueStatsStore } from "$lib/stores/queueStats.svelte";
-import { t } from "$lib/i18n/i18n.svelte";
+import { api } from "#lib/api.js";
+import type { GradeRating, TranscriptData, WordToken } from "#lib/api.js";
+import { confirmDialog } from "#lib/components/ConfirmDialog.svelte";
+import { queueStatsStore } from "#lib/stores/queueStats.svelte.js";
+import { t } from "#lib/i18n/i18n.svelte.js";
 
 export interface ReadingActionsOptions {
   contentId: string;

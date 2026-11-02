@@ -4,9 +4,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import DayPicker from "./DayPicker.svelte";
-import type { CurriculumSummary } from "$lib/api";
+import type { CurriculumSummary } from "#lib/api.js";
 
-vi.mock("$lib/stores/listened.svelte", () => ({
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false) },
 }));
 
@@ -134,7 +134,7 @@ describe("DayPicker", () => {
   });
 
   it("renders listened state (green + checkmark) for listened lessons", async () => {
-    const { listenedStore } = await import("$lib/stores/listened.svelte");
+    const { listenedStore } = await import("#lib/stores/listened.svelte.js");
     vi.mocked(listenedStore.has).mockReturnValue(true);
 
     const progress = new Map([[1, "lesson-1"]]);

@@ -18,16 +18,15 @@ import ReviewPage from "./+page.svelte";
 vi.mock("svelte", () => ({ onMount: vi.fn((fn: () => void) => fn()) }));
 
 const urlParams = vi.hoisted(() => new URLSearchParams());
-vi.mock("$app/stores", () => ({
+vi.mock("$app/state", () => ({
   page: {
-    subscribe: vi.fn((cb: (v: unknown) => void) => {
-      cb({ url: { searchParams: urlParams } });
-      return () => {};
-    }),
+    get url() {
+      return { searchParams: urlParams };
+    },
   },
 }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     fetchQueueStats: vi.fn(),
     fetchReviewQueue: vi.fn(),
@@ -37,7 +36,7 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { makeReviewQueueItem } from "../../test/factories";
 
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);

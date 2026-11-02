@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/svelte";
 import LlmActivityLog from "./LlmActivityLog.svelte";
-import type { ActivityEvent } from "$lib/api";
+import type { ActivityEvent } from "#lib/api.js";
 
 const PIPELINE_EVENTS: ActivityEvent[] = [
   {

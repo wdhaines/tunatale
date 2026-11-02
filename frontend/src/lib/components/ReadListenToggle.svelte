@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
-	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { lessonModePref } from '#lib/stores/lessonModePref.svelte.js';
+	import { playerCollapsedPref } from '#lib/stores/playerCollapsedPref.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	// The Read/Listen switch, shared by the lesson page and the review-session
 	// reader (bd tunatale-9p9d). The mode is a PERSISTED, viewport-defaulted

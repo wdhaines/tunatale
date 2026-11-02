@@ -19,19 +19,19 @@ import { render, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 
 import PillSyncHarness from "../../test/PillSyncHarness.svelte";
-import { captionBlurPref } from "$lib/stores/captionBlurPref.svelte";
-import { playerCollapsedPref } from "$lib/stores/playerCollapsedPref.svelte";
-import type { Cue, LessonAudio } from "$lib/api";
-import type { PlaybackController } from "$lib/playback/playbackController.svelte";
+import { captionBlurPref } from "#lib/stores/captionBlurPref.svelte.js";
+import { playerCollapsedPref } from "#lib/stores/playerCollapsedPref.svelte.js";
+import type { Cue, LessonAudio } from "#lib/api.js";
+import type { PlaybackController } from "#lib/playback/playbackController.svelte.js";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     audioUrl: vi.fn((id: string) => `/api/audio/${id}`),
     audioZipUrl: vi.fn((lessonId: string) => `/api/audio/lesson/${lessonId}/zip`),
   },
 }));
 
-vi.mock("$lib/sw/prefetch", () => ({
+vi.mock("#lib/sw/prefetch.js", () => ({
   maybePrefetchLesson: vi.fn(() => Promise.resolve()),
 }));
 

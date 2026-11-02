@@ -1,4 +1,4 @@
-import type { WordToken } from "$lib/api";
+import type { WordToken } from "#lib/api.js";
 
 export interface WordGloss {
   /** What the reader shows for the word: the lesson's gloss, else the card's translation. */

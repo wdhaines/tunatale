@@ -5,7 +5,7 @@
 
 /**
  * Service worker — thin event shell. All decision logic lives in the fully
- * tested `$lib/sw/audio-cache` module (the frontend coverage gate forbids
+ * tested `#lib/sw/audio-cache.js` module (the frontend coverage gate forbids
  * untested branches in `src/lib`; this file sits outside the gate's include
  * globs, so it stays a thin wrapper). See `docs/offline-audio-plan.md` Phase 3.
  *
@@ -14,18 +14,27 @@
  * - fetch:    cache-first for lesson audio; everything else hits the network.
  */
 
-import { build, files, version } from "$service-worker";
-import { AUDIO_CACHE, handleAudioFetch, isCacheableAudioRequest } from "$lib/sw/audio-cache";
-import { precacheAssets } from "$lib/sw/precache";
+import { version } from "$app/env";
+import { assets, immutable } from "$app/manifest";
+import { resolve } from "$app/paths";
+import { AUDIO_CACHE, handleAudioFetch, isCacheableAudioRequest } from "#lib/sw/audio-cache.js";
+import { precacheAssets } from "#lib/sw/precache.js";
 
 // `self` in a service worker is a ServiceWorkerGlobalScope; the webworker lib
 // reference above provides the type.
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
 const APP_CACHE = `tt-app-${version}`;
-// Not a bare [...build, ...files]: debug pages under static/ are filtered out,
-// so carrying one costs users nothing. See $lib/sw/precache.
-const APP_ASSETS = precacheAssets(build, files);
+// SvelteKit 3's `$app/manifest` replaced `$service-worker`'s `build` / `files`.
+// Its paths are relative to the base path with no leading `/`, so `resolve()`
+// turns each back into the absolute pathname the old arrays carried — the form
+// `cache.addAll` fetches and `precacheAssets`' exclusion list matches against.
+// Not a bare [...immutable, ...assets]: debug pages under static/ are filtered
+// out, so carrying one costs users nothing. See #lib/sw/precache.
+const APP_ASSETS = precacheAssets(
+  immutable.map(({ path }) => resolve(path)),
+  assets.map(({ path }) => resolve(path)),
+);
 
 sw.addEventListener("install", (event) => {
   event.waitUntil(

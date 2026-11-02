@@ -1,7 +1,7 @@
 <script lang="ts">
-	import ReviewSessionCards from '$lib/components/ReviewSessionCards.svelte';
-	import { orderSessions } from '$lib/reading/nextReviewSession';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import ReviewSessionCards from '#lib/components/ReviewSessionCards.svelte';
+	import { orderSessions } from '#lib/reading/nextReviewSession.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

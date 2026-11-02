@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { FocusRun, SRSItemDetail } from '$lib/api';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { FocusRun, SRSItemDetail } from '#lib/api.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	type Rating = 'again' | 'hard' | 'good' | 'easy';
 

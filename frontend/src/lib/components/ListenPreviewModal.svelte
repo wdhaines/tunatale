@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { dueStudyDay, studyDayOf } from '$lib/studyDay';
+	import { dueStudyDay, studyDayOf } from '#lib/studyDay.js';
 	import {
 		api,
 		type AffixCardPreview,
@@ -9,12 +9,12 @@
 		type ListenPreviewCandidate,
 		type ListenResponse,
 		type WordRating,
-	} from '$lib/api';
-	import { listenedStore } from '$lib/stores/listened.svelte';
-	import { listenCountdownPref } from '$lib/stores/listenCountdownPref.svelte';
-	import { railPropsFor, masterySides as masterySidesFn } from '$lib/masteryBands';
-	import Tooltip from '$lib/components/Tooltip.svelte';
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
+	} from '#lib/api.js';
+	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import { listenCountdownPref } from '#lib/stores/listenCountdownPref.svelte.js';
+	import { railPropsFor, masterySides as masterySidesFn } from '#lib/masteryBands.js';
+	import Tooltip from '#lib/components/Tooltip.svelte';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 	let {
 		lessonId,
@@ -427,7 +427,7 @@
 
 	/** Whole days from the current STUDY DAY until the card is due; null if unknown.
 	 *
-	 * Both sides come from `$lib/studyDay`, which holds the convention and the
+	 * Both sides come from `#lib/studyDay.js`, which holds the convention and the
 	 * history of getting it wrong (tunatale-l0b6: the TODAY side read the
 	 * browser's UTC date and every count was one day low from 20:00 to 04:00 at
 	 * UTC-4). A learning row never shows a day count here (`dueLabel` says

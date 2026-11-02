@@ -10,25 +10,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 
 const nav = vi.hoisted(() => ({ search: "" }));
-vi.mock("$app/stores", () => ({
+vi.mock("$app/state", () => ({
   page: {
-    subscribe: vi.fn((cb) => {
-      cb({ url: new URL(`http://localhost/login${nav.search}`) });
-      return () => {};
-    }),
+    get url() {
+      return new URL(`http://localhost/login${nav.search}`);
+    },
   },
 }));
 
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { login: vi.fn(), getAuthStatus: vi.fn(), getMe: vi.fn(), logout: vi.fn() },
   setUnauthorizedHandler: vi.fn(),
 }));
 
-import { api } from "$lib/api";
-import { authStore } from "$lib/stores/auth.svelte";
+import { api } from "#lib/api.js";
+import { authStore } from "#lib/stores/auth.svelte.js";
 import Login from "./+page.svelte";
 
 const mockLogin = vi.mocked(api.login);
@@ -37,6 +36,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   nav.search = "";
   mockLogin.mockResolvedValue({ email: "a@b.c" });
+  // The real goto() returns a Promise; the page chains .catch() onto it.
+  mockGoto.mockResolvedValue(undefined);
 });
 
 async function submit(
@@ -66,6 +67,21 @@ describe("/login", () => {
     await submit(getByLabelText, getByRole);
 
     await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/c/abc/l/xyz?mode=listen"));
+  });
+
+  it("lands on the root when the requested route no longer exists", async () => {
+    // SvelteKit 3: goto() REJECTS for a path that matches no route (Kit 2
+    // navigated and rendered the 404 page). A stale deep link must not turn a
+    // successful sign-in into an error on the login form.
+    nav.search = "?next=%2Fno-such-route";
+    mockGoto.mockRejectedValueOnce(new Error("No route matches /no-such-route"));
+    const { getByLabelText, getByRole, queryByRole } = render(Login);
+
+    await submit(getByLabelText, getByRole);
+
+    await waitFor(() => expect(mockGoto).toHaveBeenLastCalledWith("/"));
+    expect(mockGoto).toHaveBeenNthCalledWith(1, "/no-such-route");
+    expect(queryByRole("alert")).toBeNull();
   });
 
   it("shows the server's reason and stays put when the credentials are wrong", async () => {

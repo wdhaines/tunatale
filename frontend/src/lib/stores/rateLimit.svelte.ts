@@ -1,5 +1,5 @@
-import { api } from "$lib/api";
-import type { RateLimitStatus } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { RateLimitStatus } from "#lib/api.js";
 
 let autoProbed = false;
 

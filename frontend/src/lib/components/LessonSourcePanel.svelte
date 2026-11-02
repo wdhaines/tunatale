@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import type { StorySourceResponse } from '$lib/api';
-	import { formatSource, buildClaudePrompt } from '$lib/lessonSource';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import type { StorySourceResponse } from '#lib/api.js';
+	import { formatSource, buildClaudePrompt } from '#lib/lessonSource.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		lessonId: string;

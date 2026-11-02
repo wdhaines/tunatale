@@ -12,8 +12,8 @@
 		"preview": "vite preview",
 		"preview:robust": "bun scripts/preview.mjs",
 		"prepare": "svelte-kit sync || echo ''",
-		"check": "SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-kit sync && SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-check --tsconfig ./tsconfig.test.json",
-		"check:watch": "SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-kit sync && SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-check --tsconfig ./tsconfig.test.json --watch",
+		"check": "SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-kit sync && SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-kit sync && SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-check --tsconfig ./tsconfig.json --watch",
 		"gen:api": "openapi-typescript src/lib/api-schema.json -o src/lib/api-types.d.ts && oxfmt src/lib/api-types.d.ts",
 		"check:api": "mkdir -p node_modules/.tmp && openapi-typescript src/lib/api-schema.json -o node_modules/.tmp/api-types-check.d.ts && oxfmt node_modules/.tmp/api-types-check.d.ts && diff -q src/lib/api-types.d.ts node_modules/.tmp/api-types-check.d.ts || (echo 'FAIL: src/lib/api-types.d.ts is stale. Fix: bun run gen:api' && exit 1)",
 		"test": "SVELTEKIT_OUT_DIR=.svelte-kit-test vitest run",
@@ -26,10 +26,13 @@
 		"lint:svelte": "eslint src --max-warnings 0",
 		"lint": "bun run lint:fast && bun run lint:svelte"
 	},
+	"imports": {
+		"#lib/*": "./src/lib/*"
+	},
 	"devDependencies": {
 		"@playwright/test": "^1.64.1",
-		"@sveltejs/adapter-static": "^3.0.10",
-		"@sveltejs/kit": "^2.70.3",
+		"@sveltejs/adapter-static": "^4.0.1",
+		"@sveltejs/kit": "^3.1.1",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@testing-library/svelte": "^5.4.2",
 		"@types/node": "^26.6.6",

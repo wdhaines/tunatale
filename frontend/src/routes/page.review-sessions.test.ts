@@ -21,7 +21,7 @@ import Page from "./+page.svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     listCurricula: vi.fn(),
     startPlan: vi.fn(),
@@ -32,14 +32,14 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-vi.mock("$lib/stores/listened.svelte", () => ({
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: {
     has: vi.fn().mockReturnValue(false),
     lastListenedAt: vi.fn().mockReturnValue(null),
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 const mockListCurricula = vi.mocked(api.listCurricula);
 const mockGetCurriculumProgress = vi.mocked(api.getCurriculumProgress);
 const mockListSessions = vi.mocked(api.listReviewSessions);

@@ -1,24 +1,24 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
-	import { api } from '$lib/api';
-	import type { LessonAudio } from '$lib/api';
-	import { maybePrefetchLesson } from '$lib/sw/prefetch';
-	import type { NetworkInformationLike } from '$lib/sw/prefetch';
-	import type { CacheStorageLike } from '$lib/sw/audio-cache';
-	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
-	import { lessonPlayerPref, pillsForSection } from '$lib/stores/lessonPlayerPref.svelte';
-	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
-	import type { HandsFreeMode } from '$lib/stores/handsFreePref.svelte';
-	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
-	import type { EnglishMode } from '$lib/stores/lessonPlayerPref.svelte';
-	import { createPlaybackController } from '$lib/playback/playbackController.svelte';
-	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
-	import { splitCaption, activeChunkIndex } from '$lib/captionChunks';
-	import type { SectionType } from '$lib/sectionTypes';
-	import { createWakeLock } from '$lib/voice/wakeLock';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import type { MessageKey } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import type { LessonAudio } from '#lib/api.js';
+	import { maybePrefetchLesson } from '#lib/sw/prefetch.js';
+	import type { NetworkInformationLike } from '#lib/sw/prefetch.js';
+	import type { CacheStorageLike } from '#lib/sw/audio-cache.js';
+	import { prefetchPrefStore } from '#lib/stores/prefetchPref.svelte.js';
+	import { lessonPlayerPref, pillsForSection } from '#lib/stores/lessonPlayerPref.svelte.js';
+	import { handsFreePref } from '#lib/stores/handsFreePref.svelte.js';
+	import type { HandsFreeMode } from '#lib/stores/handsFreePref.svelte.js';
+	import { playerCollapsedPref } from '#lib/stores/playerCollapsedPref.svelte.js';
+	import type { EnglishMode } from '#lib/stores/lessonPlayerPref.svelte.js';
+	import { createPlaybackController } from '#lib/playback/playbackController.svelte.js';
+	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
+	import { captionBlurPref } from '#lib/stores/captionBlurPref.svelte.js';
+	import { splitCaption, activeChunkIndex } from '#lib/captionChunks.js';
+	import type { SectionType } from '#lib/sectionTypes.js';
+	import { createWakeLock } from '#lib/voice/wakeLock.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import SettingChip from './SettingChip.svelte';
 
 	interface Props {

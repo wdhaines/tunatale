@@ -17,7 +17,7 @@
 // Scoped to the language it was pinned under: a prompt copied for one deck must
 // not become the denominator of a session in another.
 
-import { LANGUAGE_STORAGE_KEY } from "$lib/api";
+import { LANGUAGE_STORAGE_KEY } from "#lib/api.js";
 
 const KEY = "tt-review-draft";
 

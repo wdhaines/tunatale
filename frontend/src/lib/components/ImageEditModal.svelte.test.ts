@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { makeSRSItemDetail } from "../../test/factories";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     fetchImageCandidates: vi.fn(),
     fetchLangeekCandidates: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import ImageEditModal from "./ImageEditModal.svelte";
 
 const mockFetchCandidates = vi.mocked(api.fetchImageCandidates);

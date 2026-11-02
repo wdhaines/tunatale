@@ -1,10 +1,10 @@
 <script lang="ts">
 	import type { GradeRating, WordToken } from './api';
-	import Tooltip from '$lib/components/Tooltip.svelte';
-	import type { TooltipActions } from '$lib/components/Tooltip.svelte';
-	import { railPropsFor, isUnstarted, masterySides as masterySidesFn } from '$lib/masteryBands';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { wordGloss } from '$lib/wordGloss';
+	import Tooltip from '#lib/components/Tooltip.svelte';
+	import type { TooltipActions } from '#lib/components/Tooltip.svelte';
+	import { railPropsFor, isUnstarted, masterySides as masterySidesFn } from '#lib/masteryBands.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { wordGloss } from '#lib/wordGloss.js';
 
 	interface Props {
 		word: WordToken;

@@ -12,7 +12,7 @@
 //
 // The tokens themselves are the renderer's, not ours, and they are NOT
 // enumerated by the API schema: `section_type` is typed `string` in
-// `$lib/api-types.d.ts` (generated from the OpenAPI snapshot), so there is
+// `#lib/api-types.d.ts` (generated from the OpenAPI snapshot), so there is
 // nothing to derive this union from. Hence the tuple — and hence the value of
 // keeping it to one place.
 //

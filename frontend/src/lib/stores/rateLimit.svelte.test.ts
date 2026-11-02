@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { getRateLimit: vi.fn(), probeRateLimit: vi.fn() },
 }));
 
-import { api } from "$lib/api";
-import type { RateLimitStatus } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { RateLimitStatus } from "#lib/api.js";
 
 const mockGetRateLimit = vi.mocked(api.getRateLimit);
 const mockProbeRateLimit = vi.mocked(api.probeRateLimit);

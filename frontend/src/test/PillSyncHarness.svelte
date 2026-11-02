@@ -4,9 +4,9 @@
 	// assert the player pills follow. `onSequenceEnd` is forwarded so a test can
 	// also observe the hands-free hand-off the page normally acts on.
 	// Excluded from coverage via `src/test/**`.
-	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
-	import type { LessonAudio } from '$lib/api';
-	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
+	import LessonPlayer from '#lib/components/LessonPlayer.svelte';
+	import type { LessonAudio } from '#lib/api.js';
+	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
 
 	let {
 		audio,

@@ -10,8 +10,8 @@ import { SvelteSet } from "svelte/reactivity";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-// Mock $lib/api — listCurricula (this page)
-vi.mock("$lib/api", () => ({
+// Mock #lib/api — listCurricula (this page)
+vi.mock("#lib/api.js", () => ({
   api: {
     listCurricula: vi.fn(),
     startPlan: vi.fn(),
@@ -22,16 +22,16 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-// Mock $lib/stores/listened.svelte — same signal the lesson page uses
-vi.mock("$lib/stores/listened.svelte", () => ({
+// Mock #lib/stores/listened.svelte — same signal the lesson page uses
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: {
     has: vi.fn().mockReturnValue(false),
     lastListenedAt: vi.fn().mockReturnValue(null),
   },
 }));
 
-import { api } from "$lib/api";
-import { listenedStore } from "$lib/stores/listened.svelte";
+import { api } from "#lib/api.js";
+import { listenedStore } from "#lib/stores/listened.svelte.js";
 const mockListCurricula = vi.mocked(api.listCurricula);
 const mockStartPlan = vi.mocked(api.startPlan);
 const mockGetCurriculum = vi.mocked(api.getCurriculum);

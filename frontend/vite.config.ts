@@ -1,4 +1,6 @@
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { relative, sep } from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { readFileSync } from 'node:fs';
 
@@ -27,7 +29,7 @@ const serverOptions = {
 	}),
 	allowedHosts: ['.ts.net'],
 	// The test scripts sync SvelteKit's generated tree into `.svelte-kit-test`
-	// (see svelte.config.js::outDir) so they do not rewrite the one this dev
+	// (see the `outDir` option of `sveltekit()` below) so they do not rewrite the one this dev
 	// server is using. That is necessary but NOT sufficient: vite watches the
 	// project root, so it saw the 32 files landing in the new directory and
 	// reloaded the page anyway — verified 2026-08-18, the redirect alone left
@@ -63,7 +65,56 @@ const serverOptions = {
 };
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [
+		// SvelteKit 3 reads no svelte.config.js: both the Svelte compiler options and
+		// the former `kit.*` options are arguments of the plugin.
+		sveltekit({
+			compilerOptions: {
+				// defaults to rune mode for the project, execept for `node_modules`. Can be removed in svelte 6.
+				runes: ({ filename }) => {
+					const relativePath = relative(import.meta.dirname, filename);
+					const pathSegments = relativePath.toLowerCase().split(sep);
+					const isExternalLibrary = pathSegments.includes('node_modules');
+
+					return isExternalLibrary ? undefined : true;
+				}
+			},
+
+			// Where `svelte-kit sync` writes its generated tree. Defaults to
+			// `.svelte-kit`; the TEST scripts in package.json point it at
+			// `.svelte-kit-test` instead.
+			//
+			// Why: `sync` runs at the start of BOTH `bun run check` and vitest, and
+			// rewriting the dev server's `.svelte-kit` makes vite reload the page a
+			// developer is looking at. Measured 2026-08-18 with a Playwright probe
+			// (a `window` marker survives HMR, dies on a reload):
+			//   touch src/routes/+page.svelte -> no reload (HMR swapped the module)
+			//   touch vite.config.ts          -> RELOADED  (positive control)
+			//   bunx svelte-kit sync          -> RELOADED
+			// ⚠️ Redirecting the output is NECESSARY BUT NOT SUFFICIENT — this comment
+			// claimed the opposite until 2026-08-18 and was measurably wrong. vite
+			// watches the project root, so it sees the 32 files land in the sibling
+			// directory and reloads anyway. The `server.watch.ignored` entry in
+			// `serverOptions` above is the half that actually stops it; see the A/B/C table
+			// there. Do NOT ignore `.svelte-kit/generated` — that tree is how a
+			// newly-added route reaches the running server.
+			outDir: process.env.SVELTEKIT_OUT_DIR || '.svelte-kit',
+
+			// adapter-static: production is a plain static bundle served by any file
+			// server — no Node SSR process to run, supervise, or keep patched. See
+			// `.beads-tasks/briefs/design-production-deployment-2026-08.md` § Phase 0.
+			//
+			// `fallback: 'index.html'` makes this an SPA rather than a prerendered
+			// site: nothing is prerendered (SvelteKit's `prerender` default is false
+			// and no route opts in), so every path is served the same shell and the
+			// client router takes over. That is already how the app behaves — the
+			// three data routes declare `export const ssr = false` and `#lib/api.ts`
+			// speaks to relative `/api/...` paths — so no route needed rewriting.
+			//
+			// The host must serve `index.html` for unknown paths or deep links 404.
+			adapter: adapter({ fallback: 'index.html' })
+		})
+	],
 	server: serverOptions,
 	preview: serverOptions,
 	resolve: {

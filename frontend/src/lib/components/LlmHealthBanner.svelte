@@ -1,7 +1,7 @@
 <script lang="ts">
-	import Banner from '$lib/components/Banner.svelte';
-	import { llmHealthStore } from '$lib/stores/llmHealth.svelte';
-	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
+	import Banner from '#lib/components/Banner.svelte';
+	import { llmHealthStore } from '#lib/stores/llmHealth.svelte.js';
+	import { rateLimitStore } from '#lib/stores/rateLimit.svelte.js';
 
 	let probing = $state(false);
 

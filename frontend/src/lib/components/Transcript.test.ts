@@ -5,12 +5,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import Transcript from "./Transcript.svelte";
 import { tick } from "svelte";
-import { readerEnglishPref } from "$lib/stores/readerEnglishPref.svelte";
-import { api } from "$lib/api";
-import type { Cue, LessonDetail, TranscriptData, WordToken } from "$lib/api";
-import type { PlaybackController } from "$lib/playback/playbackController.svelte";
+import { readerEnglishPref } from "#lib/stores/readerEnglishPref.svelte.js";
+import { api } from "#lib/api.js";
+import type { Cue, LessonDetail, TranscriptData, WordToken } from "#lib/api.js";
+import type { PlaybackController } from "#lib/playback/playbackController.svelte.js";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { translateTerm: vi.fn() },
 }));
 

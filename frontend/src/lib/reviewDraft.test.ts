@@ -11,7 +11,7 @@
  * `freshModule` is the reload: module state is gone, only storage is left.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { LANGUAGE_STORAGE_KEY } from "$lib/api";
+import { LANGUAGE_STORAGE_KEY } from "#lib/api.js";
 
 const WORDS = ["oppføre", "dessuten"];
 const KEY = "tt-review-draft";

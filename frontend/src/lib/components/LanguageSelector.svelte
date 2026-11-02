@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { languageStore } from '$lib/stores/language.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { languageStore } from '#lib/stores/language.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	// Changing the active language re-points every API request (X-TT-Language) at
 	// the other language's connection. A full reload is the simplest correct way to

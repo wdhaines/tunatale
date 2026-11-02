@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { createPlaybackController } from "../playbackController.svelte";
 import type { KeepAlive } from "../keepAlive";
-import type { Cue, LessonAudio } from "$lib/api";
-import { readMediaTrace, setMediaTraceEnabled, clearMediaTrace } from "$lib/mediaTrace";
+import type { Cue, LessonAudio } from "#lib/api.js";
+import { readMediaTrace, setMediaTraceEnabled, clearMediaTrace } from "#lib/mediaTrace.js";
 
 // Locked oracle for tunatale-bibo — hands-free with the screen LOCKED advanced
 // to the next section, played a tiny clip and stopped.

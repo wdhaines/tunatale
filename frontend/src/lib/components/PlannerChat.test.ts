@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import PlannerChat from "./PlannerChat.svelte";
-import type { ChatMessage } from "$lib/planner";
+import type { ChatMessage } from "#lib/planner.js";
 
 const messages: ChatMessage[] = [
   { role: "user", content: "Plan a market trip" },

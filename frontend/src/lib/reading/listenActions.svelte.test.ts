@@ -8,21 +8,21 @@
  * refetch; a plain cancel must stay a no-op (the control).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { api, type TranscriptData } from "$lib/api";
+import { api, type TranscriptData } from "#lib/api.js";
 import { createListenActions } from "./listenActions.svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getTranscript: vi.fn(),
     fetchLessonReviewQueue: vi.fn(),
   },
 }));
 
-vi.mock("$lib/stores/listened.svelte", () => ({
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: { refresh: vi.fn(), has: vi.fn(() => false) },
 }));
 
-vi.mock("$lib/stores/queueStats.svelte", () => ({
+vi.mock("#lib/stores/queueStats.svelte.js", () => ({
   queueStatsStore: { refresh: vi.fn() },
 }));
 

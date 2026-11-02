@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { SRSItemDetail, ImageCandidate, LangeekCandidatesResponse } from '$lib/api';
-	import { api } from '$lib/api';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { SRSItemDetail, ImageCandidate, LangeekCandidatesResponse } from '#lib/api.js';
+	import { api } from '#lib/api.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let { item, onclose, onupdated }: {
 		item: SRSItemDetail;

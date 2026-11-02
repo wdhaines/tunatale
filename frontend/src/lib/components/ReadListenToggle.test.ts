@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import ReadListenToggle from "./ReadListenToggle.svelte";
-import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
-import { playerCollapsedPref } from "$lib/stores/playerCollapsedPref.svelte";
+import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
+import { playerCollapsedPref } from "#lib/stores/playerCollapsedPref.svelte.js";
 import { tick } from "svelte";
 
 beforeEach(() => {

@@ -1,15 +1,15 @@
 <script lang="ts">
-	import WordSpan from '$lib/WordSpan.svelte';
+	import WordSpan from '#lib/WordSpan.svelte';
 	import Tooltip from './Tooltip.svelte';
 	import type { TooltipActions } from './Tooltip.svelte';
-	import { api } from '$lib/api';
-	import type { GradeRating, ReadableLesson, TranscriptData, WordToken } from '$lib/api';
-	import { buildScenes, fallbackScenes, cueHighlight } from '$lib/transcriptScenes';
-	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import { railPropsFor } from '$lib/masteryBands';
+	import { api } from '#lib/api.js';
+	import type { GradeRating, ReadableLesson, TranscriptData, WordToken } from '#lib/api.js';
+	import { buildScenes, fallbackScenes, cueHighlight } from '#lib/transcriptScenes.js';
+	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
+	import { railPropsFor } from '#lib/masteryBands.js';
 	import { onMount } from 'svelte';
-	import { readerProductionPref } from '$lib/stores/readerProductionPref.svelte';
-	import { readerEnglishPref } from '$lib/stores/readerEnglishPref.svelte';
+	import { readerProductionPref } from '#lib/stores/readerProductionPref.svelte.js';
+	import { readerEnglishPref } from '#lib/stores/readerEnglishPref.svelte.js';
 
 	// The legend's rail swatches are painted by the SAME function that paints
 	// the words, so a swatch cannot drift from the rail it explains. (The old
@@ -22,7 +22,7 @@
 		railPropsFor({ understand_band: 'learning', produce_band: 'learning' }),
 		railPropsFor({ understand_band: 'solid', produce_band: 'solid' })
 	];
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface CreatePhraseArgs {
 		text: string;

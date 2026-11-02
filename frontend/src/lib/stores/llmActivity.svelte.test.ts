@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { getLlmActivity: vi.fn() },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { llmActivityStore } from "./llmActivity.svelte";
 
 const mockGetLlmActivity = vi.mocked(api.getLlmActivity);

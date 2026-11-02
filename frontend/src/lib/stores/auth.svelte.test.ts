@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { getAuthStatus: vi.fn(), getMe: vi.fn(), login: vi.fn(), logout: vi.fn() },
   setUnauthorizedHandler: vi.fn(),
 }));
@@ -18,7 +18,7 @@ vi.mock("$lib/api", () => ({
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 
 const mockStatus = vi.mocked(api.getAuthStatus);
 const mockMe = vi.mocked(api.getMe);
