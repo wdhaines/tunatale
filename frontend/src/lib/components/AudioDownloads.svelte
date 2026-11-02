@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import type { LessonAudio } from '$lib/api';
+	import { api } from '#lib/api.js';
+	import type { LessonAudio } from '#lib/api.js';
 
 	/**
 	 * The offline-download row, shared by the lesson reader and the review-session

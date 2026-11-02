@@ -10,8 +10,8 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/svelte";
 import MasteryLine from "./MasteryLine.svelte";
-import { makeWordToken } from "$lib/../test/factories";
-import type { TranscriptData } from "$lib/api";
+import { makeWordToken } from "../../test/factories";
+import type { TranscriptData } from "#lib/api.js";
 
 function transcript(): TranscriptData {
   return {

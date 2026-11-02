@@ -7,14 +7,14 @@ const mockClipboard = {
 };
 Object.assign(navigator, { clipboard: mockClipboard });
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getStorySource: vi.fn(),
     importStory: vi.fn(),
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 
 const mockGetStorySource = vi.mocked(api.getStorySource);
 const mockImportStory = vi.mocked(api.importStory);

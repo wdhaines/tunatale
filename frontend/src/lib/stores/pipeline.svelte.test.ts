@@ -1,21 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { getPipeline: vi.fn() },
 }));
 
-vi.mock("$lib/stores/rateLimit.svelte", () => ({
+vi.mock("#lib/stores/rateLimit.svelte.js", () => ({
   rateLimitStore: { refresh: vi.fn() },
 }));
 
-vi.mock("$lib/stores/llmActivity.svelte", () => ({
+vi.mock("#lib/stores/llmActivity.svelte.js", () => ({
   llmActivityStore: { refresh: vi.fn() },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { pipelineStore } from "./pipeline.svelte";
-import { rateLimitStore } from "$lib/stores/rateLimit.svelte";
-import { llmActivityStore } from "$lib/stores/llmActivity.svelte";
+import { rateLimitStore } from "#lib/stores/rateLimit.svelte.js";
+import { llmActivityStore } from "#lib/stores/llmActivity.svelte.js";
 
 const mockGetPipeline = vi.mocked(api.getPipeline);
 

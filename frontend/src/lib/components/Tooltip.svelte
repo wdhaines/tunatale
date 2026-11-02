@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { GradeRating, WordToken } from '$lib/api';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { GradeRating, WordToken } from '#lib/api.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { untrack } from 'svelte';
 
 	export interface TooltipActions {

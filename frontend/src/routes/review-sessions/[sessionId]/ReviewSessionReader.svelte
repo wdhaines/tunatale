@@ -1,29 +1,29 @@
 <script lang="ts">
-	import Banner from '$lib/components/Banner.svelte';
+	import Banner from '#lib/components/Banner.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
-	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData } from '$lib/api';
-	import LessonReader from '$lib/components/LessonReader.svelte';
-	import MasteryLine from '$lib/components/MasteryLine.svelte';
-	import ListenActions from '$lib/components/ListenActions.svelte';
-	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
-	import { createListenActions } from '$lib/reading/listenActions.svelte';
-	import { listenedStore } from '$lib/stores/listened.svelte';
-	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import { createReadingActions } from '$lib/reading/readingActions.svelte';
-	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
-	import RerenderAudio from '$lib/components/RerenderAudio.svelte';
-	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
-	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
-	import PagerBand from '$lib/components/PagerBand.svelte';
-	import { invalidateAll, goto } from '$app/navigation';
-	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
-	import { mediaTrace } from '$lib/mediaTrace';
-	import { nextSessionAfter, sessionNeighbours } from '$lib/reading/nextReviewSession';
-	import type { SessionOrderable } from '$lib/reading/nextReviewSession';
-	import { formatSessionDate } from '$lib/reading/sessionDate';
+	import { api } from '#lib/api.js';
+	import type { LessonAudio, TranscriptData } from '#lib/api.js';
+	import LessonReader from '#lib/components/LessonReader.svelte';
+	import MasteryLine from '#lib/components/MasteryLine.svelte';
+	import ListenActions from '#lib/components/ListenActions.svelte';
+	import ListenPreviewModal from '#lib/components/ListenPreviewModal.svelte';
+	import { createListenActions } from '#lib/reading/listenActions.svelte.js';
+	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
+	import { createReadingActions } from '#lib/reading/readingActions.svelte.js';
+	import AudioDownloads from '#lib/components/AudioDownloads.svelte';
+	import RerenderAudio from '#lib/components/RerenderAudio.svelte';
+	import RateLimitWidget from '#lib/components/RateLimitWidget.svelte';
+	import { confirmDialog } from '#lib/components/ConfirmDialog.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import ManualStoryPanel from '#lib/components/ManualStoryPanel.svelte';
+	import PagerBand from '#lib/components/PagerBand.svelte';
+	import { refreshAll, goto } from '$app/navigation';
+	import { handsFreePref } from '#lib/stores/handsFreePref.svelte.js';
+	import { mediaTrace } from '#lib/mediaTrace.js';
+	import { nextSessionAfter, sessionNeighbours } from '#lib/reading/nextReviewSession.js';
+	import type { SessionOrderable } from '#lib/reading/nextReviewSession.js';
+	import { formatSessionDate } from '#lib/reading/sessionDate.js';
 	import type { PageData } from './$types';
 
 	// The reader for a review session.
@@ -42,7 +42,7 @@
 	//
 	// ONE INSTANCE PER SESSION: `+page.svelte` keys this component on the session
 	// id, so everything below may snapshot `data` once and run its fetches in
-	// onMount. A reload of the same session (invalidateAll) keeps the instance
+	// onMount. A reload of the same session (refreshAll) keeps the instance
 	// and only swaps `data`.
 	let { data }: { data: PageData } = $props();
 
@@ -270,7 +270,7 @@
 		try {
 			await api.reglossReviewSession(data.session.id);
 			transcriptLoading = true;
-			await invalidateAll();
+			await refreshAll();
 			transcript = await api.getTranscript(data.session.id).catch(() => null);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -303,7 +303,7 @@
 			// the player must not keep offering them.
 			audio = null;
 			transcriptLoading = true;
-			await invalidateAll();
+			await refreshAll();
 			transcript = await api.getTranscript(data.session.id).catch(() => null);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -316,7 +316,7 @@
 	async function handlePasteImported() {
 		// Re-read the session so the page shows the new text and the new coverage
 		// line. NOT goto() — the id and URL are unchanged by design.
-		await invalidateAll();
+		await refreshAll();
 		transcriptLoading = true;
 		try {
 			transcript = await api.getTranscript(data.session.id);

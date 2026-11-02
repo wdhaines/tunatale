@@ -34,25 +34,25 @@ function routeExists(target: string): boolean {
 }
 
 const mockGoto = vi.fn();
-const mockInvalidateAll = vi.fn();
+const mockRefreshAll = vi.fn();
 vi.mock("$app/navigation", () => ({
   goto: (...args: unknown[]) => mockGoto(...args),
-  invalidateAll: () => mockInvalidateAll(),
+  refreshAll: () => mockRefreshAll(),
 }));
 
 // The confirm is a real dialog component elsewhere; here it is the boundary, so
 // stub it to "yes" and let the tests assert what the click DOES.
 const mockConfirm = vi.fn().mockResolvedValue(true);
-vi.mock("$lib/components/ConfirmDialog.svelte", () => ({
+vi.mock("#lib/components/ConfirmDialog.svelte", () => ({
   default: () => null,
   confirmDialog: (...args: unknown[]) => mockConfirm(...args),
 }));
 
-vi.mock("$lib/stores/listened.svelte", () => ({
+vi.mock("#lib/stores/listened.svelte.js", () => ({
   listenedStore: { has: vi.fn().mockReturnValue(false), refresh: vi.fn() },
 }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getReviewSession: vi.fn(),
     getLessonAudio: vi.fn(),
@@ -79,9 +79,9 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
-import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
-import { listenedStore } from "$lib/stores/listened.svelte";
+import { api } from "#lib/api.js";
+import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
+import { listenedStore } from "#lib/stores/listened.svelte.js";
 import Page from "./+page.svelte";
 import { load } from "./+page";
 
@@ -1069,10 +1069,10 @@ describe("the reader", () => {
         });
         await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
 
-        // handlePasteImported calls invalidateAll + getTranscript a second time
+        // handlePasteImported calls refreshAll + getTranscript a second time
         await vi.waitFor(() => {
           expect(api.importReviewSession).toHaveBeenCalledWith("sess-1", '{"title":"Test"}');
-          expect(mockInvalidateAll).toHaveBeenCalled();
+          expect(mockRefreshAll).toHaveBeenCalled();
           expect(mockSessionTranscript).toHaveBeenCalledTimes(2);
         });
       });
@@ -2017,7 +2017,7 @@ describe("moving to another session in place", () => {
 
   describe("a reload of the SAME session leaves the reader alone", () => {
     // The other direction. Rewrite, re-gloss and paste all end in
-    // `invalidateAll()`, which hands the page a new `data` object for the same
+    // `refreshAll()`, which hands the page a new `data` object for the same
     // id; each handler re-reads what it needs. A fix that reset the page on
     // every `data` change would blank it, and double every transcript fetch.
     it("keeps the words on screen and does not fetch them again", async () => {

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { authStore } from '$lib/stores/auth.svelte';
-	import logo from '$lib/assets/logo.png';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { page } from '$app/state';
+	import { authStore } from '#lib/stores/auth.svelte.js';
+	import logo from '#lib/assets/logo.png';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let email = $state('');
 	let password = $state('');
@@ -50,7 +50,10 @@
 		error = '';
 		try {
 			await authStore.login(email, password);
-			await goto(safeNext($page.url.searchParams.get('next')));
+			// SvelteKit 3's goto() rejects a path that matches no route. The sign-in
+			// already succeeded, so a stale `next` falls back to the root instead of
+			// reaching the catch below as a login error.
+			await goto(safeNext(page.url.searchParams.get('next'))).catch(() => goto('/'));
 		} catch (err) {
 			error = humanise(err);
 		} finally {

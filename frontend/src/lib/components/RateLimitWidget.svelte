@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
-	import { formatCompactNumber } from '$lib/formatCompactNumber';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { rateLimitStore } from '#lib/stores/rateLimit.svelte.js';
+	import { formatCompactNumber } from '#lib/formatCompactNumber.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let probing = $state(false);
 	let now = $state(Date.now());

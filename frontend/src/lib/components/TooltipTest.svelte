@@ -1,7 +1,7 @@
 <!-- Test harness: renders Tooltip with a simple text child. -->
 <script lang="ts">
 	import Tooltip from './Tooltip.svelte';
-	import type { WordToken } from '$lib/api';
+	import type { WordToken } from '#lib/api.js';
 	import type { TooltipActions } from './Tooltip.svelte';
 	interface Props {
 		translation?: string | null;

@@ -11,11 +11,11 @@ import { render, fireEvent, waitFor } from "@testing-library/svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { redeemInvite: vi.fn() },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import Invite from "./+page.svelte";
 
 const mockRedeem = vi.mocked(api.redeemInvite);

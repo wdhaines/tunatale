@@ -12,7 +12,7 @@
 	//
 	// Keyed on the id rather than taught to follow `data` field by field (the
 	// lesson page's approach): a new instance cannot inherit state, including
-	// state added later. A reload of the SAME session (invalidateAll after a
+	// state added later. A reload of the SAME session (refreshAll after a
 	// rewrite, re-gloss or paste) keeps the instance.
 	let { data }: { data: PageData } = $props();
 </script>

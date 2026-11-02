@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
-	import DayPicker from '$lib/components/DayPicker.svelte';
-	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
-	import LlmActivityLog from '$lib/components/LlmActivityLog.svelte';
-	import ManualStoryPanel from '$lib/components/ManualStoryPanel.svelte';
-	import { pipelineStore } from '$lib/stores/pipeline.svelte';
-	import { llmActivityStore } from '$lib/stores/llmActivity.svelte';
-	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import DayPicker from '#lib/components/DayPicker.svelte';
+	import RateLimitWidget from '#lib/components/RateLimitWidget.svelte';
+	import LlmActivityLog from '#lib/components/LlmActivityLog.svelte';
+	import ManualStoryPanel from '#lib/components/ManualStoryPanel.svelte';
+	import { pipelineStore } from '#lib/stores/pipeline.svelte.js';
+	import { llmActivityStore } from '#lib/stores/llmActivity.svelte.js';
+	import { rateLimitStore } from '#lib/stores/rateLimit.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();

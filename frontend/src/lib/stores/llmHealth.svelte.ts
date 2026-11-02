@@ -1,5 +1,5 @@
-import { api } from "$lib/api";
-import type { LlmHealthStatus } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { LlmHealthStatus } from "#lib/api.js";
 
 function createLlmHealthStore() {
   let status = $state<LlmHealthStatus | null>(null);

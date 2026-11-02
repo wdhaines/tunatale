@@ -8,19 +8,18 @@ import { createRawSnippet } from "svelte";
 
 // Mutable pathname so individual tests can assert active-link states.
 const nav = vi.hoisted(() => ({ pathname: "/" }));
-vi.mock("$app/stores", () => ({
+vi.mock("$app/state", () => ({
   page: {
-    subscribe: vi.fn((cb) => {
-      cb({ url: { pathname: nav.pathname } });
-      return () => {};
-    }),
+    get url() {
+      return { pathname: nav.pathname };
+    },
   },
 }));
 
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   setUnauthorizedHandler: vi.fn(),
   setParkedHandler: vi.fn(),
@@ -44,12 +43,12 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api, setParkedHandler, setUnauthorizedHandler } from "$lib/api";
-import { parkedStore } from "$lib/stores/parked.svelte";
-import { authStore } from "$lib/stores/auth.svelte";
-import { syncStore } from "$lib/stores/sync.svelte";
-import { queueStatsStore } from "$lib/stores/queueStats.svelte";
-import { themeStore } from "$lib/stores/theme.svelte";
+import { api, setParkedHandler, setUnauthorizedHandler } from "#lib/api.js";
+import { parkedStore } from "#lib/stores/parked.svelte.js";
+import { authStore } from "#lib/stores/auth.svelte.js";
+import { syncStore } from "#lib/stores/sync.svelte.js";
+import { queueStatsStore } from "#lib/stores/queueStats.svelte.js";
+import { themeStore } from "#lib/stores/theme.svelte.js";
 import Layout from "./+layout.svelte";
 
 const mockPeerSync = vi.mocked(api.peerSync);

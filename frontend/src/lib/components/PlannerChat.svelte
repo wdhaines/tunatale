@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { ChatMessage } from '$lib/planner';
-	import { clampBatchSize } from '$lib/planner';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { ChatMessage } from '#lib/planner.js';
+	import { clampBatchSize } from '#lib/planner.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		messages: ChatMessage[];

@@ -29,16 +29,15 @@ vi.mock("svelte", async () => {
 
 // Mutable URL search params — individual tests set ?lesson= to enter lesson mode.
 const urlParams = vi.hoisted(() => new URLSearchParams());
-vi.mock("$app/stores", () => ({
+vi.mock("$app/state", () => ({
   page: {
-    subscribe: vi.fn((cb: (v: unknown) => void) => {
-      cb({ url: { searchParams: urlParams } });
-      return () => {};
-    }),
+    get url() {
+      return { searchParams: urlParams };
+    },
   },
 }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
     getLanguages: vi.fn(),
@@ -52,9 +51,9 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
-import type { LessonDetail, ReviewQueueItem } from "$lib/api";
-import { syncStore } from "$lib/stores/sync.svelte";
+import { api } from "#lib/api.js";
+import type { LessonDetail, ReviewQueueItem } from "#lib/api.js";
+import { syncStore } from "#lib/stores/sync.svelte.js";
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);
 const mockFetchReviewQueue = vi.mocked(api.fetchReviewQueue);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
@@ -437,7 +436,7 @@ describe("review/+page.svelte", () => {
   it("hides FSRS: defaults on a deck with no Anki sync, where defaults are the design", async () => {
     // A second learner's deck never syncs, so its FSRS parameters are the
     // defaults on purpose (tunatale-98zf.1) — the marker would be noise there.
-    const { languageStore } = await import("$lib/stores/language.svelte");
+    const { languageStore } = await import("#lib/stores/language.svelte.js");
     vi.mocked(api.getLanguages).mockResolvedValue({
       languages: [],
       active: "ceb",

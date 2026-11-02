@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { LessonAudio, RenderEstimate } from '$lib/api';
-	import { getLocale, t } from '$lib/i18n/i18n.svelte';
+	import type { LessonAudio, RenderEstimate } from '#lib/api.js';
+	import { getLocale, t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * Re-render audio from the tools menu (bd tunatale-9paa), shared by the lesson

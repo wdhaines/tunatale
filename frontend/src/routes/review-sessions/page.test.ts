@@ -14,13 +14,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     listReviewSessions: vi.fn(),
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import Page from "./+page.svelte";
 import { load } from "./+page";
 

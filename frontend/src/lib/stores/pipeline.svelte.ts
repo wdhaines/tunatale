@@ -1,5 +1,5 @@
-import { api } from "$lib/api";
-import type { PipelineStatus } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { PipelineStatus } from "#lib/api.js";
 import { rateLimitStore } from "./rateLimit.svelte";
 import { llmActivityStore } from "./llmActivity.svelte";
 

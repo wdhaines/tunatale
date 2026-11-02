@@ -13,7 +13,7 @@
  *  - refresh()       — async: resets hydration latch + re-runs hydrate()
  *  - reset()         — sync: clears entries + hydration latch (test seam)
  */
-import { api, type ListenPayload, type ListenResponse } from "$lib/api";
+import { api, type ListenPayload, type ListenResponse } from "#lib/api.js";
 
 const LEGACY_LISTENED_KEY = "tunatale:listened-lessons";
 const LEGACY_HOME_KEY = "tunatale:home";

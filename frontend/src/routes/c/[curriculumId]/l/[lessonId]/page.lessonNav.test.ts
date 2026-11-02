@@ -2,7 +2,7 @@
  * Tests for /c/[curriculumId]/l/[lessonId] — the prev/next lesson links in the
  * player header, fed by a client-side fetch of the curriculum's day→lesson map.
  *
- * See page-test-helpers.ts for the shared $lib/api / pipeline mock factories.
+ * See page-test-helpers.ts for the shared #lib/api / pipeline mock factories.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/svelte";
@@ -10,22 +10,22 @@ import { render, waitFor } from "@testing-library/svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", async () => {
+vi.mock("#lib/api.js", async () => {
   const { createApiMock } = await import("./page-test-helpers");
   return { api: createApiMock() };
 });
 
-vi.mock("$lib/stores/pipeline.svelte", async () => {
+vi.mock("#lib/stores/pipeline.svelte.js", async () => {
   const { createPipelineMock } = await import("./page-test-helpers");
   return { pipelineStore: createPipelineMock() };
 });
 
-import { api } from "$lib/api";
-import type { DayProgress, TranscriptData } from "$lib/api";
-import { listenedStore } from "$lib/stores/listened.svelte";
-import { syncStore } from "$lib/stores/sync.svelte";
-import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
-import { pipelineStore } from "$lib/stores/pipeline.svelte";
+import { api } from "#lib/api.js";
+import type { DayProgress, TranscriptData } from "#lib/api.js";
+import { listenedStore } from "#lib/stores/listened.svelte.js";
+import { syncStore } from "#lib/stores/sync.svelte.js";
+import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
+import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
 import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
 

@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { themeStore, type ThemePref } from '$lib/stores/theme.svelte';
-	import { prefetchPrefStore } from '$lib/stores/prefetchPref.svelte';
-	import { listenCountdownPref, type CountdownValue } from '$lib/stores/listenCountdownPref.svelte';
-	import { authStore } from '$lib/stores/auth.svelte';
+	import { themeStore, type ThemePref } from '#lib/stores/theme.svelte.js';
+	import { prefetchPrefStore } from '#lib/stores/prefetchPref.svelte.js';
+	import { listenCountdownPref, type CountdownValue } from '#lib/stores/listenCountdownPref.svelte.js';
+	import { authStore } from '#lib/stores/auth.svelte.js';
 	import {
 		mediaTraceEnabled,
 		readMediaTrace,
 		clearMediaTrace,
 		setMediaTraceEnabled
-	} from '$lib/mediaTrace';
-	import { t } from '$lib/i18n/i18n.svelte';
+	} from '#lib/mediaTrace.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	// The header used to carry these controls inline; they're set-and-forget
 	// preferences, so they live here and only critical CTAs stay in the nav.

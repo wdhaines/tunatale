@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
-	import logo from '$lib/assets/logo.png';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import logo from '#lib/assets/logo.png';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let token = $state('');
 	let email = $state('');

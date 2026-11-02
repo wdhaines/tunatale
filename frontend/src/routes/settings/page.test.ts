@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   api: {
     getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
@@ -21,12 +21,12 @@ vi.mock("$lib/api", () => ({
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-import { api } from "$lib/api";
-import { themeStore } from "$lib/stores/theme.svelte";
-import { prefetchPrefStore } from "$lib/stores/prefetchPref.svelte";
-import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
-import { languageStore } from "$lib/stores/language.svelte";
-import { authStore } from "$lib/stores/auth.svelte";
+import { api } from "#lib/api.js";
+import { themeStore } from "#lib/stores/theme.svelte.js";
+import { prefetchPrefStore } from "#lib/stores/prefetchPref.svelte.js";
+import { listenCountdownPref } from "#lib/stores/listenCountdownPref.svelte.js";
+import { languageStore } from "#lib/stores/language.svelte.js";
+import { authStore } from "#lib/stores/auth.svelte.js";
 import Settings from "./+page.svelte";
 
 const mockGetLanguages = vi.mocked(api.getLanguages);

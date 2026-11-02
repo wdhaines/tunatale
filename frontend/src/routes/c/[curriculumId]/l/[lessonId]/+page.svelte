@@ -1,37 +1,37 @@
 <script lang="ts">
-	import Banner from '$lib/components/Banner.svelte';
+	import Banner from '#lib/components/Banner.svelte';
 	import { onMount, untrack } from 'svelte';
-	import { goto, invalidateAll } from '$app/navigation';
-	import { api } from '$lib/api';
-	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult, DayProgress } from '$lib/api';
-	import { listenedStore } from '$lib/stores/listened.svelte';
-	import { handsFreePref } from '$lib/stores/handsFreePref.svelte';
-	import { mediaTrace } from '$lib/mediaTrace';
-	import LessonPlayer from '$lib/components/LessonPlayer.svelte';
-	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import Transcript from '$lib/components/Transcript.svelte';
-	import TranscriptPlaceholder from '$lib/components/TranscriptPlaceholder.svelte';
-	import { syncStore } from '$lib/stores/sync.svelte';
-	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
-	import { createReadingActions } from '$lib/reading/readingActions.svelte';
-	import LessonReader from '$lib/components/LessonReader.svelte';
-	import PagerBand from '$lib/components/PagerBand.svelte';
-	import MasteryLine from '$lib/components/MasteryLine.svelte';
-	import ListenActions from '$lib/components/ListenActions.svelte';
-	import { createListenActions } from '$lib/reading/listenActions.svelte';
-	import { pipelineStore } from '$lib/stores/pipeline.svelte';
-	import { rateLimitStore } from '$lib/stores/rateLimit.svelte';
-	import RateLimitWidget from '$lib/components/RateLimitWidget.svelte';
-	import AudioDownloads from '$lib/components/AudioDownloads.svelte';
-	import RerenderAudio from '$lib/components/RerenderAudio.svelte';
-	import LessonSourcePanel from '$lib/components/LessonSourcePanel.svelte';
-	import ListenPreviewModal from '$lib/components/ListenPreviewModal.svelte';
-	import { lessonMastery, masteryColor } from '$lib/mastery';
-	import Tooltip from '$lib/components/Tooltip.svelte';
-	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { isDrillOnly } from '$lib/lessonKind';
-	import type { WordRating } from '$lib/api';
+	import { goto, refreshAll } from '$app/navigation';
+	import { api } from '#lib/api.js';
+	import type { LessonAudio, TranscriptData, ListenResponse, PeerSyncResult, DayProgress } from '#lib/api.js';
+	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import { handsFreePref } from '#lib/stores/handsFreePref.svelte.js';
+	import { mediaTrace } from '#lib/mediaTrace.js';
+	import LessonPlayer from '#lib/components/LessonPlayer.svelte';
+	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
+	import Transcript from '#lib/components/Transcript.svelte';
+	import TranscriptPlaceholder from '#lib/components/TranscriptPlaceholder.svelte';
+	import { syncStore } from '#lib/stores/sync.svelte.js';
+	import { queueStatsStore } from '#lib/stores/queueStats.svelte.js';
+	import { createReadingActions } from '#lib/reading/readingActions.svelte.js';
+	import LessonReader from '#lib/components/LessonReader.svelte';
+	import PagerBand from '#lib/components/PagerBand.svelte';
+	import MasteryLine from '#lib/components/MasteryLine.svelte';
+	import ListenActions from '#lib/components/ListenActions.svelte';
+	import { createListenActions } from '#lib/reading/listenActions.svelte.js';
+	import { pipelineStore } from '#lib/stores/pipeline.svelte.js';
+	import { rateLimitStore } from '#lib/stores/rateLimit.svelte.js';
+	import RateLimitWidget from '#lib/components/RateLimitWidget.svelte';
+	import AudioDownloads from '#lib/components/AudioDownloads.svelte';
+	import RerenderAudio from '#lib/components/RerenderAudio.svelte';
+	import LessonSourcePanel from '#lib/components/LessonSourcePanel.svelte';
+	import ListenPreviewModal from '#lib/components/ListenPreviewModal.svelte';
+	import { lessonMastery, masteryColor } from '#lib/mastery.js';
+	import Tooltip from '#lib/components/Tooltip.svelte';
+	import { confirmDialog } from '#lib/components/ConfirmDialog.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { isDrillOnly } from '#lib/lessonKind.js';
+	import type { WordRating } from '#lib/api.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -265,7 +265,7 @@
 		try {
 			await api.reglossLesson(lessonId);
 			transcriptLoading = true;
-			await invalidateAll();
+			await refreshAll();
 			const t = await api.getTranscript(lessonId).catch(() => null);
 			if (data.lesson.id === lessonId) transcript = t;
 		} catch (e) {
@@ -458,7 +458,7 @@
 	// ⚠️ ONE IMPLEMENTATION, SHARED WITH THE REVIEW-SESSION READER. These ~200
 	// lines used to live here and were nearly copied into that page when its
 	// transcript endpoint missed on a session id. Only the SOURCE differs
-	// between the two — see $lib/reading/readingActions.svelte.ts.
+	// between the two — see #lib/reading/readingActions.svelte.ts.
 
 </script>
 

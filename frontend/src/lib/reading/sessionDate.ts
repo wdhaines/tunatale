@@ -1,5 +1,5 @@
-import { t } from "$lib/i18n/i18n.svelte";
-import type { MessageKey } from "$lib/i18n/i18n.svelte";
+import { t } from "#lib/i18n/i18n.svelte.js";
+import type { MessageKey } from "#lib/i18n/i18n.svelte.js";
 
 /**
  * Month names for a session date, as catalog KEYS.

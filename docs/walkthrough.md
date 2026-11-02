@@ -4108,10 +4108,10 @@ The frontend is a SvelteKit single-page app in `frontend/`, built with `adapter-
 
 ### 13.1 Shape of the app
 
-Production needs no Node process. `frontend/svelte.config.js` uses `adapter-static` with `fallback: 'index.html'`: nothing is prerendered, every path gets the same shell and the client router takes over. The consequence is that the host must serve `index.html` for unknown paths or deep links 404 (§15 covers the Caddy side). The data routes also declare `export const ssr = false`, and `$lib/api.ts` speaks to relative `/api/...` paths, so the dev server's Vite proxy and production's reverse proxy are interchangeable.
+Production needs no Node process. The `sveltekit()` plugin in `frontend/vite.config.ts` uses `adapter-static` with `fallback: 'index.html'`: nothing is prerendered, every path gets the same shell and the client router takes over. The consequence is that the host must serve `index.html` for unknown paths or deep links 404 (§15 covers the Caddy side). The data routes also declare `export const ssr = false`, and `#lib/api.ts` speaks to relative `/api/...` paths, so the dev server's Vite proxy and production's reverse proxy are interchangeable.
 
 ```bash
-cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter(" ../../svelte.config.js
+cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter(" ../../vite.config.ts
 ```
 
 ```output
@@ -4311,7 +4311,7 @@ Two hard-won details. `navigator.mediaSession` is a global singleton, and on a c
 
 Position is saved on `visibilitychange`/`pagehide` (throttled) and resumes into the right section. The Repeat latch loops the current sentence until switched off, and next/previous cancel it. The artwork shown on the lock screen is the app icon.
 
-**Offline audio.** Audio is cached by `frontend/src/service-worker.ts`, deliberately a thin shell; all decisions live in the tested `$lib/sw/audio-cache.ts`. Strategy is cache-first on the full file with *synthesised* Range responses: lesson audio is immutable (keyed by a server-minted id), `<audio>` sends `Range` requests, Chromium stalls over a service worker unless it gets a `206`, and the server's own `206` cannot be cached, so the worker caches the full `200` and cuts `206` slices itself. `sw/prefetch.ts` can prefetch a lesson on wifi when the Network Information API says so and the user has not asked to save data. `sw/precache.ts` keeps debug pages (the voice probes) out of the app-shell cache, so a spike can stay in the tree safely. The design is in `docs/archive/offline-audio-plan.md`.
+**Offline audio.** Audio is cached by `frontend/src/service-worker.ts`, deliberately a thin shell; all decisions live in the tested `#lib/sw/audio-cache.ts`. Strategy is cache-first on the full file with *synthesised* Range responses: lesson audio is immutable (keyed by a server-minted id), `<audio>` sends `Range` requests, Chromium stalls over a service worker unless it gets a `206`, and the server's own `206` cannot be cached, so the worker caches the full `200` and cuts `206` slices itself. `sw/prefetch.ts` can prefetch a lesson on wifi when the Network Information API says so and the user has not asked to save data. `sw/precache.ts` keeps debug pages (the voice probes) out of the app-shell cache, so a spike can stay in the tree safely. The design is in `docs/archive/offline-audio-plan.md`.
 
 **Voice.** A voice-control spike lives under `frontend/src/lib/voice/`: `phraseTable.ts::resolveCommand` maps an exact utterance to a command, and `wakeLock.ts` holds a screen wake lock while hands-free is running in Listen, which is when nobody is touching the phone. There is no recognizer wired in yet; the Mic chip and its `voicePref` store were removed until there is a wake word.
 
@@ -4385,14 +4385,14 @@ cd frontend && grep '"fmt:check"\|"lint"\|"check"\|"test:coverage"\|"test:e2e"' 
 ```
 
 ```output
-		"check": "SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-kit sync && SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-check --tsconfig ./tsconfig.test.json",
+		"check": "SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-kit sync && SVELTEKIT_OUT_DIR=.svelte-kit-test svelte-check --tsconfig ./tsconfig.json",
 		"test:coverage": "SVELTEKIT_OUT_DIR=.svelte-kit-test vitest run --coverage && bun scripts/coverage-gate.ts",
 		"test:e2e": "playwright test",
 		"fmt:check": "oxfmt --check 'src/**/*.ts' 'src/**/*.js'",
 		"lint": "bun run lint:fast && bun run lint:svelte"
 ```
 
-`check` and `test` set `SVELTEKIT_OUT_DIR=.svelte-kit-test`. `svelte-kit sync` runs at the start of both, and rewriting the dev server's `.svelte-kit` made Vite reload the page the developer was looking at; the comment in `svelte.config.js` records the measurement, including that redirecting the output is necessary but not sufficient (a `server.watch.ignored` entry in `vite.config.ts` is the half that stops the reload).
+`check` and `test` set `SVELTEKIT_OUT_DIR=.svelte-kit-test`. `svelte-kit sync` runs at the start of both, and rewriting the dev server's `.svelte-kit` made Vite reload the page the developer was looking at; the comment on the `outDir` option of `sveltekit()` in `vite.config.ts` records the measurement, including that redirecting the output is necessary but not sufficient (a `server.watch.ignored` entry in `vite.config.ts` is the half that stops the reload).
 
 **The 100% gate.** Coverage must be 100% lines, branches, functions and statements per file, enforced by `frontend/scripts/coverage-gate.ts`, not by Vitest's `thresholds:` block, which is intentionally absent. The reason is the Svelte 5 compiler: it injects template fragments (`'} created, {'`, folded ternary literals, `?? ''` defaults) that v8 reports as uncovered branches no test can reach, so a plain threshold would have to sit near 75% to absorb the noise. The gate reads `coverage/coverage-final.json`, classifies each uncovered sub-location with `isPhantom(branchType, text, synthetic, duplicateRange)`, logs the drops to `coverage/dropped-branches.json`, then asserts 100% on what is left.
 

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { ReadableLesson } from '$lib/api';
-	import { buildScenes } from '$lib/transcriptScenes';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { ReadableLesson } from '#lib/api.js';
+	import { buildScenes } from '#lib/transcriptScenes.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		lesson: ReadableLesson;

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   probeRateLimit: vi.fn(),
 }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getLlmHealth: mocks.getLlmHealth,
     getRateLimit: mocks.getRateLimit,
@@ -15,8 +15,8 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { llmHealthStore } from "$lib/stores/llmHealth.svelte";
-import { rateLimitStore } from "$lib/stores/rateLimit.svelte";
+import { llmHealthStore } from "#lib/stores/llmHealth.svelte.js";
+import { rateLimitStore } from "#lib/stores/rateLimit.svelte.js";
 import LlmHealthBanner from "./LlmHealthBanner.svelte";
 
 const STATUS = {

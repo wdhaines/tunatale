@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { fetchQueueStats: vi.fn() },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 import { queueStatsStore } from "./queueStats.svelte";
 
 const mockFetchQueueStats = vi.mocked(api.fetchQueueStats);

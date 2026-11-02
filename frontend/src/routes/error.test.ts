@@ -1,7 +1,7 @@
 /**
  * Tests for the global +error.svelte error boundary route.
  *
- * Mocks $app/stores.page via a vi.hoisted mutable holder so each test can
+ * Mocks $app/state.page via a vi.hoisted mutable holder so each test can
  * set status/error before render() without re-mocking per test.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -14,11 +14,13 @@ const hoisted = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("$app/stores", () => ({
+vi.mock("$app/state", () => ({
   page: {
-    subscribe: (run: (v: typeof hoisted.pageData) => void) => {
-      run(hoisted.pageData);
-      return () => {};
+    get status() {
+      return hoisted.pageData.status;
+    },
+    get error() {
+      return hoisted.pageData.error;
     },
   },
 }));
@@ -30,19 +32,19 @@ beforeEach(() => {
 });
 
 describe("+error.svelte", () => {
-  it("renders the HTTP status code from $page.status", () => {
+  it("renders the HTTP status code from page.status", () => {
     hoisted.pageData = { status: 404, error: { message: "Not found" } };
     const { getByRole } = render(ErrorPage);
     expect(getByRole("heading", { level: 1 }).textContent).toBe("404");
   });
 
-  it("renders the error message when $page.error.message is present", () => {
+  it("renders the error message when page.error.message is present", () => {
     hoisted.pageData = { status: 500, error: { message: "Boom" } };
     const { getByText } = render(ErrorPage);
     expect(getByText("Boom")).toBeTruthy();
   });
 
-  it("falls back to the default message when $page.error is null", () => {
+  it("falls back to the default message when page.error is null", () => {
     hoisted.pageData = { status: 500, error: null };
     const { getByText } = render(ErrorPage);
     expect(getByText("Something went wrong")).toBeTruthy();

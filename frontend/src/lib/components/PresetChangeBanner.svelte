@@ -5,12 +5,12 @@
 	// range. That was tunatale-xzp6 — Slovene at a median of 7.06 where ~1.5 was
 	// expected — and it was invisible until the line reached sync.log. This is
 	// that line, on screen.
-	import Banner from '$lib/components/Banner.svelte';
-	import { api } from '$lib/api';
-	import type { PresetChange } from '$lib/api';
-	import { languageStore } from '$lib/stores/language.svelte';
-	import { syncStore } from '$lib/stores/sync.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import Banner from '#lib/components/Banner.svelte';
+	import { api } from '#lib/api.js';
+	import type { PresetChange } from '#lib/api.js';
+	import { languageStore } from '#lib/stores/language.svelte.js';
+	import { syncStore } from '#lib/stores/sync.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	let { syncAvailable = true }: { syncAvailable?: boolean } = $props();
 

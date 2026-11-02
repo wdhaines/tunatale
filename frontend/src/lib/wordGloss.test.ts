@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { wordGloss } from "./wordGloss";
-import { makeWordToken } from "$lib/../test/factories";
+import { makeWordToken } from "../test/factories";
 
 describe("wordGloss", () => {
   it("shows the lesson's gloss first and the disagreeing card second", () => {

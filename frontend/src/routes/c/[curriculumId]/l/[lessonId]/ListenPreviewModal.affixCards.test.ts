@@ -17,11 +17,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
-import ListenPreviewModal from "$lib/components/ListenPreviewModal.svelte";
-import { api, type AffixCardPreview, type ListenPreview } from "$lib/api";
-import { listenCountdownPref } from "$lib/stores/listenCountdownPref.svelte";
+import ListenPreviewModal from "#lib/components/ListenPreviewModal.svelte";
+import { api, type AffixCardPreview, type ListenPreview } from "#lib/api.js";
+import { listenCountdownPref } from "#lib/stores/listenCountdownPref.svelte.js";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getListenPreview: vi.fn(),
     markAsListened: vi.fn(),
@@ -29,9 +29,9 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-vi.mock("$lib/stores/listened.svelte", async () => {
-  const actual = await vi.importActual<typeof import("$lib/stores/listened.svelte")>(
-    "$lib/stores/listened.svelte",
+vi.mock("#lib/stores/listened.svelte.js", async () => {
+  const actual = await vi.importActual<typeof import("#lib/stores/listened.svelte.js")>(
+    "#lib/stores/listened.svelte.js",
   );
   return { listenedStore: actual.listenedStore };
 });

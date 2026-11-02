@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { createListenActions } from '$lib/reading/listenActions.svelte';
+	import type { createListenActions } from '#lib/reading/listenActions.svelte.js';
 	import ReaderChips from './ReaderChips.svelte';
 
 	/**

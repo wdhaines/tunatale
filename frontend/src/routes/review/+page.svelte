@@ -1,26 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
-	import type { QueueStats } from '$lib/api';
-	import { api } from '$lib/api';
-	import QueueStatsWidget from '$lib/components/QueueStatsWidget.svelte';
-	import type { ReviewQueueItem } from '$lib/api';
-	import DrillCard from '$lib/components/DrillCard.svelte';
-	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
-	import { queueStatsStore } from '$lib/stores/queueStats.svelte';
-	import { syncStore } from '$lib/stores/sync.svelte';
-	import { languageStore } from '$lib/stores/language.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { page } from '$app/state';
+	import type { QueueStats } from '#lib/api.js';
+	import { api } from '#lib/api.js';
+	import QueueStatsWidget from '#lib/components/QueueStatsWidget.svelte';
+	import type { ReviewQueueItem } from '#lib/api.js';
+	import DrillCard from '#lib/components/DrillCard.svelte';
+	import { confirmDialog } from '#lib/components/ConfirmDialog.svelte';
+	import { queueStatsStore } from '#lib/stores/queueStats.svelte.js';
+	import { syncStore } from '#lib/stores/sync.svelte.js';
+	import { languageStore } from '#lib/stores/language.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	type QueueItem = { item: ReviewQueueItem; direction: 'recognition' | 'production' };
 
 	// C1: lesson mode — read from URL search params.
-	let lessonId = $derived($page.url.searchParams.get('lesson'));
+	let lessonId = $derived(page.url.searchParams.get('lesson'));
 	// A RETURN PATH, not a curriculum id. `c` only ever existed to rebuild the
 	// "back to lesson" url, which assumed the content lived under a curriculum.
 	// A review session does not, so the caller now says where to go back to
 	// (bd tunatale-9p9d).
-	let backHref = $derived($page.url.searchParams.get('back'));
+	let backHref = $derived(page.url.searchParams.get('back'));
 	let lessonMode = $derived(lessonId !== null);
 
 	let queue: QueueItem[] = $state([]);

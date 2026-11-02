@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import RerenderAudio from "./RerenderAudio.svelte";
-import type { LessonAudio, RenderEstimate } from "$lib/api";
+import type { LessonAudio, RenderEstimate } from "#lib/api.js";
 
 const SECTIONS = [
   { section_type: "key_phrases", title: "Key Phrases" },

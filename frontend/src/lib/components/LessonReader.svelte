@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { LessonAudio, ReadableLesson, TranscriptData } from '$lib/api';
-	import type { PlaybackController } from '$lib/playback/playbackController.svelte';
-	import type { createReadingActions } from '$lib/reading/readingActions.svelte';
-	import { isDrillOnly } from '$lib/lessonKind';
-	import { lessonModePref } from '$lib/stores/lessonModePref.svelte';
-	import { playerCollapsedPref } from '$lib/stores/playerCollapsedPref.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { LessonAudio, ReadableLesson, TranscriptData } from '#lib/api.js';
+	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
+	import type { createReadingActions } from '#lib/reading/readingActions.svelte.js';
+	import { isDrillOnly } from '#lib/lessonKind.js';
+	import { lessonModePref } from '#lib/stores/lessonModePref.svelte.js';
+	import { playerCollapsedPref } from '#lib/stores/playerCollapsedPref.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import DrillForms from './DrillForms.svelte';
 	import LessonPlayer from './LessonPlayer.svelte';
 	import ReadListenToggle from './ReadListenToggle.svelte';

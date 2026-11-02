@@ -16,7 +16,7 @@
   spike. The qi5.1 version WAS deleted, purely because the service worker
   precaches everything in static/ and a debug page in the app-shell cache is a
   real cost to users — and then it had to be recovered from a commit hash to
-  build this. `$lib/sw/precache` now excludes /voice-probe.html and
+  build this. `#lib/sw/precache` now excludes /voice-probe.html and
   /voice-probe/ from the precache list, so keeping it costs users nothing.
 
   Its heavy assets (~19 MB: openWakeWord ONNX + the onnxruntime-web WASM

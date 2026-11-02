@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { getLlmHealth: vi.fn() },
 }));
 
-import { api } from "$lib/api";
-import type { LlmHealthStatus } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { LlmHealthStatus } from "#lib/api.js";
 
 const mockGetLlmHealth = vi.mocked(api.getLlmHealth);
 

@@ -1,5 +1,5 @@
-import { api } from "$lib/api";
-import type { QueueStats } from "$lib/api";
+import { api } from "#lib/api.js";
+import type { QueueStats } from "#lib/api.js";
 
 /**
  * Shared review-count stats so the nav badge and the /review page can't drift.

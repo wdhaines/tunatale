@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import type { PipelineStatus } from '$lib/api';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import type { PipelineStatus } from '#lib/api.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		status: PipelineStatus;

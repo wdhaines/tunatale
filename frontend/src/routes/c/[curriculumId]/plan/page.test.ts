@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     planTurn: vi.fn(),
     commitPlan: vi.fn(),
@@ -15,11 +15,11 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-vi.mock("$lib/stores/pipeline.svelte", () => ({
+vi.mock("#lib/stores/pipeline.svelte.js", () => ({
   pipelineStore: { start: vi.fn(), stop: vi.fn(), status: null, error: "" },
 }));
 
-vi.mock("$lib/stores/llmActivity.svelte", () => ({
+vi.mock("#lib/stores/llmActivity.svelte.js", () => ({
   llmActivityStore: {
     events: [],
     currentLine: "",
@@ -29,7 +29,7 @@ vi.mock("$lib/stores/llmActivity.svelte", () => ({
   },
 }));
 
-vi.mock("$lib/stores/rateLimit.svelte", () => ({
+vi.mock("#lib/stores/rateLimit.svelte.js", () => ({
   rateLimitStore: {
     status: null,
     probeError: "",
@@ -41,15 +41,15 @@ vi.mock("$lib/stores/rateLimit.svelte", () => ({
 }));
 
 // Keep RateLimitWidget mocked (deeply nested store)
-vi.mock("$lib/components/RateLimitWidget.svelte", () => ({
+vi.mock("#lib/components/RateLimitWidget.svelte", () => ({
   default: (_props: unknown) => "<span>LLM —</span>",
 }));
 
-import { api } from "$lib/api";
-import { pipelineStore } from "$lib/stores/pipeline.svelte";
-import { rateLimitStore } from "$lib/stores/rateLimit.svelte";
-import { llmActivityStore } from "$lib/stores/llmActivity.svelte";
-import type { CurriculumSummary, DayPlan, ProposedBatch } from "$lib/api";
+import { api } from "#lib/api.js";
+import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
+import { rateLimitStore } from "#lib/stores/rateLimit.svelte.js";
+import { llmActivityStore } from "#lib/stores/llmActivity.svelte.js";
+import type { CurriculumSummary, DayPlan, ProposedBatch } from "#lib/api.js";
 import Page from "./+page.svelte";
 
 const mockPlanTurn = vi.mocked(api.planTurn);
@@ -348,7 +348,7 @@ describe("/c/[curriculumId]/plan page", () => {
       },
       configurable: true,
     });
-    const { llmActivityStore } = await import("$lib/stores/llmActivity.svelte");
+    const { llmActivityStore } = await import("#lib/stores/llmActivity.svelte.js");
     Object.defineProperty(llmActivityStore, "events", {
       value: [
         {

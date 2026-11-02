@@ -6,7 +6,7 @@ import { render, fireEvent } from "@testing-library/svelte";
 import { tick, createRawSnippet } from "svelte";
 import Tooltip from "./Tooltip.svelte";
 import TooltipTest from "./TooltipTest.svelte";
-import { makeWordToken } from "$lib/../test/factories";
+import { makeWordToken } from "../../test/factories";
 
 describe("Tooltip", () => {
   it("renders the child content", () => {

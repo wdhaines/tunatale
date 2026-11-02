@@ -6,12 +6,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/svelte";
 import { tick } from "svelte";
 import Transcript from "./Transcript.svelte";
-import type { TranscriptData } from "$lib/api";
+import type { TranscriptData } from "#lib/api.js";
 import { makeWordToken } from "../../test/factories";
-import { readerProductionPref } from "$lib/stores/readerProductionPref.svelte";
-import { readerEnglishPref } from "$lib/stores/readerEnglishPref.svelte";
+import { readerProductionPref } from "#lib/stores/readerProductionPref.svelte.js";
+import { readerEnglishPref } from "#lib/stores/readerEnglishPref.svelte.js";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: { translate: vi.fn() },
 }));
 

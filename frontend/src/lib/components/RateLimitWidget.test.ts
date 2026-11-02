@@ -6,14 +6,14 @@ const mocks = vi.hoisted(() => ({
   probeRateLimit: vi.fn(),
 }));
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     getRateLimit: mocks.getRateLimit,
     probeRateLimit: mocks.probeRateLimit,
   },
 }));
 
-import { rateLimitStore } from "$lib/stores/rateLimit.svelte";
+import { rateLimitStore } from "#lib/stores/rateLimit.svelte.js";
 import RateLimitWidget from "./RateLimitWidget.svelte";
 
 const STATUS_WITH_SNAPSHOT = {

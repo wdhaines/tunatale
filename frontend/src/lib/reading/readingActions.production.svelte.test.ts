@@ -7,11 +7,11 @@
  * on the production direction, with the button's rating.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { api, type TranscriptData } from "$lib/api";
+import { api, type TranscriptData } from "#lib/api.js";
 import { createReadingActions } from "./readingActions.svelte";
 import { makeWordToken } from "../../test/factories";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     submitDrill: vi.fn(),
     undoGrade: vi.fn(),
@@ -19,11 +19,11 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-vi.mock("$lib/stores/queueStats.svelte", () => ({
+vi.mock("#lib/stores/queueStats.svelte.js", () => ({
   queueStatsStore: { refresh: vi.fn() },
 }));
 
-vi.mock("$lib/components/ConfirmDialog.svelte", () => ({
+vi.mock("#lib/components/ConfirmDialog.svelte", () => ({
   confirmDialog: vi.fn(),
 }));
 

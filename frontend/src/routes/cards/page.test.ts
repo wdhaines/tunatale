@@ -15,7 +15,7 @@ async function openRowMenu(
   return trigger;
 }
 
-vi.mock("$lib/api", () => {
+vi.mock("#lib/api.js", () => {
   return {
     api: {
       listSRSItems: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock("$lib/api", () => {
   };
 });
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 const mockList = vi.mocked(api.listSRSItems);
 const mockUpdate = vi.mocked(api.updateSRSItem);
 const mockDelete = vi.mocked(api.deleteSRSItem);
@@ -47,7 +47,7 @@ const mockFetchImageCandidates = vi.mocked(api.fetchImageCandidates);
 const mockRemoveItemImage = vi.mocked(api.removeItemImage);
 const mockProposeCloze = vi.mocked(api.proposeClozeSentence);
 const mockSetCloze = vi.mocked(api.setClozeSentence);
-import { syncStore } from "$lib/stores/sync.svelte";
+import { syncStore } from "#lib/stores/sync.svelte.js";
 import { makeSRSItemDetail } from "../../test/factories";
 
 /** Yield to let pending microtasks (Svelte DOM updates) drain. */

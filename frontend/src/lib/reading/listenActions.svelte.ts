@@ -12,10 +12,10 @@
  * component across navigations, and a captured id would leave the queue count
  * describing the page you just left.
  */
-import { api } from "$lib/api";
-import type { ListenResponse, TranscriptData } from "$lib/api";
-import { listenedStore } from "$lib/stores/listened.svelte";
-import { queueStatsStore } from "$lib/stores/queueStats.svelte";
+import { api } from "#lib/api.js";
+import type { ListenResponse, TranscriptData } from "#lib/api.js";
+import { listenedStore } from "#lib/stores/listened.svelte.js";
+import { queueStatsStore } from "#lib/stores/queueStats.svelte.js";
 
 export interface ListenActionsOptions {
   contentId: string;

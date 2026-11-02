@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import type { PeerSyncResult } from '$lib/api';
-	import { syncStore } from '$lib/stores/sync.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import type { PeerSyncResult } from '#lib/api.js';
+	import { syncStore } from '#lib/stores/sync.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	// Peer-sync with AnkiWeb (or a self-host server): TunaTale syncs its OWN
 	// collection, so Anki can stay open and changes reach AnkiDroid. (This replaced

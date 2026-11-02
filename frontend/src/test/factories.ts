@@ -1,4 +1,4 @@
-import type { WordToken, ReviewQueueItem, SRSItemDetail } from "$lib/api";
+import type { WordToken, ReviewQueueItem, SRSItemDetail } from "#lib/api.js";
 
 export function makeWordToken(overrides: Partial<WordToken> = {}): WordToken {
   return {

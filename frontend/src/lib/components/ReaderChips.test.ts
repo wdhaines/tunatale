@@ -11,8 +11,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 
 import ReaderChips from "./ReaderChips.svelte";
-import { readerEnglishPref } from "$lib/stores/readerEnglishPref.svelte";
-import { readerProductionPref } from "$lib/stores/readerProductionPref.svelte";
+import { readerEnglishPref } from "#lib/stores/readerEnglishPref.svelte.js";
+import { readerProductionPref } from "#lib/stores/readerProductionPref.svelte.js";
 
 beforeEach(() => {
   localStorage.clear();

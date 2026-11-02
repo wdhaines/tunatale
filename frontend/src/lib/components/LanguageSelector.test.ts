@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   LANGUAGE_STORAGE_KEY: "tt-language",
   api: { getLanguages: vi.fn() },
 }));
 
-import { api } from "$lib/api";
-import { languageStore } from "$lib/stores/language.svelte";
-import LanguageSelector from "$lib/components/LanguageSelector.svelte";
+import { api } from "#lib/api.js";
+import { languageStore } from "#lib/stores/language.svelte.js";
+import LanguageSelector from "#lib/components/LanguageSelector.svelte";
 
 const mockGet = vi.mocked(api.getLanguages);
 const TWO = {

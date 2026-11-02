@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { CurriculumSummary } from '$lib/api';
-	import { listenedStore } from '$lib/stores/listened.svelte';
+	import type { CurriculumSummary } from '#lib/api.js';
+	import { listenedStore } from '#lib/stores/listened.svelte.js';
 
 	interface Props {
 		curriculum: CurriculumSummary;

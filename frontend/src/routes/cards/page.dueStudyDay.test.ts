@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import CardsPage from "./+page.svelte";
 import { makeSRSItemDetail } from "../../test/factories";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     listSRSItems: vi.fn(),
     fetchQueueStats: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock("$lib/api", () => ({
   },
 }));
 
-import { api } from "$lib/api";
+import { api } from "#lib/api.js";
 const mockList = vi.mocked(api.listSRSItems);
 
 beforeEach(() => {

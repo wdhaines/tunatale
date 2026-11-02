@@ -4,7 +4,7 @@
  * general render/listen/mode-switch interaction surface.
  *
  * Split from page.test.ts (item 14, Phase B) — see page-test-helpers.ts for
- * the shared $lib/api / pipeline mock factories and fixtures.
+ * the shared #lib/api / pipeline mock factories and fixtures.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
@@ -12,18 +12,18 @@ import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 const mockGoto = vi.fn();
 vi.mock("$app/navigation", () => ({ goto: (...args: unknown[]) => mockGoto(...args) }));
 
-vi.mock("$lib/api", async () => {
+vi.mock("#lib/api.js", async () => {
   const { createApiMock } = await import("./page-test-helpers");
   return { api: createApiMock() };
 });
 
-vi.mock("$lib/stores/pipeline.svelte", async () => {
+vi.mock("#lib/stores/pipeline.svelte.js", async () => {
   const { createPipelineMock } = await import("./page-test-helpers");
   return { pipelineStore: createPipelineMock() };
 });
 
 const mockQueueStatsRefresh = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-vi.mock("$lib/stores/queueStats.svelte", () => ({
+vi.mock("#lib/stores/queueStats.svelte.js", () => ({
   queueStatsStore: {
     get stats() {
       return null;
@@ -33,12 +33,12 @@ vi.mock("$lib/stores/queueStats.svelte", () => ({
   },
 }));
 
-import { api } from "$lib/api";
-import type { TranscriptData } from "$lib/api";
-import { listenedStore } from "$lib/stores/listened.svelte";
-import { syncStore } from "$lib/stores/sync.svelte";
-import { lessonModePref } from "$lib/stores/lessonModePref.svelte";
-import { pipelineStore } from "$lib/stores/pipeline.svelte";
+import { api } from "#lib/api.js";
+import type { TranscriptData } from "#lib/api.js";
+import { listenedStore } from "#lib/stores/listened.svelte.js";
+import { syncStore } from "#lib/stores/sync.svelte.js";
+import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
+import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
 import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
 
@@ -1908,9 +1908,9 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 describe("reader chips (bd tunatale-685k)", () => {
   beforeEach(async () => {
     localStorage.clear();
-    const { readerEnglishPref } = await import("$lib/stores/readerEnglishPref.svelte");
-    const { readerProductionPref } = await import("$lib/stores/readerProductionPref.svelte");
-    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    const { readerEnglishPref } = await import("#lib/stores/readerEnglishPref.svelte.js");
+    const { readerProductionPref } = await import("#lib/stores/readerProductionPref.svelte.js");
+    const { playerCollapsedPref } = await import("#lib/stores/playerCollapsedPref.svelte.js");
     readerEnglishPref.set("off");
     readerProductionPref.set(false);
     playerCollapsedPref.set(false);
@@ -1929,7 +1929,7 @@ describe("reader chips (bd tunatale-685k)", () => {
   });
 
   it("Read, playerCollapsedPref.set(true): reader-english-chip absent; reader-recall-chip present and its parentElement is .listen-actions", async () => {
-    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    const { playerCollapsedPref } = await import("#lib/stores/playerCollapsedPref.svelte.js");
     playerCollapsedPref.set(true);
     const { queryByTestId, getByTestId, container } = render(Page, {
       props: { data: { curriculum, lesson, audio, transcript } },
@@ -1953,7 +1953,7 @@ describe("reader chips (bd tunatale-685k)", () => {
       expect(queryByTestId("reader-english-chip")).toBeNull();
       expect(queryByTestId("reader-recall-chip")).toBeNull();
     });
-    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    const { playerCollapsedPref } = await import("#lib/stores/playerCollapsedPref.svelte.js");
     playerCollapsedPref.set(true);
     await waitFor(() => {
       expect(queryByTestId("reader-english-chip")).toBeNull();
@@ -1962,7 +1962,7 @@ describe("reader chips (bd tunatale-685k)", () => {
   });
 
   it("Read with no audio and playerCollapsedPref.set(true): both chips present", async () => {
-    const { playerCollapsedPref } = await import("$lib/stores/playerCollapsedPref.svelte");
+    const { playerCollapsedPref } = await import("#lib/stores/playerCollapsedPref.svelte.js");
     playerCollapsedPref.set(true);
     const { getByTestId } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript } },

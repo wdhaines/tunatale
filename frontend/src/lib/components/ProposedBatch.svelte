@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { ProposedBatch } from '$lib/api';
-	import { batchRange } from '$lib/planner';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { ProposedBatch } from '#lib/api.js';
+	import { batchRange } from '#lib/planner.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		proposed: ProposedBatch;

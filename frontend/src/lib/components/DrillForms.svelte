@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { LessonDrill } from '$lib/api';
-	import { captionBlurPref } from '$lib/stores/captionBlurPref.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { LessonDrill } from '#lib/api.js';
+	import { captionBlurPref } from '#lib/stores/captionBlurPref.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * What a lesson's affix drill covers: each root and its forms (bd

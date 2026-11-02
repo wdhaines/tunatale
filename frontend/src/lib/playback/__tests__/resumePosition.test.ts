@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createPlaybackController } from "../playbackController.svelte";
-import type { Cue, LessonAudio } from "$lib/api";
+import type { Cue, LessonAudio } from "#lib/api.js";
 
 // Locked oracle for tunatale-9idn — "Refresh loses the listening position".
 //

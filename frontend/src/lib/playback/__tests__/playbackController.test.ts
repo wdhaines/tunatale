@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPlaybackController } from "../playbackController.svelte";
-import type { Cue, LessonAudio } from "$lib/api";
+import type { Cue, LessonAudio } from "#lib/api.js";
 import {
   readMediaTrace,
   setMediaTraceEnabled,
   setMediaTraceSource,
   clearMediaTrace,
-} from "$lib/mediaTrace";
+} from "#lib/mediaTrace.js";
 
 function makeCue(overrides: Partial<Cue> & { index: number }): Cue {
   return {

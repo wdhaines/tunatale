@@ -1,6 +1,40 @@
-// Editor + `bun run build`. Layers the shared options over the tree that
-// `svelte-kit sync` generates at the DEFAULT outDir. Array `extends` is
-// later-wins and needs TypeScript >= 5.0 (this repo is on 6.x).
+// The one tsconfig: editor, `bun run build`, and `bun run check`.
+//
+// SvelteKit 3 writes its generated config to `node_modules/$app/tsconfig.json`,
+// one file whatever `outDir` is, and points its `rootDirs` at the `outDir` of
+// the most recent `svelte-kit sync`. That retired the old split, where
+// tsconfig.json extended `.svelte-kit/tsconfig.json` and tsconfig.test.json
+// extended `.svelte-kit-test/tsconfig.json`: `bun run check` syncs to
+// `.svelte-kit-test` first, so it reads its own generated types through this file.
+//
+// `$app/tsconfig` defines no include/exclude, so they are spelled out here. The
+// list is the one SvelteKit 2 generated. The service worker stays excluded: it
+// needs WebWorker rather than DOM types, and it was never part of this project.
 {
-	"extends": ["./.svelte-kit/tsconfig.json", "./tsconfig.base.json"]
+	"extends": "$app/tsconfig",
+	"compilerOptions": {
+		"rewriteRelativeImportExtensions": true,
+		"allowJs": true,
+		"checkJs": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		"strict": true,
+		"moduleResolution": "bundler"
+	},
+	"include": [
+		"vite.config.ts",
+		"src/**/*.js",
+		"src/**/*.ts",
+		"src/**/*.svelte",
+		"test/**/*.js",
+		"test/**/*.ts",
+		"test/**/*.svelte",
+		"tests/**/*.js",
+		"tests/**/*.ts",
+		"tests/**/*.svelte"
+	],
+	"exclude": ["node_modules/**", "src/service-worker.ts"]
 }

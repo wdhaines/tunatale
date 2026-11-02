@@ -6,23 +6,23 @@
  * new card, because the backend picks among a spelling's cards by the gloss.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { api, type TranscriptData } from "$lib/api";
-import { queueStatsStore } from "$lib/stores/queueStats.svelte";
+import { api, type TranscriptData } from "#lib/api.js";
+import { queueStatsStore } from "#lib/stores/queueStats.svelte.js";
 import { createReadingActions } from "./readingActions.svelte";
 import { makeWordToken } from "../../test/factories";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     createSenseCard: vi.fn(),
     getTranscript: vi.fn(),
   },
 }));
 
-vi.mock("$lib/stores/queueStats.svelte", () => ({
+vi.mock("#lib/stores/queueStats.svelte.js", () => ({
   queueStatsStore: { refresh: vi.fn() },
 }));
 
-vi.mock("$lib/components/ConfirmDialog.svelte", () => ({
+vi.mock("#lib/components/ConfirmDialog.svelte", () => ({
   confirmDialog: vi.fn(),
 }));
 

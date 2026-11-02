@@ -5,14 +5,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 
-vi.mock("$lib/api", () => ({
+vi.mock("#lib/api.js", () => ({
   api: {
     peerSync: vi.fn(),
   },
 }));
 
-import { api } from "$lib/api";
-import SyncButton from "$lib/components/SyncButton.svelte";
+import { api } from "#lib/api.js";
+import SyncButton from "#lib/components/SyncButton.svelte";
 
 const mockPeerSync = vi.mocked(api.peerSync);
 

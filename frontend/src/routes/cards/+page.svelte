@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { dueStudyDay } from '$lib/studyDay';
-	import type { SRSItemDetail, SRSListParams, QueueStats } from '$lib/api';
-	import { syncStore } from '$lib/stores/sync.svelte';
-	import ImageEditModal from '$lib/components/ImageEditModal.svelte';
-	import ClozeSentenceModal from '$lib/components/ClozeSentenceModal.svelte';
-	import { confirmDialog } from '$lib/components/ConfirmDialog.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { api } from '#lib/api.js';
+	import { dueStudyDay } from '#lib/studyDay.js';
+	import type { SRSItemDetail, SRSListParams, QueueStats } from '#lib/api.js';
+	import { syncStore } from '#lib/stores/sync.svelte.js';
+	import ImageEditModal from '#lib/components/ImageEditModal.svelte';
+	import ClozeSentenceModal from '#lib/components/ClozeSentenceModal.svelte';
+	import { confirmDialog } from '#lib/components/ConfirmDialog.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	const PAGE_SIZE = 50;
 

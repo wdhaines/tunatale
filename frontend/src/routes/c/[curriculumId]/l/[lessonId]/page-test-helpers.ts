@@ -5,8 +5,8 @@
  *
  * NOTE: `vi.mock()` calls cannot live here — Vitest hoists them to the top of
  * the file that calls them, so each split file declares its own
- * `vi.mock("$lib/api", …)` / `vi.mock("$app/navigation", …)` /
- * `vi.mock("$lib/stores/pipeline.svelte", …)` and wires them to the factories
+ * `vi.mock("#lib/api.js", …)` / `vi.mock("$app/navigation", …)` /
+ * `vi.mock("#lib/stores/pipeline.svelte.js", …)` and wires them to the factories
  * below via an async factory (`await import("./page-test-helpers")`), which
  * sidesteps the hoisting restriction because the import happens when the
  * factory runs, not at hoist time.
@@ -16,7 +16,7 @@
  */
 import { vi } from "vitest";
 
-/** Fresh `$lib/api` mock surface — the full method set `+page.svelte` may call. */
+/** Fresh `#lib/api.js` mock surface — the full method set `+page.svelte` may call. */
 export function createApiMock() {
   return {
     getLessonAudio: vi.fn(),

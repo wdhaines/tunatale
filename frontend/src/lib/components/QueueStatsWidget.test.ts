@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/svelte";
 import QueueStatsWidget from "./QueueStatsWidget.svelte";
-import type { QueueStats } from "$lib/api";
+import type { QueueStats } from "#lib/api.js";
 
 describe("QueueStatsWidget", () => {
   it("renders three numbers with correct color classes", () => {
