@@ -7,19 +7,19 @@ name = "tunatale-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi>=0.142.2",
+    "fastapi>=0.162.0",
     "uvicorn>=0.54.0",
-    "pydantic>=2.13.5",
-    "pydantic-settings>=2.15.0",
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.4",
-    "python-multipart>=0.0.32",
+    "python-multipart>=0.0.33",
     "soundfile>=0.14.0",
     "aiofiles>=25.1.0",
-    "numpy>=2.5.3",
+    "numpy>=2.5.4",
     "wordfreq>=3.1.1",
     "argon2-cffi>=25.1.0",
-    "google-auth[requests]>=2.59.1",
+    "google-auth[requests]>=2.62.0",
 ]
 
 [project.optional-dependencies]
@@ -40,13 +40,13 @@ dev = [
     # pre-commit framework — there is no .pre-commit-config.yaml anywhere in the
     # tree, so the package was an unused dependency and was dropped 2026-07-25.
     # Don't re-add it without also adding a config that something actually runs.
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "respx>=0.23.1",
-    "ruff>=0.16.9",
-    "anyio>=4.15.1",
+    "ruff>=0.17.3",
+    "anyio>=4.16.0",
     # Reads docker-compose.yml in tests/test_compose_profile.py. Declared even
     # though it arrives transitively via transformers in the `slovene`/
     # `norwegian` groups: CI installs `--no-default-groups --group dev` with
@@ -133,7 +133,7 @@ norwegian = [
 # take check, tunatale-ve4p.29), and transformers does not depend on torch, so
 # the first such install had transformers and no torch — the model could not
 # load and every Gemini take rendered unchecked (2026-10-14).
-alignment = ["transformers>=5.18.0", "torch>=2.9"]
+alignment = ["transformers>=5.22.1", "torch>=2.9"]
 
 [tool.uv]
 # The slovene/norwegian/alignment groups are DEFAULT groups, so a bare
@@ -195,6 +195,10 @@ line-ending = "lf"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Explicit since pytest-asyncio 1.4.1.post1, which warns (8x per run) when this is
+# unset. "function" is what an unset value already resolved to here: every async
+# fixture in tests/ is function-scoped (the module/session-scoped ones are sync).
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     # Surface ResourceWarnings (unclosed DB connections, files, etc.) so leaks are caught,
     # but ignore the "unclosed event loop" emitted during GC by pytest-asyncio's per-test
