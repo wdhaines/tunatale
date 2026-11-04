@@ -326,6 +326,9 @@ def _gloss_and_examples(text: str) -> tuple[str, list[Example]]:
 # --- senses -----------------------------------------------------------------------------------
 
 _SENSE_NUMBER = re.compile(r"\{(\w+)\}")
+#: A sense number with its braces lost in the source text ('v 1 [A; b5c] ask for s.t.'):
+#: a bare number right where a sense may start, with its class code after it.
+_BARE_SENSE = re.compile(r"\d+[a-z]?")
 _CLASSES = re.compile(r"\[([^\]]+)\]")
 
 
@@ -390,9 +393,15 @@ def _senses(text: str) -> tuple[list[Sense], list[str], tuple[str, str] | None]:
             i += 3
             continue
         m = _SENSE_NUMBER.fullmatch(t)
-        if m:
+        bare = (
+            _BARE_SENSE.fullmatch(t) is not None
+            and (at_start or prev in POS_LABELS)
+            and i + 1 < len(tokens)
+            and tokens[i + 1].startswith("[")
+        )
+        if m or bare:
             close()
-            cur = Sense(pos=pos, number=m.group(1), classes=heading_classes)
+            cur = Sense(pos=pos, number=m.group(1) if m else t, classes=heading_classes)
             senses.append(cur)
             i += 1
             continue
@@ -602,10 +611,15 @@ def decode_classes(code: str) -> list[tuple[str, str]]:
     for part in parts:
         for letter, digits in re.findall(r"([ABCabc])((?:\d|\(\d\)|[SPN])*)", part):
             nums = set(re.sub(r"\(\d\)|[SPN]", "", digits))
+            # §7.111: a number marks the affix's nonoccurrence; an S after it (§7.121 for B)
+            # re-enables that affix, which then occurs with a shifted stress (A2S, B2S).
+            again = set(re.findall(r"(\d)S", digits))
             paren = re.findall(r"\((\d)\)", digits)
+            offs = nums - again
+
             if letter == "A":
                 for d, affix in (("1", "mo-/mi-"), ("2", "mag-/nag-"), ("3", "maka-/naka-")):
-                    if d not in nums:
+                    if d not in offs:
                         add(affix, DOER)
                 if "N" in digits:
                     add("maN-/naN-", DOER)
@@ -620,13 +634,13 @@ def decode_classes(code: str) -> list[tuple[str, str]]:
                     ("5", "maka-/naka-"),
                     ("6", "magka-/nagka-"),
                 ):
-                    if d not in nums:
+                    if d not in offs:
                         add(affix, maka if affix == "maka-/naka-" else UNDERGOER)
                 if "N" in digits:  # §7.121: BN takes paN- with mu-, as AN does
                     add("maN-/naN-", UNDERGOER)
             elif letter == "C":
                 for d, affix in (("1", "mag-/nag-"), ("2", "magka-/nagka-"), ("3", "makig-/nakig-")):
-                    if d not in nums:
+                    if d not in offs:
                         add(affix, TOGETHER)
             elif letter == "a":
                 if "3" in nums:

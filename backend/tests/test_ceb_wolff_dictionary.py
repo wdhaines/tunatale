@@ -224,6 +224,15 @@ def test_digits_remove_affixes():
     assert [a for a, _ in decode_classes("A2")] == ["mo-/mi-", "maka-/naka-"]
 
 
+def test_an_s_after_a_digit_keeps_the_affix():
+    # Wolff §7.111: "The symbol S following a number indicates that the base occurs with the
+    # prefix represented, but that there is shift": dalágan 'run' [A2S] occurs with all three
+    # active sets. Read as a plain 2, it lost mag- (báyad 'pay for' [A2S3S] had no nagbáyad).
+    assert [a for a, _ in decode_classes("A2S")] == ["mo-/mi-", "mag-/nag-", "maka-/naka-"]
+    assert [a for a, _ in decode_classes("A2S3S")] == ["mo-/mi-", "mag-/nag-", "maka-/naka-"]
+    assert [a for a, _ in decode_classes("A2S3")] == ["mo-/mi-", "mag-/nag-"]
+
+
 def test_decode_stative_and_mutual_classes():
     assert [a for a, _ in decode_classes("B16")] == ["mag-/nag-", "ma-/na-", "maka-/naka-"]
     assert dict(decode_classes("B16"))["ma-/na-"] == "the one it happens to"

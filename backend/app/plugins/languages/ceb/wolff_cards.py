@@ -428,6 +428,62 @@ def _plain(gloss: str) -> str:
     return re.sub(r"\s+", " ", text).strip().rstrip(".;, ")
 
 
+def _marked_letters(text: str) -> list[tuple[str, frozenset[str]]]:
+    """The letters of *text*, e/o folded to i/u, each with its accent marks (Wolff §3.2, §5.11)."""
+    out: list[tuple[str, frozenset[str]]] = []
+    for ch in unicodedata.normalize("NFD", text.lower()):
+        if unicodedata.combining(ch):
+            if out and ch in _MARKS:
+                out[-1] = (out[-1][0], out[-1][1] | {ch})
+            continue
+        if ch.isalpha():
+            out.append((ch.translate(_EO), frozenset()))
+    return out
+
+
+def _card_keeps_i(card: str, head: str) -> bool:
+    """Whether *card* is *head* with an i where the Handbook chose a loan's e.
+
+    Wolff writes i; the Handbook writes e only for a Spanish or English loan (§3.2), so a
+    card word that writes i says the word is native (ibílin's root is bílin, not bélen). The
+    u/o choice is Wolff's own rule and no evidence either way, so it is not compared.
+    """
+    a, b = strip_marks(card), strip_marks(head)
+    return len(a) == len(b) and all(x == y or (y == "e" and x == "i") for x, y in zip(a, b, strict=True))
+
+
+def _card_letters(word: str, root: str, affix: str) -> str | None:
+    """The letters of *word* that spell *root*, marks and all, or None when they don't line up.
+
+    ``affixes.letter_map`` says which of the word's letters belong to the root (the rest are
+    the affix's, or a nasal that stands in for the root's first consonant).
+    """
+    tags = affixes.letter_map(affixes.wolff_letters(word), root, affix)
+    if tags is None:
+        return None
+    chars: list[str] = []
+    marks: list[list[str]] = []
+    for ch in unicodedata.normalize("NFD", word.lower()):
+        if unicodedata.combining(ch):
+            if marks:
+                marks[-1].append(ch)
+        else:
+            chars.append(ch)
+            marks.append([])
+    # tags has one entry per letter of strip_marks(word), so it lines up with the bases here
+    out = [c + "".join(m) for c, m, tag in zip(chars, marks, tags, strict=True) if isinstance(tag, int)]
+    return unicodedata.normalize("NFC", "".join(out)) if out else None
+
+
+def _names(word: str, surface: str) -> bool:
+    """Whether *word* carries *surface*'s letters and marks: 'nakakitâ' names the stress form
+    'kitâ', not the root 'kítà' (§5.11). Letters alone fold e/o, so a card's spelling still
+    meets Wolff's."""
+    want = _marked_letters(surface)
+    have = _marked_letters(word)
+    return bool(want) and any(have[i : i + len(want)] == want for i in range(len(have) - len(want) + 1))
+
+
 @dataclass(frozen=True)
 class CardFields:
     spelling: str
@@ -603,6 +659,9 @@ class WolffLexicon:
     ):
         self.entries = list(entries)
         self.relations = relations if relations is not None else EnglishRelations.empty()
+        #: Every head spelling, marks and all: a stress form spelt like another word's head is
+        #: that other word, not a variant (sákit 'torture' is also sákit 'socket').
+        self._spellings = frozenset(h.lower() for rec in self.entries for h in rec["heads"])
         self._decoded: dict[str, _Hit] = {}
         for row in decoded:
             found = [
@@ -639,7 +698,7 @@ class WolffLexicon:
             return None
         # '*líhug': the star marks a root never said bare, and is no part of its head
         target = strip_marks(re.split(r"[ ,]", xref[1])[0]).lower().lstrip("*").split("_")[0]
-        for tei in self._heads.get(target, []):
+        for tei in sorted(self._heads.get(target, []), key=lambda t: t != ei):
             forms = self.entries[tei]["forms"]
             inside = [i for i, f in enumerate(forms) if f["wolff"] and letters_key(f["wolff"]) == word_key]
             tfi = inside[0] if xref[0] == "see" and inside else 0
@@ -834,7 +893,7 @@ class WolffLexicon:
         # 'breastfeed' would read as sûsò 'pound'). Its own stress forms must then agree.
         if set(pieces) <= {"-a", "-i"} and self._first_pos(found[0].root) == "n":
             return None  # on a noun, -a is Wolff's 'that particular' (baláya), not the command
-        readings = self._readings(found[0].root, pieces, inflections, english)
+        readings = self._readings(found[0].root, pieces, inflections, english, word)
         # exactly one reading, and not one form that reads two ways (None)
         if len(readings) != 1 or None in readings:
             return None
@@ -842,7 +901,15 @@ class WolffLexicon:
             return None  # Wolff's ma-_2: on an adjective root, ma- makes the adjective (mainit 'hot')
         (labels, (form, sense, shown)) = next(iter(readings.items()))
         by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
-        root = Part(shown["hb"] or shown["wolff"], self._root_gloss(form, sense), False)
+        head = shown["hb"] or shown["wolff"]
+        # The card's word is the course spelling, and its i where the Handbook chose a loan's e
+        # wins: the root of ibílin is bílin, not bélen (the Handbook spelling of bilin's other
+        # entry). A card that spells a different consonant (kinahánglan for kinahángan) or drops
+        # one (manánghid, maN- in place of sánghid's s) is not evidence about the vowel.
+        letters = _card_letters(word, found[0].root, affix)
+        if not (letters and _card_keeps_i(letters, head)):
+            letters = None
+        root = Part(onto_card(letters, head) if letters else head, self._root_gloss(form, sense), False)
         before = [p for p in pieces if p.endswith("-")]
         after = [p for p in pieces if not p.endswith("-")]
         label = by_piece | ({"pa-": labels[-1]} if "pa-" in pieces else {})
@@ -857,16 +924,19 @@ class WolffLexicon:
         senses = next(r for r in self.entries if root in r["heads"])["forms"][0]["senses"]
         return senses[0]["pos"] if senses else None
 
-    def _agreeing(self, senses: list[dict], english: str) -> list[dict]:
-        """*senses*, kept to those the word's English agrees with when it came with some
-        (the same word, a related one, or one its definition holds: EnglishRelations, as a
-        card's match uses). A lesson's 'see' rules out kítà's 'earn'; no English, no filter."""
+    def _agreeing(self, senses: list[dict], english: str) -> list[tuple[dict, tuple[int, int, int]]]:
+        """(sense, how the English names it) over *senses*: the same word, a related one, or
+        one its definition holds (EnglishRelations, as a card's match uses). A lesson's 'see'
+        rules out kítà's 'earn'; no English, no filter, and every sense is strong."""
         if not english.strip():
-            return senses
+            return [(s, (1, 1, 1)) for s in senses]
         card = _words(english)
-        return [s for s in senses if any(self.relations.score(english, card, s["gloss"]))]
+        scored = [(s, self.relations.score(english, card, s["gloss"])) for s in senses]
+        return [(s, t) for s, t in scored if any(t)]
 
-    def _readings(self, root: str, pieces: list[str], inflections: list[str], english: str = "") -> dict:
+    def _readings(
+        self, root: str, pieces: list[str], inflections: list[str], english: str = "", word: str = ""
+    ) -> dict:
         """reading -> (the form that gives it, its licensing sense, the form as the word spells
         it) over *root*'s forms and stress forms, a pointer ('suwat = sulat') followed. A root's
         part of speech stands in only when no form reads as a verb (abut 'arrive' is a verb;
@@ -879,10 +949,39 @@ class WolffLexicon:
                 if fi and form["label"] not in _ROOT_FORMS:
                     continue
                 tei, tfi = self._resolve(ei, fi, letters_key(root)) or (ei, fi)
-                candidates.append((self.entries[tei], self.entries[tei]["forms"][tfi], form))
+                candidates.append((self.entries[tei], self.entries[tei]["forms"][tfi], form, not fi))
+        # The card's own stress names a word. A final-stress form it spells, and the root does
+        # not, is the word ('nakakitâ' is kitâ, not kítà). When the card names the root, a
+        # differently stressed sub-entry that is also another headword is not it (nagsakít is
+        # sakít, not sákit 'torture'). Unnamed stress forms remain: two words still silence.
+        named = [c for c in candidates if _names(word, c[2]["hb"] or c[2]["wolff"] or "")]
+        finals = [c for c in named if not c[3] and c[2]["label"] == "(→)"]
+        # The card names a stress form that two entries both spell: two words, and neither is
+        # the word's (buhî is both 'alive''s 'raise' and 'set free''s, tunatale-30t0).
+        if len({id(c[0]) for c in finals}) > 1:
+            return {}
+        final = [c for c in finals if c[2]["xref"] is None]
+        if final and not any(c[3] for c in named):
+            candidates = final
+        elif named:
+            candidates = [
+                c for c in candidates if c[3] or c in named or (c[2]["hb"] or "").lower() not in self._spellings
+            ]
         readings: dict = {}
-        for by_kind in (False, True):
-            for rec, form, shown in candidates:
+        # The 'will become' kind of reading is a guess when the word came with an English
+        # that no sense of the root agrees with (tunatale-30t0): it ignores the English,
+        # and mosóod 'will enter' is not 'will become close in space or time'. A root the
+        # English does name keeps it (mopulá 'becomes yellow-brown' is pulá 'red').
+        kinds = (False, True)
+        if english.strip():
+            card = _words(english)
+            agrees = any(
+                any((t := self.relations.score(english, card, s["gloss"]))[0] or t[1] for s in form["senses"])
+                for _, form, _, _ in candidates
+            )
+            kinds = (False, True) if agrees else (False,)
+        for by_kind in kinds:
+            for rec, form, shown, _ in candidates:
                 reading = self._reading(rec, form, pieces, inflections, english, by_kind=by_kind)
                 if reading is not None:
                     readings.setdefault(reading[0], (form, reading[1], shown))
@@ -909,15 +1008,32 @@ class WolffLexicon:
         for piece in inflections:
             # Wolff lists a root's main sense first: the first sense that licenses the piece decides
             found: dict[str, dict | None] = {}
-            for s in self._agreeing(source, english):
+            stative = _labels().get((piece, UNDERGOER))
+            best: tuple[int, int, int] | None = None
+            for s, tier in self._agreeing(source, english):
                 for pair, subject in _licenses(s["cls"]):
-                    if pair in _PIECE_PAIRS.get(piece, ()) and (piece, subject) in _labels():
-                        found.setdefault(_labels()[(piece, subject)], s)
+                    if pair not in _PIECE_PAIRS.get(piece, ()) or (piece, subject) not in _labels():
+                        continue
+                    label = _labels()[(piece, subject)]
+                    # Wolff §7.12: a verb of state's ma-/na- is its own active. An English
+                    # reached only through the definition does not make it a state's verb:
+                    # píldi's 'die of a sickness' is not 'lost' (tunatale-30t0).
+                    if piece in ("ma-", "na-") and label == stative and not (tier[0] or tier[1]):
+                        continue
+                    found.setdefault(label, s)
                 if found:
+                    # A sense Wolff lists before this one that the English names more exactly
+                    # and that does not take this piece is the word the row names: ingón
+                    # [A; b5c] 'say, tell' is 'tell him', not {1a} 'said to be' + -a. The row
+                    # corroborates the affix when its English says what the affix means
+                    # (magkítà 'will see each other': the label's 'each other' is the reciprocal
+                    # that only kítà's 'meet with' takes, not 'see').
+                    if best is not None and best > tier and not any(_words(english) & _words(code) for code in found):
+                        return None
                     break
+                best = tier if best is None else max(best, tier)
             if kind and not found and (piece, kind) in _labels():
                 found[_labels()[(piece, kind)]] = None
-            stative = _labels().get((piece, UNDERGOER))
             if len(found) > 1 and piece in ("ma-", "na-") and stative in found:
                 # Wolff §7.12: a verb of state's ma-/na- is its own active, not a potential
                 found = {stative: found[stative]}

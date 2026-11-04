@@ -658,6 +658,25 @@ def licensed(a: Analysis, lex: Lexicon) -> bool:
     return a.affix in takes or all(piece in takes for piece in a.affix.split("+"))
 
 
+def _nasal_is_prefix(found: list[Analysis]) -> list[Analysis]:
+    """The analyses left once a nasal prefix is read as one.
+
+    Wolff's N (§6.2) is only on the page because the root does not spell it. A word that
+    reads as ``maN-`` + a root that starts with a vowel is not also ``ma-`` + that root with
+    the nasal grown onto it: mangádtu is maN- + ádto (§5.2), not ma- + ngádto. (A root that
+    starts with a consonant keeps both: namangku is na- + mangku, or naN- + bangku.) If the
+    maN- root's entry does not license maN- (ádto's ``A2; b3c`` does not) the word has no
+    reading rather than a wrong one.
+    """
+    grown = {
+        (a.affix.replace("N", ""), nasal + a.root.lstrip("-"))
+        for a in found
+        if "N" in a.affix and a.root.lstrip("-")[:1] in "aeiou"
+        for nasal in ("m", "n", "ng")
+    }
+    return [a for a in found if (a.affix, a.root.lstrip("-")) not in grown]
+
+
 def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
     """*surface*'s analyses, best first.
 
@@ -683,4 +702,4 @@ def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
             -chars,
         )
 
-    return sorted(decode(surface, lex.roots), key=rank)
+    return sorted(_nasal_is_prefix(decode(surface, lex.roots)), key=rank)
