@@ -36,26 +36,28 @@ Pimsleur lessons are audio-only by design. Reading and writing come after the au
 
 **TT's expression**: the `/review` queue is audio-first by default (recognition direction plays L2 audio first, asks the user to recall L1). The transcript is text-second — you see the words only after the audio plays. §8.6 of `walkthrough.md` covers the transcript component.
 
-## The four-section lesson format
+## The lesson format
 
-Pimsleur lessons are ~30 minutes structured as: introduction → new vocabulary in a dialogue → drilling each new phrase with anticipation → integrating the new phrases into varied sentences → a wrap-up review. TT compresses this into four named sections defined in `backend/app/models/lesson.py:24-30`:
+Pimsleur lessons are ~30 minutes structured as: introduction → new vocabulary in a dialogue → drilling each new phrase with anticipation → integrating the new phrases into varied sentences → a wrap-up review. TT expresses this as named sections, the `SectionType` enum in `backend/app/models/lesson.py` (walkthrough §4.3, §6.7):
 
 | Section | What | Pimsleur analogue |
 |---|---|---|
-| `KEY_PHRASES` | Each target phrase, narrator title → L2 → L1 → repeat × 2 | Pre-teaching the new vocabulary |
+| `KEY_PHRASES` | Each target phrase: L2, its English, then the backward buildup | Pre-teaching the new vocabulary |
 | `NATURAL_SPEED` | The story dialogue at normal conversational pace | The new dialogue, presented whole |
-| `SLOW_SPEED` | Same dialogue, ellipses between words to slow it down | The drill phase, slowed for comprehension |
-| `TRANSLATED` | Every L2 line followed by narrator English | The integration / check-comprehension phase |
+| `SLOW_SPEED` ("Enunciated") | The same lines with a pause after every word, not a slower rate | Hearing where the words part |
+| `TRANSLATED` / `EN_TRANSLATED` ("English After" / "English Before") | Every L2 line with its English, in either order | The integration / check-comprehension phase |
+| `SLOW_TRANSLATED` / `SLOW_EN_TRANSLATED` | The enunciated line with its English, in either order | The same, enunciated |
+| `AFFIX_DRILL` (Cebuano) | One affix pair modelled on a few roots, then each form asked for from its English, with a pause sized for the answer | Anticipation drilling: "How do you say …?", pause, answer |
 
-`backend/app/generation/section_builder.py` builds these four sections from the `Story` produced by the LLM. Each section gets its own audio file in addition to a full-lesson MP3 — the frontend's section-picker uses these to let the user replay just one section.
+`backend/app/generation/section_builder.py` builds the story sections from the `Story` produced by the LLM. The affix drill is built from hand-checked tables with no model call (`app/generation/affix_drill.py`, walkthrough §6.12), and it is the closest thing in TT to Pimsleur's anticipation drill: the learner hears the English, says the form into the pause, and hears it said. Each section is rendered to its own audio file, which is what the player's section pills and hands-free sequence select between.
 
 ## Backward buildup pronunciation
 
 When a Pimsleur lesson introduces a new word with three or more syllables, the narrator builds it backward: final syllable alone → final two syllables → all three. This trains pronunciation in the order the mouth has to produce it (the ending shape, then back-chained to the start).
 
-**TT's expression**: `backend/app/generation/syllabify.py` performs onset-maximization syllabification on Slovene words, then `section_builder.py::_build_backward_buildup` (lines 31–88) generates the syllable-level audio sequence for KEY_PHRASES. For a three-syllable Slovene word like `do-bro-doš-li`, the buildup is `dôš-li → bro-doš-li → do-bro-doš-li`. The narrator-voice scaffolding ("Listen and repeat") wraps it.
+**TT's expression**: `backend/app/generation/syllabify.py` performs onset-maximization syllabification through each language's own phonotactics, then `section_builder.py::build_word_breakdown_spans` generates the syllable-level sequence for KEY_PHRASES (walkthrough §6.7). For a three-syllable Slovene word like `do-bro-doš-li`, the buildup is `dôš-li → bro-doš-li → do-bro-doš-li`. The narrator-voice scaffolding ("Listen and repeat") wraps it.
 
-This is one of the parts of the Pimsleur method that's mechanically reproducible and TT reproduces it. Languages without a built-in syllabifier currently fall back to whole-word audio with no buildup — adding a new language means adding a syllabifier.
+This is one of the parts of the Pimsleur method that's mechanically reproducible and TT reproduces it, for every language: a language without its own syllabifier falls back to a generic one, which can cut wrongly (walkthrough §3.4). Two refinements came from listening to whole lessons. A word the learner already knows well is not built up at all, in key phrases or drill (`app/generation/known_buildups.py`), and within one affix drill a root is built up once, after which its forms add only their affix (`mo, molakaw`).
 
 ## Audio-first all the way down
 

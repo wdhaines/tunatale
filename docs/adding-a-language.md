@@ -54,12 +54,18 @@ All are `LanguageConfig` fields. Who uses what today:
 | `phoneme_planner_factory` | | ✓ | ✓ | ✓ | IPA for the key-phrase breakdown. `no`: NST lexicon. `tl`: Wiktionary pronunciations. `ceb`: read off the spelling. |
 | `ipa_read_in_voice_locale` | | | ✓ | | The voice ignores `<phoneme>`, so IPA must reach it unwrapped. |
 | `ipa_for_drill_phrases` | | | | ✓ | Per-word IPA on drill steps that are not a piece of a word: key phrases and drilled forms, one word or several. Deliberately not a default, because on Azure it would wrap every word in `<phoneme>`. |
+| `ipa_for_natural_lines`, `ipa_for_enunciated_lines`, `ipa_for_card_words` | | | | ✓ | The reading also goes with a whole natural-speed line, an Enunciated line (words run together) and a card's word audio, because the Gemini voice reads plain text loosely ("ugna" for "ugma"). Azure languages stay plain on the same evidence. Each needs a planner that can read a word in a line (`plan_line_word`) or a whole word (`plan_word`). |
+| `take_check` | | | | ✓ | A Gemini take is checked for a `t` said as `p`/`b` (and a missing glottal stop in a one-word take) and drawn again (`app/audio/take_check.py`). Needs the `alignment` dependency group at runtime; without it, takes render unchecked and `TAKE_CHECK_UNAVAILABLE` is logged. |
+| `variant_separator`, `variant_pairs_fn`, `short_form_pairs_fn` | | `,` only | | ✓ | One card front, several accepted spellings (`dili, di`). `variant_pairs_fn` lists which spellings are one word, so `Oo, salamat` stays a phrase; `short_form_pairs_fn` names short/long pairs for the card's Short form field. |
+| `dictionary_fields_fn`, `dictionary_gloss_fn`, `parts_fn` | | | | ✓ | A bilingual dictionary on the cards and in the reader: note fields at creation (`vocab_notetype.DICTIONARY_FIELDS`), a fallback gloss when the model cannot gloss a new card, and a word glossed by its parts. Cebuano reads Wolff (1972). The notetype must carry the fields first (`app/plugins/anki_sync/add_dictionary_fields.py`, a full-upload schema change). |
+| `a1_morphology.patterns` (on the bundle) | | | | ✓ | Affix patterns for the affix drill and the pace gate (walkthrough §6.12). Every pattern needs hand-checked English per root and native-corpus counts vouching for each form; nothing is worded from a root's gloss. |
 | `notetype_profiles` | | | ✓ | ✓ | **Required for any language with no `l2_scorer`**, which covers both Philippine languages: no letters tell them apart from English. TT's own vocab notes must be read by field name, or the first sync after minting fails with "No L2 scorer" (`1e93783`, tunatale-2qqr). An imported deck needs its own profile too (Tagalog's Pimsleur deck: `recognition_ord=1`, `disambig="Front"`). |
 | `mint_deck_name` | | | ✓ | ✓ | TT mints into a `::TunaTale` subdeck. Create the subdeck in Anki first. |
 | `a1_morphology` | ✓ | ✓ | ✓ | ✓ | Tagalog and Cebuano: an affixed verb form becomes an inflection cloze on its root card. A language without a bundle gets no morphology, not Slovene's (`0f34ec3`). |
 | `verb_headword_fn`, `story_text_normalizer` | | | ✓ | | Tagalog keys verbs on the root; the normalizer joins the LLM's `mag‑kape` affix hyphens. |
 | `planner_example` | ✓ | ✓ | ✓ | ⚠️ | See the gotchas below. |
-| Norwegian-only | | ✓ | | | `lexicon_factory`, `breakdown_spans_fn` (compound breakdown), `variant_separator`, gender facets, `alignment`. |
+| Norwegian-only | | ✓ | | | `lexicon_factory`, `breakdown_spans_fn` (compound breakdown), gender facets, `alignment`. |
+| `slow_word_fn` | | ✓ | ✓ | | Cuts a long word inside an Enunciated line (Norwegian compounds; Tagalog words of five syllables or more). |
 
 ## Voices and cost
 
