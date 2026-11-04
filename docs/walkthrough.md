@@ -9,7 +9,7 @@ TunaTale generates Pimsleur-style audio lessons whose stories are written around
 
 The tour is ordered by subsystem, not by history. §1 follows one lesson end to end, from a planned day to a graded card in Anki, and names the chapter that owns each step. §2–§16 then take the subsystems one at a time. Appendix A gives the short history and maps the old `PART N` numbering (still cited by older docs) to the current chapters. This edition was restructured on 2026-10-01 and brought up to date on 2026-11-04, adding the Cebuano dictionary and affix work (§3.9, §6.12, §11.10), invites (§2.7) and the Gemini take checks (§7.3). The previous, chronological edition is archived at [`docs/archive/walkthrough-2026-03-to-07.md`](archive/walkthrough-2026-03-to-07.md).
 
-**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. Since 2026-11-04 it does so on every commit: `./test.sh` and CI's `backend` job both run it as the "Walkthrough check" (§14.3), after 25 blocks had drifted unnoticed in a month. To update outputs after a code change, run `uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md`, then read the prose around every block that changed, which the tool cannot update. A block must print the same thing on any machine: print a setting's class default (`Settings.model_fields[k].default`), not the live value a local `.env` can change, and filter out build debris such as `__pycache__`. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
+**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. Since 2026-11-04 it does so on every commit: `./test.sh` and CI's `backend` job both run it as the "Walkthrough check" (§14.3), after 25 blocks had drifted unnoticed in a month. To update outputs after a code change, run `uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md`, then read the prose around every block that changed, which the tool cannot update. A block must print the same thing on any machine: print a setting's class default (`Settings.model_fields[k].default`), not the live value a local `.env` can change, filter out build debris such as `__pycache__`, sort anything a directory walk returns (`LC_ALL=C sort`: `grep -r` order is the filesystem's), and truncate text by character in Python rather than with `cut -c`, which counts bytes in GNU coreutils and characters in the Rust coreutils CI's Ubuntu runner ships, so a line with an em dash cut short differs between the two. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
 
 ### How to read it
 
@@ -2269,7 +2269,7 @@ This is the part of the old walkthrough most likely to mislead, so exact status 
 It was **retired from the app's render path** (`ab35609e`, the k318 epic). The lexicon `<phoneme>` path replaced it for every chunk that wants IPA, and the one remaining chunk class was judged by ear to sound better from plain synthesis than from a slice, which had audible speed artifacts. What is and is not wired, verified against the tree:
 
 ```bash
-cd backend && grep -rn "build_slicers(" app scripts --include=*.py | grep -v "^app/audio/slicer.py"
+cd backend && grep -rn "build_slicers(" app scripts --include=*.py | grep -v "^app/audio/slicer.py" | LC_ALL=C sort
 echo ---
 sed -n '/NOT WIRED, deliberately/,/Keep them/p' app/main.py
 echo ---
@@ -3166,18 +3166,18 @@ print(_spread_mix([f'R{i}' for i in range(1, 11)], ['N1', 'N2']))
 4. the end-of-session auto-bump, when ready learning and main are both empty and some pending card has ripened.
 
 ```bash
-grep -rn "advance_learning_cutoff(" backend/app --include=*.py | grep -v "def advance_learning_cutoff" | sed -E 's/^backend\/app\/([^:]+):[0-9]+: */\1: /' | cut -c1-100
+grep -rn "advance_learning_cutoff(" backend/app --include=*.py | grep -v "def advance_learning_cutoff" | sed -E 's/^backend\/app\/([^:]+):[0-9]+: */\1: /' | LC_ALL=C sort | cut -c1-100
 ```
 
 ```output
-api/srs.py: advance_learning_cutoff(db, now)
 api/srs.py: advance_learning_cutoff(db, grade_ctx["now"])
 api/srs.py: advance_learning_cutoff(db, now)
-srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
-srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
-plugins/anki_sync/sync_engine.py: def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_ru
+api/srs.py: advance_learning_cutoff(db, now)
 plugins/anki_sync/sync_engine.py: advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlo
+plugins/anki_sync/sync_engine.py: def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_ru
 plugins/anki_sync/sync_engine.py: self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
+srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
+srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
 ```
 
 The stickiness is intentional: while main or ready learning has anything in it, a learning card that ripens mid-session does not preempt the card on screen. Do not add a "live now" or per-poll advance.
@@ -3323,14 +3323,14 @@ Two TT-only refinements sit on top. `budget_neutral` marks a "Check your work" r
 | Seeded starter cards | 85 | A review card with no reps |
 
 ```bash
-grep "^## Layer" docs/anki-parity-layers.md | tail -4 | cut -c1-110
+grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; [print(line.rstrip()[:110]) for line in sys.stdin]'
 ```
 
 ```output
-## Layer 88 — a schedule change nobody graded reached Anki as a review (mark known, restore, relabel, promot
-## Layer 89 — a pushed due date wrote `ivl = days from today`, which is the interval only on the day of the 
+## Layer 88 — a schedule change nobody graded reached Anki as a review (mark known, restore, relabel, promote)
+## Layer 89 — a pushed due date wrote `ivl = days from today`, which is the interval only on the day of the gr
 ## Layer 90 — a reset pushed to Anki forgot the card but logged nothing, so its old reviews still counted
-## Layer 91 — a card with no `lrt` counted its elapsed days from a "today" that runs a day ahead after midni
+## Layer 91 — a card with no `lrt` counted its elapsed days from a "today" that runs a day ahead after midnigh
 ```
 
 The four newest, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
