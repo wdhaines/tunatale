@@ -39,7 +39,7 @@ def _load_hook():
     return module
 
 
-def _decide(command: str, cwd: str) -> str | None:
+def _decide(command: str, cwd: str, env: dict[str, str] | None = None) -> str | None:
     """Run the hook against *command*; return its ask reason, or ``None``."""
     proc = subprocess.run(
         [sys.executable, str(_HOOK)],
@@ -47,6 +47,7 @@ def _decide(command: str, cwd: str) -> str | None:
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
     )
     assert proc.returncode == 0, f"hook must always exit 0, got {proc.returncode}: {proc.stderr}"
     if not proc.stdout.strip():
@@ -87,6 +88,51 @@ class TestForeignRepoIsNotGated:
         """The real beads shape: stage and commit in one compound command."""
         command = f"cd {foreign_repo} && git add briefs/x.md && git commit -q -m 'notes'"
         assert _decide(command, str(_REPO_ROOT)) is None
+
+
+class TestTildePathsResolve:
+    """``cd ~/repo && git commit`` names a fixed directory, so it must resolve.
+
+    Regression (2026-11-04): ``~`` sat in UNRESOLVABLE beside ``$`` and
+    backticks, so every commit in the owner's book repo (``cd ~/Books/wolff &&
+    git add . && git commit``) fell back to the session cwd — this repo — and
+    raised the ./test.sh prompt about a repository test.sh does not cover. The
+    shell expands ``~`` and ``~user`` before git runs; only ``$`` and command
+    substitution are genuinely unknowable here.
+    """
+
+    @staticmethod
+    def _home_env(home: Path) -> dict[str, str]:
+        import os
+
+        return {**os.environ, "HOME": str(home)}
+
+    def test_cd_tilde_into_another_repo_is_not_gated(self, foreign_repo: Path) -> None:
+        command = "cd ~/other-repo && git add . && git commit -q -m 'notes'"
+        assert _decide(command, str(_REPO_ROOT), self._home_env(foreign_repo.parent)) is None
+
+    def test_git_dash_c_tilde_into_another_repo_is_not_gated(self, foreign_repo: Path) -> None:
+        command = "git -C ~/other-repo commit -q -m 'notes'"
+        assert _decide(command, str(_REPO_ROOT), self._home_env(foreign_repo.parent)) is None
+
+    def test_a_tilde_path_into_this_repo_is_still_gated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Expanding ``~`` must not become a bypass: a tilde path HERE still resolves here."""
+        hook = _load_hook()
+        monkeypatch.setenv("HOME", str(_REPO_ROOT.parent))
+        resolved = hook.effective_cwd(f"cd ~/{_REPO_ROOT.name} && git commit -m x", "/")
+        assert Path(resolved) == _REPO_ROOT
+
+    def test_a_quoted_tilde_is_a_literal_directory(self) -> None:
+        """The shell does not expand ``'~/x'``; neither may the hook."""
+        hook = _load_hook()
+        resolved = hook.effective_cwd("cd '~/x' && git commit -m x", "/base")
+        assert resolved == "/base/~/x"
+
+    def test_an_unknown_user_tilde_falls_back_to_the_session_cwd(self) -> None:
+        """Fail SAFE: ``~nosuchuser`` doesn't expand, so keep gating."""
+        hook = _load_hook()
+        resolved = hook.effective_cwd("cd ~nosuchuser-tt-x/a && git commit -m x", str(_REPO_ROOT))
+        assert Path(resolved) == _REPO_ROOT
 
 
 class TestThisRepoIsStillGated:

@@ -88,8 +88,11 @@ CD_RE = re.compile(rf"(?:^|&&|\|\||;)\s*cd\s+(?P<p>{_PATH})")
 # git's own -C, allowing the global options that may precede it.
 GIT_C_RE = re.compile(rf"\bgit\s+(?:-c\s+\S+\s+|--no-pager\s+|--git-dir\s+\S+\s+)*-C\s+(?P<p>{_PATH})")
 # Anything we cannot resolve statically. Falling back to the session cwd keeps
-# the gate ON, which is the safe direction.
-UNRESOLVABLE = ("$", "`", "~")
+# the gate ON, which is the safe direction. `~` is NOT here: the shell expands a
+# leading `~` / `~user` before git runs, so `_resolve` expands it too (an
+# unknown user stays unexpanded and falls back). It used to be here, and every
+# `cd ~/Books/wolff && git commit` was gated as if it were this repo (2026-11-04).
+UNRESOLVABLE = ("$", "`")
 
 # A shell asked to run a command line: its quoted argument is code, not data.
 SHELL_C_RE = re.compile(r"\b(?:ba|z|k|da)?sh\s+(?:-\w+\s+)*-\w*c\b")
@@ -165,6 +168,18 @@ def _unquote(token):
     return token
 
 
+def _resolve(token):
+    """The path *token* names, or None when it cannot be known statically."""
+    target = _unquote(token)
+    if any(ch in target for ch in UNRESOLVABLE):
+        return None
+    if target.startswith("~") and not token.startswith(("'", '"')):  # a quoted ~ is literal to the shell
+        target = os.path.expanduser(target)
+        if target.startswith("~"):
+            return None  # ~nosuchuser: the shell leaves it too, and nothing here is that directory
+    return target
+
+
 def effective_cwd(command, cwd):
     """Resolve the directory *command*'s `git commit` actually runs in.
 
@@ -178,15 +193,15 @@ def effective_cwd(command, cwd):
 
     base = cwd
     for cd in CD_RE.finditer(head):
-        target = _unquote(cd.group("p"))
-        if any(ch in target for ch in UNRESOLVABLE):
+        target = _resolve(cd.group("p"))
+        if target is None:
             return cwd  # can't know where we ended up — keep gating
         base = os.path.join(base, target)
 
     dash_c = GIT_C_RE.search(command)
     if dash_c:
-        target = _unquote(dash_c.group("p"))
-        if any(ch in target for ch in UNRESOLVABLE):
+        target = _resolve(dash_c.group("p"))
+        if target is None:
             return cwd
         base = os.path.join(base, target)
 
