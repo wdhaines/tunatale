@@ -128,15 +128,15 @@ UV_PROJECT_ENVIRONMENT=/tmp/ci-venv uv sync --no-default-groups --group dev
 UV_PROJECT_ENVIRONMENT=/tmp/ci-venv UV_NO_SYNC=1 uv run pytest …
 ```
 
-Three smaller divergences are deliberate, not bugs:
+Three smaller points are deliberate, not bugs:
 - **The gitignored content directories.** `backend/media/` and
   `backend/output/audio/` have no tracked files, so they exist on every
   developer's disk and in no fresh checkout, and `GET /api/health` probes both by
-  writing a real file, answering 503 when they are absent. CI provisions them
-  explicitly (`mkdir -p`) rather than the app creating them at startup: a mkdir in
-  the lifespan would create a plain directory where a volume failed to mount,
-  which is the "unmounted volume reads green" bug `app/api/health.py` exists to
-  prevent. Deployments must provision them too.
+  writing a real file, answering 503 when they are absent. CI and `./test.sh` both
+  provision them explicitly (`mkdir -p`, before e2e) rather than the app creating
+  them at startup: a mkdir in the lifespan would create a plain directory where a
+  volume failed to mount, which is the "unmounted volume reads green" bug
+  `app/api/health.py` exists to prevent. Deployments must provision them too.
 - **Coverage measures different sets.** Locally `--run-oracle` is folded into the
   covered pytest run; CI's `backend` job omits it and the `anki-gates` job runs
   those tests `--no-cov`. Both reach 100%, so CI's is the stricter claim (100%

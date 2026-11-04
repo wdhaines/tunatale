@@ -211,6 +211,19 @@ log_step() {
   # flat 6..12 region is a property of this suite's size, not a constant.
   log_step backend "Tests" uv run pytest --run-oracle -n 6
 
+  # docs/walkthrough.md is a Showboat document: every bash block was run and its
+  # output recorded under it. Nothing re-ran them, so between 2026-10-01 and
+  # 2026-11-04 25 of them drifted from the code unnoticed (a new route, a new
+  # LanguageConfig field, a new section type...). This re-runs every block and
+  # fails on any output that no longer matches. ~50 s; after Tests on purpose, so
+  # a stale walkthrough never stops the suite from reporting. It needs the NST
+  # lexicon built above (one Norwegian breakdown block reads it).
+  #
+  # To fix a failure, regenerate and then READ the prose around each changed
+  # block, which the tool cannot update:
+  #   uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md
+  log_step backend "Walkthrough check" uvx showboat@0.6.1 --workdir "$ROOT" verify "$ROOT/docs/walkthrough.md"
+
   # Clean up coverage data file left by pytest --cov
   uv run coverage erase
 ) >"$backend_log" 2>&1 &
@@ -229,6 +242,15 @@ backend_pid=$!
   log_step frontend "Svelte type check" bun run check
 
   log_step frontend "Frontend tests (with coverage)" bun run test:coverage
+
+  # The e2e backend's GET /api/health probes these by writing a real file and
+  # answers 503 when one is missing. Both are gitignored with no tracked files,
+  # so they exist on a developer's disk and in no fresh checkout: a fresh clone
+  # (a cloud session, a new worktree) failed both smoke health checks and
+  # cors-lockdown here. Same step, same reason, as ci.yml's "Provision the
+  # gitignored content directories" — provisioned by the runner, never by the
+  # app at startup (see that step's comment for why).
+  mkdir -p "$ROOT/backend/media" "$ROOT/backend/output/audio"
 
   # Playwright clears test-results/ at the START of every run, so re-running to
   # see whether a red is a flake is also what destroys the trace that would have

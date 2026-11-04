@@ -7,9 +7,9 @@
 
 TunaTale generates Pimsleur-style audio lessons whose stories are written around the learner's own vocabulary. It schedules that vocabulary with FSRS in lock-step with the learner's Anki deck. This document is a guided tour of the codebase as it stands. It is written for two readers: a person who wants to understand how the system works, and an agent about to change it.
 
-The tour is ordered by subsystem, not by history. §1 follows one lesson end to end, from a planned day to a graded card in Anki, and names the chapter that owns each step. §2–§16 then take the subsystems one at a time. Appendix A gives the short history and maps the old `PART N` numbering (still cited by older docs) to the current chapters. The previous, chronological edition is archived at [`docs/archive/walkthrough-2026-03-to-07.md`](archive/walkthrough-2026-03-to-07.md).
+The tour is ordered by subsystem, not by history. §1 follows one lesson end to end, from a planned day to a graded card in Anki, and names the chapter that owns each step. §2–§16 then take the subsystems one at a time. Appendix A gives the short history and maps the old `PART N` numbering (still cited by older docs) to the current chapters. This edition was restructured on 2026-10-01 and brought up to date on 2026-11-04, adding the Cebuano dictionary and affix work (§3.9, §6.12, §11.10), invites (§2.7) and the Gemini take checks (§7.3). The previous, chronological edition is archived at [`docs/archive/walkthrough-2026-03-to-07.md`](archive/walkthrough-2026-03-to-07.md).
 
-**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
+**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. Since 2026-11-04 it does so on every commit: `./test.sh` and CI's `backend` job both run it as the "Walkthrough check" (§14.3), after 25 blocks had drifted unnoticed in a month. To update outputs after a code change, run `uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md`, then read the prose around every block that changed, which the tool cannot update. A block must print the same thing on any machine: print a setting's class default (`Settings.model_fields[k].default`), not the live value a local `.env` can change, filter out build debris such as `__pycache__`, sort anything a directory walk returns (`LC_ALL=C sort`: `grep -r` order is the filesystem's), and truncate text by character in Python rather than with `cut -c`, which counts bytes in GNU coreutils and characters in the Rust coreutils CI's Ubuntu runner ships, so a line with an em dash cut short differs between the two. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
 
 ### How to read it
 
@@ -17,6 +17,7 @@ The tour is ordered by subsystem, not by history. §1 follows one lesson end to 
 |---|---|
 | understand the product loop | §1, then §8 |
 | add or change a language | §3, then `docs/adding-a-language.md` |
+| work on Cebuano (dictionary, affixes, drills, Gemini voices) | §3.8, §3.9, §6.12, §7.3, §11.10 |
 | touch anything that reads or writes Anki or schedules cards | §9 and §10 first, then `.claude/rules/anki-safety-core.md`, `.claude/rules/anki-sync.md`, `.claude/rules/anki-queue-parity.md` |
 | change generation prompts or lesson structure | §4, §6 |
 | change what a lesson sounds like or what a render costs | §7, then `.claude/rules/paid-vendors.md` |
@@ -86,6 +87,7 @@ find frontend/src/routes -name '+page.svelte' | sed 's|frontend/src/routes||; s|
 /c/[curriculumId]/l/[lessonId]
 /c/[curriculumId]/plan
 /cards
+/invite
 /login
 /review
 /review-sessions
@@ -95,7 +97,7 @@ find frontend/src/routes -name '+page.svelte' | sed 's|frontend/src/routes||; s|
 
 Five invariants recur in every chapter:
 
-1. **No hardcoded language logic in core.** Two gates enforce it (§3.9).
+1. **No hardcoded language logic in core.** Two gates enforce it (§3.10).
 2. **Exactly one Anki sync sequence**, `run_full_sync`. Every Anki write goes through `safe_open`, with `usn = -1` and `mod = now` on touched rows (§10).
 3. **TT's queue and FSRS mirror Anki's bit for bit.** A divergence is a numbered parity layer, pinned by a differential oracle against the real Anki binary (§9).
 4. **Every LLM call in tests replays a cassette.** Coverage is 100% and enforced (§5, §14).
@@ -116,6 +118,7 @@ Generating a day is a background job. `app/generation/pipeline.py::LessonPipelin
 1. **Story.** `StoryGenerator` builds the prompt from the day, the language's style notes (§3), the strategy (WIDER, DEEPER or REVIEW, §4.6) and the review words. The review words come from `app/srs/review_selector.py`: the learner's due cards in order of increasing retrievability, so the words closest to being forgotten are offered first (§8.12). One call to Groq (`openai/gpt-oss-120b`) returns the story as JSON. In tests, and in dev by default, the call replays a recorded cassette (§5).
 2. **Glosses.** Word-by-word glosses are a separate LLM call (`app/generation/glossing.py`), because inside the story call they took most of the token budget and truncated the story. They are spliced back in before the lesson is built.
 3. **Sections.** `build_lesson_from_story` and `section_builder` turn the story into a `Lesson` of Pimsleur sections: key phrases with their syllable buildups, the dialogue at natural speed, an enunciated pass, and translated passes in both language orders (§4.3, §6). Every phrase is pinned to a resolved voice from the language plugin's voice map (§3.3).
+4. **Affix drill.** For a language that registers affix patterns (Cebuano), the day also has a pattern: the next one in the language's teaching order the learner has not yet passed (`app/generation/pattern_gate.py`). The story prompt asks for a few roots in both forms of it, and publishing appends a closing `affix_drill` section on the roots the story used, built from hand-checked tables with no model call (§6.12).
 
 ### 1.3 Publish
 
@@ -148,9 +151,9 @@ Renders are serialised to one per process, because the production box has under 
 
 ### 1.5 Listen and read
 
-On the lesson page (§13) the learner plays the lesson section by section, or hands-free from key phrases through the translated pass and on to the next day. They can also read the transcript instead. Each word in the transcript is a `WordToken` (§8.6) that carries the word's lemma, its card and both directions' strength. The reader colours it by mastery, bolds it when its recognition card is due, and offers one tap to start learning an unknown word.
+On the lesson page (§13) the learner plays the lesson section by section, or hands-free from key phrases through the translated pass and the closing drill, and on to the next day. They can also read the transcript instead. Each word in the transcript is a `WordToken` (§8.6) that carries the word's lemma, its card, both directions' strength, the lesson's own gloss and, for Cebuano, the word glossed by its parts (`mo- will + ádto there · go`). The reader colours it by mastery, bolds it when its recognition card is due, and its popover offers one tap to start learning an unknown word or the four review ratings for a due one.
 
-Marking the lesson listened opens the listen preview (§8.9). The learner sees which words the listen will grade, which new cards it will create, and where today's new-card budget runs out. Confirmed grades are applied immediately. The rest are staged per lesson for "Check your work", a read-only drill over just that lesson's cards (§8.10). Hearing a word can only ever grade its recognition direction.
+Marking the lesson listened opens the listen preview (§8.9). The learner sees which words the listen will grade, which new cards it will create (including the drill's contrast or focus cards, §6.12), and where today's new-card budget runs out. Confirmed grades are applied immediately. The rest are staged per lesson for "Check your work", a read-only drill over just that lesson's cards (§8.10). Hearing a word can only ever grade its recognition direction.
 
 ### 1.6 Review
 
@@ -175,7 +178,7 @@ Every write to an Anki collection goes through `safe_open`, which runs a lock pr
 
 ### 1.8 Around the loop
 
-- **Configuration and accounts** (§2): settings, per-language databases selected by the `X-TT-Language` header, and an owner plus learner accounts in a separate `auth.db`.
+- **Configuration and accounts** (§2): settings, per-language databases selected by the `X-TT-Language` header, and an owner plus learner accounts in a separate `auth.db`, created from the CLI or by a single-use invite link.
 - **Languages** (§3): Slovene, Norwegian, Tagalog and Cebuano, all plugins behind a registry that core may not bypass.
 - **The API** (§12): typed end to end into the frontend through a committed OpenAPI schema.
 - **Gates** (§14): the commit gate, CI and the checker scripts that keep these invariants true.
@@ -293,7 +296,7 @@ Why a separate file: the content databases are per-language and are copied, migr
 - **Sessions** last `session_ttl_days` (30). `create_session` deletes expired rows in the same transaction as the insert, so the table is bounded by the login rate with no scheduler. `get_session_user` returns None when the database is missing, the token is unknown or expired, or the user is deactivated.
 - **The cookie** is `tt_session`: HttpOnly, Secure, SameSite=Lax.
 
-There is **no self-serve signup**. Accounts come from the command line (§2.7).
+There is **no self-serve signup**. Accounts come from the command line, or from a single-use invite the admin mints there (§2.7).
 
 **Owner versus learners.** `app/storage/user_dbs.py` implements the multi-user model. One account is the *owner*: `owner_email` if set, otherwise the first account ever created (lowest id). The owner keeps resolving to the flat per-language databases, so nothing of theirs moves. Every other account resolves to `<root>/<user id>/tunatale_<code>.db`, where the root is `user_data_dir` or a `users/` directory beside the owner's databases (so it lands on the data volume wherever that is). The default is fail-safe: a second account created later is never the owner by accident and never reads the owner's reviews.
 
@@ -328,6 +331,7 @@ The auth endpoints, in `app/api/auth.py`:
 | `POST /api/auth/login` | none | Verifies credentials, sets the cookie. Identical 401 body for unknown email and wrong password. |
 | `POST /api/auth/logout` | none | Deletes the session row and clears the cookie; succeeds even when already logged out. |
 | `GET /api/auth/me` | `require_user` | The current email. |
+| `POST /api/auth/invite/redeem` | none (the invite is the credential) | Spends an invite token to create an account (§2.7). Sets no cookie. |
 
 The exempt list in `tests/test_auth_route_coverage.py` is exact paths, not a prefix: a prefix would blanket-exempt `/api/auth/me`, the endpoint that most needs the gate. That test enumerates routes and asserts every non-exempt one answers 401 anonymously. It iterates the *OpenAPI* surface rather than walking `app.routes`, because a router included into another router and nested yields almost no flat routes (2 of 72 when this was measured on FastAPI 0.140), and a guard that walks nothing reports total success.
 
@@ -372,12 +376,22 @@ print('commands:', sorted(build_parser()._subparsers._group_actions[0].choices))
 
 ```output
 usage: python -m app.auth.cli [-h]
-                              {create-user,set-password,list-users,deactivate-user} ...
+                              {create-user,create-invite,set-password,list-users,deactivate-user} ...
 
-commands: ['create-user', 'deactivate-user', 'list-users', 'set-password']
+commands: ['create-invite', 'create-user', 'deactivate-user', 'list-users', 'set-password']
 ```
 
 There is **no `--password` flag**, and a test asserts the parser rejects one: a password in argv shows up in shell history, in `ps` output, and in process-accounting logs. The password comes from stdin, from `$TT_AUTH_PASSWORD`, or from a `getpass` prompt on an interactive terminal. In a container the exact invocation (`docker compose exec -T api /app/.venv/bin/python -m app.auth.cli ...`, with `-T` and the venv's interpreter rather than `uv run`) is in `docs/deployment.md` § Accounts; the reasons for both are there too.
+
+**Invites** (`56b48e7`, bd `tunatale-1mh`) let a learner create their own account without shell access, while signup stays closed. `create-invite [--ttl-days N]` mints a single-use token (default lifetime `invite_ttl_days`, 7) and prints a link, `/invite#<token>`; the recipient picks an email and a password on the `/invite` page, which calls `POST /api/auth/invite/redeem`. The decisions, each pinned by a test in `tests/test_auth_invites.py` or its neighbours:
+
+- **The token rides in the URL fragment**, so it is never part of a requested URL (a proxy access log, a `Referer`). Only its sha256 is stored, like a session token.
+- **Redeeming does not sign you in.** There is one way in, the login endpoint with its throttle (§2.6), so the redeem response sets no cookie.
+- **No enumeration oracle.** Unknown, expired and already-spent tokens get one byte-identical 403, and the token is judged before the email. A valid token against an email already registered is 409 and does not burn the invite. Passwords are 8 to 1,024 characters, and the argon2 hash is computed only after the token is claimed, since the route is unauthenticated and argon2 is slow.
+- **No invite into an empty store.** With `owner_email` unset the lowest-id account owns the flat databases (§2.5), so an invite redeemed first would have been handed the owner's data; `create_invite` refuses until an account exists.
+- **The claim is one write.** `AuthDatabase.redeem_invite` opens its transaction with `UPDATE invites SET redeemed_at = ? WHERE token_hash = ? AND redeemed_at IS NULL AND expires_at > ?` and requires a rowcount of 1. Under WAL a read-then-upgrade transaction fails with "database is locked" instead of waiting, and a check-then-write lets two concurrent callers both pass the check.
+
+A freshly invited learner has no deck yet, and invites made that the normal state rather than a corner. A non-owner account with no deck used to get 400 from every `/api` route, `/api/auth/me` and `/api/auth/logout` included, so the SPA read the failed `me` as "not signed in" and the person could neither stay in nor log out. `main.py::_language_free` now lets the identity and liveness routes through; data routes are still refused.
 
 ### 2.8 Prod boot guards
 
@@ -477,16 +491,19 @@ print(textwrap.fill(', '.join(names), 100))
 ```
 
 ```output
-39 LanguageConfig fields:
+48 LanguageConfig fields:
 language, preprocessor_factory, deck_name, mint_deck_name, notetype_profiles, vocab_notetype,
 l2_scorer, lemmatizer_type, syllabifier_fn, morphology_profile, slow_word_fn, story_text_normalizer,
-definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, infinitive_marker,
+definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, variant_pairs_fn,
+dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, infinitive_marker,
 verb_headword_fn, gender_articles, noun_gender_fn, style_notes, function_words_path, numbers_path,
-spatial_path, pronouns_path, calendar_path, breakdown_spans_fn, alignment, planner_example,
-wordfreq_lang, frequency_table_path, a1_morphology, lexicon_factory, phoneme_planner_factory,
-ipa_read_in_voice_locale, ipa_for_drill_phrases, phrase_match_exact_form, lemma_table_path,
-built_data
+spatial_path, pronouns_path, calendar_path, breakdown_spans_fn, alignment, take_check,
+planner_example, wordfreq_lang, frequency_table_path, a1_morphology, lexicon_factory,
+phoneme_planner_factory, ipa_read_in_voice_locale, ipa_for_drill_phrases, ipa_for_enunciated_lines,
+ipa_for_natural_lines, ipa_for_card_words, phrase_match_exact_form, lemma_table_path, built_data
 ```
+
+The nine fields added since the 2026-10-01 edition are all Cebuano's, and all are about a dictionary or a voice: `variant_pairs_fn` and `short_form_pairs_fn` (which spellings are one word, §3.9), `dictionary_fields_fn`, `dictionary_gloss_fn` and `parts_fn` (Wolff's dictionary on cards and in the reader, §3.9, §11.10), `take_check` (re-drawing a Gemini take that says a `t` as `p`, §7.3), and three IPA flags, `ipa_for_enunciated_lines`, `ipa_for_natural_lines` and `ipa_for_card_words`, that send a whole line or card word to the voice with its reading.
 
 Every field is optional except `language`; a language opts into a capability by supplying the field, and every consumer treats `None` as "this language has no such thing" rather than guessing. The accessors follow two shapes. Plain facets share one helper, `_facet(code, attr, default)`, which calls `discover()`, returns the field or a default for an unknown code, and is used by the flag getters (`get_ipa_read_in_voice_locale`, `get_phrase_match_exact_form`, `get_lemmatizer_type`, ...). Getters that *call* what they fetch (`get_lexicon`, `get_phoneme_planner`) keep their own bodies because they must not open a store on the import path: the field holds a zero-argument factory, never an instance.
 
@@ -517,8 +534,10 @@ for code in sorted(L._CONFIGS):
 ```output
 ceb Cebuano    locale=ceb-PH  lemmatizer=table  style=True
       preprocessor_factory, deck_name, mint_deck_name, notetype_profiles, vocab_notetype,
-      syllabifier_fn, function_words_path, numbers_path, spatial_path, pronouns_path, calendar_path,
-      frequency_table_path, a1_morphology, phoneme_planner_factory, ipa_for_drill_phrases,
+      syllabifier_fn, variant_separator, variant_pairs_fn, dictionary_fields_fn, short_form_pairs_fn,
+      dictionary_gloss_fn, parts_fn, function_words_path, numbers_path, spatial_path, pronouns_path,
+      calendar_path, take_check, frequency_table_path, a1_morphology, phoneme_planner_factory,
+      ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words,
       lemma_table_path
 en  English    locale=en-US  lemmatizer=lowercase  style=False
       (none: gloss language only)
@@ -534,9 +553,10 @@ sl  Slovene    locale=sl-SI  lemmatizer=classla  style=True
       wordfreq_lang, a1_morphology
 tl  Tagalog    locale=fil-PH  lemmatizer=table  style=True
       preprocessor_factory, deck_name, mint_deck_name, notetype_profiles, vocab_notetype,
-      syllabifier_fn, story_text_normalizer, verb_headword_fn, function_words_path, numbers_path,
-      spatial_path, pronouns_path, calendar_path, planner_example, wordfreq_lang, a1_morphology,
-      phoneme_planner_factory, ipa_read_in_voice_locale, phrase_match_exact_form, lemma_table_path
+      syllabifier_fn, slow_word_fn, story_text_normalizer, verb_headword_fn, function_words_path,
+      numbers_path, spatial_path, pronouns_path, calendar_path, planner_example, wordfreq_lang,
+      a1_morphology, phoneme_planner_factory, ipa_read_in_voice_locale, phrase_match_exact_form,
+      lemma_table_path
 ```
 
 Reading it as design rather than inventory:
@@ -545,7 +565,7 @@ Reading it as design rather than inventory:
 |---|---|---|---|---|
 | Lemmatizer | classla (laptop only) | stanza, or its table in prod | table | table |
 | Native TTS | Azure sl-SI (2 voices) | Azure nb-NO (3 voices) | Azure fil-PH (2 voices) | Gemini-TTS (no Azure voice exists) |
-| Distinguishing feature | the plain baseline; planner example, A1 case/dual vocabulary | compounds, NST lexicon, gender articles, lemma guards | pronunciation-first syllabifier, affix-hyphen normalizer, root-keyed verbs | spelling-read IPA, drill-phrase IPA, frequency table |
+| Distinguishing feature | the plain baseline; planner example, A1 case/dual vocabulary | compounds, NST lexicon, gender articles, lemma guards | pronunciation-first syllabifier, affix-hyphen normalizer, root-keyed verbs | Wolff's dictionary on cards, affix decoder, short forms, affix drill and pace gate, spelling-read IPA everywhere, take checks |
 | Mints into | the imported deck | the imported deck | `2. Pimsleur Tagalog::TunaTale` | `3. Bisaya::TunaTale` |
 | Has `planner_example` | yes | yes | yes | deliberately no |
 
@@ -729,7 +749,7 @@ no front "mot, imot" -> ['mot', 'imot']
 sl front "mot, imot" -> ['mot, imot']
 ```
 
-`variant_separator` (Norwegian `,`) lets one card front carry alternate accepted spellings (`mot, imot`); a language that sets nothing has single-surface fronts.
+`variant_separator` (Norwegian and Cebuano `,`) lets one card front carry alternate accepted spellings (`mot, imot`, `dili, di`); a language that sets nothing has single-surface fronts. Cebuano also registers `variant_pairs_fn`, its listed spellings of one word, so a comma front is a variant list only when every part is a spelling of the same word: `Oo, salamat` is a phrase, not two spellings. Norwegian keeps the bare rule, because its deck's pairs are not listed anywhere.
 
 **Notetypes and mint decks.** `vocab_notetype` is the TT-managed notetype new cards are minted into (`app/cards/vocab_notetype.py`: one `VocabNotetype(name, l2_field, l2_css_class)` per language). `deck_name` is what sync *reads*, including all its subdecks; `mint_deck_name` is where TT-minted notes *go* when different. Tagalog and Cebuano mint into a `::TunaTale` subdeck, which must already exist in Anki, and failure to find it is loud. `l2_scorer` lets the importer pick the L2 field out of an unmarked Anki note by scoring how language-like a string is. Slovene and Norwegian have one (Norwegian's counts only `æøå`, after a Slovene scorer once ranked `snøm` at 0.0 and a headword became an example sentence); Tagalog and Cebuano cannot, because no letters distinguish them from English, so they register `notetype_profiles` instead, field-role maps by notetype name, and TT-minted notes are read by field name. Skipping that is a documented trap: the first sync after minting fails with "No L2 scorer".
 
@@ -753,11 +773,62 @@ Tagalog was the pathfinder; Cebuano reused its core fixes and was wired in a day
 
 - **Table lemmatizer and root-keyed verbs.** Both lemmatize from a kaikki-derived table with no NLP dependency group. A verb's table entry is its *root*; `phrase_match_exact_form` (Tagalog only) stops a multi-word card from matching a lesson phrase on a different form of the same verb (`Magdadala ako` is not graded as `magdala ako`), while single words still resolve by root. Cebuano's `closed_class.tsv` hand-curates readings the table gets wrong (`ang`, `mga`, `ka`, `si`, `ni`, `og`), and `spelling_variants.tsv` folds variants to one headword (`puwede` to `pwede`).
 - **Voices that cannot be asked for IPA the usual way.** Two facets handle two failure modes. `ipa_read_in_voice_locale` (Tagalog) means the locale ignores `<phoneme>`, so IPA must reach the voice unwrapped, read by its own front end. `ipa_for_drill_phrases` (Cebuano) means a drill step that is not a piece of a word (a key phrase or a drilled form, of one word or several) should reach the voice with per-word IPA. Gemini rejects SSML `<phoneme>`, so IPA is delivered as a prompt instruction ("say only this one Cebuano syllable") whose language *name* is recovered from the voice's locale by `language_name_for_tts_locale`. That function returns `None` for a locale two languages declare, because a prompt that names neither beats one that misnames. The flag is per-language because the channel is the adapter's: on Azure a per-word map would re-speak every word of a drill. Dialogue stays plain for everyone.
-- **IPA sources.** Tagalog's planner (`tl/phoneme_plan.py`) hands the key-phrase voice the chosen Wiktionary reading, giving whole words IPA too, since a German voice reading Tagalog text guesses; an unlisted word is read letter by letter. Cebuano has no lexicon, so `ceb/phoneme_plan.py` reads IPA off the spelling, with the hyphen mapped to a glottal stop (`kanus-a`) and a dot at every syllable break (`mi.ʔi.nom`): run together, a stop between two like vowels was lost on the Gemini voice (`ceb/phoneme_plan.py::_SYLLABLE_BREAK`). The one reading without the dots is an Enunciated line's (`synth_plan.py` asks `line_phonemes` for its words run together): with them its takes ran 1.13 times as long and were heard as chopped up. The shared logic is a core class, `app/audio/spelled_ipa.py::SpelledPhonemePlanner`, while the Latin letter table is *duplicated* in each plugin, since plugins cannot import each other (§3.9).
-- **Style guards.** Tagalog: no Taglish, everyday English and Spanish loans kept, `po` sparingly, Spanish-derived numbers for clock time and prices. Cebuano's drift list marks Tagalog words as contamination (`hindi` becomes `dili`, `ano` becomes `unsa`).
-- **Data for "what to learn next."** Cebuano ships a Fluent Forever base list, a reviewed next-words queue and a root-keyed frequency table. A script only *proposes* new words; a human reviews each root against sentences because about one in five proposals had the wrong sense.
+- **IPA sources.** Tagalog's planner (`tl/phoneme_plan.py`) hands the key-phrase voice the chosen Wiktionary reading, giving whole words IPA too, since a German voice reading Tagalog text guesses; an unlisted word is read letter by letter. Cebuano has no lexicon, so `ceb/phoneme_plan.py` reads IPA off the spelling, with the hyphen mapped to a glottal stop (`kanus-a`) and a dot at every syllable break (`mi.ʔi.nom`): run together, a stop between two like vowels was lost on the Gemini voice (`ceb/phoneme_plan.py::_SYLLABLE_BREAK`). The one reading without the dots is an Enunciated line's (`synth_plan.py` asks `line_phonemes` for its words run together): with them its takes ran 1.13 times as long and were heard as chopped up. The shared logic is a core class, `app/audio/spelled_ipa.py::SpelledPhonemePlanner`, while the Latin letter table is *duplicated* in each plugin, since plugins cannot import each other (§3.10).
+- **Whole lines and card words, too (Cebuano).** Three more flags carry the reading past the drill. `ipa_for_natural_lines`: a natural-speed line of two words or more goes to the voice with its reading, because read as plain text the Gemini voice now and then says a word that is not in the line ("ugna" for "ugma"; eight lines by four takes, 2026-10-12). `ipa_for_enunciated_lines`: the Enunciated line gets its reading with its words run together (§6.7). `ipa_for_card_words`: a vocab card's word audio is voiced from its reading, because a bare `away` (quarrel) came back as the English word and `semana` grew a syllable. The Azure languages stay plain on each of these, on the same kind of evidence: the planner they would need would wrap every word in `<phoneme>`, changing audio nobody has heard.
+- **Style guards.** Tagalog: no Taglish, everyday English and Spanish loans kept, `po` sparingly, Spanish-derived numbers for clock time and prices. Cebuano's drift list marks Tagalog words as contamination (`hindi` becomes `dili`, `ano` becomes `unsa`). Since 2026-10-16 Cebuano dialogue also writes the everyday short forms (`di`, `gyud`, `nya`, `sad`/`pud`, `ko`, `ka`), following Wolff's style advice that the short form is the common one in speech, and puts particles before a short pronoun (`Asa man ka?`, `Wala pa ko.`), the reverse of Tagalog's `Kumain ka na ba?` (`ceb/data/style.md`, citing Tanangkingsing 2009 §6.2, who counts particle-first about 25 to 1).
+- **Data for "what to learn next."** Cebuano ships a Fluent Forever base list, a reviewed next-words queue and a root-keyed frequency table. The base list is served most-used word first with its themes spread out (`srs/base_list.py::spread_by_frequency`, 2026-10-05): in Wyner's thematic order the deck had served dog, cat, fish, bird and cow on one day. A script only *proposes* new words; a human reviews each root against sentences because about one in five proposals had the wrong sense.
+- **Clozes by pictureability, not part of speech.** In both languages a word gets a cloze only when it is on the plugin's `function_words` include list (`5eafd92`). Their lemma tables carry Wiktionary's UPOS, which tags productive, picturable roots as closed-class, so the closed-class route had been turning roots that take affixes into clozes.
 
-### 3.9 Keeping it honest: the gates and adding a language
+### 3.9 Cebuano in depth: Wolff's dictionary, the affix decoder and short forms
+
+Through October Cebuano went from Tagalog's younger sibling to the plugin with the most in it. Almost all of that rests on two public-domain books by John U. Wolff: *A Dictionary of Cebuano Visayan* (1972, Project Gutenberg #40074) and the *Beginning Cebuano* course, which the owner reads respelled in the Handbook spelling of Raisanen & Raisanen (2016). There is no native speaker on the project, so where the code needs a linguistic decision it cites one of those books, Tanangkingsing's grammar, or a count in the FineWeb-2 native-news corpus (9.5 M tokens), and the owner's decision is recorded beside it in the module docstring. The pieces, in the order the data flows:
+
+- **The dictionary, parsed** (`ceb/wolff_dictionary.py`). An entry paragraph becomes a root, its sub-entries (an affix label such as `paN-` or a written-out word), parts of speech, numbered senses with "Cebuano, English." example pairs, the verb class (`[A; ab2]`, decoded by `decode_classes`), stress shifts (`(→)`, `(←)`), short forms and cross-references. `backend/scripts/build_cebuano_wolff_lexicon.py` writes it to a committed `data/wolff_lexicon.json.gz`, one record per paragraph. It is a build product that nothing rebuilds automatically: a change to the spelling inputs it reads must be followed by a rebuild, and `bbc7129` found it 452 entries stale four days after one was not.
+- **Two spellings** (`ceb/handbook_spelling.py`). Wolff writes three vowels and leaves stress and the glottal stop between vowels to rule; the course marks both, because a learner cannot see either otherwise: an acute on every stressed syllable, a grave for a glottal stop, a circumflex where the two fall together (`maáyu` becomes `màáyo`), and Raisanen's `e`/`o` rules. Where the dictionary and the respelled course spell one word differently, the course wins (owner, 2026-10-18; `data/handbook_course_spellings.tsv`). The converter is pure: its corpus and loan-word data are passed in as a `SpellingLexicon`, and `backend/scripts/wolff_handbook_oracle.py` builds one from the real sources.
+- **The affix decoder** (`ceb/affixes.py`, design in `.beads-tasks/briefs/design-ceb-affix-decoder.md`). Wolff's Introduction §5 to §7 as code, in two directions: `generate(root, affix)` gives every form the sound changes allow, each tagged with the rules it used, and `decode(surface, roots)` runs the same rules as a search over the headwords a caller passes. §5 calls most of its alternations tendencies, so `generate` returns candidates, and callers rank them by attestation; `analyse` ranks a word's roots by the dictionary entries that license them and by the English it came with. It has several consumers: the lemma table build roots the corpus words Wiktionary leaves unrooted with it (rule 6b of `scripts/build_cebuano_lemma_table.py`; it cut that build from over ten minutes to about 98 s once it cached per word, `b85cbce`), `a1_morphology.py` falls back to it for a form subtraction cannot explain (`putlon` is `putol` + `-on`, the vowel dropped), `WolffLexicon.by_rule` uses its analysis to stress a suffixed word Wolff never lists (§5.11: `kapehan` becomes `kapéhan`), and `letter_map` tells the respeller which letters of an affixed form spell the root.
+- **One card, one entry** (`ceb/wolff_cards.py::WolffLexicon`). A card finds its entry by its word's letters and picks among candidates by its English, in tiers: the same words, then a WordNet relation (synonym, plural, one a kind of the other, from `data/english_relations.json.gz`), and so on down. No shared meaning, or a tie between different spellings, is a `Miss`: the card gets nothing and the word goes on the owner's list, because "a wrong spelling under a word is worse than none". A word Wolff never writes out can share its letters with one he does (`kabalo` 'can' is `ka-` + `baló` 'know', but his only `kabálo` is 'shame'), so a hand row in `data/wolff_decoded.tsv` names the sub-entry and is read before the letters. What a card shows is §11.10.
+- **Glossed by its parts.** `WolffLexicon.parts_line` reads an affixed verb as its affix and its root, each labelled: the affix with the owner's approved short wording (`data/affix_labels.tsv`), the root with its stress and gloss. The line leads a verb card's Meaning (§11.10) and, through the `parts_fn` facet, the reader's popover (§8.6). It stays silent where a lesson shows the reading is wrong (`bc34374`). Measured on Wolff's own Lessons 1 to 4, about 12 of 59 lines were, and two rules now return nothing instead: `-a` or `-i` alone on a noun is Wolff's "that particular" (`baláya` 'the house'), not a command; and when the word comes with the lesson's English, the sense that takes the affix must agree with it (`kítà`'s `maka-` is 'earn', but the lesson says 'see').
+- **Short forms are first class** (`ceb/short_forms.py`, `e0dd20b`). One rule decides how many cards a short/long pair has. Interchangeable forms share a card, and the card names its short form: `dili, di` is one front (§3.6), as are the terms of address `manong, nong`, `manang, nang`, `inday, day` (`e0a8a5e`, after the owner found both `day` and `inday` on the deck). A short form with its own grammar has its own card, and each names the other: the pronoun clitics `ko`/`ako`, `ka`/`ikaw`, `mi`/`kami` (Wolff, *Beginning Cebuano* 3 B 4: the short form stands anywhere but the predicate). The line is written into the card's own `Short form` field. The lemma table reads Wolff's written contractions (3 F) as their host (`say` is `sab` + `y`, which reaches `usab`): rule 8 of the table build, with 53 hand rows in `closed_class.tsv` that it skips (names, loans and words of their own), each checked against the news corpus.
+
+```bash
+cd backend && uv run python - <<'E' 2>/dev/null
+from app.languages import discover; discover()
+from app.plugins.languages.ceb import affixes
+from app.plugins.languages.ceb.short_forms import short_form_line
+from app.plugins.languages.ceb.wolff_cards import load_lexicon
+for c in affixes.generate("inum", "-un")[:2]:
+    print("generate inum + -un ->", c.surface, "by §", ", ".join(c.rules))
+print("decode imnun        ->", [(a.root, a.affix, a.rules) for a in affixes.decode("imnun", frozenset({"inum"}))])
+lex = load_lexicon()
+for word, english in (("milakaw", "walked"), ("moadto", "will go"), ("nagtrabaho", "is working")):
+    print(f"parts {word:10} ->", lex.parts_line(word, english))
+fields = lex.card_fields("maayo", "good").as_note_fields()
+print("maayo Spelling     ->", fields["Spelling"])
+print("kapehan by rule    ->", lex.by_rule("kapehan", "coffee shop"))
+for word, english in (("dili, di", "not"), ("ako", "I"), ("ko", "I")):
+    print(f"short form {word!r:10} ->", short_form_line(word, english))
+E
+```
+
+```output
+generate inum + -un -> imnun by § 5.12, 5.14
+generate inum + -un -> inmun by § 5.12
+decode imnun        -> [('inum', '-un', ('5.12', '5.14'))]
+parts milakaw    -> mi- did + lakáw walk
+parts moadto     -> mo- will + ádto there (far away, future) · go, bring to a place
+parts nagtrabaho -> nag- is, or was + trabáho work, go to work
+maayo Spelling     -> màáyo
+kapehan by rule    -> kapéhan
+short form 'dili, di' -> short form: dì
+short form 'ako'      -> short form: ko
+short form 'ko'       -> short for akó
+```
+
+Wolff's spelling (`inum`, `-un`, three vowels) is the decoder's working alphabet; the Handbook spelling is what a learner sees. The other Cebuano work of the period lives with the subsystem it changed: the affix drill and its pace gate (§6.12), the Gemini take checks (§7.3), the dictionary fields and drawn deictics on cards (§11.4, §11.10).
+
+Three smaller lemma-table rules from the same weeks are worth knowing before touching `cebuano_lemmas.tsv.gz`. `ni-` is read as a spelling of `mi-` (it is the commoner one in native news, `niadto` 1,058 against `miadto` 231), so the `verb:mi` hint names both and `moadto`/`niadto` stay in the mo-mi pattern. When the context tag matches several readings, the table's default for that tag wins (`lemma_table.py::readings_by_tag`); before `0649a71` the first in alphabetical order did, so `naa` tagged VERB read as `na`. And `cebuano_frequency.tsv.gz` counts each corpus token under the lemma the table *defaults* to, so it goes stale whenever a default moves or a surface becomes known. Since 2026-11-04 the build records a digest of that mapping in a `#lemma_defaults_sha256=` header, and `tests/test_build_cebuano_frequency.py` compares it with the committed lemma table. On that day the committed table was measured stale (five lemma-table commits since its last build, about 3% of its tokens on keys the table now roots elsewhere), so the comparison is a strict `xfail` until the next rebuild, which needs the FineWeb-2 shard on the owner's machine (`uv run --with pyarrow python scripts/build_cebuano_frequency.py`). The Wolff lexicon build reads these counts, so it is rebuilt after.
+
+### 3.10 Keeping it honest: the gates and adding a language
 
 Two CI-enforced checks make "just import the Slovene thing" a build failure rather than a review comment, and a test proves a plugin can disappear.
 
@@ -839,7 +910,9 @@ A lesson is the unit of audio. `app/models/lesson.py::Lesson` holds a `title`, `
 
 A `Phrase` is one thing to synthesize: `text`, `voice_id`, `language_code` (the *text's* language, which is what decides pause rules and gain tables), SSML-style `rate`/`pitch`/`volume`, a `role` (`narrator`, `female-1`, ...), the part-of-speech tag `upos`, and two breakdown provenance fields, `source_word` and `syllable_span`, explained in §4.6. `role` is structure and `voice_id` is presentation: an English translation keeps `role="narrator"` even when a speaker-matched English voice reads it (§3.3), so cue pairing and key-phrase grouping never depend on which voice was chosen.
 
-`SectionType` has seven members, and the Pimsleur design is visible in their names: one drill section, then the dialogue at natural speed, then slow ("enunciated") and bilingual variants in both orders. The narrator announces each section by its display title, which lives in `app/generation/section_builder.py::SECTION_TITLES` rather than on the enum, because it is spoken content and changes with listening tests (the slow pass is now "Enunciated" because it is the same line with a pause after each word, not a rate change).
+A drill step also uses two more fields. `role` names what the step is (`narrator`, `model`, `answer`, or `DRILL_PROMPT_ROLE`, `"prompt"`, which tells the pause calculator to wait for the learner's answer rather than for the next line), and `stressed` is a `(start, stop)` span of the English the narrator says with weight on it: the object-focus drill is cued only by which noun is meant, "HE ate fish" against "he ate THE FISH" (§6.12). `stressed` is `None` on every target-language line. A `Lesson` carries a `kind`, `thematic` (a story) or `grammar` (an affix drill and nothing else), the same two values as `CurriculumDay.kind`, so whatever holds a lesson knows which it is without finding its day.
+
+`SectionType` has eight members, and the Pimsleur design is visible in their names: one drill section, then the dialogue at natural speed, then slow ("enunciated") and bilingual variants in both orders, and last the affix drill, the one section not made from the story. The narrator announces each section by its display title, which lives in `app/generation/section_builder.py::SECTION_TITLES` rather than on the enum, because it is spoken content and changes with listening tests (the slow pass is now "Enunciated" because it is the same line with a pause after each word, not a rate change).
 
 ```bash
 cd backend && uv run python -c "
@@ -858,6 +931,7 @@ TRANSLATED           translated           'English After'
 SLOW_TRANSLATED      slow_translated      'Enunciated, English After'
 EN_TRANSLATED        en_translated        'English Before'
 SLOW_EN_TRANSLATED   slow_en_translated   'Enunciated, English Before'
+AFFIX_DRILL          affix_drill          'Affix Drill'
 ```
 
 Persistence is JSON: `Lesson.to_json()` / `from_json()` round-trip through a string stored in the lesson row (§6). The one wrinkle is that JSON has no tuples, so `syllable_span` goes out as a list and `_phrase_from_dict` restores the tuple on the way back, which is what keeps `Phrase` equality exact after a reload. `from_json` defaults `narrator_voice` for blobs that predate the field, and a stored lesson pins a *resolved* `voice_id` per phrase, so changing a language's voice map affects only lessons generated afterwards. Titles are normalised on construction (§4.4).
@@ -887,7 +961,7 @@ round trip equal            : True
 
 ### 4.4 `Curriculum` and `CurriculumDay`
 
-A curriculum is a plan: `id`, `topic`, `language_code`, `cefr_level`, a list of `CurriculumDay`s, and a `metadata` dict. A day carries `title`, `focus`, a list of target `collocations`, a `learning_objective` and optional `story_guidance`. It serialises with `to_json` / `from_json` (stored by `ContentStore`, §6).
+A curriculum is a plan: `id`, `topic`, `language_code`, `cefr_level`, a list of `CurriculumDay`s, and a `metadata` dict. A day carries `title`, `focus`, a list of target `collocations`, a `learning_objective` and optional `story_guidance`, plus a `kind` (`thematic` or `grammar`, validated against `DAY_KINDS`) and the affix `pattern` its lesson drills (§6.12). The pattern lives on the day so that regenerating the lesson rebuilds the same drill; stored plans that predate both fields load as thematic days with no pattern. It serialises with `to_json` / `from_json` (stored by `ContentStore`, §6).
 
 **`day` is a key, not an ordinal.** Lessons, pipeline jobs and planner feedback all reference `CurriculumDay.day`, so deleting a day leaves a permanent gap (`[1, 2, 3, 4, 6]`), and nothing renumbers. Anything the learner sees is therefore derived from `Curriculum.day_positions()`, which maps each key to its 1-based position in sorted order. Showing the raw key would produce "Day 6" after "Day 4".
 
@@ -1072,8 +1146,8 @@ from app.llm.client import GROQ_DEFAULT_MODEL, reasoning_params_for_model
 print(GROQ_DEFAULT_MODEL)
 print(reasoning_params_for_model(GROQ_DEFAULT_MODEL))
 print(reasoning_params_for_model('llama-3.3-70b-versatile'))
-from app.config import settings
-print(settings.llm_model, settings.groq_tokens_per_day_limit, settings.groq_requests_per_day_limit, settings.llm_allow_fallback)
+from app.config import Settings  # the class defaults, so a local .env cannot change the output
+print(*(Settings.model_fields[k].default for k in ('llm_model', 'groq_tokens_per_day_limit', 'groq_requests_per_day_limit', 'llm_allow_fallback')))
 "
 ```
 
@@ -1302,7 +1376,7 @@ POST  /api/llm/rate-limit/probe
 
 ## 6. Content Generation & Storage
 
-This chapter follows text from the learner's intent to a stored lesson: a chat-planned curriculum, a story the model writes for one day, a separate glossing pass, a deterministic expansion of the story into seven Pimsleur sections, and the publish step that tags, writes and schedules audio. Review sessions, which are lessons with no curriculum, are generated by the same machinery and described here (their reader and player are §13). The chapter ends with `ContentStore`, the SQLite repository everything above writes into. The model client and its budgets are §5; the audio that the stored sections become is §7; the words and cards a lesson feeds are §8 and §11.
+This chapter follows text from the learner's intent to a stored lesson: a chat-planned curriculum, a story the model writes for one day, a separate glossing pass, a deterministic expansion of the story into seven Pimsleur sections (plus, for Cebuano, a closing affix drill), and the publish step that tags, writes and schedules audio. Review sessions, which are lessons with no curriculum, are generated by the same machinery and described here (their reader and player are §13). The chapter ends with `ContentStore`, the SQLite repository everything above writes into. The model client and its budgets are §5; the audio that the stored sections become is §7; the words and cards a lesson feeds are §8 and §11.
 
 ### 6.1 The shape of the pipeline
 
@@ -1317,7 +1391,8 @@ This chapter follows text from the learner's intent to a stored lesson: a chat-p
                         ▼  build_lesson_from_story    deterministic, the ONE build step (6.5, 6.7)
                      Lesson (7 sections + generation_metadata)
                         │
-                        ▼  publish_lesson             lemmas, UPOS, write, invalidate, prewarm, render (6.8)
+                        ▼  publish_lesson             prepare (the closing affix drill, 6.12), lemmas, UPOS,
+                        │                             trim known buildups, write, invalidate, prewarm, render (6.8)
               ContentStore: lessons / review_sessions + audio_files (6.11)
 
 The model contributes only creative text: a title, 3 to 8 key phrases, and four to six scenes of dialogue with English translations. Everything structural (which sections exist, their order and titles, the syllable buildups, voices, slow-speed spacing) is code, so a lesson is reproducible from its Story JSON. That JSON is itself stored (`generation_metadata["story"]`) and is the unit a human can export, edit and re-import (`docs/lesson-authoring.md`).
@@ -1426,7 +1501,9 @@ PlannerError: Expected 2 days, got 1
 
 The learner snapshot (`srs/planner_snapshot.py::build_learner_snapshot`) is deliberately a pure function of DB contents, with no dates or row-order leakage, so identical decks give identical prompts. That purity is what a due-aware review selector could not honour, and is why the selector (§6.4) is a sibling module and not a parameter on it.
 
-One stale spot: the planner's system text still describes "the Pimsleur 4-section lesson shape". A lesson has seven sections (§6.7); the model is only told the shape is fixed, so this does not change what it plans, but the wording predates the split into English-before and English-after variants.
+The planner does not choose a day's affix pattern. A planned day is thematic with no pattern, and the pace gate picks the pattern at generation time from what the learner has passed (§6.12). The "Add a grammar lesson" button that once added a drill-only day from the curriculum page was retired on 2026-10-13 with its two routes (`1108cd7`): drills now close story lessons instead. Grammar days already stored still generate and play.
+
+One stale spot: the planner's system text still describes "the Pimsleur 4-section lesson shape". A lesson has seven story sections and sometimes a drill (§6.7); the model is only told the shape is fixed, so this does not change what it plans, but the wording predates the split into English-before and English-after variants.
 
 ### 6.4 Story prompts
 
@@ -1544,7 +1621,8 @@ Its design rules:
 
 - **Never fatal.** The story is expensive and already in hand; glosses are a cheap, re-runnable enrichment. Any failure logs a warning and leaves the lesson without hover translations, rather than throwing away a valid story and 502ing the button the split was made to fix. The create responses carry a `warnings` entry ("no hover translations") when `gloss_entry_count == 0`.
 - **Skip when already glossed.** A story that arrives with `dialogue_glosses` (paste route, legacy cassette, authored lesson) skips the call, so the change is backward compatible by construction rather than by a flag.
-- **Sized from the work.** `gloss_max_tokens` is `unique_words x 24` clamped to what the request reservation allows; 24 is a measured 1.5x margin over the worst case seen (9.4 and 10.4 tokens per entry live, 16.1 historically). Raising it is cheap; lowering it truncates the array, which is the failure being avoided.
+- **Each line carries its English.** The pass is sent `(line, translation)` pairs, not the target-language lines alone (`e1678e5`, bd `qrzr`). Without the translation it guessed each word's sense: a Cebuano lesson's "Moadto ko sa haya." ("I'm going to the wake.") glossed `haya` as "garden". The top-up sees the same pairs.
+- **Sized from the work.** `gloss_max_tokens` is `unique_words x 24`, or `1500 + unique_words x 12` when that is larger, clamped to what the request reservation allows and never below 256. The 24 is a measured 1.5x margin over the worst case seen (9.4 and 10.4 tokens per entry live, 16.1 historically); the second term is the reasoning a model spends before its JSON, which a short dialogue's entries-only cap did not leave room for (a 57-word dialogue capped at 57 x 24 truncated in 2 of 3 calls, 2026-10-14). Raising it is cheap; lowering it truncates the array, which is the failure being avoided.
 - **Recover, do not discard.** `parse_gloss_array` falls back to recovering `{...}` objects one at a time, so one bad character no longer empties the array (`96878b8e`); it also strips HTML the model put inside a word (`vz<span></span>amem`, bd `vayt`), logging each repair.
 - **One retry, one top-up.** An empty reply is retried once. A *partial* reply gets one targeted call for exactly the `uncovered_surfaces`, with context limited to the lines that contain them. The top-up's cap includes a 1,500-token reasoning allowance, since a 5-word top-up came back truncated mid-entry at an entries-only size. Never a loop: whatever is still missing is logged.
 
@@ -1556,15 +1634,15 @@ raw = ('[{"word": "hei", "translation": "hello"}, '
        '{"word": "vz<span></span>amem", "translation": "I take"}, '
        '{"word": "bro", "translation": "bri')           # truncated mid-entry
 print(parse_gloss_array(raw))
-print("short dialogue cap:", gloss_max_tokens(["Hei, jeg heter Anna."]),
-      "| 40 lines:", gloss_max_tokens([f"ord {i} en to tre" for i in range(40)]))
+print("short dialogue cap:", gloss_max_tokens([("Hei, jeg heter Anna.", "Hi, my name is Anna.")]),
+      "| 40 lines:", gloss_max_tokens([(f"ord {i} en to tre", f"word {i} one two three") for i in range(40)]))
 print("uncovered:", uncovered_surfaces({"hei": "hei", "heter": "hete"}, [{"word": "hei", "translation": "hello"}]))
 E
 ```
 
 ```output
 [{'word': 'hei', 'translation': 'hello'}, {'word': 'vzamem', 'translation': 'I take'}]
-short dialogue cap: 256 | 40 lines: 1056
+short dialogue cap: 1548 | 40 lines: 2028
 uncovered: ['heter']
 ```
 
@@ -1572,7 +1650,7 @@ Two repair paths exist for lessons stored without glosses: `POST /api/story/{les
 
 ### 6.7 Sections, key phrases and morphology focus
 
-`generation/section_builder.py` expands the story into seven `Section`s, always in this order. Titles are spoken by the narrator as each section's first phrase and are the learner-visible names; the enum values are persisted (in stored JSON and `audio_files.section_type`), so renaming titles needed no migration and the display titles moved independently (`ea162179`, `backend/scripts/rename_section_titles.py` retitles stored lessons).
+`generation/section_builder.py` expands the story into seven `Section`s, always in this order, and a lesson with an affix pattern ends on an eighth, built from tables rather than from the story (`build_affix_drill_section`, §6.12). Titles are spoken by the narrator as each section's first phrase and are the learner-visible names; the enum values are persisted (in stored JSON and `audio_files.section_type`), so renaming titles needed no migration and the display titles moved independently (`ea162179`, `backend/scripts/rename_section_titles.py` retitles stored lessons).
 
 | `SectionType` value | Spoken title | Contents |
 |---|---|---|
@@ -1583,6 +1661,7 @@ Two repair paths exist for lessons stored without glosses: `POST /api/story/{les
 | `slow_translated` | Enunciated, English After | enunciated L2, then English |
 | `en_translated` | English Before | English, then the L2 line |
 | `slow_en_translated` | Enunciated, English Before | English, then enunciated L2 |
+| `affix_drill` | Affix Drill | Cebuano only, last: one affix pattern modelled, then asked for from its English with a pause to answer (§6.12) |
 
 "Slow" is a legacy name. The pass is *enunciated* speech, not slower speech: each target-language line is said with a pause after every word and no rate change. The three Enunciated sections **store the natural line**, the same text as their natural-speed twins; what makes them enunciated is their `section_type`. At render time `app/audio/enunciation.py::plan_line` cuts the line into words, and `get_slow_word(code)` cuts a long word into parts (Norwegian compounds at the morpheme boundary; Tagalog words of five syllables or more after a long prefix or in front of the lemma table's root). Each provider then pauses in the only way that works for it, chosen by the user's ear on 2026-10-06:
 
@@ -1617,7 +1696,7 @@ natural_speed ['Natural Speed', 'At a cafe', 'Jeg venter på flyplassen']
 slow_speed ['Enunciated', 'At a cafe', 'Jeg venter på flyplassen']
 (('jeg',), ('venter',), ('på',), ('fly', 'plassen'))
 <prosody rate="+0%">jeg<break time="450ms"/> venter<break time="450ms"/> på<break time="450ms"/> fly<break time="150ms"/>plassen</prosody>
-{'key_phrases': 'Key Phrases', 'natural_speed': 'Natural Speed', 'slow_speed': 'Enunciated', 'translated': 'English After', 'slow_translated': 'Enunciated, English After', 'en_translated': 'English Before', 'slow_en_translated': 'Enunciated, English Before'}
+{'key_phrases': 'Key Phrases', 'natural_speed': 'Natural Speed', 'slow_speed': 'Enunciated', 'translated': 'English After', 'slow_translated': 'Enunciated, English After', 'en_translated': 'English Before', 'slow_en_translated': 'Enunciated, English Before', 'affix_drill': 'Affix Drill'}
 ```
 
 **Key phrases and breakdown.** The Pimsleur backward buildup is built by `build_key_phrases_section`: L2 phrase, English, then a sequence of progressively longer fragments from the end of the phrase back to the whole. `build_word_breakdown_spans` returns `BreakdownChunk(text, source_word, span)` records. A language that registers a `breakdown_spans_fn` (Norwegian, with its compound handling, §3) supplies its own; everyone else gets `_generic_breakdown_spans`, which syllabifies through the registry and guards each word with a **losslessness check**: provenance (`source_word`, `syllable_span`) is attached only when the syllables rejoin the word exactly, so a slicer (§7) can cut chunks from one whole-word render instead of asking the voice for a fragment it would misread. A `None` span always means "synthesize `text`". The plain-text sequence of `build_word_breakdown` is, by invariant, identical to the spans version, since the audio cue manifest is built from the plain one and any divergence would desynchronise every cue.
@@ -1647,16 +1726,18 @@ tl ['magkape ako', 'ko', 'a', 'ako', 'pe', 'ka', 'kape', 'mag', 'magkape', 'magk
 
 ### 6.8 Publishing: the one write seam
 
-Six call sites write lesson-shaped content: the pipeline's generate path, `POST /api/story/generate`, `POST /api/story/import`, and the review-session create, paste-import and in-place import routes. Each used to perform the post-generation steps by hand and drop different ones; the observable bug was that creating a review session never rendered audio while creating a lesson always did. `generation/publishing.py::publish_lesson` is the one ordering they now share, and the ordering is load-bearing:
+Seven call sites write lesson-shaped content: the pipeline's generate path, the pipeline's grammar-day path (a drill-only lesson, §6.12), `POST /api/story/generate`, `POST /api/story/import`, and the review-session create, paste-import and in-place import routes. Each used to perform the post-generation steps by hand and drop different ones; the observable bug was that creating a review session never rendered audio while creating a lesson always did. `generation/publishing.py::publish_lesson` is the one ordering they now share, and the ordering is load-bearing:
 
+0. `target.prepare(lesson, srs_db=..., lemmatizer=...)`: what only the placement knows. For a curriculum day that is the closing affix drill of the day's pattern (`CurriculumDayTarget.prepare` calls `story_pattern.add_day_drill`, §6.12). It lives here, not in the two places that generate or import a story, so a lesson made by hand from the exported prompt ends on the same drill as one the pipeline wrote. A review session's `prepare` does nothing.
 1. `resolve_lesson_lemmas` (awaited): disambiguates words for table-lemmatizer languages (§8); a no-op for others. `llm` is a required keyword so a new writer cannot skip it.
 2. `annotate_chunk_upos_for_lesson` (awaited, **before** the write): tags breakdown chunks with part of speech so the IPA planner (§7) can choose pronunciations. A detached task races the write, so the tags land on an in-memory object nobody persists again. On 2026-08-26 a fresh lesson had 0 of 47 chunks tagged, and re-annotating the stored copy tagged all 47.
-3. `target.write(lesson)`.
-4. `target.invalidate_audio(id)` when replacing.
-5. Pre-warm the sentence-analysis cache as an *anchored* background task: the event loop keeps only a weak reference, so an unanchored task can be garbage-collected mid-flight. `_background_tasks` is the strong reference, and tests drain it.
-6. `target.schedule_render(...)`.
+3. `known_buildups.trim_well_known_buildups`: a word the learner knows well (the listen preview's own `mastery.is_well_known`, read off the transcript) loses its syllable-by-syllable pieces, in key phrases and drill alike; the word and the phrase built backwards from it stay (owner, 2026-10-14: "that would save some length as well"). It is an enrichment, so a failure logs a warning and the lesson keeps every buildup.
+4. `target.write(lesson)`.
+5. `target.invalidate_audio(id)` when replacing.
+6. Pre-warm the sentence-analysis cache as an *anchored* background task: the event loop keeps only a weak reference, so an unanchored task can be garbage-collected mid-flight. `_background_tasks` is the strong reference, and tests drain it.
+7. `target.schedule_render(...)`.
 
-The destination is a `ContentTarget` protocol (`write`, `invalidate_audio`, `schedule_render`) with two implementations. `CurriculumDayTarget` mints a fresh id, saves under `(curriculum_id, day)`, syncs the day's title to the lesson title, and enqueues a `render` job; a regenerate therefore **inserts** a second row and `invalidate_audio` drops only the *superseded* lesson's audio, keeping its row (a row is cheap and a possible undo, orphaned audio is not). `ReviewSessionTarget` writes under its own id and renders directly (§6.10).
+The destination is a `ContentTarget` protocol (`prepare`, `write`, `invalidate_audio`, `schedule_render`) with two implementations. `CurriculumDayTarget` mints a fresh id, saves under `(curriculum_id, day)`, syncs the day's title to the lesson title, and enqueues a `render` job; a regenerate therefore **inserts** a second row and `invalidate_audio` drops only the *superseded* lesson's audio, keeping its row (a row is cheap and a possible undo, orphaned audio is not). `ReviewSessionTarget` writes under its own id and renders directly (§6.10).
 
 ```bash
 grep -rc "await publish_lesson(" backend/app --include=*.py | grep -v ":0$" | sort
@@ -1665,7 +1746,7 @@ grep -rc "await publish_lesson(" backend/app --include=*.py | grep -v ":0$" | so
 ```output
 backend/app/api/generation.py:2
 backend/app/api/review_sessions.py:3
-backend/app/generation/pipeline.py:1
+backend/app/generation/pipeline.py:2
 ```
 
 ### 6.9 LessonPipeline
@@ -1796,6 +1877,111 @@ orphaned paths returned, nothing unlinked: ['x.opus']
 {'id': 'rs1', 'language_code': 'no', 'session_date': '2026-10-01', 'title': 'Kaffe', 'review_requested': ['kaffe'], 'review_used': []}
 readable by id: Kaffe | Kaffe
 ```
+
+### 6.12 The affix drill and the pace gate
+
+A Cebuano verb is a root and an affix, and the affix carries aspect: `molakaw` "will walk" and `milakaw` "walked" are one root, `lakaw`. The plan since September has been "roots first, affixes on top": a root is learned as a vocab card, and once its production card is in review a lesson's affixed form of it becomes an inflection cloze on that root, hinted with the affix (`ceb/a1_morphology.py`, §8). What that leaves out is the affix itself as something to practise. The affix drill (bd `tunatale-ve4p`, October) is that practice: a Pimsleur-style section that models one *pattern*, a pair of affixes taught as one contrast, on a few roots the learner knows, then asks for each form from its English and leaves a pause to answer. Nothing in it calls a model. Every line comes from hand-checked tables in the plugin, because there is no native speaker on the project to catch a generated mistake.
+
+**Patterns are data, and so is their English.** The plugin registers its patterns, in teaching order, on its `A1Morphology` bundle, with the functions that spell a root across one (`pattern_forms`) and word it in English (`pattern_glosses`):
+
+```bash
+cd backend && uv run python - <<'E' 2>/dev/null
+from app.languages import discover, get_a1_morphology; discover()
+from app.generation import pattern_gate as gate
+m = get_a1_morphology("ceb")
+for p in m.patterns:
+    root = m.pattern_roots(p)[0]
+    if p.sentences:
+        s = m.pattern_sentences(root, p)
+        forms, cells = s.forms, [english for _, english in s.cells]
+    else:
+        forms, (_, cells) = m.pattern_forms(root, p), m.pattern_glosses(root, p)
+    flags = "review_only" if p.review_only else "sentences" if p.sentences else ""
+    print(f"{p.key:10} {flags:11} {' / '.join(forms)}\n{'':22} {' / '.join(cells)}")
+print("gate:", {k: getattr(gate, k) for k in ("DRILL_DAYS", "REVIEW_ONLY_DRILL_DAYS", "FIRST_PASSES", "PASS_RATE", "STUCK_AFTER")})
+E
+```
+
+```output
+mo-mi                  molakaw / milakaw
+                       will walk / walked
+mag-nag                maglakaw / naglakaw
+                       will be walking / is walking
+ma-na      review_only matulog / natulog
+                       will sleep / is asleep
+maka-naka              makakita / nakakita
+                       can see / saw
+on-gi      sentences   moinom / miinom / imnon / giinom
+                       I'll drink water. / I drank water. / I'll drink the water. / I drank the water.
+gate: {'DRILL_DAYS': 2, 'REVIEW_ONLY_DRILL_DAYS': 1, 'FIRST_PASSES': 4, 'PASS_RATE': 0.8, 'STUCK_AFTER': 5}
+```
+
+Three tables vouch for each row. `ceb/affix_patterns.py` reads `data/cebuano_affix_counts.tsv.gz` and offers a pair only when native news uses *both* forms of the root at least `VOUCH_FLOOR` (20) times, because attaching a prefix is regular but which pairs a root takes is not (`tulog` never takes `mo-`, `anhi` never takes `mag-`); the floor was chosen by measurement, losing one of the 22 forms the stored lessons used at 20 and five at 50. `data/affix_glosses.tsv` is the only way a root gets into a drill, and its English is never derived from the root's gloss, because the affix can change the meaning (`kita` is "see", `magkita` "will meet"); each row was checked against Wolff's entry, verb class and examples, and its header records the two rows that check changed. And the labels are aspect, not tense: Wolff calls the two forms of a pair *real* and *unreal*, so the drill says "not begun" and "begun", and `mag-` is worded "will be walking" so a card can tell `maglakaw` from `molakaw` (owner, 2026-10-13 and 10-14).
+
+**The script** (`app/generation/affix_drill.py::build_affix_drill`) is five parts: meet the pair (each root, then each form after its English, built up the Key Phrases way, with the narrator's note on what the two forms are for after the first root), your turn (each form asked from its English), new roots (named but *not* modelled, so getting them right can only be the affix), everything once more, and optionally whole lines, each taught before it is asked for. Every asking round is mixed so that no two neighbours are forms of one root; the order is drawn from the drill's contents, so the same drill is the same script every time. A root is built up syllable by syllable once per drill, after which its forms add only their affix (`mo, molakaw`). The first prompt of each round is the question, "How do you say "will walk"?", and the rest are the bare English, which is the variant the owner chose by ear over a whole round heard four ways. A root the tables cannot vouch for is dropped with its reason, never guessed.
+
+```bash
+cd backend && uv run python - <<'E' 2>/dev/null
+from collections import Counter
+from app.languages import discover, get_a1_morphology; discover()
+from app.generation.affix_drill import build_affix_drill
+p = {p.key: p for p in get_a1_morphology("ceb").patterns}["mo-mi"]
+d = build_affix_drill("ceb", p, roots=["lakaw", "adto"], new_roots=["kaon"], note=p.notes)
+print(len(d.steps), "steps:", dict(Counter(s.kind for s in d.steps)), "| dropped:", d.dropped)
+first_ask = next(i for i, s in enumerate(d.steps) if s.kind == "prompt")
+for i, s in enumerate(d.steps):
+    if i < 14 or first_ask <= i < first_ask + 12:
+        print(f"{s.kind:6} {s.language_code:3} {s.text}")
+    elif i == 14:
+        print("  ...")
+E
+```
+
+```output
+55 steps: {'model': 31, 'prompt': 12, 'answer': 12} | dropped: []
+model  en  Listen and repeat.
+model  en  walk
+model  ceb lakaw
+model  en  will walk
+model  ceb molakaw
+model  ceb kaw
+model  ceb la
+model  ceb lakaw
+model  ceb mo
+model  ceb molakaw
+model  en  walked
+model  ceb milakaw
+model  ceb mi
+model  ceb milakaw
+  ...
+prompt en  How do you say "will walk"?
+answer ceb molakaw
+prompt en  will go.
+answer ceb moadto
+prompt en  walked.
+answer ceb milakaw
+prompt en  went.
+answer ceb miadto
+model  en  eat
+model  ceb kaon
+prompt en  How do you say "will eat"?
+answer ceb mokaon
+```
+
+**Into a lesson** (`app/generation/story_pattern.py`). A thematic day gets the pattern the pace gate names (below). Before the story is written, `pattern_block` asks the prompt for up to four roots in both forms of it: unasked, a story used a pattern on one or two roots in one form each, which `backend/scripts/report_affix_exposure.py` measures against a target of three roots in both cells. After the story exists, `add_closing_drill` (through `CurriculumDayTarget.prepare`, §6.8) appends the drill on up to three roots the story actually used, plus two it did not use and does not model, and ends on at most two of the story's lines, chosen by `drill_lines.admitted_lines`: only a line the learner already has every word of, judged by the reader's own transcript resolution, so the drill never asks for a word the reader shows as new. The drill records itself in `generation_metadata["affix_drill"]`, and every rebuild of the lesson keeps its pattern. A story lesson's page shows what its closing drill covers under the story, with meters for the gate (`bc22b12`, `4bfd96f`). A *grammar* day (`CurriculumDay.kind == "grammar"`) is a drill and nothing else, planned from the learner's cards by `grammar_lesson.py`; the button that created them is retired (§6.3), and the owner chose closing drills only.
+
+**Cards.** Marking a drilled lesson listened offers, through the listen preview's own new-card budget, one *contrast card* per drilled root at a time (`app/srs/contrast_card.py`): a cloze over the root's small paradigm with one form blank (`lakaw · walk / will walk: molakaw / walked: [...]`), keyed `morph:pair-<feature>`. The grid is never stored; the row holds what any cloze holds, and the grid is rebuilt from the language's table when the card is drawn and when its Anki note is written. It reaches Anki as an ordinary production-only cloze through the card-adding contract (`.claude/rules/anki-sync.md`).
+
+**The pace gate** (`app/generation/pattern_gate.py`, `13437b9`) replaced a fixed rotation through the patterns. A day's pattern is the first in teaching order the learner has not passed, so a pattern stays until it passes, and one that passed comes back once it stops passing. Passing, as the owner set it on 2026-10-14, needs both:
+
+- its drill heard on `DRILL_DAYS` (2) different study days, counted from lessons marked listened whose drill is that pattern (two listens on one day are one drill); and
+- `FIRST_PASSES` (4) of its cards passing their first review, with at least `PASS_RATE` (80%) of all its card reviews passing. Learning steps are not reviews: passing them shows the card was read the day it was added.
+
+A `review_only` pattern (`ma-`/`na-`, which the owner knows from Tagalog) needs one drill and no cards, but only on the owner's deck; a second learner is taught it like any other, so every caller says whose deck it is reading (`692f73b`). With every pattern passed, the one heard longest ago comes round. A pattern still unpassed after `STUCK_AFTER` (5) drill days logs `PATTERN_STUCK` and stays, because something other than another drill has to change. The evidence for two drills was the owner's transfer probe: 5 of 10 after one `mo-`/`mi-` drill, 10 of 10 after two, with an undrilled root among the ten.
+
+**Object focus** (stage 6, the `on-gi` pattern) adds a second choice to the first: which noun is the `ang` noun. "Ate" is both `mikaon` and `gikaon`, and English shows the difference only in the object's article (He ate bread / He ate THE bread), so this pattern is taught as whole sentences, built by rule from one hand-checked row per root (`ceb/focus_sentences.py`, `data/focus_rows.tsv`): the affix, the doer (`siya` becomes `niya`) and `og` becoming `ang` move together. Three things follow from that. The narrator stresses the focus in each English prompt: `Phrase.stressed` (§4.3) rides through the renderer to the Azure adapter, which wraps the stressed words in `<prosody pitch="+15%" volume="+30%" rate="-20%">` inside the line's own rate wrapper (`azure_tts.py::_STRESS_PROSODY`; `<emphasis>` was measured with Praat and raised no pitch at all). Each sentence builds up only its new verb, since the rest are words the learner has. And the drill comes in two halves, by tense, one per story lesson (`AffixPattern.halves`), because whole it ran about nine minutes, too long for the end of a lesson. Its cards are *focus cards* (`app/srs/focus_card.py`, `morph:focus-<feature>`): one whole sentence per cell, English with the focus in bold on the front, so no card can be passed on tense alone.
+
+**What it sounds like** is §7: one target-language voice says every form, so what changes between two of them is the affix and not the speaker; a prompt's pause is two seconds to think plus the length of the answer that follows, and a form's is its own length with a one-second floor (`pause_calculator.py`); and every drill step reaches the Gemini voice with its reading (§7.3).
 
 ## 7. The Audio Pipeline
 
@@ -1930,6 +2116,14 @@ Say only this one Cebuano syllable or word, exactly once, with nothing before or
 
 The third line is the "refuse rather than guess" rule: "ko ang ko" is three tokens over two map entries, so the step stays plain instead of being rendered from a reading with a word missing. The model is `gemini-2.5-flash-tts`, chosen by listening test: it follows the IPA instruction, whereas the 3.x family treats the text as a verbatim transcript.
 
+**Every fresh take is checked before it is cached.** A nondeterministic voice with a permanent cache means a bad take is heard on every render after it, so since mid-October the adapter measures what it got and draws again rather than keeping it. There are three checks, and each one came from a fault the owner heard in a lesson:
+
+- **Said twice.** Now and then a take says its line two or more times over (about 1.5% of cached clips; no request field prevents it). A take of a prompted line (an Enunciated line, or a natural-speed line sent with its reading) that speaks for longer than `repeat_limit_seconds` allows is dropped and drawn again, up to `MAX_LINE_TAKES` (3); if every take is too long, `RepeatedLineError` fails the render loudly and nothing is cached. The limit is the text's expected length times `REPEAT_SPEECH_FACTOR` (1.8, above the longest single saying measured, 1.36, and below a median line said twice, 2.06) or `ENUNCIATED_REPEAT_SPEECH_FACTOR` (2.5). An Enunciated take that runs two words together, so has fewer pauses than its line has word gaps, is drawn again for the same reason: `word_gaps.rewrite_word_gaps` cannot set a gap that is not there (§6.7).
+- **A `t` said as `p` or `b`** (`app/audio/take_check.py`, `6787897`). The voice said "Kaon na ta!" as "pa" and `adto` as "adpo". A character CTC model turns the take into per-frame log-probabilities, and the score is the log-likelihood of the text it was asked to say minus the best likelihood of the same text with one `t` swapped for a rival, at the worst `t`; below zero, the model hears the rival. On 2026-10-14 the seven deliberate "pa"/"adpo" renders scored -5.2 to -8.7 and nineteen fresh takes split into 17 at +1.4 or above and 2 real failures, with nothing in between, so the threshold is zero. The whole-text comparison matters: scoring only the frames the aligner gave the `t` passed every "adpo", because in a `dt` cluster the aligner put the `t` on the `d`'s frames. A failed take is re-drawn up to `TAKE_CHECK_REROLLS` (3) times, then the best-scoring one is kept, logged `TAKE_CHECK_GAVE_UP`, and left for `reroll_tts_clip.py`. The model is Norwegian's wav2vec2 character model, which the slicer already used: every letter Cebuano writes is in its alphabet, and a plugin cannot borrow another plugin's loader, so `ceb/take_check.py` registers its own (`LanguageConfig.take_check`).
+- **The stop between like vowels.** For a one-word text with two like vowels side by side (`miinom`), the same checker also requires a glottal closure of at least `CLOSURE_MIN_MS` (40 ms) (`618e480`). A whole line is not screened, because the pauses between its words would read as closures.
+
+The CTC check needs torch and transformers, which only the `alignment` dependency group brings. The laptop instance installs it (`docs/deployment.md`); the production image does not, and logs `TAKE_CHECK_UNAVAILABLE` and renders unchecked rather than failing.
+
 ### 7.4 Cost, quota and the render-cost instrument
 
 The Azure Speech resource is on the **F0 free tier**: standard and Multilingual Neural characters draw on a 500K/month allowance, and going over throttles rather than bills. **Azure Neural HD (Dragon) voices are banned** by the user: HD bills from the first character, outside the allowance, and is nondeterministic. It is enforced by `test_languages.py::test_no_voice_map_names_a_paid_hd_voice` (an HD voice id is the only kind containing a colon). Full detail, including the two unexplained rate-limit observations, is in `.claude/rules/paid-vendors.md`.
@@ -1960,7 +2154,7 @@ with tempfile.TemporaryDirectory() as d:
 after +100: 500000 characters per month resets in 9.0 h
 ```
 
-Azure documents the allowance but not when the month turns over, so the reset timezone is a setting (`azure_tts_quota_reset_tz`, default UTC), and the clock is injected into the adapter so tests pin it without patching `time.time`. One honest caveat: `tts_factory.py::get_tts_service` constructs the enforcing ledger without passing that setting, while `api/llm.py` (the usage readout) does pass it, so a non-UTC value would currently change the display but not the enforcement. At the shipped default the two agree.
+Azure documents the allowance but not when the month turns over, so the reset timezone is a setting (`azure_tts_quota_reset_tz`, default UTC), and the clock is injected into the adapter so tests pin it without patching `time.time`. Both the enforcing ledger (`tts_factory.py::get_tts_service`) and the usage readout (`api/llm.py`) are built with that setting; until `877de5b` the factory left it out, so a non-UTC value moved the display but not the month in which synthesis was refused.
 
 **Pricing a render before running it** is a standing rule (AGENTS.md "Paid vendors"). The instrument is `backend/scripts/report_render_cost.py`, whose pricing core now lives in `app/audio/render_cost.py` so the in-app estimate and the script cannot disagree. It asks `app/audio/synth_plan.py::plan_section` what each phrase is sent as, which is the function `LessonRenderer._synthesize_section` itself calls, so the report and the renderer cannot name different clips (it used to carry a copy of those rules, and the copy had drifted for Tagalog and Cebuano; `tests/test_synth_plan_parity.py` now renders through the real renderer and compares). It decides hit-or-miss with the adapter's own `_cache_path` against the real `tts_cache_dir`, then sums `len(_billable_body(...))` over the misses only. Counting the billable body, not the text, matters: SSML markup bills, and across thousands of short utterances the ~36-character `<prosody>` wrapper roughly doubles a text-length estimate. Quote the incremental figure for "what will this run cost" and the cold figure (`--cache-dir "$(mktemp -d)"`) only for "from empty", and say which; they have differed about 7x. Measured numbers are deliberately not written into docs because they rot as lessons are added. The command regenerates them:
 
@@ -2075,7 +2269,7 @@ This is the part of the old walkthrough most likely to mislead, so exact status 
 It was **retired from the app's render path** (`ab35609e`, the k318 epic). The lexicon `<phoneme>` path replaced it for every chunk that wants IPA, and the one remaining chunk class was judged by ear to sound better from plain synthesis than from a slice, which had audible speed artifacts. What is and is not wired, verified against the tree:
 
 ```bash
-cd backend && grep -rn "build_slicers(" app scripts --include=*.py | grep -v "^app/audio/slicer.py"
+cd backend && grep -rn "build_slicers(" app scripts --include=*.py | grep -v "^app/audio/slicer.py" | LC_ALL=C sort
 echo ---
 sed -n '/NOT WIRED, deliberately/,/Keep them/p' app/main.py
 echo ---
@@ -2139,7 +2333,7 @@ section_2  start= 161000 dur= 30000
 boundaries: 3
 ```
 
-**Pauses** (`pause_calculator.py::NaturalPauseCalculator`) are the learner's thinking and repeating time. A KEY_PHRASES line in the target language pauses for the clip's own duration (floor 500 ms) so the learner can say it back; slow-speed and slow-translated target-language lines pause 600 ms; everything else, and every English line, pauses 500 ms. Sections are separated by 3 s:
+**Pauses** (`pause_calculator.py::NaturalPauseCalculator`) are the learner's thinking and repeating time. A KEY_PHRASES line in the target language pauses for the clip's own duration (floor 500 ms) so the learner can say it back; slow-speed and slow-translated target-language lines pause 600 ms; everything else, and every English line, pauses 500 ms. The affix drill (§6.12) is the exception on both counts: a form pauses for its own length with a 1 s floor, and a *prompt* (`role == DRILL_PROMPT_ROLE`) pauses 2 s to think plus the length of the answer that follows it, which is why `get_phrase_pause` takes the role and the next clip's duration. The table below shows a prompt-less drill line. Sections are separated by 3 s:
 
 ```bash
 cd backend && uv run python -c "
@@ -2162,6 +2356,7 @@ translated                      500      500
 slow_translated                 600      500
 en_translated                   500      500
 slow_en_translated              600      500
+affix_drill                    2500      500
 section boundary 3000 ms
 ```
 
@@ -2180,8 +2375,8 @@ from app.audio.transcode import CODEC_EXT, EXT_MEDIA_TYPE, _FFMPEG_ARGS
 print(CODEC_EXT)
 print(EXT_MEDIA_TYPE)
 print(_FFMPEG_ARGS['opus'])
-from app.config import settings
-print(settings.audio_delivery_codec, settings.audio_delivery_bitrate, settings.max_concurrent_renders, settings.ffmpeg_nice)
+from app.config import Settings  # the class defaults, so a local .env cannot change the output
+print(*(Settings.model_fields[k].default for k in ('audio_delivery_codec', 'audio_delivery_bitrate', 'max_concurrent_renders', 'ffmpeg_nice')))
 "
 ```
 
@@ -2449,11 +2644,12 @@ dan    srs=unknown  active=None understand=None produce=None suffix='!'
 
 `dober` has a card (NEW, never studied), `dan` has none. Resolution per token is **inflection-first**: an exact-surface inflection cloze wins over the base card, which wins over "unknown"; a lemma on the card-less ignore list reads `ignored`. A multi-word collocation overlapping the token is attached by `match_spans` (longest match first, up to five tokens), keyed on lemmas or, for languages with `get_phrase_match_exact_form` (Tagalog), on casefolded surfaces. Each spanning word carries the enclosing collocation's state, progress, due flag and bands, so the frontend can draw one styled span.
 
-The `WordToken` fields fall into four groups:
+The `WordToken` fields fall into five groups:
 
 | Group | Fields | Used for |
 |---|---|---|
 | Identity | `surface`, `lemma`, `prefix_punct`, `suffix_punct`, `srs_item_id`, `translation`, `card_type` | display, and which card a click targets |
+| Lesson meaning | `gloss` (the lesson's in-context gloss, whatever the card says), `parts` (the word glossed by its parts, from the language's `parts_fn`; Cebuano only, ranked by `gloss`) | the popover's first lines (§8.5, §8.11) |
 | Reader paint | `understand_band`, `produce_band`, `*_stability`, `*_progress`, `is_due`, `overdue_ratio`, `production_due` | rails, bold weight, blur-as-cloze (§13) |
 | Lesson roll-up | `recognition_state`, `recognition_is_due`, `well_known`, `progress` | the mastery line (§8.7) |
 | Click affordances | `active_direction`, `active_state`, `recognition_reviewable`, `inflectable`, `inflection_feature`, `known_marked` | what the popover offers (§8.8, §8.11) |
@@ -2624,21 +2820,23 @@ Three ways out of the bucket, all clearing the row:
 
 ### 8.11 Reading actions: click, grade, undo
 
-In Read mode a tap on a word does one thing, chosen by `frontend/src/lib/reading/readingActions.svelte.ts::onWordClick` and mirrored in the popover's grade-button label (`WordSpan.svelte::gradeLabel`). It is one implementation shared by the lesson page and the review-session reader (the session reader first shipped a hand-rolled transcript and was visibly worse within a day, bd `tunatale-9p9d`); only the content id and language differ.
+In Read mode a tap or hover opens a word's popover (`Tooltip.svelte`), and the popover holds every action; the dispatcher behind its buttons is `frontend/src/lib/reading/readingActions.svelte.ts::onWordClick`, mirrored in the button label (`WordSpan.svelte::gradeLabel`). It is one implementation shared by the lesson page and the review-session reader (the session reader first shipped a hand-rolled transcript and was visibly worse within a day, bd `tunatale-9p9d`); only the content id and language differ.
 
-| Word state | Tap does | Button label |
+| Word state | The popover offers | What it does |
 |---|---|---|
-| `unknown` | create the base card, then record a first **Good** review so it enters learning now rather than parking at NEW; a function word grades the *production* direction its cloze actually has (grading a missing recognition card 500'd) | Start learning |
-| due and tracked | grade **Good** on `active_direction` | Got it |
-| not due, recognition on the ramp | **read-ahead**: a Good on the literal recognition direction, never `active_direction` | Review |
-| carded but NEW (a sync-minted cloze) | the same one-tap introduction | Start learning |
-| anything else | nothing (no button) | none |
+| `unknown` | **Start learning** | create the base card, then record a first **Good** review so it enters learning now rather than parking at NEW; a function word grades the *production* direction its cloze actually has (grading a missing recognition card 500'd) |
+| due and tracked | the four ratings, **Again / Hard / Good / Easy** | grade `active_direction` with that rating |
+| not due, recognition on the ramp | the four ratings | **read-ahead**: the rating on the literal recognition direction, never `active_direction` |
+| carded but NEW (a sync-minted cloze) | **Start learning** | the same one-tap introduction |
+| a due key phrase in the transcript | the four ratings | grade the phrase card |
+
+The four ratings replaced a single "Got it ✓" that always graded Good (bd `8jgb`, 2026-10-14), and each is painted with the review card's own colour token for it. When a primary action shares the popover with two or more utilities (Inflect, Different meaning, Phrase… and the state overrides below), the utilities fold behind one **More…** button, so the popover is one clean row at 320 px; `Tooltip.svelte` re-places itself when More… makes it taller or wider. The popover leads with the lesson's own gloss, names a disagreeing card beneath it (§8.5), and for Cebuano shows the word glossed by its parts (`WordToken.parts`, §3.9).
 
 A just-graded word flips its button to **Undo**: `POST /api/srs/items/{id}/direction/{direction}/undo` (`app/srs/grade_undo.py`) restores the verbatim pre-grade `DirectionState` and deletes the `tt_revlog` row, but only while the grade is still TunaTale-local, meaning it is the direction's latest and still `dirty_fsrs`. After a sync the review lives in Anki and undo is refused with 409, since the next pull would re-clobber it. It is single-level by design (one snapshot in `anki_state_cache`), and the learning-cutoff advance is deliberately not unwound.
 
 The popover also carries state overrides: `POST /items/{id}/state` (`new`, `learning`, `known`; `learning` calls `promote_to_learning`), **mark known** with a reversible snapshot (`mark_known` stores `known_prior_*`; `POST /items/{id}/restore-known` undoes it), **untrack** (`POST /items/{id}/untrack`: a never-synced row is deleted outright, a synced one has both directions suspended with `dirty_fsrs` so the next push suspends the Anki card), and un-ignore. The override set deliberately excludes lapse and restore-to-review, so it never rewrites FSRS scheduling state. `promote_to_learning` writes `state='learning'` without `left`/`due_at`: TunaTale shows LEARNING while Anki still has the card as new, a documented TunaTale-only asymmetry (queue-parity rule 12 and the learning-badge caveat in `.claude/rules/anki-queue-parity.md`).
 
-A per-device **Produce** toggle (default off) turns on blur-as-cloze: words whose production direction is due (`WordToken.production_due`) are blurred, tap to reveal, then one of the review queue's four ratings (Again / Hard / Good / Easy) grades the production card. The reader stays recognition-based, and this flag does not move `is_due`. Drag-selecting a phrase offers a translate button (`POST /api/srs/translate`, 422 on empty text or an unknown language code, 503 when no LLM is configured) and creates a multi-word collocation through `POST /api/srs/items`. Rendering details are §13.
+A per-device **Produce** toggle (default off) turns on blur-as-cloze: words whose production direction is due (`WordToken.production_due`) are blurred, tap to reveal, then one of the review queue's four ratings (Again / Hard / Good / Easy) grades the production card. The reader stays recognition-based, and this flag does not move `is_due`. A phrase card is made by dragging across words on a desktop, or on a phone by **Phrase…** in a free word's popover (offered only where the next word is free too): the line then asks for the last word, outlines the words that can end the phrase, and the second tap drops into a confirm bar that auto-translates (`POST /api/srs/translate`, 422 on empty text or an unknown language code, 503 when no LLM is configured) and creates a multi-word collocation through `POST /api/srs/items` (`2d51cfd`). The old tap-to-select never worked on a real phone: a real tap is `pointerdown`, `pointerup`, `click`, the pointer handlers cleared the anchor the click handler then set, and `fireEvent.click` in jsdom dispatches only the click, so its unit tests passed for six months. `reader-phrases.spec.ts` and `real-tap.spec.ts` now walk the gesture with real touch. Phrases already on a line carry a faint neutral tint. Rendering details are §13.
 
 ### 8.12 The review selector: what the next lesson reinforces
 
@@ -2968,18 +3166,18 @@ print(_spread_mix([f'R{i}' for i in range(1, 11)], ['N1', 'N2']))
 4. the end-of-session auto-bump, when ready learning and main are both empty and some pending card has ripened.
 
 ```bash
-grep -rn "advance_learning_cutoff(" backend/app --include=*.py | grep -v "def advance_learning_cutoff" | sed -E 's/^backend\/app\/([^:]+):[0-9]+: */\1: /' | cut -c1-100
+grep -rn "advance_learning_cutoff(" backend/app --include=*.py | grep -v "def advance_learning_cutoff" | sed -E 's/^backend\/app\/([^:]+):[0-9]+: */\1: /' | LC_ALL=C sort | cut -c1-100
 ```
 
 ```output
-api/srs.py: advance_learning_cutoff(db, now)
 api/srs.py: advance_learning_cutoff(db, grade_ctx["now"])
 api/srs.py: advance_learning_cutoff(db, now)
-srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
-srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
-plugins/anki_sync/sync_engine.py: def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_ru
+api/srs.py: advance_learning_cutoff(db, now)
 plugins/anki_sync/sync_engine.py: advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlo
+plugins/anki_sync/sync_engine.py: def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_ru
 plugins/anki_sync/sync_engine.py: self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
+srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
+srs/anki_mirror/queue_engine.py: advance_learning_cutoff(db, now)
 ```
 
 The stickiness is intentional: while main or ready learning has anything in it, a learning card that ripens mid-session does not preempt the card on screen. Do not add a "live now" or per-poll advance.
@@ -3113,27 +3311,29 @@ Two TT-only refinements sit on top. `budget_neutral` marks a "Check your work" r
 | Family | Layers | The question it settles |
 |---|---|---|
 | Learning cutoff, queue freeze, rebuild | 1 to 5, 7, 23, 29, 36 | When does TT's frozen order change, and when is a learning card "ready" |
-| Retrievability and elapsed days | 11 to 13, 15, 40, 45, 50, 54 | Fractional vs integer elapsed, the col-day helpers, the grade-time elapsed |
+| Retrievability and elapsed days | 11 to 13, 15, 40, 45, 50, 54, 91 | Fractional vs integer elapsed, the col-day helpers, the grade-time elapsed |
 | FSRS arithmetic and intervals | 42, 44, 48, 51, 52, 57, 59, 62, 63 | Lapse stability, graduation, the interval cascade, f32, the clamp |
 | Learning steps and fuzz | 6, 41 | Bit-exact RNG, single-step Hard delay |
 | Load balancer | 53, 55 | The residual `due_at` gap, the live port |
 | New-card gather, bury and order | 14, 24, 25, 28, 32, 33, 64, 65, 83, 84 | Gather order, cross-direction bury, Template sort, production gate, writer positions |
 | Sibling bury and unbury | 27, 35, 47, 56, 64, 67 | `bury_kind`, the daily sweep, the 04:00 window |
 | Badges and daily caps | 8a, 16, 26, 36, 73, 75 to 77, 79 | Counts from TT state only, `introduced_at`, review budget, new cap |
-| Sync merge and push/pull seams | 17 to 22, 30, 37, 58, 60 to 61, 68 to 74, 80, 86, 87 | What the diff compares, Anki-ahead deferral, graves, revlog ids, per-grade push, suspension round trip |
+| Sync merge and push/pull seams | 17 to 22, 30, 37, 58, 60 to 61, 68 to 74, 80, 86 to 90 | What the diff compares, Anki-ahead deferral, graves, revlog ids, per-grade push, suspension round trip, what a change nobody graded writes to Anki |
 | Pending bucket and isolation | 81 (retired), 82 | Staged grades, per-language injection |
 | Seeded starter cards | 85 | A review card with no reps |
 
 ```bash
-grep "^## Layer" docs/anki-parity-layers.md | tail -4 | cut -c1-110
+grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; [print(line.rstrip()[:110]) for line in sys.stdin]'
 ```
 
 ```output
-## Layer 84 — every card TunaTale writes was allocated to the BACK of the new queue (front-of-queue allocato
-## Layer 85 — a seeded starter card is a REVIEW card with no reps, and "has a schedule" stopped meaning `rep
-## Layer 86 — suspending and un-suspending a never-reviewed card from TunaTale was lossy in both directions
-## Layer 87 — suspending a REVIEWED card through TunaTale wrote a review nobody made
+## Layer 88 — a schedule change nobody graded reached Anki as a review (mark known, restore, relabel, promote)
+## Layer 89 — a pushed due date wrote `ivl = days from today`, which is the interval only on the day of the gr
+## Layer 90 — a reset pushed to Anki forgot the card but logged nothing, so its old reviews still counted
+## Layer 91 — a card with no `lrt` counted its elapsed days from a "today" that runs a day ahead after midnigh
 ```
+
+The four newest, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
 
 **The oracle harness** pins TT against the real Anki scheduler rather than against TT's idea of it. A pytest fixture (`synthetic_collection`) builds a minimal modern `collection.anki2`, and a subprocess driver (`backend/tests/anki_oracle/oracle.py`, run with `uv run --with anki python`) opens it, enables the V3 scheduler, and answers JSON ops: queue order and counts, post-grade stability, `get_today`, `deck_today`, and so on. Tests are `backend/tests/test_parity_*.py`, marked `@pytest.mark.oracle`, opt-in via `--run-oracle`. The subprocess boundary is the architectural point: backend code and backend tests never `import anki`. Where the oracle and the Anki source disagree, trust the binary (Layer 38 was found that way). The harness mechanics, its fifteen gotchas and the CI wiring are in §10 and §14; the rule file is `.claude/rules/anki-oracle-harness.md`. Two CI facts belong here: `anki-gates` runs the oracle at the 04:00 rollover instead of the workflow's UTC, so a boundary-only failure there means TT and Anki genuinely disagree about the day (suspect product code first); and a finding that the harness surfaces is first filed `xfail(strict=True)` and fixed in its own commit.
 
@@ -3458,18 +3658,26 @@ cd backend && ls app/plugins/anki_sync/*.py | xargs -n1 basename | grep -v "^__i
 ```
 
 ```output
+add_dictionary_fields.py
 add_image_field.py
 add_production_template.py
+add_short_form_field.py
 add_vocab_notetype.py
+backfill_dictionary_fields.py
+convert_pronoun_clozes.py
 import_seed.py
 migrate_number_clozes.py
 normalize_usns.py
+refresh_dictionary_css.py
 replay_fsrs_from_revlog.py
 reposition_production_cards.py
 safety.py
 secrets.py
+short_form_cards.py
 sqlite_reader.py
 ```
+
+Six of those arrived with the Cebuano dictionary and short-form work, and they show the shape a change to an existing notetype takes. `add_dictionary_fields` and `add_short_form_field` are schema changes to the TT vocab notetype (new fields and their template blocks), so they follow the full-upload protocol of §10.3; `refresh_dictionary_css` updates its stylesheet; `backfill_dictionary_fields` fills the new fields on notes that already exist; `short_form_cards` is read-only and reports what a live deck needs for first-class short forms; and `convert_pronoun_clozes` turns a language's pronoun clozes into picture cards while keeping their review history, in three steps (retire, add, inherit), each a dry run until `--apply` and each followed by a sync, because the new card has the cloze's guid and so cannot be minted until the cloze's grave has reached AnkiWeb. A learner with no Anki gets the same dictionary layers from `backend/scripts/backfill_dictionary_extras.py` (§11.10).
 
 Finished one-shots live under `backend/scripts/anki_archive/`; they are kept as worked examples of the `graves` and USN recipes (the canonical delete pattern mirrors `delete_phonology_demos.py`) rather than as tools to run again.
 
@@ -3512,7 +3720,7 @@ ceb        Cebuano Vocabulary                       L2=Cebuano         recogniti
 
 `app/cards/media/pipeline.py::fetch_card_media` is the single entry point that produces a card's audio and image. It returns a `MediaResult` with the bytes, the chosen filenames and a status for each half, and it never raises for a missing asset: media is best-effort and must never block a card.
 
-**Audio** is Forvo first, then synthesis, then loudness normalisation. Forvo is scraped (`forvo.py`, no API key; the paid API migration is written and parked on PR #16). `settings.forvo_enabled` gates it, and production sets `FORVO_ENABLED=false`: the same scraper that finds `takk` from a home connection gets HTTP 403 and a Cloudflare challenge from the datacenter box (`f2f9c834`, measured with a nonsense word as a control, which was blocked too, so the finding is about the network and not the word). When disabled, `audio_status` is `"disabled"`, a value kept separate from `"blocked"`, which means Forvo refused a call that was expected to work. Every non-found outcome falls back to synthesis (`tts.py`, through the same `get_tts_service()` the lesson renderer uses, §7) in the language's voice, and `normalize.py` runs ffmpeg `loudnorm` to a fixed target (-23 LUFS) so a deck has uniform volume. Synchronous work (Forvo, ffmpeg) is offloaded to threads so one slow fetch cannot stall the event loop.
+**Audio** is Forvo first, then synthesis, then loudness normalisation. Forvo is scraped (`forvo.py`, no API key; the paid API migration is written and parked on PR #16). `settings.forvo_enabled` gates it, and production sets `FORVO_ENABLED=false`: the same scraper that finds `takk` from a home connection gets HTTP 403 and a Cloudflare challenge from the datacenter box (`f2f9c834`, measured with a nonsense word as a control, which was blocked too, so the finding is about the network and not the word). When disabled, `audio_status` is `"disabled"`, a value kept separate from `"blocked"`, which means Forvo refused a call that was expected to work, and from `"skipped"`, which means the caller asked for no audio at all (`audio="none"`, used when only a picture is wanted, as by the shared-photo repair below). Forvo files a word under its lowercase spelling and answers a capitalized one with a redirect, which the scraper now follows, so months, weekdays and names can get a human recording too (`b4880e8`). Every non-found outcome falls back to synthesis (`tts.py`, through the same `get_tts_service()` the lesson renderer uses, §7) in the language's voice, and `normalize.py` runs ffmpeg `loudnorm` to a fixed target (-23 LUFS) so a deck has uniform volume. Synchronous work (Forvo, ffmpeg) is offloaded to threads so one slow fetch cannot stall the event loop. Card audio is fetched in the language being synced, not the `.env` default (`9778c7b`: on a multi-language instance every sync-minted Cebuano card had been looked up in another language's Forvo section and voiced by its card voice, and nothing failed, because a wrong voice still returns audio). A synthesized clip is named by its voice or its bytes, never its word alone (`tts_<word>_<sha8>.mp3`; `870aecd`), because one media directory serves every language: Tagalog's and Cebuano's `gusto` would otherwise be one file.
 
 ```bash
 sed -n '/^    if forvo_enabled is None:/,/audio_status = "disabled"/p' backend/app/cards/media/pipeline.py | grep -v "^ *#"
@@ -3524,12 +3732,17 @@ sed -n '/^    if forvo_enabled is None:/,/audio_status = "disabled"/p' backend/a
 
         forvo_enabled = settings.forvo_enabled
 
-    if not forvo_enabled:
+    if audio == "none":
+        forvo = ForvoResult(ForvoOutcome.NO_PRONUNCIATION)
+        result.audio_status = "skipped"
+    elif not forvo_enabled:
         forvo = ForvoResult(ForvoOutcome.NO_PRONUNCIATION)
         result.audio_status = "disabled"
 ```
 
-**Images** come from Pixabay by default (`pixabay.py`). The pipeline asks an LLM for a short sense-disambiguated query (`query_llm.py`, version-stamped `img-query-v2` and cached, so the same word is never paid for twice), searches, and filters out any URL already in the run's `used_image_urls` set. A search with no overlap with the query gets one retry with a simplified query. Among the survivors an LLM picks the best hit (`choose_llm.py`) and falls back to tag-overlap scoring if it declines. Search results are cached for 24 hours and the hand-curated English-to-query table is data (`cards/media/data/image_query_map.json`), not a module. `image_query == ""` is the documented skip sentinel for a word that should have no photo at all, and it is what a drawn picture (§11.4) passes so that no LLM call or Pixabay search is spent.
+**Images** come from LanGeek first, then Pixabay. LanGeek's picture dictionary (`langeek.py`, `e3b2d8a`) draws one illustration per word *sense*, which is the shape a vocab card wants, where Pixabay is a stock-photo search that is poor at abstract words: in the 2026-10-27 shared-photo repair, 117 of 124 glosses had an illustrated LanGeek sense. There is no documented API; the site's own JSON endpoint is a prefix search, so only the entry spelled exactly as the term is used, requests are throttled to one a second process-wide, and a word with several illustrated senses is chosen among by a model call (`media_sense` call site). The lookup word is the gloss's base form with its punctuation dropped (`085813a`: "knew" has no entry, "know" has two). Files start `lgk_` so they can be found again if LanGeek's terms change, and `settings.langeek_api_url` empty turns the source off without a request, which is how the test suite stays off the network. It is tried before the `""` skip sentinel below, because the abstract words that skip a photo are the ones LanGeek draws. The picture editor on `/cards` lists LanGeek's illustrated senses above Pixabay's hits (`GET /api/srs/items/{id}/image/langeek[?q=]`).
+
+Otherwise images come from Pixabay (`pixabay.py`). The pipeline asks an LLM for a short sense-disambiguated query (`query_llm.py`, version-stamped `img-query-v2` and cached, so the same word is never paid for twice), searches, and filters out any URL already in the run's `used_image_urls` set. A search with no overlap with the query gets one retry with a simplified query. Among the survivors an LLM picks the best hit (`choose_llm.py`) and falls back to tag-overlap scoring if it declines. Search results are cached for 24 hours and the hand-curated English-to-query table is data (`cards/media/data/image_query_map.json`), not a module. `image_query == ""` is the documented skip sentinel for a word that should have no photo at all, and it is what a drawn picture (§11.4) passes so that no LLM call or Pixabay search is spent.
 
 ### 11.3 One picture per card
 
@@ -3540,6 +3753,8 @@ A learner told "this picture is the word for *know*" must not meet the same pict
 - **Image swaps never delete files.** `vocab_media._drop_image_rows` removes media rows only. One media directory is shared by every language database and every learner's database, and a caller sees only one of them, so "nothing here uses it" never means "nothing uses it". The Cebuano picture repair once deleted `img_side.jpg` while a Slovene card still showed it (`a80e9ec6`). An orphaned file costs disk; a wrongly deleted one breaks a card nobody was touching. The callers are `replace_item_image`, `DELETE /api/srs/items/{id}/image` (`app/api/srs_images.py`) and `picture_redraw.apply_redraws`.
 - **Orphan media rows are swept** by migration v46 (the Norwegian deck had eight).
 - **Restore drill caution.** One restored file (`img_cup.jpg`) was recovered from Anki. Do not repoint its media row at the hash-suffixed variant: that would swap the picture and orphan an `<img>` already written into the Anki note.
+
+**Shared photos already on a deck** are repaired by `app/cards/shared_photo_repair.py` (wrapped by `backend/scripts/repicture_shared_photos.py`, dry run first), by the owner's rule: in each group of cards that show one photograph, the word the language's frequency source ranks highest keeps it and every other card is re-fetched with the shared picture barred (a tie keeps the oldest card's). A card changes only when a new picture is in hand, so no card that had one is left without, and it goes out through the dirty flag and the ordinary push, as `picture_redraw` does. The script leaves alone a card the owner re-pictured by hand after its list was made, and `--copy-from` gives a second learner's deck the owner's LanGeek pictures by GUID instead of fetching them again.
 
 A word whose image search came back genuinely empty is stamped with `collocations.image_unavailable_at` (migration v44) and routed to a cloze (§11.6). A transient failure is not that: a Pixabay outage must never write a permanent "cannot be pictured" verdict, so the pre-stage uses `fetch_card_media`'s skipped, failed and empty classification to tell them apart (`c05097d0`).
 
@@ -3575,7 +3790,9 @@ def drawn_picture(text: str, language_code: str, gloss: str, disambig: str = "")
 | Pronouns | `pronoun_scenes.py` / `pronoun_picture.py` | A conversation with the referent filled; possessives are the same scene plus a carried bag (and are gendered where the language is: min, mi, mitt). A word can also carry a sentence with itself blanked, drawn under the scene, which names its slot: Cebuano `ko` and `ako` share a referent and differ only in where they may stand (`frames`/`word_frames` in the plugin's `pronouns.json`). A word with two senses (`ko` "I" and "my") is two notes, the second keyed by `disambig_key` (`senses`) |
 | Calendar | `calendar_scenes.py` / `calendar_picture.py` | A month is a 4 by 3 grid with its number lit; a weekday is one of seven columns |
 
-The vocabularies are data facets of the language plugin (`numbers_path`, `spatial_path`, `pronouns_path`, `calendar_path`, each a JSON file in the plugin's `data/`), so adding a language adds JSON, not code. Three guards keep the dispatcher honest:
+The vocabularies are data facets of the language plugin (`numbers_path`, `spatial_path`, `pronouns_path`, `calendar_path`, each a JSON file in the plugin's `data/`), so adding a language adds JSON, not code.
+
+Most of October's new drawings are Cebuano's, and most answer a learner's "could this be a drawing?" about a word whose relation *is* its meaning. Cebuano marks distance from the people talking four ways (Wolff): near speaker and hearer (`kini`, `dinhi`), near the speaker only (`kiri`, `diri`), near the hearer (`kana`, `diha`), far from both (`kadto`, `didto`). The spatial scene reuses the pronoun pictures' speaker and listener, each standing in a dashed floor zone, with a ball for a thing word and a short flag for a place word, so "this" and "here" differ at the same distance (`6896668`). By the end of the month every deictic, demonstrative and pronoun in Wolff's Lesson 1 charts had a drawing (`0571887`): time meanings as an outline person with an arrow leaving (past) or arriving (future), genitive demonstratives as the thing with a bag standing on it, datives as the nominative scene with a bag landing on the lit referent, and the preposed possessives (`ato`, `imo`, `iya`, ...). A `spatial.json` value may now be a *list* of concepts, drawn by the first whose gloss guard matches the card's gloss, so `dídto` glossed "over there" keeps the flag while "was there" gets the past picture. Movement got `from` and `toward` (a flag, a dotted trail and the ball; Cebuano `gikan`, `padulong`), a line got `first` and `last` (Norwegian `først`, `sist`; Cebuano `una`), and Cebuano `usa` and Tagalog `isa` are now drawn as the number one, since neither language uses it as an article the way Norwegian uses `en`. A pronoun's short form shares its long form's drawing with a slot sentence beneath (`ko`/`ako`), and a word with a second sense (`ko` "I" and "my") mints the second note with its recognition card suspended, since both notes' recognition fronts are the same bare word (`f44062a`). `backend/app/plugins/anki_sync/convert_pronoun_clozes.py` moved the live `ko`/`ka` clozes to picture cards with their history (§10.9). Three guards keep the dispatcher honest:
 
 - A number is checked first and ignores the gloss, because its value is its meaning. Everything else needs the gloss to confirm the sense, because each family contains homographs the router cannot see: Norwegian `mars` is a month and a planet, Tagalog `linggo` is a week and a Sunday, Cebuano `wala` and `tuo` have non-spatial senses.
 - Polysemous prepositions (Norwegian i, på, ved; Slovene na, v, za, med; Tagalog and Cebuano sa) are not drawn. They stay clozes, because no single scene is their meaning.
@@ -3736,6 +3953,52 @@ RESET   : anki_state_cache, collocation_directions, collocations
 
 Every table and column is classified in that module, and one the seed does not know is a refusal (`SeedRefused`), not a silent copy: one learner's history travelling inside another's file has no visible symptom. Cards the owner already studied go in front of the new-card queue in the order the owner first reviewed them, which is the curriculum they were actually given; suspended cards stay suspended with their schedule reset; every direction returns to NEW with its Anki pairing stripped; FSRS parameters are the defaults, not the owner's trained weights, and deck configuration is kept in `anki_state_cache`. `backend/scripts/seed_user_deck.py` is the dry-run-first wrapper (the account must exist and must not be the owner). Run both scripts on the live side, under that side's environment, with the target database backed up first.
 
+### 11.10 Dictionary layers on Cebuano cards
+
+A Cebuano vocab card carries Wolff's dictionary under its word, tiered the way the Norwegian deck's cards are (bd `tunatale-h0q3.2`; layout chosen by the owner from mockups on 2026-10-17). The `Cebuano` field stays the plain word, because it carries card identity and lesson matching; everything else is in six fields the TT notetype gained after `DisambigKey` (`vocab_notetype.DICTIONARY_FIELDS` and `SHORT_FORM_FIELD`), added to the live notetype by the schema-changing migrations of §10.9:
+
+```bash
+cd backend && uv run python - <<'E' 2>/dev/null
+import re
+from app.languages import discover; discover()
+from app.cards.vocab_notetype import DICTIONARY_FIELDS, SHORT_FORM_FIELD
+from app.plugins.languages.ceb.wolff_cards import load_lexicon
+print("fields:", DICTIONARY_FIELDS, "+", SHORT_FORM_FIELD)
+lex = load_lexicon()
+for word, english in (("lakaw", "walk"), ("hibalo", "know")):
+    fields = lex.card_fields(word, english).as_note_fields()
+    for name in DICTIONARY_FIELDS:
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fields.get(name, ""))).strip()
+        print(f"{word:7} {name:17} {text[:78]}")
+print("short gloss:", {w: lex.short_gloss(w) for w in ("hibalo", "pasaylo", "tulo")})
+E
+```
+
+```output
+fields: ('Spelling', 'Meaning', 'Verb', 'Details', 'Dictionary entry') + Short form
+lakaw   Spelling          lakáw
+lakaw   Meaning           walk; for s.t. to be going on; approaching an age, length of time; go away, de
+lakaw   Verb              Action verb: someone does it. Verb of state: it happens to someone; nobody doe
+lakaw   Details           Short form of lakát verb walk Molakát na ang bátà The baby is able to walk now
+lakaw   Dictionary entry  Wolff, A Dictionary of Cebuano Visayan (1972), in its own spelling lakaw = lak
+hibalo  Spelling          hibaló
+hibalo  Meaning           know s.t., how to do s.t.; take care of a problem
+hibalo  Verb              Verb of state: it happens to someone; nobody does it. not begun begun Stative 
+hibalo  Details           From the root baló I don’t know verb know s.t., how to do s.t. Kahibaló ka ban
+hibalo  Dictionary entry  Wolff, A Dictionary of Cebuano Visayan (1972), in its own spelling hibalu see 
+short gloss: {'hibalo': 'know', 'pasaylo': 'forgive', 'tulo': ''}
+```
+
+(The block strips the fields' HTML to show their text.) **Spelling** is the Handbook spelling (§3.9), shown under the word on the recognition front and the production back; a two-form front such as `manong, nong` spells both and voices the full one. **Short form** sits under it (§3.9). **Meaning** is the senses' glosses on one line, led for a verb by the word glossed by its parts. **Verb** names the kind of verb ("Action verb: someone does it", "Verb of state: it happens to someone; nobody does it") and then gives one row per affix, with its examples folded under it, as a forms table (`508614d`: as one paragraph the field was "very long and hard to read"). **Details** holds the numbered senses with an example each, who the subject is per affix, the root, related words, homographs and a short form's full form. **Dictionary entry** is the paragraph verbatim, in Wolff's own spelling, with its citation. The back shows Meaning and Verb; Details sits behind a `<details>` disclosure, and the entry behind a second one nested in it.
+
+Where the layers come from, by path:
+
+- **At creation.** A card gets its layers when it is made, not at the next sync (`6a51899`; the owner had seen `lami` with no stress until a sync). `add_collocation` fills a new vocab row's extras through `app/cards/dictionary_extras.py` when the language registers `dictionary_fields_fn`, and the sync mint writes the same fields into the Anki note.
+- **For an owner deck that already existed**, `backfill_dictionary_fields` fills the notes in Anki and the ordinary pull brings them back as extras (§10.9).
+- **For a learner with no Anki**, `dictionary_extras` builds the same extras through the same notetype profile, so a card shows the same thing either way; `backend/scripts/backfill_dictionary_extras.py` does it for existing rows (dry run unless `--apply`, backs up first, refuses an Anki-linked database).
+
+Two gloss rules from the same weeks apply to every language with a dictionary. A card added from the reader (`POST /api/srs/items/base`) used to copy the lesson's gloss, which is deliberately in context (`uban` became "let's accompany" from "Mag-uban ta"), so every new vocab card is now re-glossed to dictionary form by a model call that reads the sentence to pick the sense, and a listed pronoun takes its plugin's `pronouns.json` gloss instead (`d2852dd`). When the model cannot gloss, as on a day the laptop was offline, the dictionary's short gloss stands in (`dictionary_gloss_fn`; Cebuano: `WolffLexicon.short_gloss`) and the fallback logs a warning naming the card (`0387daf`). A card word the dictionary cannot settle gets nothing rather than a guess, as the empty `tulo` above shows.
+
 ## 12. The API Layer
 
 The API is a thin FastAPI shell over the services built in §6–§11: it resolves the caller's account and language, picks that caller's stores off `request.state`, delegates, and shapes the response. It is also the contract the SvelteKit frontend (§13) is typed against, so most of this chapter is about guarantees: who may call a route, which database a call lands in, what error a failure becomes, and how a type change in Python reaches TypeScript. Identity and per-language connections are set up in §2; this chapter is the routing and contract layer on top.
@@ -3749,19 +4012,19 @@ grep -n "^OWNER =\|^USER =\|include_router" backend/app/main.py
 ```
 
 ```output
-482:OWNER = [Depends(require_user), Depends(require_owner)]
-483:USER = [Depends(require_user)]
-484:app.include_router(curriculum.router, dependencies=USER)
-485:app.include_router(generation.router, dependencies=USER)
-486:app.include_router(srs.router, dependencies=[Depends(require_user)])
-487:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
-488:app.include_router(audio.router, dependencies=USER)
-489:app.include_router(review_sessions_api.router, dependencies=USER)
-491:    app.include_router(anki.router, dependencies=OWNER)
-492:app.include_router(admin.router, dependencies=OWNER)
-497:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
-498:app.include_router(llm_api.router, dependencies=USER)
-499:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
+494:OWNER = [Depends(require_user), Depends(require_owner)]
+495:USER = [Depends(require_user)]
+496:app.include_router(curriculum.router, dependencies=USER)
+497:app.include_router(generation.router, dependencies=USER)
+498:app.include_router(srs.router, dependencies=[Depends(require_user)])
+499:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
+500:app.include_router(audio.router, dependencies=USER)
+501:app.include_router(review_sessions_api.router, dependencies=USER)
+503:    app.include_router(anki.router, dependencies=OWNER)
+504:app.include_router(admin.router, dependencies=OWNER)
+509:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
+510:app.include_router(llm_api.router, dependencies=USER)
+511:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 ```
 
 Three tiers result:
@@ -3796,8 +4059,8 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-102 operations
-  6  (untagged)
+105 operations
+  7  (untagged)
   3  admin
   3  anki
   6  audio
@@ -3807,8 +4070,8 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
   4  llm
   3  pipeline
  15  review-sessions
- 35  srs
-  4  srs-images
+ 36  srs
+  5  srs-images
 ```
 
 Cards, queue and listen (the `srs` and `srs-images` tags). Both routers share the `/api/srs` prefix; the image routes (`backend/app/api/srs_images.py`) carry their own tag.
@@ -3862,6 +4125,7 @@ for (t, p), ms in sorted(rows.items()): print(f\"{'/'.join(ms):<12}{p.replace('/
  POST        /translate-missing
  PUT/DELETE  /items/{item_id}/image
  GET         /items/{item_id}/image/candidates
+ GET         /items/{item_id}/image/langeek
  PUT         /items/{item_id}/image/upload
 ```
 
@@ -3955,6 +4219,7 @@ anki   POST        /api/anki/peer-sync
 anki   GET         /api/anki/preset-change
 anki   POST        /api/anki/preset-change/dismiss
 client POST        /api/client-log
+(untag POST        /api/auth/invite/redeem
 (untag POST        /api/auth/login
 (untag POST        /api/auth/logout
 (untag GET         /api/auth/me
@@ -4069,7 +4334,7 @@ grep "^def " backend/app/api/app_state.py | cut -d'(' -f1 | cut -c5- | tr '\n' '
 ```
 
 ```output
-_optional activity_log audio_dir auth_db content_stores language languages lemmatizer llm model_version pipeline renderer tts user_dbs idempotent_writes review_renders lesson_renders background_work 
+_optional activity_log audio_dir auth_db content_stores language languages lemmatizer llm model_version pipeline renderer tts user_dbs idempotent_writes review_renders review_render_failures lesson_renders background_work 
 ```
 
 Three accessors create their state on first use rather than in the lifespan: `idempotent_writes`, `review_renders` and `background_work`. The reason is test ergonomics: tests set `app.state.*` by hand and never run the lifespan, so a lifespan-only initialiser would `AttributeError`. `review_renders` is the in-memory in-flight set behind `GET /api/review-sessions/{id}/render-status`. `app/common/background_work.py::BackgroundWork.track` wraps fire-and-forget jobs (image prestage after a sync, for example), counting in-flight, completed and failed ones and logging `BACKGROUND_DONE`; `GET /api/admin/background-work` exposes the snapshot.
@@ -4120,18 +4385,19 @@ cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter("
 ./c/[curriculumId]/l/[lessonId]/+page.svelte
 ./c/[curriculumId]/plan/+page.svelte
 ./cards/+page.svelte
+./invite/+page.svelte
 ./login/+page.svelte
 ./review-sessions/+page.svelte
 ./review-sessions/[sessionId]/+page.svelte
 ./review/+page.svelte
 ./settings/+page.svelte
-49:		adapter: adapter({ fallback: 'index.html' })
+115:			adapter: adapter({ fallback: 'index.html' })
 ```
 
 | Route | What it is |
 |-------|-----------|
-| `/` | Lessons home: curricula, the plan-a-curriculum form, the dated review-session list, "new review session" and manual paste |
-| `/c/[curriculumId]` | Curriculum overview and day picker, plus the generation pipeline card |
+| `/` | Lessons home: the lead curriculum (the one listened to most recently) with its progress and up to three lesson rows, the first unlistened one marked "Up next"; the other curricula as one-line links; the three newest review sessions; the plan-a-curriculum form, "new review session" and manual paste (`474d89c`, rules in `lib/reading/recentLessons.ts`) |
+| `/c/[curriculumId]` | Curriculum overview and day picker, the generation pipeline card, and the curriculum's Delete |
 | `/c/[curriculumId]/plan` | Chat planner (`PlannerChat`, `ProposedBatch`, review-pressure select) |
 | `/c/[curriculumId]/l/[lessonId]` | The lesson page: player, reader, listen actions, source panel |
 | `/review-sessions` | Every review session, newest first: the page a session's back link and delete return to |
@@ -4139,6 +4405,7 @@ cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter("
 | `/review` | The SRS drill; with `?lesson=<id>` a read-only "check your work" pass over one lesson's words |
 | `/cards` | Card viewer and admin; `?focus=<id>&q=<text>` deep-links from the drill |
 | `/settings`, `/login` | Per-device preferences; sign-in |
+| `/invite` | Redeem an invite: the token is read from the URL fragment, the person picks an email and password (§2.7) |
 
 `frontend/src/routes/+layout.svelte` owns the global chrome: brand, nav (Review, Lessons, Cards, Settings), the `LanguageSelector` code pill, the `SyncButton`, the theme and the banners. It also registers the two API-client callbacks from §13.2 and, when the instance is parked, replaces the whole UI with the parked screen. `LanguageSelector` stores the code and reloads, except on a page that belongs to one language (`/c/…`, `/review-sessions/…`), where it navigates home because that id would 404 in the other language's database.
 
@@ -4237,6 +4504,7 @@ export const SECTION_TYPES = [
   "slow_speed",
   "slow_translated",
   "slow_en_translated",
+  "affix_drill",
 ] as const;
 
 export type SectionType = (typeof SECTION_TYPES)[number];
@@ -4250,7 +4518,7 @@ Study-day arithmetic is likewise stated once: `frontend/src/lib/studyDay.ts` mir
 
 **Track mode.** Since the renderer emits per-section audio with per-section cue manifests (§7), the player works in *track mode*: it selects one section file at a time rather than seeking inside one long file. `LessonPlayer::trackMode` is true only when every section row carries its own cues. A lesson rendered before that existed (or one with no full-lesson file, since a render now produces only the section files) falls back: legacy lessons stay on the full-lesson track where sentence navigation works off the full manifest, because switching them would strand playback on one cue-less section.
 
-**Pills and the English cycle.** The learner sees phase pills (key phrases, dialogue), an enunciation level (natural or slow) and an English mode; `LessonPlayer::resolveSectionType` folds the three into one section token. English mode is a three-state cycle, `off`, `l2_first` ("English After") and `en_first` ("English Before"), and lessons rendered without the English-first sections cycle just `off` and `l2_first`.
+**Pills and the English cycle.** The learner sees phase pills (key phrases, dialogue, and a Drill pill on a lesson that has an `affix_drill` section), an enunciation level (natural or slow) and an English mode; `LessonPlayer::resolveSectionType` folds the three into one section token. English mode is a three-state cycle, `off`, `l2_first` ("English After") and `en_first` ("English Before"), and lessons rendered without the English-first sections cycle just `off` and `l2_first`.
 
 ```bash
 cd frontend/src/lib && sed -n '/^\tfunction resolveSectionType/,/^\t}/p' components/LessonPlayer.svelte
@@ -4259,6 +4527,7 @@ cd frontend/src/lib && sed -n '/^\tfunction resolveSectionType/,/^\t}/p' compone
 ```output
 	function resolveSectionType(phase: Phase, enunLevel: string, engMode: EnglishMode): SectionType {
 		if (phase === 'key_phrases') return 'key_phrases';
+		if (phase === 'drill') return 'affix_drill';
 		const natural = enunLevel === 'natural';
 		if (engMode === 'off') return natural ? 'natural_speed' : 'slow_speed';
 		if (engMode === 'l2_first') return natural ? 'translated' : 'slow_translated';
@@ -4278,6 +4547,9 @@ export const HANDS_FREE_SEQUENCE = [
   "natural_speed",
   "slow_speed",
   "translated",
+  // The affix drill closes a lesson that has one: it asks for forms the
+  // passes above have just been using.
+  "affix_drill",
 ] as const satisfies readonly SectionType[];
 const SEQUENCE_STEP: ReadonlyMap<string, number> = new Map([
   ["key_phrases", 0],
@@ -4287,10 +4559,11 @@ const SEQUENCE_STEP: ReadonlyMap<string, number> = new Map([
   ["slow_translated", 3],
   ["en_translated", 3],
   ["slow_en_translated", 3],
+  ["affix_drill", 4],
 ]);
 ```
 
-Every English variant is the single "EN" step, so the Section ▶ button from any of them hands off to what comes next. The chip is three-state (Off, On, Repeat) and the rules are:
+Every English variant is the single "EN" step, so the Section ▶ button from any of them hands off to what comes next, and the affix drill closes a run on a lesson that has one, because it asks for forms the passes before it have just been using. The chip is three-state (Off, On, Repeat) and the rules are:
 
 - A run completes at the end of the last pass the lesson actually has (passes are found over the sections present, because `selectTrack` is a no-op on a missing section and a blind `idx + 1` would loop one track forever).
 - `onHandsFreeEnd` reports the fact and stops; what comes next is the *page's* question. The lesson page's `onSequenceEnd` re-reads the curriculum progress map (a failed mount fetch or a newly generated day would otherwise end the run as if this were the last day), arms a one-shot baton in `sessionStorage` through `handsFreePref.armHandoff()`, and navigates to the next day; the arriving page consumes the baton and starts playing at Key Phrases. Review sessions use `reading/nextReviewSession.ts::nextSessionAfter`, which orders by date with an id tiebreak so a run cannot bounce between two sessions sharing a day.
@@ -4339,7 +4612,7 @@ export function masterySides(bands: {
 - **Weight** marks what is due: a due recognition direction renders bold, and `WordToken.overdue_ratio` (computed backend-side relative to stability, since a 2-day memory a week late is lost while a 6-month one is fine) steps it to 800 at one stability overdue and 900 at three.
 - **The reader's chips** (`ReaderChips.svelte`) sit in the sticky card in Read, drawn like Listen's setting chips. English cycles Off, Idiomatic (the line translation), Literal (the per-word gloss), Both (`stores/readerEnglishPref.svelte.ts`); Recall is Blurred or Off. Both persist. With the player collapsed only Recall stays, on the Mark as Listened row. In Read the player itself always plays natural speed with no spoken English and ignores hands-free; the Listen choices are kept and apply again on switching back (`LessonPlayer.svelte`, `effectiveEnun` / `effectiveEnglish` / `syncEffectiveHandsFree`).
 - **Blur-as-cloze**: with the per-device Recall chip on Blurred (default off, `stores/readerProductionPref.svelte.ts`), a word whose *production* direction is due blurs instead of bolding. Tapping reveals it and grades nothing; only the popover's four ratings (Again / Hard / Good / Easy) write, and they grade production through the review queue's own endpoint. With Recall off the reader is exactly the recognition-only reader.
-- **Popover actions** (`Tooltip.svelte`) create a base card or an inflection cloze, grade a due word, undo the single latest grade, and apply ignore, known and new overrides; the override set deliberately excludes lapse and restore so it never rewrites FSRS scheduling state.
+- **Popover actions** (`Tooltip.svelte`) create a base card, an inflection cloze ("Inflect") or a second-sense card ("Different meaning"), start a phrase ("Phrase…"), grade a due word with the four ratings, undo the single latest grade, and apply ignore, known and new overrides, with the utilities folded behind "More…" when they share the popover with a primary action (§8.11); the override set deliberately excludes lapse and restore so it never rewrites FSRS scheduling state.
 
 ### 13.6 Listen, review and review sessions
 
@@ -4347,7 +4620,7 @@ export function masterySides(bands: {
 
 **The drill.** `/review` fetches `GET /api/srs/review-queue`, which blends due cards with a daily-capped slice of new ones (§9), and each grade is a per-direction `POST …/feedback`. Media URLs arrive in the queue payload. The grade buttons are docked at the bottom. The `?lesson=` mode reads `/api/srs/content/{id}/review-queue` instead and never advances the global session cutoff, so checking one lesson's words cannot disturb tomorrow's queue.
 
-**Review sessions.** The home page lists them by date and creates them through `api.createReviewSession` with an idempotency key; the manual (Claude-chat) mode is `getReviewSessionDraftPrompt` then `createReviewSessionFromPaste`. A session page shows the shared reader and, if a render is in flight server-side, polls `GET …/render-status` with `setTimeout` rather than `setInterval` (a slow response must not overlap itself) and gives up after a bounded run of failures instead of polling a dead server forever. Deleting a session keeps its SRS history. A session that lost its glosses shows a shared `Banner` with a Restore glosses button (`api.reglossReviewSession`).
+**Review sessions.** The home page lists them by date and creates them through `api.createReviewSession` with an idempotency key; the manual (Claude-chat) mode is `getReviewSessionDraftPrompt` then `createReviewSessionFromPaste`. A session page shows the shared reader and, if a render is in flight server-side, polls `GET …/render-status`, which answers a `state` (`idle`, `rendering`, `failed`) and the `error`, kept in memory beside the in-flight set (`app.state.review_render_failures`), so a failed render says so instead of reading as finished and fetching audio that was never made (`e439995`). The page polls it with `setTimeout` rather than `setInterval` (a slow response must not overlap itself) and gives up after a bounded run of failures instead of polling a dead server forever. Deleting a session keeps its SRS history. A session that lost its glosses shows a shared `Banner` with a Restore glosses button (`api.reglossReviewSession`).
 
 **Shared UI parts.** `ConfirmDialog.svelte` replaces `window.confirm()`; `Banner.svelte` is the one inline notice; popovers clamp to the nearest clipping ancestor so they cannot leave the viewport.
 
@@ -4508,6 +4781,7 @@ grep -o 'log_step backend "[^"]*" uv run python scripts/[a-z_]*\.py' test.sh | s
 "Mock boundary check" -> scripts/check_mock_boundaries.py
 "Language literal check" -> scripts/check_language_literals.py
 "Date today check" -> scripts/check_date_today.py
+"Anki day index check" -> scripts/check_anki_day_index.py
 "Singular database_url check" -> scripts/check_singular_database_url.py
 "Plugin import check" -> scripts/check_plugin_imports.py
 "OpenAPI snapshot check" -> scripts/check_openapi_snapshot.py
@@ -4525,6 +4799,7 @@ What each guards:
 | `check_mock_boundaries.py` | tests mock only at process/network boundaries (§14.5) |
 | `check_language_literals.py` | no `"sl"`/`"no"`, `Slovene`, `classla`, `*-Neural` literals in `app/**` outside allowlisted plugin modules (§3) |
 | `check_date_today.py` | no `date.today()` composed into Anki-day arithmetic (§9) |
+| `check_anki_day_index.py` | no `compute_anki_day_index` call in `app/` whose day is "now" or omitted: that function decodes stored day markers and runs a day ahead of Anki between local midnight and 04:00 (Layer 91, §9.5) |
 | `check_singular_database_url.py` | nothing reads the singular `settings.database_url` directly; on a multi-language install it names one fixed language, so the failure is silent. Callers go through `resolve_language_context` |
 | `check_plugin_imports.py` | core never imports `app.plugins.languages.*` directly |
 | `check_openapi_snapshot.py` | `api-schema.json` is fresh and every 2xx JSON route declares `response_model=` |
@@ -4534,7 +4809,9 @@ What each guards:
 | `check_media_filename_case.py` | media rows match on-disk filename case (APFS vs ext4) |
 | `check_content_surface_parity.py` | lessons and review sessions keep the same verbs, held as an explicit verb map rather than a router-vs-router diff |
 
-Two design decisions shaped all of them. First, there are no grandfather ledgers. Earlier versions carried shrink-only files of known violations; they were deleted once empty, because "empty ledger" and "no additions, ever" behave identically and the ledger machinery was unexercised weight. The remaining `backend/tests/*allowlist.txt` files are plain allowlists, and additions to the mock allowlist need the user's sign-off. Second, the shared helpers live in one module so the checkers cannot drift:
+One more check runs after the backend tests rather than among these: the **Walkthrough check**, `uvx showboat@0.6.1 verify docs/walkthrough.md`, which re-runs every block of this document and fails on any output that no longer matches the code (about 50 s; it needs the NST lexicon the backend group builds first). It is not a `scripts/` checker, so the listing above does not show it.
+
+Two design decisions shaped all of the checkers. First, there are no grandfather ledgers. Earlier versions carried shrink-only files of known violations; they were deleted once empty, because "empty ledger" and "no additions, ever" behave identically and the ledger machinery was unexercised weight. The remaining `backend/tests/*allowlist.txt` files are plain allowlists, and additions to the mock allowlist need the user's sign-off. Second, the shared helpers live in one module so the checkers cannot drift:
 
 ```bash
 grep "^def \|^class " backend/scripts/_checker_lib.py
@@ -4616,12 +4893,11 @@ sed -n '/^def pytest_addoption/,/^def pytest_configure/p' backend/tests/conftest
 Helpers that are not fixtures live in `backend/tests/_helpers/`: `anki_db.py`, the `sync_server.py` session fixture, `localtz.py`, and `lemmatizer.py::StubLemmatizer` (stub the lemmatizer instead of loading stanza).
 
 ```bash
-ls backend/tests/_helpers
+ls backend/tests/_helpers | grep -v __pycache__
 ```
 
 ```output
 __init__.py
-__pycache__
 anki_db.py
 anki_sync_create_new.py
 anki_sync_pull.py
@@ -4776,7 +5052,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts language-switch.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts pipeline-card.spec.ts planner-chat.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;
@@ -4789,7 +5065,7 @@ export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 
 Several choices carry history. Database cleanup runs at module scope in the config before any server starts, behind a `TT_E2E_DBS_CLEANED` guard, because workers re-evaluate the config and an unguarded copy deleted live databases mid-run; a cleanup inside a `webServer` command raced the shared auth DB. The suite serves a real `vite build` because the service-worker and offline specs need a production bundle. Worker count is `E2E_WORKERS` (default 2); a measured sweep on a 10-core box found 4 fastest standalone and 6+ slower from oversubscription, but the default stays 2 because contention with the gate's other concurrent groups was not measured. Retries are 0 on purpose: a spec that passes only on retry is a flake chosen not to be seen. CI uploads the HTML report and traces on failure, and `test.sh` preserves failing e2e artifacts via `backend/scripts/preserve_e2e_artifacts.py`.
 
-What belongs in Playwright is governed by `.claude/rules/test-tiers.md`. In short: core user journeys (`smoke`, `review-flow`, `planner-chat`) earn a slot by the path they walk; everything else must be a **seam** where two systems must agree, which the rule reduces to one question, "is the asserted value computed by the browser or by the app?". Layout geometry, CORS enforcement and the service worker are browser-computed and stay in e2e; `classList`, `textContent` and store values are app-computed and belong in vitest. Regression tests land at the cheapest tier that can catch the bug, and the rule's sabotage-drill criterion says when a test comes down.
+What belongs in Playwright is governed by `.claude/rules/test-tiers.md`. In short: core user journeys (`smoke`, `review-flow`, `planner-chat`) earn a slot by the path they walk; everything else must be a **seam** where two systems must agree, which the rule reduces to one question, "is the asserted value computed by the browser or by the app?". Layout geometry, CORS enforcement, the service worker and a gesture's real event sequence are browser-computed and stay in e2e (the last was added in October after tap-to-select passed jsdom for six months while never working on a phone, §8.11; `real-tap.spec.ts`, `reader-phrases.spec.ts` and `phrase-drag.spec.ts` drive real touch and a real mouse); `classList`, `textContent` and store values are app-computed and belong in vitest. Regression tests land at the cheapest tier that can catch the bug, and the rule's sabotage-drill criterion says when a test comes down.
 
 ### 14.9 Peer-sync tests
 
@@ -5379,4 +5655,3 @@ Other documents in `docs/` cite the old `PART N` numbering. This table maps the 
 | PART 27, 29.1 | Event-sourced sync, the one sync path | §10 |
 | PART 29.3–29.4, 30.1 | Language registry, compound breakdown, plugin gates | §3 |
 | PART 31 | Syllable slicing | §7 |
-

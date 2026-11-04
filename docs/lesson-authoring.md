@@ -147,6 +147,11 @@ imported day flows through unchanged. New collocations still enter Anki only via
 existing `/listen` → `sync_create_new` contract (`.claude/rules/anki-sync.md`), which
 this feature doesn't touch.
 
+*Current state (2026-11):* every import now goes through `publishing.py::publish_lesson`,
+so a story imported into a curriculum day of a language with affix patterns (Cebuano)
+ends on the same closing affix drill a generated one does: it is appended at publish by
+`CurriculumDayTarget.prepare`, not by the import path (walkthrough §6.8, §6.12).
+
 ## Workflows this unlocks
 
 - **Fix a bad generation.** Generate on gpt-oss → export → I edit the `speaker`
