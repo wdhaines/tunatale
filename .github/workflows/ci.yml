@@ -201,6 +201,15 @@ jobs:
       - name: Test
         run: uv run pytest -n auto
 
+      # Re-runs every bash block of docs/walkthrough.md (a Showboat document)
+      # and fails on any output that no longer matches. This job is the
+      # environment the walkthrough says its blocks run in: the lean dev-group
+      # install, UV_NO_SYNC, and the NST lexicon built above. Same step as
+      # test.sh's "Walkthrough check"; the fix command is in its comment there.
+      - name: Walkthrough check
+        working-directory: .
+        run: uvx showboat@0.6.1 verify docs/walkthrough.md
+
   # Runs the backend suite at a deliberately hostile UTC offset, because pinning
   # TZ everywhere else makes both gates blind to time-zone fragility rather than
   # free of it.

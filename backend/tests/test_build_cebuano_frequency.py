@@ -12,7 +12,15 @@ import gzip
 import pytest
 
 from app.srs.lemma_table import Reading
-from scripts.build_cebuano_frequency import count_lemmas, is_native_host, write_table
+from scripts.build_cebuano_frequency import (
+    DEFAULT_OUT,
+    LEMMA_TABLE,
+    count_lemmas,
+    is_native_host,
+    lemma_defaults_digest,
+    recorded_lemma_defaults,
+    write_table,
+)
 
 # ── is_native_host: the corpus is native news only ───────────────────────────
 
@@ -120,15 +128,87 @@ def _lines(path) -> list[str]:
 
 def test_write_table_records_the_full_total_but_drops_rare_rows(tmp_path):
     out = tmp_path / "freq.tsv.gz"
-    written = write_table({"sa": 10, "tawo": 5, "rare": 1}, out, source="test-source", min_count=2)
+    written = write_table({"sa": 10, "tawo": 5, "rare": 1}, out, source="test-source", min_count=2, lemma_defaults="d1")
     assert written == 2
     lines = _lines(out)
-    assert lines[:2] == ["#source=test-source", "#total_tokens=16"]
-    assert lines[2:] == ["sa\t10", "tawo\t5"]
+    assert lines[:3] == ["#source=test-source", "#total_tokens=16", "#lemma_defaults_sha256=d1"]
+    assert lines[3:] == ["sa\t10", "tawo\t5"]
 
 
 def test_write_table_orders_ties_alphabetically(tmp_path):
     out = tmp_path / "freq.tsv.gz"
-    write_table({"b": 3, "a": 3, "c": 4}, out, source="s", min_count=1)
-    rows = _lines(out)[2:]
+    write_table({"b": 3, "a": 3, "c": 4}, out, source="s", min_count=1, lemma_defaults="d1")
+    rows = _lines(out)[3:]
     assert rows == ["c\t4", "a\t3", "b\t3"]
+
+
+# ── staleness: the table records which lemma table keyed it ──────────────────
+#
+# Every token is counted under its surface's DEFAULT lemma, or under itself when
+# the lemma table does not know the surface. So the counts go stale exactly when
+# that mapping moves: a default changes, or a surface becomes known. The table
+# records a digest of the mapping it was built against, and the committed pair is
+# checked below. Measured 2026-11-04: five lemma-table commits after ce1b96e
+# (63205ff, 7b7416e, a99d56d, e0a8a5e, bcfbcb7) added 19,610 known surfaces and
+# moved 133 defaults with no frequency rebuild, leaving ~247k of 8.2M tokens (3%)
+# on 4,320 keys the table now roots elsewhere (angkon 107, ~4.1k of its forms
+# counted under them).
+
+
+def _table(path, rows):
+    with gzip.open(path, "wt", encoding="utf-8") as fh:
+        fh.write("#source_version=test\n")
+        fh.write("".join("\t".join(r) + "\n" for r in rows))
+    return path
+
+
+_BASE = [("milakaw", "VERB", "lakaw", "1"), ("milakaw", "NOUN", "milakaw", "0"), ("ang", "DET", "ang", "1")]
+
+
+def test_the_digest_moves_when_a_default_lemma_moves(tmp_path):
+    before = lemma_defaults_digest(_table(tmp_path / "a.tsv.gz", _BASE))
+    moved = [("milakaw", "VERB", "lakaw", "0"), ("milakaw", "NOUN", "milakaw", "1"), _BASE[2]]
+    assert lemma_defaults_digest(_table(tmp_path / "b.tsv.gz", moved)) != before
+
+
+def test_the_digest_moves_when_a_surface_becomes_known(tmp_path):
+    before = lemma_defaults_digest(_table(tmp_path / "a.tsv.gz", _BASE))
+    known = [*_BASE, ("dad-on", "VERB", "dala", "1")]
+    assert lemma_defaults_digest(_table(tmp_path / "b.tsv.gz", known)) != before
+
+
+def test_the_digest_ignores_what_cannot_change_a_count(tmp_path):
+    """A non-default reading, and the row order, key no token."""
+    before = lemma_defaults_digest(_table(tmp_path / "a.tsv.gz", _BASE))
+    other = [_BASE[2], ("milakaw", "ADJ", "lakaw", "0"), _BASE[1], _BASE[0]]
+    assert lemma_defaults_digest(_table(tmp_path / "b.tsv.gz", other)) == before
+
+
+def test_a_table_without_the_header_records_nothing(tmp_path):
+    out = tmp_path / "old.tsv.gz"
+    with gzip.open(out, "wt", encoding="utf-8") as fh:
+        fh.write("#source=s\n#total_tokens=3\nsa\t3\n")
+    assert recorded_lemma_defaults(out) is None
+
+
+def test_the_written_digest_reads_back(tmp_path):
+    out = tmp_path / "freq.tsv.gz"
+    write_table({"sa": 3}, out, source="s", min_count=1, lemma_defaults="abc")
+    assert recorded_lemma_defaults(out) == "abc"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "STALE: cebuano_frequency.tsv.gz was last built at ce1b96e and the lemma table has moved five times "
+        "since. Rebuild it on the machine that has the FineWeb-2 shard (uv run --with pyarrow python "
+        "scripts/build_cebuano_frequency.py), then delete this marker: strict, so the rebuild turns it red "
+        "until you do. The Wolff lexicon build reads these counts too, so rebuild it after "
+        "(scripts/build_cebuano_wolff_lexicon.py)."
+    ),
+)
+def test_the_committed_frequency_table_was_built_against_the_committed_lemma_table():
+    assert recorded_lemma_defaults(DEFAULT_OUT) == lemma_defaults_digest(LEMMA_TABLE), (
+        "cebuano_frequency.tsv.gz counts tokens under the lemma table's default lemmas, and that mapping has "
+        "changed since it was built. Rebuild it: uv run --with pyarrow python scripts/build_cebuano_frequency.py"
+    )

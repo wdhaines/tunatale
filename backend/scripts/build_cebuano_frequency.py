@@ -96,18 +96,55 @@ def count_lemmas(
     return counts
 
 
-def write_table(counts: dict[str, int], out: Path, *, source: str, min_count: int) -> int:
+_DIGEST_HEADER = "#lemma_defaults_sha256="
+
+
+def lemma_defaults_digest(table: Path) -> str:
+    """A digest of what the lemma table contributes to a count: each known surface and its default lemma.
+
+    :func:`count_lemmas` keys a token by its surface's DEFAULT reading, or by the
+    surface itself when the table does not know it, so the counts are stale
+    exactly when this mapping moves. Non-default readings and row order key no
+    token and are left out, so a table rebuilt with only those changes does not
+    call for a corpus rebuild.
+    """
+    pairs = []
+    with gzip.open(table, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+            surface, _upos, lemma, is_default = line.rstrip("\n").split("\t")
+            if is_default == "1":
+                pairs.append(f"{surface}\t{lemma}\n")
+    return hashlib.sha256("".join(sorted(pairs)).encode("utf-8")).hexdigest()
+
+
+def recorded_lemma_defaults(table: Path) -> str | None:
+    """The lemma-table digest a frequency table was built against, or ``None`` if it records none."""
+    with gzip.open(table, "rt", encoding="utf-8") as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                return None
+            if line.startswith(_DIGEST_HEADER):
+                return line[len(_DIGEST_HEADER) :].strip()
+    return None
+
+
+def write_table(counts: dict[str, int], out: Path, *, source: str, min_count: int, lemma_defaults: str) -> int:
     """Write *counts* as the gzipped TSV ``app.srs.frequency_table`` reads; return rows written.
 
     ``#total_tokens`` is the total over ALL counted tokens, rare ones included,
     so a zipf is a share of the corpus and not of the truncated list.
+    *lemma_defaults* is :func:`lemma_defaults_digest` of the lemma table that
+    keyed the counts, recorded so a later change to that table shows up as a
+    failing test rather than as quietly wrong ranks.
     """
     rows = sorted(((lemma, c) for lemma, c in counts.items() if c >= min_count), key=lambda r: (-r[1], r[0]))
     out.parent.mkdir(parents=True, exist_ok=True)
     # mtime=0: the same counts produce byte-identical output, so a rebuild with
     # no data change leaves git clean.
     with open(out, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
-        gz.write(f"#source={source}\n#total_tokens={sum(counts.values())}\n".encode())
+        gz.write(f"#source={source}\n#total_tokens={sum(counts.values())}\n{_DIGEST_HEADER}{lemma_defaults}\n".encode())
         gz.write("".join(f"{lemma}\t{c}\n" for lemma, c in rows).encode())
     return len(rows)
 
@@ -140,7 +177,13 @@ def main(argv: list[str] | None = None) -> int:
         en_zipf=lambda s: wordfreq.zipf_frequency(s, "en"),
     )
     lemmatizer.close()
-    written = write_table(counts, args.out, source=f"fineweb-2/ceb_Latn sha256={sha[:12]}", min_count=args.min_count)
+    written = write_table(
+        counts,
+        args.out,
+        source=f"fineweb-2/ceb_Latn sha256={sha[:12]}",
+        min_count=args.min_count,
+        lemma_defaults=lemma_defaults_digest(LEMMA_TABLE),
+    )
     print(f"{sum(counts.values())} tokens, {len(counts)} lemmas, {written} written (count >= {args.min_count})")
     print(f"source sha256 {sha}")
     print(f"wrote {args.out}")

@@ -40,7 +40,7 @@ necessary but not sufficient. Adding a check to `test.sh` obliges you to add it 
 `ci.yml` in the same commit; the reverse is not required.
 
 `.github/workflows/ci.yml` runs six parallel jobs: `backend` (ruff → checkers →
-pytest), `backend-hostile-tz`, `backend-hostile-hour`, `frontend`, `e2e`, and
+pytest → the walkthrough's Showboat blocks), `backend-hostile-tz`, `backend-hostile-hour`, `frontend`, `e2e`, and
 `anki-gates` (oracle parity and peer-sync in one job). Job count, not job speed,
 drives CI's tail latency — which is why the two Anki gates share a job and why
 none of these is a matrix.

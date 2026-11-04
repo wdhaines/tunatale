@@ -9,7 +9,7 @@ TunaTale generates Pimsleur-style audio lessons whose stories are written around
 
 The tour is ordered by subsystem, not by history. §1 follows one lesson end to end, from a planned day to a graded card in Anki, and names the chapter that owns each step. §2–§16 then take the subsystems one at a time. Appendix A gives the short history and maps the old `PART N` numbering (still cited by older docs) to the current chapters. This edition was restructured on 2026-10-01 and brought up to date on 2026-11-04, adding the Cebuano dictionary and affix work (§3.9, §6.12, §11.10), invites (§2.7) and the Gemini take checks (§7.3). The previous, chronological edition is archived at [`docs/archive/walkthrough-2026-03-to-07.md`](archive/walkthrough-2026-03-to-07.md).
 
-**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
+**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. Since 2026-11-04 it does so on every commit: `./test.sh` and CI's `backend` job both run it as the "Walkthrough check" (§14.3), after 25 blocks had drifted unnoticed in a month. To update outputs after a code change, run `uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md`, then read the prose around every block that changed, which the tool cannot update. A block must print the same thing on any machine: print a setting's class default (`Settings.model_fields[k].default`), not the live value a local `.env` can change, and filter out build debris such as `__pycache__`. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
 
 ### How to read it
 
@@ -826,7 +826,7 @@ short form 'ko'       -> short for akó
 
 Wolff's spelling (`inum`, `-un`, three vowels) is the decoder's working alphabet; the Handbook spelling is what a learner sees. The other Cebuano work of the period lives with the subsystem it changed: the affix drill and its pace gate (§6.12), the Gemini take checks (§7.3), the dictionary fields and drawn deictics on cards (§11.4, §11.10).
 
-Three smaller lemma-table rules from the same weeks are worth knowing before touching `cebuano_lemmas.tsv.gz`. `ni-` is read as a spelling of `mi-` (it is the commoner one in native news, `niadto` 1,058 against `miadto` 231), so the `verb:mi` hint names both and `moadto`/`niadto` stay in the mo-mi pattern. When the context tag matches several readings, the table's default for that tag wins (`lemma_table.py::readings_by_tag`); before `0649a71` the first in alphabetical order did, so `naa` tagged VERB read as `na`. And `cebuano_frequency.tsv.gz` counts each corpus token under the lemma the table *defaults* to, so it goes stale whenever a default moves, silently; rebuild it after a table change (`scripts/build_cebuano_frequency.py`).
+Three smaller lemma-table rules from the same weeks are worth knowing before touching `cebuano_lemmas.tsv.gz`. `ni-` is read as a spelling of `mi-` (it is the commoner one in native news, `niadto` 1,058 against `miadto` 231), so the `verb:mi` hint names both and `moadto`/`niadto` stay in the mo-mi pattern. When the context tag matches several readings, the table's default for that tag wins (`lemma_table.py::readings_by_tag`); before `0649a71` the first in alphabetical order did, so `naa` tagged VERB read as `na`. And `cebuano_frequency.tsv.gz` counts each corpus token under the lemma the table *defaults* to, so it goes stale whenever a default moves or a surface becomes known. Since 2026-11-04 the build records a digest of that mapping in a `#lemma_defaults_sha256=` header, and `tests/test_build_cebuano_frequency.py` compares it with the committed lemma table. On that day the committed table was measured stale (five lemma-table commits since its last build, about 3% of its tokens on keys the table now roots elsewhere), so the comparison is a strict `xfail` until the next rebuild, which needs the FineWeb-2 shard on the owner's machine (`uv run --with pyarrow python scripts/build_cebuano_frequency.py`). The Wolff lexicon build reads these counts, so it is rebuilt after.
 
 ### 3.10 Keeping it honest: the gates and adding a language
 
@@ -1146,8 +1146,8 @@ from app.llm.client import GROQ_DEFAULT_MODEL, reasoning_params_for_model
 print(GROQ_DEFAULT_MODEL)
 print(reasoning_params_for_model(GROQ_DEFAULT_MODEL))
 print(reasoning_params_for_model('llama-3.3-70b-versatile'))
-from app.config import settings
-print(settings.llm_model, settings.groq_tokens_per_day_limit, settings.groq_requests_per_day_limit, settings.llm_allow_fallback)
+from app.config import Settings  # the class defaults, so a local .env cannot change the output
+print(*(Settings.model_fields[k].default for k in ('llm_model', 'groq_tokens_per_day_limit', 'groq_requests_per_day_limit', 'llm_allow_fallback')))
 "
 ```
 
@@ -2375,8 +2375,8 @@ from app.audio.transcode import CODEC_EXT, EXT_MEDIA_TYPE, _FFMPEG_ARGS
 print(CODEC_EXT)
 print(EXT_MEDIA_TYPE)
 print(_FFMPEG_ARGS['opus'])
-from app.config import settings
-print(settings.audio_delivery_codec, settings.audio_delivery_bitrate, settings.max_concurrent_renders, settings.ffmpeg_nice)
+from app.config import Settings  # the class defaults, so a local .env cannot change the output
+print(*(Settings.model_fields[k].default for k in ('audio_delivery_codec', 'audio_delivery_bitrate', 'max_concurrent_renders', 'ffmpeg_nice')))
 "
 ```
 
@@ -4809,7 +4809,9 @@ What each guards:
 | `check_media_filename_case.py` | media rows match on-disk filename case (APFS vs ext4) |
 | `check_content_surface_parity.py` | lessons and review sessions keep the same verbs, held as an explicit verb map rather than a router-vs-router diff |
 
-Two design decisions shaped all of them. First, there are no grandfather ledgers. Earlier versions carried shrink-only files of known violations; they were deleted once empty, because "empty ledger" and "no additions, ever" behave identically and the ledger machinery was unexercised weight. The remaining `backend/tests/*allowlist.txt` files are plain allowlists, and additions to the mock allowlist need the user's sign-off. Second, the shared helpers live in one module so the checkers cannot drift:
+One more check runs after the backend tests rather than among these: the **Walkthrough check**, `uvx showboat@0.6.1 verify docs/walkthrough.md`, which re-runs every block of this document and fails on any output that no longer matches the code (about 50 s; it needs the NST lexicon the backend group builds first). It is not a `scripts/` checker, so the listing above does not show it.
+
+Two design decisions shaped all of the checkers. First, there are no grandfather ledgers. Earlier versions carried shrink-only files of known violations; they were deleted once empty, because "empty ledger" and "no additions, ever" behave identically and the ledger machinery was unexercised weight. The remaining `backend/tests/*allowlist.txt` files are plain allowlists, and additions to the mock allowlist need the user's sign-off. Second, the shared helpers live in one module so the checkers cannot drift:
 
 ```bash
 grep "^def \|^class " backend/scripts/_checker_lib.py
@@ -4891,12 +4893,11 @@ sed -n '/^def pytest_addoption/,/^def pytest_configure/p' backend/tests/conftest
 Helpers that are not fixtures live in `backend/tests/_helpers/`: `anki_db.py`, the `sync_server.py` session fixture, `localtz.py`, and `lemmatizer.py::StubLemmatizer` (stub the lemmatizer instead of loading stanza).
 
 ```bash
-ls backend/tests/_helpers
+ls backend/tests/_helpers | grep -v __pycache__
 ```
 
 ```output
 __init__.py
-__pycache__
 anki_db.py
 anki_sync_create_new.py
 anki_sync_pull.py
