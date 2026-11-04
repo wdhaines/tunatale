@@ -50,6 +50,21 @@ FineWeb-2 is released under the **Open Data Commons Attribution License
 also subject to Common Crawl's Terms of Use: <https://commoncrawl.org/terms-of-use>.
 This file is the attribution ODC-By requires.
 
+# Attribution: `cebuano_surface_frequency.tsv.gz`
+
+This committed file holds **word counts derived from FineWeb-2**, built in the
+same pass as `cebuano_frequency.tsv.gz` by
+`backend/scripts/build_cebuano_frequency.py`: the same tokens, keyed by the
+lowercased word as written instead of its lemma. It contains word/count pairs
+only — no text from the source.
+
+- **Source:** the same FineWeb-2 `ceb_Latn` shard and the same four native news
+  hosts as `cebuano_frequency.tsv.gz` above.
+- **Source shard sha256:**
+  `4982dae9f61107d1f9c60725bb8434e1d0d4b990f596c8fd1e890ebef5f98a3a`
+
+Licence: ODC-By v1.0 and Common Crawl's Terms of Use, as above.
+
 # Attribution: `cebuano_affix_counts.tsv.gz`
 
 This committed file holds **root/affix counts derived from FineWeb-2**, built by

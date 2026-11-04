@@ -6,7 +6,10 @@
 
 wordfreq has no ``ceb``, so the creation-candidate ranker had nothing to rank
 Cebuano by (tunatale-u8nz.6). This writes ``ceb/data/cebuano_frequency.tsv.gz``,
-read by ``app.srs.frequency_table``.
+read by ``app.srs.frequency_table``, and beside it
+``cebuano_surface_frequency.tsv.gz``: the same tokens counted by the word as
+written, for whatever needs whole-word evidence (the Handbook spelling
+converter, the Wolff parser's English test; see :func:`count_tokens`).
 
 **Source.** FineWeb-2, subset ``ceb_Latn`` (HuggingFaceFW/fineweb-2, ODC-By
 1.0), fetched by hand into ``scripts/local/fineweb2/`` (gitignored). Only four
@@ -53,6 +56,7 @@ _BACKEND = Path(__file__).resolve().parents[1]
 _CEB_DATA = _BACKEND / "app/plugins/languages/ceb/data"
 DEFAULT_SOURCE = _BACKEND / "scripts/local/fineweb2/ceb_Latn-000_00000.parquet"
 DEFAULT_OUT = _CEB_DATA / "cebuano_frequency.tsv.gz"
+SURFACE_OUT = _CEB_DATA / "cebuano_surface_frequency.tsv.gz"
 LEMMA_TABLE = _CEB_DATA / "cebuano_lemmas.tsv.gz"
 
 NATIVE_NEWS_HOSTS = ("sunstar.com.ph", "rmn.ph", "rpnradio.com", "pia.gov.ph")
@@ -66,34 +70,58 @@ def is_native_host(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in NATIVE_NEWS_HOSTS)
 
 
-def count_lemmas(
+def count_tokens(
     texts: Iterable[str],
     *,
     readings: Callable[[str], list[Reading]],
     en_zipf: Callable[[str], float],
-) -> Counter[str]:
-    """Lemma counts over *texts*, English runs dropped (see the module docstring)."""
-    keyed: dict[str, tuple[str, bool]] = {}
+) -> tuple[Counter[str], Counter[str]]:
+    """(lemma counts, surface counts) over *texts*, English runs dropped (see the module docstring).
 
-    def key(raw: str) -> tuple[str, bool]:
+    One pass, two keys for the same tokens. Lemma counts rank words for learning:
+    a root collects its affixed forms. Surface counts say how often the corpus
+    WRITES a word, which is what whole-word evidence needs (the Handbook spelling
+    converter, the Wolff parser's English test). Keyed by lemma, a form the lemma
+    table knows vanishes into its root (magsige 307 into sige), while a
+    misspelling the table does not know (magsigi 48) stays the only whole word.
+    """
+    keyed: dict[str, tuple[str, str, bool]] = {}
+
+    def key(raw: str) -> tuple[str, str, bool]:
         if raw not in keyed:
             surface = raw.lower()
             found = readings(surface)
             if found:
-                keyed[raw] = (next(r for r in found if r.is_default).lemma, False)
+                keyed[raw] = (next(r for r in found if r.is_default).lemma, surface, False)
             else:
                 bar = ENGLISH_ZIPF if raw == surface else ENGLISH_ZIPF_CAPITALIZED
-                keyed[raw] = (surface, en_zipf(surface) >= bar)
+                keyed[raw] = (surface, surface, en_zipf(surface) >= bar)
         return keyed[raw]
 
-    counts: Counter[str] = Counter()
+    lemmas: Counter[str] = Counter()
+    surfaces: Counter[str] = Counter()
     for text in texts:
         tokens = [key(t) for t in tokenize(text) if any(c.isalpha() for c in t)]
-        for i, (lemma, english) in enumerate(tokens):
-            in_run = english and ((i > 0 and tokens[i - 1][1]) or (i + 1 < len(tokens) and tokens[i + 1][1]))
+        for i, (lemma, surface, english) in enumerate(tokens):
+            in_run = english and ((i > 0 and tokens[i - 1][2]) or (i + 1 < len(tokens) and tokens[i + 1][2]))
             if not in_run:
-                counts[lemma] += 1
-    return counts
+                lemmas[lemma] += 1
+                surfaces[surface] += 1
+    return lemmas, surfaces
+
+
+def count_lemmas(
+    texts: Iterable[str], *, readings: Callable[[str], list[Reading]], en_zipf: Callable[[str], float]
+) -> Counter[str]:
+    """Lemma counts over *texts* (see :func:`count_tokens`)."""
+    return count_tokens(texts, readings=readings, en_zipf=en_zipf)[0]
+
+
+def count_surfaces(
+    texts: Iterable[str], *, readings: Callable[[str], list[Reading]], en_zipf: Callable[[str], float]
+) -> Counter[str]:
+    """Surface (whole-word, lowercased) counts over *texts* (see :func:`count_tokens`)."""
+    return count_tokens(texts, readings=readings, en_zipf=en_zipf)[1]
 
 
 _DIGEST_HEADER = "#lemma_defaults_sha256="
@@ -166,27 +194,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE, help="FineWeb-2 ceb_Latn parquet shard")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--surface-out", type=Path, default=SURFACE_OUT)
     parser.add_argument("--min-count", type=int, default=MIN_COUNT)
     args = parser.parse_args(argv)
 
     sha = hashlib.sha256(args.source.read_bytes()).hexdigest()
     lemmatizer = TableLemmatizer("ceb", LEMMA_TABLE)
-    counts = count_lemmas(
+    counts, surfaces = count_tokens(
         _native_texts(args.source),
         readings=lemmatizer.readings,
         en_zipf=lambda s: wordfreq.zipf_frequency(s, "en"),
     )
     lemmatizer.close()
-    written = write_table(
-        counts,
-        args.out,
-        source=f"fineweb-2/ceb_Latn sha256={sha[:12]}",
-        min_count=args.min_count,
-        lemma_defaults=lemma_defaults_digest(LEMMA_TABLE),
-    )
+    digest = lemma_defaults_digest(LEMMA_TABLE)
+    source = f"fineweb-2/ceb_Latn sha256={sha[:12]}"
+    written = write_table(counts, args.out, source=source, min_count=args.min_count, lemma_defaults=digest)
+    written_s = write_table(surfaces, args.surface_out, source=source, min_count=args.min_count, lemma_defaults=digest)
     print(f"{sum(counts.values())} tokens, {len(counts)} lemmas, {written} written (count >= {args.min_count})")
+    print(f"{len(surfaces)} surfaces, {written_s} written")
     print(f"source sha256 {sha}")
-    print(f"wrote {args.out}")
+    print(f"wrote {args.out} and {args.surface_out}")
     return 0
 
 

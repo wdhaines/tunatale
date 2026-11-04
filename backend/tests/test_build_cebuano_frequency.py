@@ -15,7 +15,9 @@ from app.srs.lemma_table import Reading
 from scripts.build_cebuano_frequency import (
     DEFAULT_OUT,
     LEMMA_TABLE,
+    SURFACE_OUT,
     count_lemmas,
+    count_surfaces,
     is_native_host,
     lemma_defaults_digest,
     recorded_lemma_defaults,
@@ -118,6 +120,24 @@ def test_punctuation_and_numbers_are_not_tokens():
     assert _count("tawo, 2024 — tawo!") == {"tawo": 2}
 
 
+# ── count_surfaces: the same tokens, keyed by the word as written ────────────
+
+
+def _surfaces(*texts):
+    return count_surfaces(texts, readings=lambda s: _TABLE.get(s, []), en_zipf=lambda s: _EN.get(s, 0.0))
+
+
+def test_a_known_form_counts_under_its_own_surface_not_its_lemma():
+    """Whole-word evidence (the Handbook converter's 'magsige 307 vs magsigi 48',
+    the English test's 'long') must survive the lemma table learning the word:
+    keyed by lemma, a surface the table knows vanishes into its root."""
+    assert _surfaces("Naglakaw ang tawo. Lakaw kita.") == {"naglakaw": 1, "lakaw": 1, "ang": 1, "tawo": 1, "kita": 1}
+
+
+def test_surface_counts_drop_the_same_english_runs():
+    assert _surfaces("the police station tawo ka tawo") == {"tawo": 2, "ka": 1}
+
+
 # ── write_table ───────────────────────────────────────────────────────────────
 
 
@@ -197,18 +217,17 @@ def test_the_written_digest_reads_back(tmp_path):
     assert recorded_lemma_defaults(out) == "abc"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "STALE: cebuano_frequency.tsv.gz was last built at ce1b96e and the lemma table has moved five times "
-        "since. Rebuild it on the machine that has the FineWeb-2 shard (uv run --with pyarrow python "
-        "scripts/build_cebuano_frequency.py), then delete this marker: strict, so the rebuild turns it red "
-        "until you do. The Wolff lexicon build reads these counts too, so rebuild it after "
-        "(scripts/build_cebuano_wolff_lexicon.py)."
-    ),
-)
 def test_the_committed_frequency_table_was_built_against_the_committed_lemma_table():
     assert recorded_lemma_defaults(DEFAULT_OUT) == lemma_defaults_digest(LEMMA_TABLE), (
         "cebuano_frequency.tsv.gz counts tokens under the lemma table's default lemmas, and that mapping has "
         "changed since it was built. Rebuild it: uv run --with pyarrow python scripts/build_cebuano_frequency.py"
+    )
+
+
+def test_the_committed_surface_table_was_built_against_the_committed_lemma_table():
+    """Built in the same pass as the lemma counts, and the lemma table decides which
+    tokens are English-looking, so it goes stale with the same table."""
+    assert recorded_lemma_defaults(SURFACE_OUT) == lemma_defaults_digest(LEMMA_TABLE), (
+        "cebuano_surface_frequency.tsv.gz is stale. Rebuild: uv run --with pyarrow python "
+        "scripts/build_cebuano_frequency.py"
     )

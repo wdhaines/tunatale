@@ -253,9 +253,13 @@ def _is_cebuano(clause: str) -> bool:
 
 @cache
 def _cebuano_counts() -> dict[str, int]:
-    """Word -> its count in the Cebuano news corpus (the frequency list the cards use)."""
+    """Word -> how often the Cebuano news corpus writes it, as a whole word.
+
+    The surface table, not the lemma-keyed list the cards rank by: keyed by lemma, a
+    count moves whenever the lemma table roots a form (magalong defaulting to long
+    lifted 'long' over the English bar below)."""
     out: dict[str, int] = {}
-    with gzip.open(Path(__file__).parent / "data" / "cebuano_frequency.tsv.gz", "rt") as fh:
+    with gzip.open(Path(__file__).parent / "data" / "cebuano_surface_frequency.tsv.gz", "rt") as fh:
         for line in fh:
             word, _, count = line.rstrip("\n").partition("\t")
             out[word] = int(count.split("\t")[0]) if count.split("\t")[0].isdigit() else 0
