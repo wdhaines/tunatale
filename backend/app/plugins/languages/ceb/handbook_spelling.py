@@ -69,7 +69,29 @@ VOWEL_OVERRIDES = {
     "dyud": "gyud",
     "mistir": "mistir",
     "uy": "uy",
+    # Words the corpus counts as another word (tunatale-h0q3.38). The whole-word
+    # table is lowercased: 'belen' is the name Belen (59) and 'boboi' a nickname,
+    # while bilin 'left behind' (lemma bilin 704 vs belen 67; the Wolff book
+    # writes bílin) and bùbù 'pour' are native.
+    "bilin": "bilin",
+    "hibilin": "hibilin",
+    "nanghibilin": "nanghibilin",
+    "bubui": "buboi",
+    "biling": "biling",  # bíli 'price' + -ng, not Belén + g
+    # síging is sígi + -ng, but the analyser reads the fish net sígin; writers
+    # write sige (lemma 1324 vs sigi 42) and magsige.
+    "siging": "sigeng",
+    # túru 'bull' is Spanish toro; turo 'point, teach' shares its letters (6 vs 6).
+    "turu": "toro",
+    "muturu": "motoro",
 }
+
+# When whole-word counts settle a spelling (tunatale-h0q3.38): the winner is
+# written at least WORD_FLOOR times and WORD_RATIO times as often as the other.
+# A word with no Wolff or loan root needs more (UNKNOWN_*): at 5, English in
+# Wolff's examples turned into lookalikes (did -> ded, 9 vs 0).
+WORD_FLOOR, WORD_RATIO = 5, 2
+UNKNOWN_FLOOR, UNKNOWN_RATIO = 10, 2
 
 _PREFIXES = sorted(
     [
@@ -137,11 +159,27 @@ class Loan(NamedTuple):
 
 @dataclass(frozen=True)
 class SpellingLexicon:
-    freq: Mapping[str, int]  # news-corpus counts by spelling
+    freq: Mapping[str, int]  # news-corpus counts by lemma: how much a ROOT is used, its affixed forms included
     entries: Mapping[str, str]  # Wolff headword, accent-free -> entry text, accent-free lowercase
     loans: Mapping[str, Loan]  # sound key -> loan
     # Wolff spelling (lowercase NFC) -> the course's spelling, where the two books differ
     course: Mapping[str, str] = field(default_factory=dict)
+    # news-corpus counts by the word as written, for comparing two spellings of one
+    # word (magsige vs magsigi). Lemma counts cannot: a form the lemma table knows is
+    # folded into its root, so only the spelling it does not know (often the
+    # misspelling) is left as a word. None: use freq.
+    words: Mapping[str, int] | None = None
+
+    def word_count(self, word: str) -> int:
+        return (self.freq if self.words is None else self.words).get(word, 0)
+
+
+def _clear(a: int, b: int, floor: int, ratio: int) -> int:
+    """1 if count *a* clearly beats *b*, -1 if *b* clearly beats *a*, 0 if neither does."""
+    hi, lo = max(a, b), min(a, b)
+    if hi >= floor and hi >= ratio * lo:
+        return 1 if a > b else -1
+    return 0
 
 
 class HandbookSpelling(NamedTuple):
@@ -199,6 +237,7 @@ def build_lexicon(
     en_sounds: Iterable[tuple[str, str, int]],
     english_common: Collection[str],
     course_spellings: Mapping[str, str] | None = None,
+    words: Mapping[str, int] | None = None,
 ) -> SpellingLexicon:
     """Assemble the lexicon. ``es_words`` is a frequency-ordered Spanish word list;
     ``en_sounds`` holds (English word, Cebuano sound spelling, frequency rank);
@@ -217,7 +256,7 @@ def build_lexicon(
     for word, template, rank in en_sounds:
         if rank < EN_CAP and len(template) >= 3 and "-" not in template:
             loans.setdefault(sound_key(template), Loan(template, "en", word))
-    return SpellingLexicon(freq=freq, entries=entries, loans=loans, course=dict(course_spellings or {}))
+    return SpellingLexicon(freq=freq, entries=entries, loans=loans, course=dict(course_spellings or {}), words=words)
 
 
 @cache
@@ -372,23 +411,27 @@ def choose_vowels(base: str, lex: SpellingLexicon) -> tuple[str, str]:
         alts = {
             "".join(p) for p in itertools.product(*[(c, {"i": "e", "u": "o"}[c]) if c in "iu" else (c,) for c in base])
         }
-        best = max(sorted(alts), key=lambda c: lex.freq.get(c, 0))
-        n = lex.freq.get(best, 0)
-        if n >= 20 and n > 3 * lex.freq.get(rule, 0) and len(alts) <= 256:
-            return best, "unknown-corpus"
+        if len(alts) <= 256:
+            best = max(sorted(alts), key=lex.word_count)
+            if _clear(lex.word_count(best), lex.word_count(rule), UNKNOWN_FLOOR, UNKNOWN_RATIO) == 1:
+                return best, "unknown-corpus"
         return rule, "unknown"
     pre, r, dv, cl, kind, doubled, restored = a
     pre2, dv2 = _affix_o(pre, dv)
     if kind == "loan" and not doubled:
         loan = lex.loans[sound_key(r)]
         sp, nat = _apply_template(r, loan.template), _last_syllable_o(r)
-        f_sp, f_nat = lex.freq.get(sp, 0), lex.freq.get(nat, 0)
-        # Judge the whole word where the corpus knows it: ibilin 71 vs ibelen 0, though
-        # the bare root loses to the name Belen.
+        # The word as written where the corpus clearly prefers one spelling (magsige 307
+        # vs magsigi 48); else the bare root as a word (siguro 935 vs seguro 230); else
+        # the root by lemma, its affixed forms included.
         full_sp, full_nat = pre2 + sp + dv2 + cl, pre2 + nat + dv2 + cl
-        if lex.freq.get(full_sp, 0) or lex.freq.get(full_nat, 0):
-            f_sp, f_nat = lex.freq.get(full_sp, 0), lex.freq.get(full_nat, 0)
-        if f_sp >= 3 and f_sp * 3 >= f_nat:
+        verdict = _clear(lex.word_count(full_sp), lex.word_count(full_nat), WORD_FLOOR, WORD_RATIO)
+        if not verdict and sp != nat:
+            verdict = _clear(lex.word_count(sp), lex.word_count(nat), WORD_FLOOR, WORD_RATIO)
+        f_sp, f_nat = lex.freq.get(sp, 0), lex.freq.get(nat, 0)
+        if verdict:
+            r2, how = (sp, f"loan-{loan.source}") if verdict == 1 else (nat, f"loan-{loan.source}-convention")
+        elif f_sp >= 3 and f_sp * 3 >= f_nat:
             r2, how = sp, f"loan-{loan.source}"  # writers use the source's vowels
         elif f_nat >= 5:
             r2, how = nat, f"loan-{loan.source}-convention"  # writers settled on i/u (pulis)

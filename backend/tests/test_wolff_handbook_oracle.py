@@ -11,8 +11,11 @@ import collections
 
 from app.plugins.languages.ceb.handbook_spelling import build_lexicon
 from scripts.wolff_handbook_oracle import (
+    FREQUENCY,
+    WORD_FREQUENCY,
     Dictionary,
     compare,
+    corpus_counts,
     course_tokens,
     entry_paragraphs,
     headwords,
@@ -129,3 +132,12 @@ def test_summary_counts_single_and_multiple_spellings():
     assert summarize(rows) == (
         "single spelling: 2/3 agree (66.7%); several spellings: course among them 1/2; course leaves it unmarked: 1"
     )
+
+
+def test_the_converter_reads_whole_words_and_lemmas_from_their_own_tables():
+    """Whole-word checks need the word as written: the lemma table folds magsige (307)
+    into sige and leaves the misspelling magsigi (48) the only whole word (h0q3.38)."""
+    words, lemmas = corpus_counts(WORD_FREQUENCY), corpus_counts(FREQUENCY)
+    assert words["magsige"] > words["magsigi"] > 0
+    assert "magsige" not in lemmas
+    assert words["siguro"] > 3 * words["seguro"]
