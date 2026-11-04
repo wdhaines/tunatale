@@ -230,6 +230,15 @@ backend_pid=$!
 
   log_step frontend "Frontend tests (with coverage)" bun run test:coverage
 
+  # The e2e backend's GET /api/health probes these by writing a real file and
+  # answers 503 when one is missing. Both are gitignored with no tracked files,
+  # so they exist on a developer's disk and in no fresh checkout: a fresh clone
+  # (a cloud session, a new worktree) failed both smoke health checks and
+  # cors-lockdown here. Same step, same reason, as ci.yml's "Provision the
+  # gitignored content directories" — provisioned by the runner, never by the
+  # app at startup (see that step's comment for why).
+  mkdir -p "$ROOT/backend/media" "$ROOT/backend/output/audio"
+
   # Playwright clears test-results/ at the START of every run, so re-running to
   # see whether a red is a flake is also what destroys the trace that would have
   # explained it (2026-09-09: a card-image failure was gone before it was read).
