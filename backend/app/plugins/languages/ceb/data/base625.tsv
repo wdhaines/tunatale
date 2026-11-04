@@ -16,72 +16,74 @@ pronoun	he; she	siya	accepted
 people	victim	biktima	dictionary
 pronoun	they	sila	accepted
 number	two	duha	dictionary
-pronoun	I	ako	accepted
-number	first	una	dictionary
 verb	see	kita	dictionary
-people	person; human	tawo	dictionary
+pronoun	I	ako	accepted
+nature	sun; day	adlaw	dictionary
+number	first	una	dictionary
+time	year	tuig	dictionary
 direction	inside	sulod	dictionary
+people	person; human	tawo	dictionary
 beverage	juice	duga	dictionary
 adjective	good	maayo	dictionary
 location	city	siyudad	dictionary
-time	year	tuig	dictionary
 direction	outside	gawas	dictionary
 adjective	big	dako	dictionary
 people	president	presidente	dictionary
-nature	sun; day	adlaw	dictionary
 location	town	lungsod	dictionary
-adjective	new	bag-o	dictionary
-location	place; location	lugar	usage
 verb	carry; bring	dala	usage
-people	family	pamilya	usage
+location	place; location	lugar	usage
 verb	kill; die; dead	patay	dictionary
+adjective	new	bag-o	dictionary
+verb	follow	sunod	dictionary
+people	family	pamilya	usage
 location	house	balay	dictionary
 number	three	tulo	dictionary
 job	job; work	trabaho	dictionary
-verb	follow	sunod	dictionary
-job	police	pulis	accepted
-food	bread	pan	dictionary
 direction	below; down; low	ubos	dictionary
+job	police	pulis	accepted
 time	morning	buntag	dictionary
+food	bread	pan	dictionary
 people	child	bata	dictionary
 time	evening; night	gabii	dictionary
 transportation	vehicle	sakyanan	variant
 body	body	lawas	dictionary
 time	afternoon	hapon	dictionary
+verb	fight	away	dictionary
 people	woman	babaye	dictionary
 time	week	semana	dictionary
-people	man	lalaki	dictionary
-verb	throw	labay	dictionary
-direction	right (side)	tuo	dictionary
 verb	call	tawag	dictionary
-body	sick; pain; disease	sakit	dictionary
+direction	right (side)	tuo	dictionary
 verb	say; speak	sulti	dictionary
-number	four	upat	dictionary
-verb	fight	away	dictionary
-month	January	Enero	dictionary
+people	man	lalaki	dictionary
+society	gun	pusil	dictionary
+verb	throw	labay	dictionary
+body	sick; pain; disease	sakit	dictionary
 verb	go	adto	reviewed
 direction	tall; long; high; up	taas	dictionary
 verb	burn	sunog	reviewed
-location	country	nasod	dictionary
-verb	watch; look	tan-aw	dictionary
-beverage	water	tubig	dictionary
-people	wife	asawa	dictionary
-location	street; road	dalan	dictionary
-verb	run	dagan	dictionary
-day	Monday	Lunes	dictionary
+number	four	upat	dictionary
 verb	buy	palit	dictionary
+month	January	Enero	dictionary
+verb	watch; look	tan-aw	dictionary
+people	wife	asawa	dictionary
+location	country	nasod	dictionary
+verb	run	dagan	dictionary
+beverage	water	tubig	dictionary
+location	street; road	dalan	dictionary
+verb	pass by	agi	usage
+day	Monday	Lunes	dictionary
 nature	moon; month	bulan	dictionary
 time	hour; time	oras	dictionary
 people	father	amahan	dictionary
 number	five	lima	dictionary
-month	May	Mayo	dictionary
 society	strength; energy	kusog	dictionary
+month	May	Mayo	dictionary
 day	Saturday	Sabado	dictionary
 misc	image; picture	hulagway	reviewed
-verb	pass by	agi	usage
 people	husband	bana	dictionary
 month	June	Hunyo	dictionary
 people	mother	inahan	dictionary
+verb	build	tukod	dictionary
 society	death	kamatayon	dictionary
 transportation	bus	bus	accepted
 verb	marry	minyo	dictionary
@@ -89,239 +91,242 @@ month	March	Marso	dictionary
 people	parent	ginikanan	dictionary
 day	Friday	Biyernes	dictionary
 month	December	Disyembre	dictionary
-number	second (ordinal)	ikaduha	dictionary
 misc	wound; injury	samad	dictionary
+number	second (ordinal)	ikaduha	dictionary
 month	February	Pebrero	dictionary
 location	court	korte	accepted
 month	July	Hulyo	dictionary
 day	Thursday	Huwebes	dictionary
-verb	build	tukod	dictionary
-month	October	Oktubre	dictionary
-number	six	unom	dictionary
 adjective	tight	hugot	dictionary
-day	Tuesday	Martes	dictionary
+month	October	Oktubre	dictionary
+verb	pay; payment	bayad	dictionary
 body	head	ulo	dictionary
 verb	sell	baligya	dictionary
-food	food	pagkaon	dictionary
-people	neighbor	silingan	reviewed
-society	newspaper	mantalaan	dictionary
-verb	pay; payment	bayad	dictionary
-adjective	alive	buhi	dictionary
-location	church	simbahan	dictionary
-verb	search; look for	pangita	accepted
 adjective	small	gamay	dictionary
+number	six	unom	dictionary
+day	Tuesday	Martes	dictionary
+people	neighbor	silingan	reviewed
+food	food	pagkaon	dictionary
+society	newspaper	mantalaan	dictionary
+verb	win	daog	dictionary
+adjective	alive	buhi	dictionary
+verb	search; look for	pangita	accepted
+location	church	simbahan	dictionary
+verb	hear	dungog	dictionary
 people	friend	higala	dictionary
-job	student	estudyante	dictionary
-people	sibling	igsuon	dictionary
 society	money	kwarta	variant
+people	sibling	igsuon	dictionary
+verb	catch	dakop	dictionary
+job	student	estudyante	dictionary
 adjective	young	batan-on	dictionary
 society	murder	pagpatay	reviewed
 month	April	Abril	dictionary
 society	price	presyo	dictionary
-location	hospital	ospital	dictionary
-society	drug	droga	accepted
 location	ground; earth; soil	yuta	dictionary
+adjective	poor	kabus	accepted
+location	hospital	ospital	dictionary
+verb	drink	inom	dictionary
+society	drug	droga	accepted
+adjective	old (thing)	daan	dictionary
 society	relationship	relasyon	dictionary
 job	patient	pasyente	dictionary
-adjective	old (thing)	daan	dictionary
+verb	open	abli	dictionary
+body	finger	tudlo	dictionary
+verb	stop	hunong	dictionary
 measure	meter	metro	accepted
-verb	hear	dungog	dictionary
+verb	count	ihap	dictionary
 society	peace	kalinaw	dictionary
 pronoun	we (not you)	kami	accepted
-body	finger	tudlo	dictionary
 job	teacher	magtutudlo	dictionary
 direction	front	atubangan	usage
-verb	stop	hunong	dictionary
 body	hand	kamot	dictionary
-number	seven	pito	dictionary
 measure	half	tunga	dictionary
-verb	count	ihap	dictionary
-pronoun	you	ikaw	reviewed
-adjective	beautiful	nindot	variant
-verb	drive	maneho	dictionary
+number	seven	pito	dictionary
+verb	study; learn	tuon	dictionary
 adjective	fast	paspas	dictionary
-verb	catch	dakop	dictionary
-location	hotel	hotel	accepted
+pronoun	you	ikaw	reviewed
+verb	drive	maneho	dictionary
+adjective	beautiful	nindot	variant
+society	medicine	tambal	dictionary
 verb	wear	sul-ob	dictionary
+location	hotel	hotel	accepted
 month	August	Agosto	dictionary
-verb	drink	inom	dictionary
 job	soldier	sundalo	dictionary
 number	third	ikatulo	dictionary
 society	election	eleksyon	dictionary
+verb	eat	kaon	dictionary
 number	eight	walo	dictionary
-job	doctor	doktor	dictionary
+verb	walk	lakaw	dictionary
 location	office	opisina	dictionary
-verb	open	abli	dictionary
+job	doctor	doktor	dictionary
 adjective	expensive	mahal	dictionary
 number	million	milyon	accepted
-verb	walk	lakaw	dictionary
-society	medicine	tambal	dictionary
-verb	win	daog	dictionary
 month	September	Septiyembre	dictionary
-nature	rain	ulan	dictionary
 animal	pig	baboy	dictionary
+nature	rain	ulan	dictionary
+verb	think	hunahuna	reviewed
+adjective	wet	basa	dictionary
+body	eye	mata	dictionary
 verb	love	gugma	dictionary
 food	rice (uncooked)	bugas	dictionary
-verb	eat	kaon	dictionary
 job	lawyer	abogado	dictionary
 location	store; shop	tindahan	dictionary
 month	November	Nobyembre	dictionary
 location	camp	kampo	accepted
-body	eye	mata	dictionary
+verb	sit	lingkod	dictionary
 location	market	merkado	dictionary
 nature	sea	dagat	dictionary
-adjective	wet	basa	dictionary
 home	letter; write	sulat	dictionary
 nature	tree; wood	kahoy	dictionary
 verb	clean	limpyo	dictionary
-society	gun	pusil	dictionary
-verb	study; learn	tuon	dictionary
-body	face	nawong	dictionary
-verb	sit	lingkod	dictionary
-location	school	eskwelahan	variant
-transportation	ship	barko	dictionary
-verb	explode	buto	dictionary
-adjective	poor	kabus	accepted
-direction	side	kilid	dictionary
-number	nine	siyam	dictionary
 body	blood	dugo	dictionary
+location	school	eskwelahan	variant
+body	face	nawong	dictionary
+transportation	ship	barko	dictionary
 material	stone	bato	dictionary
+verb	explode	buto	dictionary
+adjective	hot	init	dictionary
+verb	sign (one's name)	pirma	dictionary
+direction	side	kilid	dictionary
+nature	lake	linaw	dictionary
+number	nine	siyam	dictionary
 day	Sunday	Domingo	variant
-adjective	happy	malipayon	dictionary
 electronics	radio	radyo	dictionary
 nature	wind; air	hangin	dictionary
-direction	back (behind)	likod	dictionary
-pronoun	you (plural)	kamo	reviewed
-verb	sign (one's name)	pirma	dictionary
-home	paper	papel	dictionary
-animal	fish	isda	dictionary
-nature	fire	kalayo	dictionary
-animal	dog	iro	dictionary
-nature	ocean	kadagatan	dictionary
-verb	sleep	tulog	reviewed
 adjective	slow	hinay	dictionary
+direction	back (behind)	likod	dictionary
+verb	cut	putol	dictionary
+pronoun	you (plural)	kamo	reviewed
+home	paper	papel	dictionary
+animal	dog	iro	dictionary
+nature	fire	kalayo	dictionary
+animal	fish	isda	dictionary
+nature	ocean	kadagatan	dictionary
+body	foot	tiil	dictionary
 verb	grow	tubo	dictionary
 number	ten	napulo	dictionary
+verb	sleep	tulog	reviewed
+food	chicken	manok	dictionary
+society	contract	kontrata	accepted
 body	heart	kasingkasing	dictionary
 verb	listen	paminaw	dictionary
-adjective	hot	init	dictionary
-society	contract	kontrata	accepted
+society	wedding	kasal	dictionary
+verb	lose	pildi	dictionary
 number	number	numero	accepted
 nature	plant	tanom	dictionary
 body	neck	liog	dictionary
-verb	lose	pildi	dictionary
-society	wedding	kasal	dictionary
-verb	think	hunahuna	reviewed
-body	foot	tiil	dictionary
-society	game; play	dula	dictionary
 verb	fall	hulog	dictionary
+society	game; play	dula	dictionary
+art	song; sing	kanta	dictionary
 color	color	kolor	dictionary
 measure	kilogram	kilo	accepted
-verb	cut	putol	dictionary
-food	chicken	manok	dictionary
-art	song; sing	kanta	dictionary
+body	voice; sound	tingog	accepted
 verb	stand	barog	dictionary
 color	black	itom	dictionary
 nature	nature	kinaiyahan	accepted
 beverage	drink; beverage	ilimnon	dictionary
 direction	south	habagatan	dictionary
+adjective	heavy	bug-at	dictionary
+direction	straight ahead	deretso	dictionary
 measure	date	petsa	dictionary
 nature	mountain	bukid	dictionary
 verb	cry	hilak	dictionary
 location	bar	bar	accepted
 society	prison	prisohan	dictionary
 nature	heat	kainit	accepted
-adjective	heavy	bug-at	dictionary
+adjective	dirty	hugaw	dictionary
 color	white	puti	dictionary
 art	band	banda	accepted
 society	God	Diyos	dictionary
-adjective	dirty	hugaw	dictionary
+food	oil	lana	dictionary
 verb	pray	ampo	dictionary
 food	knife	kutsilyo	dictionary
 body	mouth	baba	dictionary
-food	oil	lana	dictionary
 direction	top; above	ibabaw	dictionary
-food	meat	karne	accepted
 adjective	cheap	barato	dictionary
 job	priest	pari	dictionary
+food	meat	karne	accepted
 location	bank	bangko	dictionary
-body	voice; sound	tingog	accepted
+body	brain	utok	dictionary
+verb	close	sira	dictionary
 home	dream	damgo	dictionary
 nature	world	kalibotan	dictionary
 people	grandmother	lola	dictionary
 nature	beach	baybayon	reviewed
-body	brain	utok	dictionary
-nature	river	suba	dictionary
 direction	direction	direksyon	accepted
+nature	river	suba	dictionary
+society	war	gubat	dictionary
 transportation	truck	trak	dictionary
-adjective	deep	lawom	dictionary
 verb	hit; beat	bunal	dictionary
+adjective	deep	lawom	dictionary
 location	bridge	taytayan	dictionary
 home	book	libro	dictionary
+verb	cook	luto	dictionary
 direction	north	amihanan	dictionary
-society	war	gubat	dictionary
-direction	straight ahead	deretso	dictionary
 number	thousand	libo	dictionary
 society	technology	teknolohiya	dictionary
-verb	cook	luto	dictionary
 home	door	pultahan	dictionary
 body	skin	panit	dictionary
 transportation	tire	ligid	dictionary
-verb	hang	bitay	dictionary
+adjective	quiet	hilom	dictionary
+verb	mix	sagol	dictionary
 electronics	television	telebisyon	dictionary
+verb	hang	bitay	dictionary
 location	room	kwarto	accepted
 clothing	pocket	bulsa	dictionary
 body	arm	bukton	dictionary
-verb	close	sira	dictionary
-body	shoulder	abaga	dictionary
 job	actor	aktor	accepted
-people	grandfather	lolo	dictionary
+body	shoulder	abaga	dictionary
 adjective	wide	lapad	dictionary
+people	grandfather	lolo	dictionary
+animal	animal	hayop	dictionary
+adjective	thick	baga	dictionary
 measure	weight	gibug-aton	accepted
 society	race (contest)	lumba	dictionary
-animal	animal	hayop	dictionary
 adjective	healthy	himsog	accepted
 people	king	hari	dictionary
-adjective	thick	baga	dictionary
-verb	mix	sagol	dictionary
-adjective	quiet	hilom	dictionary
-verb	jump	ambak	dictionary
-adjective	kind; nice	buotan	dictionary
-animal	cow	baka	dictionary
 adjective	cold	bugnaw	dictionary
-transportation	gasoline	gasolina	dictionary
+verb	taste	tilaw	dictionary
+adjective	kind; nice	buotan	dictionary
+verb	jump	ambak	dictionary
+animal	cow	baka	dictionary
 verb	break	buak	dictionary
+transportation	gasoline	gasolina	dictionary
+color	red	pula	dictionary
+verb	pull	bira	dictionary
 measure	corner	eskina	dictionary
+verb	laugh	katawa	dictionary
 transportation	car	awto	dictionary
+verb	dance	sayaw	dictionary
 nature	leaf	dahon	dictionary
 home	telephone	telepono	dictionary
 body	hair	buhok	dictionary
 location	university	unibersidad	dictionary
 nature	flower	bulak	dictionary
 material	gold	bulawan	dictionary
-transportation	engine	makina	dictionary
-verb	fly	lupad	dictionary
-society	religion	relihiyon	accepted
-home	table	lamesa	dictionary
-society	sky; heaven	langit	dictionary
-verb	pull	bira	dictionary
-color	red	pula	dictionary
-verb	taste	tilaw	dictionary
-adjective	short	mubo	reviewed
-verb	laugh	katawa	dictionary
-adjective	bright	hayag	dictionary
-clothing	clothes; shirt	sinina	dictionary
-home	roof	atop	dictionary
-adjective	hard	gahi	dictionary
-people	baby	masuso	reviewed
 adjective	weak	luya	dictionary
-body	tooth	ngipon	dictionary
+transportation	engine	makina	dictionary
+adjective	happy	malipayon	dictionary
+verb	fly	lupad	dictionary
 adjective	noisy; loud	saba	accepted
-time	minute	minuto	dictionary
+society	sky; heaven	langit	dictionary
+home	table	lamesa	dictionary
+society	religion	relihiyon	accepted
 adjective	loose	luag	dictionary
+clothing	clothes; shirt	sinina	dictionary
+adjective	bright	hayag	dictionary
+home	roof	atop	dictionary
+adjective	short	mubo	reviewed
+people	baby	masuso	reviewed
+adjective	hard	gahi	dictionary
+body	tooth	ngipon	dictionary
+verb	smile	pahiyom	dictionary
+transportation	bicycle	bisikleta	dictionary
+time	minute	minuto	dictionary
 verb	lie down	higda	dictionary
 body	tear (drop)	luha	dictionary
 adjective	dark	ngitngit	dictionary
+verb	turn	liko	dictionary
 food	banana	saging	dictionary
 clothing	shoes	sapatos	dictionary
 beverage	milk	gatas	dictionary
@@ -329,128 +334,124 @@ food	bottle	botelya	dictionary
 home	window	bintana	dictionary
 number	hundred	gatos	dictionary
 home	gift	regalo	dictionary
-verb	smile	pahiyom	dictionary
-home	kitchen	kusina	variant
-verb	turn	liko	dictionary
 adjective	flat	patag	accepted
-verb	dance	sayaw	dictionary
+home	kitchen	kusina	variant
 food	egg	itlog	dictionary
 verb	wash	hugas	dictionary
 body	knee	tuhod	dictionary
 misc	light	kahayag	dictionary
+verb	kiss	halok	dictionary
 animal	cat	iring	dictionary
+material	mud; clay	lapok	dictionary
 food	corn	mais	dictionary
 beverage	coffee	kape	dictionary
 body	bone	bukog	dictionary
+verb	touch	hikap	dictionary
 animal	bird	langgam	dictionary
+adjective	old (person)	tigulang	dictionary
 verb	feed	pakaon	accepted
 food	salt	asin	dictionary
 location	airport	tugpahanan	dictionary
 electronics	cell phone	selpon	dictionary
-adjective	old (person)	tigulang	dictionary
 food	cooked rice	kan-on	dictionary
+society	poison	hilo	dictionary
+food	seed	liso	dictionary
 adjective	strong	kusgan	dictionary
 season	dry season; summer	ting-init	dictionary
-verb	touch	hikap	dictionary
 nature	wave	balod	dictionary
-material	mud; clay	lapok	dictionary
+food	plate	plato	usage
 adjective	rich	dato	reviewed
 society	exercise	ehersisyo	dictionary
 adjective	bad	daotan	dictionary
+verb	swim	langoy	dictionary
 body	nose	ilong	dictionary
 measure	pound	libra	accepted
 nature	forest	lasang	dictionary
-verb	kiss	halok	dictionary
 adjective	dry	uga	dictionary
-verb	swim	langoy	dictionary
 location	farm; field	uma	dictionary
 food	dinner	panihapon	dictionary
 body	ear	dunggan	variant
 society	ball	bola	dictionary
-nature	hill	bungtod	dictionary
+nature	grass	sagbot	dictionary
 home	soap	sabon	dictionary
+nature	hill	bungtod	dictionary
 measure	temperature	temperatura	accepted
+nature	island	pulo	dictionary
 food	lunch	paniudto	dictionary
 color	yellow	dalag	dictionary
-nature	island	pulo	dictionary
 verb	lift	alsa	dictionary
+material	plastic	plastik	accepted
 home	tool	himan	dictionary
 art	music	musika	accepted
 beverage	wine	bino	accepted
-nature	grass	sagbot	dictionary
 misc	yes	oo	dictionary
-material	plastic	plastik	accepted
-home	bathroom	banyo	dictionary
 animal	wing	pako	dictionary
+material	dust	abog	dictionary
+home	bathroom	banyo	dictionary
+animal	horse	kabayo	dictionary
 home	ceiling	kisame	variant
+body	tongue	dila	dictionary
 misc	hole	lungag	dictionary
 home	key	yawe	variant
+verb	dig	kalot	dictionary
 art	musical instrument	instrumento	accepted
 nature	root	gamot	dictionary
 direction	west	kasadpan	dictionary
-body	tongue	dila	dictionary
+adjective	blind	buta	accepted
 misc	map	mapa	dictionary
 food	breakfast	pamahaw	dictionary
 body	lip	ngabil	dictionary
-society	poison	hilo	dictionary
-food	seed	liso	dictionary
 direction	east	sidlakan	dictionary
 adjective	light (weight)	gaan	dictionary
-transportation	bicycle	bisikleta	dictionary
-adjective	blind	buta	accepted
 transportation	ticket	tiket	dictionary
 home	box	kahon	dictionary
 adjective	shallow	mabaw	dictionary
 home	bed	katre	dictionary
-animal	horse	kabayo	dictionary
-home	photograph	litrato	dictionary
-material	dust	abog	dictionary
-home	floor	salog	dictionary
-measure	square	kwadrado	accepted
-home	yard	nataran	accepted
-day	Wednesday	Miyerkoles	dictionary
 people	crowd	panon	dictionary
+home	photograph	litrato	dictionary
+measure	square	kwadrado	accepted
+home	floor	salog	dictionary
+day	Wednesday	Miyerkoles	dictionary
+home	yard	nataran	accepted
 time	second	segundo	dictionary
+home	page	panid	dictionary
 people	queen	reyna	accepted
-nature	lake	linaw	dictionary
+material	drinking glass	baso	accepted
 location	park	parke	accepted
 society	dollar	dolyar	accepted
-material	drinking glass	baso	accepted
 food	sugar	asukar	dictionary
 home	wall	bungbong	dictionary
+verb	smell	simhot	dictionary
 adjective	soft	humok	dictionary
-verb	dig	kalot	dictionary
+clothing	hat	kalo	dictionary
 adjective	thin	nipis	dictionary
 animal	mouse	ilaga	dictionary
 art	movie	sine	dictionary
-material	metal	metal	accepted
-verb	smell	simhot	dictionary
-home	page	panid	dictionary
-verb	shake	uyog	dictionary
 body	sweat	singot	dictionary
+material	metal	metal	accepted
+verb	shake	uyog	dictionary
 home	chair	lingkoranan	dictionary
 adjective	deaf	bungol	dictionary
 location	restaurant	restawran	accepted
-food	plate	plato	usage
+art	art	arte	accepted
 nature	sand	balas	dictionary
 job	author; writer	magsusulat	dictionary
 measure	inch	pulgada	dictionary
 food	spoon	kutsara	dictionary
-clothing	hat	kalo	dictionary
-food	cup	tasa	dictionary
 people	player	magdudula	dictionary
+food	cup	tasa	dictionary
 home	garden	tanaman	dictionary
 transportation	train	tren	dictionary
 location	outer space	kawanangan	dictionary
 food	soup	sabaw	dictionary
 measure	circle	lingin	dictionary
-art	art	arte	accepted
 verb	melt	tunaw	dictionary
 adjective	sad	masulub-on	accepted
 transportation	plane	ayroplano	reviewed
 clothing	pants	karsones	dictionary
 home	ring	singsing	dictionary
 misc	piece	piraso	accepted
+verb	push	tulod	dictionary
 color	green	berde	dictionary
 society	marriage	kaminyoon	dictionary
 job	secretary	sekretarya	accepted
@@ -462,12 +463,14 @@ electronics	lamp	lampara	accepted
 adjective	ugly	pangit	accepted
 home	lock	kandado	accepted
 measure	edge	ngilit	accepted
+clothing	stain	mansa	dictionary
 location	building	bilding	accepted
 society	science	siyensya	accepted
 home	pencil	lapis	dictionary
 location	theater	teatro	accepted
 clothing	skirt	sayal	variant
 food	fork	tinidor	dictionary
+body	beard	bungot	reviewed
 home	paint	pintura	accepted
 society	hell	impyerno	dictionary
 adjective	narrow	pig-ot	dictionary
@@ -477,11 +480,8 @@ food	apple	mansanas	dictionary
 beverage	tea	tsa	dictionary
 home	pen	bolpen	dictionary
 electronics	clock	orasan	accepted
-verb	push	tulod	dictionary
 transportation	boat	baroto	accepted
-clothing	stain	mansa	dictionary
 job	manager	manedyer	reviewed
-body	beard	bungot	reviewed
 electronics	camera	kamera	accepted
 season	cold season; winter	tingtugnaw	dictionary
 adjective	famous	bantogan	reviewed

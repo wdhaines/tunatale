@@ -432,3 +432,15 @@ def test_preposed_starts_a_sub_entry():
 def test_a_phrase_sense_ends_where_its_english_begins(paragraph, phrase, gloss):
     (sense,) = [s for s in parse_entry(paragraph).root.senses if s.phrase is not None]
     assert (sense.phrase, sense.gloss) == (phrase, gloss)
+
+
+def test_the_english_test_counts_whole_words_not_lemmas():
+    """_english_word asks how often the corpus WRITES a word. Keyed by lemma, the count
+    moves whenever the lemma table roots a form: magalong defaulting to long lifted
+    'long' over the bar, and 'long-faced' stopped reading as English. magsige is the
+    commoner spelling (307 vs 48) though the lemma table roots it at sige."""
+    from app.plugins.languages.ceb.wolff_dictionary import _cebuano_counts
+
+    counts = _cebuano_counts()
+    assert counts.get("magsige", 0) > counts.get("magsigi", 0) > 0
+    assert counts.get("long", 0) < 20
