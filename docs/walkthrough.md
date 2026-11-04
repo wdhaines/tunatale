@@ -9,7 +9,7 @@ TunaTale generates Pimsleur-style audio lessons whose stories are written around
 
 The tour is ordered by subsystem, not by history. §1 follows one lesson end to end, from a planned day to a graded card in Anki, and names the chapter that owns each step. §2–§16 then take the subsystems one at a time. Appendix A gives the short history and maps the old `PART N` numbering (still cited by older docs) to the current chapters. This edition was restructured on 2026-10-01 and brought up to date on 2026-11-04, adding the Cebuano dictionary and affix work (§3.9, §6.12, §11.10), invites (§2.7) and the Gemini take checks (§7.3). The previous, chronological edition is archived at [`docs/archive/walkthrough-2026-03-to-07.md`](archive/walkthrough-2026-03-to-07.md).
 
-**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. Since 2026-11-04 it does so on every commit: `./test.sh` and CI's `backend` job both run it as the "Walkthrough check" (§14.3), after 25 blocks had drifted unnoticed in a month. To update outputs after a code change, run `uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md`, then read the prose around every block that changed, which the tool cannot update. A block must print the same thing on any machine: print a setting's class default (`Settings.model_fields[k].default`), not the live value a local `.env` can change, filter out build debris such as `__pycache__`, sort anything a directory walk returns (`LC_ALL=C sort`: `grep -r` order is the filesystem's), and truncate text by character in Python rather than with `cut -c`, which counts bytes in GNU coreutils and characters in the Rust coreutils CI's Ubuntu runner ships, so a line with an em dash cut short differs between the two. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
+**This is a [Showboat](https://github.com/simonw/showboat) document.** Every `bash` block was executed from the repo root, and the `output` block under it is what it printed. `uvx showboat verify docs/walkthrough.md` re-runs them all and diffs the results, so drift between the prose and the code shows up as a failing block rather than going unnoticed. Since 2026-11-04 it does so on every commit: `./test.sh` and CI's `backend` job both run it as the "Walkthrough check" (§14.3), after 25 blocks had drifted unnoticed in a month. To update outputs after a code change, run `uvx showboat@0.6.1 verify docs/walkthrough.md --output /tmp/w.md && mv /tmp/w.md docs/walkthrough.md`, then read the prose around every block that changed, which the tool cannot update. A block must print the same thing on any machine: print a setting's class default (`Settings.model_fields[k].default`), not the live value a local `.env` can change, filter out build debris such as `__pycache__`, sort anything a directory walk returns (`LC_ALL=C sort`: `grep -r` order is the filesystem's), and truncate text by character in Python rather than with `cut -c`, which counts bytes in GNU coreutils and characters in the Rust coreutils CI's Ubuntu runner ships, so a line with an em dash cut short differs between the two. The local gate runs it on macOS with every dependency group installed, so three more rules apply: search tracked files with `git grep`, since `grep -r` also matches gitignored local files (`backend/scripts/local/`); strip `uniq -c`'s padding, which is four columns in BSD and seven in GNU; and print nothing an optional package adds (a lemmatizer's lemma keys), since CI's install has none. The blocks anchor on symbol names, never line numbers, so ordinary edits elsewhere in a file don't break them. They also run against a lean install (`uv sync --no-default-groups --group dev`), so none of them needs torch, a network connection, or an API key. Elsewhere, code is cited as `path/module.py::symbol`.
 
 ### How to read it
 
@@ -1599,11 +1599,13 @@ story = {"title": "Kaffe",
      {"speaker": "male-1", "text": "Jeg vil ha kaffe", "translation": "I want coffee"}]}],
   "dialogue_glosses": [{"word": w, "translation": t} for w, t in
      [("god","good"),("dag","day"),("jeg","I"),("vil","want"),("ha","have"),("kaffe","coffee")]]}
+surface = {g["word"] for g in story["dialogue_glosses"]}
 lesson = build_lesson_from_story(story, lang, review_words=["kaffe", "takk"])
 md = lesson.generation_metadata
 print(sorted(md))
 print("requested:", md["review_requested"], "used:", md["review_used"], "gloss entries:", md["gloss_entry_count"])
-print("token_glosses:", md["token_glosses"])
+# surface keys only: lemma keys (vil -> ville) appear only where a lemmatizer is installed
+print("token_glosses:", {k: v for k, v in md["token_glosses"].items() if k in surface})
 E
 ```
 
@@ -2269,7 +2271,7 @@ This is the part of the old walkthrough most likely to mislead, so exact status 
 It was **retired from the app's render path** (`ab35609e`, the k318 epic). The lexicon `<phoneme>` path replaced it for every chunk that wants IPA, and the one remaining chunk class was judged by ear to sound better from plain synthesis than from a slice, which had audible speed artifacts. What is and is not wired, verified against the tree:
 
 ```bash
-cd backend && grep -rn "build_slicers(" app scripts --include=*.py | grep -v "^app/audio/slicer.py" | LC_ALL=C sort
+cd backend && git grep -n "build_slicers(" -- 'app/*.py' 'scripts/*.py' | grep -v "^app/audio/slicer.py" | LC_ALL=C sort
 echo ---
 sed -n '/NOT WIRED, deliberately/,/Keep them/p' app/main.py
 echo ---
@@ -4757,13 +4759,13 @@ Every backend job runs `uv sync --no-default-groups --group dev` with `UV_NO_SYN
 The same constraint is why this document's own probes avoid importing modules that need torch at import time.
 
 ```bash
-grep -c "UV_NO_SYNC: \"1\"" .github/workflows/ci.yml; grep "run: uv sync" .github/workflows/ci.yml | sort | uniq -c
+grep -c "UV_NO_SYNC: \"1\"" .github/workflows/ci.yml; grep "run: uv sync" .github/workflows/ci.yml | sort | uniq -c | sed -E 's/^ +//'
 ```
 
 ```output
 6
-      4         run: uv sync --no-default-groups --group dev
-      1         run: uv sync --no-group slovene --no-group norwegian --no-group alignment
+4         run: uv sync --no-default-groups --group dev
+1         run: uv sync --no-group slovene --no-group norwegian --no-group alignment
 ```
 
 To reproduce CI's environment before pushing, `.claude/rules/testing.md` gives the two-line recipe with `UV_PROJECT_ENVIRONMENT=/tmp/ci-venv`.
