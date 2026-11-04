@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import dataclasses
 import gzip
 import hashlib
 import json
@@ -51,7 +52,7 @@ def build(dictionary_text: str, en_sounds: Path) -> list[dict]:
     paragraphs = [p for p in entry_paragraphs(dictionary_text) if is_entry(p)]
     english = set(wordfreq.top_n_list("en", 30000))
     lex = load_lexicon(Dictionary(paragraphs, english), en_sounds)
-    lex = lex.__class__(freq=lex.freq, entries=lex.entries, loans=lex.loans, course=load_course_spellings())
+    lex = dataclasses.replace(lex, course=load_course_spellings())
     entries = [parse_entry(p) for p in paragraphs]
     records = [entry_record(e, lex) for e in entries]
     add_attested(entries, records, lex)  # words Wolff prints but does not list (tunatale-h0q3.21)

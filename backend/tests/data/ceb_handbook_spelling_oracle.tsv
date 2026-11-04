@@ -1,0 +1,194 @@
+# The Handbook spelling converter's oracle (tunatale-h0q3.38), checked against the committed
+# wolff_lexicon.json.gz by tests/test_ceb_lexicon_spellings.py: the lexicon writes KEEP and never REJECT.
+# Rows: every word the h0q3.38 rebuild changed, and every word a whole-word-count build would have
+# changed but should not. Settled by the owner's rule "if the corpus agrees, follow the corpus"
+# (2026-11-04), counts from cebuano_surface_frequency.tsv.gz (whole words) and cebuano_frequency.tsv.gz
+# (lemmas). Verdicts:
+#   corpus        whole words: KEEP written >= 5 times and >= 2x REJECT
+#   corpus-root   the word's root as writers spell it (as a word, else by lemma)
+#   follows-root  the corpus is silent or split on the word; written as its root is
+#   other-word    the count belongs to another word (a name, a homograph): VOWEL_OVERRIDES
+#   kept          the corpus cannot tell (homograph or unattested): the build before h0q3.38's spelling
+#   rule          the corpus splits; the Raisanen rule decides
+#   neutral       the corpus splits and both spellings are fine
+#   residual      KEEP is wrong, REJECT right: a known miss, explained. Fixing it turns this test red; flip the row.
+keep	reject	verdict	why
+abríhan	abréhan	corpus	whole words: abríhan 32, abréhan 7
+adúlts	adólts	corpus	whole words: adúlts 12, adólts 0
+alimpús	alimpós	corpus	whole words: alimpús 10, alimpós 0
+amerkáno	amirkáno	corpus	whole words: amerkáno 18, amirkáno 0
+balíg	balég	corpus	whole words: balíg 36, balég 5
+basketbolán	baskitbulán	corpus	whole words: basketbolán 19, baskitbulán 0
+bálig	báleg	corpus	whole words: bálig 36, báleg 5
+bísti	bíste	corpus	whole words: bísti 27, bíste 10
+delikádong	dilikádong	corpus	whole words: dilikádong 7, delikádong 60
+depektúso	dipiktúso	corpus	whole words: depektúso 18, dipiktúso 0
+dágkong	dágkung	corpus	whole words: dágkung 80, dágkong 1615
+edad-edarán	idad-idarán	corpus	whole words: edad-edarán 10, idad-idarán 0
+edukasiyón	idukasiyón	corpus	whole words: edukasiyón 13, idukasiyón 0
+empleyádong	impliyádong	corpus	whole words: empleyádong 11, impliyádong 0
+eskuwáter	iskuwátir	corpus	whole words: eskuwáter 16, iskuwátir 0
+espirituhánong	ispirituhánong	corpus	whole words: ispirituhánong 0, espirituhánong 25
+estasyonán	istasyunán	corpus	whole words: estasyonán 19, istasyunán 0
+gibatî	gibatê	corpus	whole words: gibatê 10, gibatî 960
+gibátì	gibátè	corpus	whole words: gibátè 10, gibátì 960
+gisentensyahán	gisintinsyahán	corpus	whole words: gisentensyahán 16, gisintinsyahán 0
+gisigíhan	gisigéhan	corpus	whole words: gisigíhan 17, gisigéhan 7
+gìatáke	gìatáki	corpus	whole words: gìatáki 41, gìatáke 147
+haponánon	hapunánon	corpus	whole words: haponánon 11, hapunánon 0
+idolohíya	iduluhíya	corpus	whole words: idolohíya 16, iduluhíya 0
+imbestigahón	imbistigahón	corpus	whole words: imbistigahón 0, imbestigahón 54
+just	jost	corpus	whole words: just 15, jost 0
+kalíbre	kalíbri	corpus	whole words: kalíbri 9, kalíbre 1017
+kasína	kaséna	corpus	whole words: kaséna 0, kasína 11
+kinapusorán	kinapusurán	corpus	whole words: kinapusorán 29, kinapusurán 10
+kongrésman	kungrísman	corpus	whole words: kongrésman 18, kungrísman 0
+kumbáti	kombáte	corpus	whole words: kumbáti 31, kombáte 11
+kumpará	kompará	corpus	whole words: kompará 59, kumpará 127
+kwentáda	kwintáda	corpus	whole words: kwentáda 16, kwintáda 0
+kòoperasiyón	kùupirasiyón	corpus	whole words: kòoperasiyón 16, kùupirasiyón 0
+kúmo	kómo	corpus	whole words: kúmo 141, kómo 69
+kúmò	kómò	corpus	whole words: kúmò 141, kómò 69
+laláking	lalákeng	corpus	whole words: lalákeng 139, laláking 297
+lumolúpyò	lumulúpyò	corpus	whole words: lumolúpyò 579, lumulúpyò 268
+mabalí	mabalé	corpus	whole words: mabalí 10, mabalé 5
+mabálì	mabálè	corpus	whole words: mabálì 10, mabálè 5
+magsíge	magsígi	corpus	whole words: magsíge 307, magsígi 48
+makasigúro	makasegúro	corpus	whole words: makasigúro 57, makasegúro 24
+malampúson	malampóson	corpus	whole words: malampúson 532, malampóson 43
+malolóy-on	malulúy-on	corpus	whole words: malulúy-on 0, malolóy-on 22
+malígsan	malégsan	corpus	whole words: malígsan 30, malégsan 0
+mamisíta	mameséta	corpus	whole words: mameséta 0, mamisíta 6
+mamíntal	maméntal	corpus	whole words: maméntal 0, mamíntal 13
+masigúro	masegúro	corpus	whole words: masigúro 501, masegúro 249
+mayén	mayín	corpus	whole words: mayén 15, mayín 0
+mibutó	mibotó	corpus	whole words: mibotó 18, mibutó 101
+mibúkal	mibókal	corpus	whole words: mibúkal 7, mibókal 0
+milô	melô	corpus	whole words: milô 90, melô 38
+misegúro	misigúro	corpus	whole words: misigúro 5, misegúro 26
+misíta	meséta	corpus	whole words: meséta 0, misíta 7
+mobotár	mobutár	corpus	whole words: mobutár 6, mobotár 51
+modúwà	mudúwà	corpus	whole words: mudúwà 0, modúwà 183
+molámpos	mulámpos	corpus	whole words: mulámpos 0, molámpos 124
+nagbinátà	nagbenátà	corpus	whole words: nagbenátà 0, nagbinátà 10
+nagbukál	nagbokál	corpus	whole words: nagbukál 8, nagbokál 0
+nagbulâ	nagbolâ	corpus	whole words: nagbolâ 0, nagbulâ 10
+nagbúkal	nagbókal	corpus	whole words: nagbúkal 8, nagbókal 0
+naghinóbra	naghinúbra	corpus	whole words: naghinóbra 19, naghinúbra 0
+nagsíge	nagsígi	corpus	whole words: nagsíge 356, nagsígi 68
+nalígsan	nalégsan	corpus	whole words: nalígsan 140, nalégsan 0
+nalóka	nalúka	corpus	whole words: nalóka 5, nalúka 0
+namisíta	nameséta	corpus	whole words: nameséta 0, namisíta 16
+napríso	napréso	corpus	whole words: napréso 11, napríso 195
+nasyonál	nasyunál	corpus	whole words: nasyonál 225, nasyunál 107
+nasína	naséna	corpus	whole words: naséna 0, nasína 10
+nibíra	nebéra	corpus	whole words: nebéra 0, nibíra 28
+nàabó	nàabú	corpus	whole words: nàabú 0, nàabó 18
+personél	pirsuníl	corpus	whole words: personél 10, pirsuníl 0
+politikánhon	pulitikánhon	corpus	whole words: politikánhon 25, pulitikánhon 10
+pírming	pírmeng	corpus	whole words: pírming 25, pírmeng 9
+rekúrsos	rikúrsos	corpus	whole words: rekúrsos 11, rikúrsos 0
+sementádong	simintádong	corpus	whole words: simintádong 0, sementádong 61
+senemaná	sinimaná	corpus	whole words: senemaná 17, sinimaná 0
+sigúro	segúro	corpus	whole words: segúro 230, sigúro 935
+sigúrong	segúrong	corpus	whole words: sigúrong 20, segúrong 10
+surprísa	sorprésa	corpus	whole words: sorprésa 10, surprísa 27
+trust	trost	corpus	whole words: trust 18, trost 0
+tukár	tokár	corpus	whole words: tokár 5, tukár 15
+tumár	tomár	corpus	whole words: tomár 0, tumár 6
+útro	ótro	corpus	whole words: ótro 8, útro 33
+bilíng	beléng	corpus-root	bilin 704 vs belen 67 (lemma); the book writes bílin; whole-word "belen" is the name Belen
+bunô	bonô	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+bínta	bénta	corpus-root	binta 8 vs benta 0 (lemma)
+búnò	bónò	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+diskargáha	deskargáha	corpus-root	diskarga 25 vs deskarga 0 (lemma)
+diskárga	deskárga	corpus-root	diskarga 25 vs deskarga 0 (lemma)
+gipundohán	gipondohán	corpus-root	pundo 1889 vs pondo 408 (lemma)
+gipundóhan	gipondóhan	corpus-root	pundo 1889 vs pondo 408 (lemma)
+hibílin	hibélen	corpus-root	bilin 704 vs belen 67 (lemma); the book writes bílin; whole-word "belen" is the name Belen
+ibunô	ibonô	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+ibínta	ibénta	corpus-root	binta 8 vs benta 0 (lemma)
+idiskárga	ideskárga	corpus-root	diskarga 25 vs deskarga 0 (lemma)
+igpamisíta	igpameséta	corpus-root	mamisíta 6:0, namisíta 16:0, misíta 7:0 (whole words)
+inabunóhan	inabonóhan	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+inigpamisíta	inigpameséta	corpus-root	mamisíta 6:0, namisíta 16:0, misíta 7:0 (whole words)
+intrígo	entrégo	corpus-root	intriga 113 vs entrega 0 (lemma)
+ipatukár	ipatokár	corpus-root	tukár 15 vs tokár 5 (whole word)
+kumparahón	komparahón	corpus-root	kumpará 127 vs kompará 59 (whole word)
+kàútrog	kàótrog	corpus-root	útro 33 vs ótro 8 (whole word)
+magbisikléta	magbisiklíta	corpus-root	bisikleta 176 vs bisiklita 34 (lemma)
+makabínta	makabénta	corpus-root	binta 8 vs benta 0 (lemma)
+makadiskárga	makadeskárga	corpus-root	diskarga 25 vs deskarga 0 (lemma)
+makatumár	makatomár	corpus-root	tumár 6 vs tomár 0 (whole word)
+makigbúnò	makigbónò	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+matumár	matomár	corpus-root	tumár 6 vs tomár 0 (whole word)
+mitukár	mitokár	corpus-root	tukár 15 vs tokár 5 (whole word)
+mitumár	mitomár	corpus-root	tumár 6 vs tomár 0 (whole word)
+modiskárga	modeskárga	corpus-root	diskarga 25 vs deskarga 0 (lemma)
+mosigúro	mosegúro	corpus-root	siguro 935 vs seguro 230 (whole word); i in the root
+motumár	motomár	corpus-root	tumár 6 vs tomár 0 (whole word)
+màintrígo	màentrégo	corpus-root	intriga 113 vs entrega 0 (lemma)
+màumidó	màumedó	corpus-root	umido 12 vs umedo 0 (lemma)
+mìeskápo	mìiskápo	corpus-root	eskapo 144 vs iskapo 0 (lemma)
+mòatáke	mòatáki	corpus-root	gìatáke 147 vs gìatáki 41 (whole word)
+mòumidó	mòumedó	corpus-root	umido 12 vs umedo 0 (lemma)
+nagbúnò	nagbónò	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+nagkadiskárga	nagkadeskárga	corpus-root	diskarga 25 vs deskarga 0 (lemma)
+nakabunô	nakabonô	corpus-root	buno 154 vs bono 9 (lemma); native bunù "fight"
+nakatumár	nakatomár	corpus-root	tumár 6 vs tomár 0 (whole word)
+nanghibilín	nanghibelén	corpus-root	bilin 704 vs belen 67 (lemma); the book writes bílin; whole-word "belen" is the name Belen
+pagtukár	pagtokár	corpus-root	tukár 15 vs tokár 5 (whole word)
+pamisitáhan	pamesetáhan	corpus-root	mamisíta 6:0, namisíta 16:0, misíta 7:0 (whole words)
+pamisíta	pameséta	corpus-root	mamisíta 6:0, namisíta 16:0, misíta 7:0 (whole words)
+patukará	patokará	corpus-root	tukár 15 vs tokár 5 (whole word)
+patukár	patokár	corpus-root	tukár 15 vs tokár 5 (whole word)
+sigurôa	segurôa	corpus-root	siguro 935 vs seguro 230 (whole word); i in the root
+sigúrog	segúrog	corpus-root	siguro 935 vs seguro 230 (whole word); i in the root
+sígeng	síging	corpus-root	sige 1324 vs sigi 42 (lemma)
+sípan	sépan	corpus-root	sipan 18 vs sepan 0 (lemma)
+tukarán	tokarán	corpus-root	tukár 15 vs tokár 5 (whole word)
+tukarón	tokarón	corpus-root	tukár 15 vs tokár 5 (whole word)
+tumará	tomará	corpus-root	tumár 6 vs tomár 0 (whole word)
+tumarón	tomarón	corpus-root	tumár 6 vs tomár 0 (whole word)
+umidó	umedó	corpus-root	umido 12 vs umedo 0 (lemma)
+bistíhan	bistéhan	follows-root	whole words 0:0; written as its root is
+bísting	bísteng	follows-root	whole words 0:0; written as its root is
+búboy	bóboy	follows-root	whole words 26:50; written as its root is
+ibísti	ibíste	follows-root	whole words 0:0; written as its root is
+ikúmò	ikómò	follows-root	whole words 0:0; written as its root is
+kasiguróhan	kaseguróhan	follows-root	whole words 28:40; written as its root is
+kasigurôan	kasegurôan	follows-root	whole words 51:33; written as its root is
+kumôa	komôa	follows-root	whole words 0:0; written as its root is
+makabísti	makabíste	follows-root	whole words 0:0; written as its root is
+nagkakumbáti	nagkakombáte	follows-root	whole words 0:0; written as its root is
+pabistíhan	pabistéhan	follows-root	whole words 0:0; written as its root is
+bilín	belén	other-word	whole-word "belen" is the name Belen; bilin 704 vs belen 67 (lemma); book: bílin
+bílin	bélen	other-word	whole-word "belen" is the name Belen; bilin 704 vs belen 67 (lemma); book: bílin
+bùbôi	bòbôi	other-word	whole-word "boboi" is a nickname; Wolff bùbù "pour" is native: o only in the last syllable
+bakô	bakû	kept	corpus cannot tell (bakô 0, bakû 0; homograph or unattested): keep today's
+bubóhon	bobóhon	kept	corpus cannot tell (bubóhon 0, bobóhon 0; homograph or unattested): keep today's
+bubôon	bobôon	kept	corpus cannot tell (bubôon 0, bobôon 0; homograph or unattested): keep today's
+bùbôig	bòbôig	kept	corpus cannot tell (bùbôig 0, bòbôig 0; homograph or unattested): keep today's
+búbo	bóbo	kept	corpus cannot tell (búbo 5, bóbo 9; homograph or unattested): keep today's
+búbò	bóbò	kept	corpus cannot tell (búbò 5, bóbò 9; homograph or unattested): keep today's
+bûbò	bôbò	kept	corpus cannot tell (bûbò 5, bôbò 9; homograph or unattested): keep today's
+hinabákò	hinabákù	kept	corpus cannot tell (hinabákò 0, hinabákù 0; homograph or unattested): keep today's
+ikasulô	ikasolô	kept	corpus cannot tell (ikasulô 0, ikasolô 0; homograph or unattested): keep today's
+magbùbòáy	magbòbòáy	kept	corpus cannot tell (magbùbòáy 0, magbòbòáy 0; homograph or unattested): keep today's
+magsúlo	magsólo	kept	corpus cannot tell (magsúlo 0, magsólo 0; homograph or unattested): keep today's
+mosúlo	mosólo	kept	corpus cannot tell (mosúlo 0, mosólo 0; homograph or unattested): keep today's
+mosúlò	mosólò	kept	corpus cannot tell (mosúlò 0, mosólò 0; homograph or unattested): keep today's
+motóro	motúro	kept	corpus cannot tell (motóro 0, motúro 0; homograph or unattested): keep today's
+nagsulô	nagsolô	kept	corpus cannot tell (nagsulô 0, nagsolô 0; homograph or unattested): keep today's
+pagkabakô	pagkabakû	kept	corpus cannot tell (pagkabakô 0, pagkabakû 0; homograph or unattested): keep today's
+panabákò	panabákù	kept	corpus cannot tell (panabákò 0, panabákù 0; homograph or unattested): keep today's
+sigín	sigén	kept	Wolff sígin is a fish net (native), not sige: whole words 0:0, keep
+sulóhon	solóhon	kept	corpus cannot tell (sulóhon 0, solóhon 0; homograph or unattested): keep today's
+sulô	solô	kept	corpus cannot tell (sulô 13, solô 15; homograph or unattested): keep today's
+sígin	sígen	kept	Wolff sígin is a fish net (native), not sige: whole words 0:0, keep
+súlo	sólo	kept	corpus cannot tell (súlo 13, sólo 15; homograph or unattested): keep today's
+súlò	sólò	kept	corpus cannot tell (súlò 13, sólò 15; homograph or unattested): keep today's
+tóro	túro	kept	corpus cannot tell (tóro 6, túro 6; homograph or unattested): keep today's
+timán-i	timán-e	rule	native -i (Raisanen: native words always i); whole words 96 (timan-e) vs 54 split
+ikomparár	ikumparár	neutral	whole words 16 (ikumparar) vs 11 (ikomparar): the corpus splits
+lisinsiyádo	lisensiyádo	residual	whole words lisensiyado 9 vs lisinsiyado 0, under the unknown-word floor of 10 that keeps English out (did -> ded at 9)

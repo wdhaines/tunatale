@@ -27,7 +27,8 @@ this reads it from the owner's book build (``~/Books/wolff/build/pages-l0N``)
 and commits nothing of it. The dictionary is Project Gutenberg #40074. The
 English loan sounds are ``~/Books/wolff/build/lex/en_cmu.tsv`` (word, Cebuano
 sound spelling, wordfreq rank, made from the CMU Pronouncing Dictionary). The
-corpus counts are the committed ``cebuano_frequency.tsv.gz``, and the Spanish
+corpus counts are the committed ``cebuano_frequency.tsv.gz`` (by lemma, for
+roots) and ``cebuano_surface_frequency.tsv.gz`` (by word, for whole words), and the Spanish
 and English word lists come from wordfreq.
 """
 
@@ -53,6 +54,7 @@ DEFAULT_DICTIONARY = BOOKS / "cebuano-refs/wolff-dictionary/wolff-dictionary.txt
 DEFAULT_PAGES = [BOOKS / f"wolff/build/pages-l0{n}" for n in (1, 2, 3)]
 DEFAULT_EN_SOUNDS = BOOKS / "wolff/build/lex/en_cmu.tsv"
 FREQUENCY = Path(__file__).resolve().parents[1] / "app/plugins/languages/ceb/data/cebuano_frequency.tsv.gz"
+WORD_FREQUENCY = FREQUENCY.with_name("cebuano_surface_frequency.tsv.gz")
 
 _TOKEN = re.compile(r"[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ̀-ͯ\-]*")
 _HEADS = re.compile(r"((?:[^\s,]+, )*[^\s,]+)")
@@ -160,17 +162,23 @@ def summarize(rows: list[dict]) -> str:
     )
 
 
+def corpus_counts(path: Path) -> dict[str, int]:
+    """A committed news-corpus count table: FREQUENCY (by lemma) or WORD_FREQUENCY (by word)."""
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        return {w: int(n) for w, n in (line.rstrip("\n").split("\t") for line in fh if not line.startswith("#"))}
+
+
 def load_lexicon(dictionary: Dictionary, en_sounds: Path) -> SpellingLexicon:
     import wordfreq
 
-    with gzip.open(FREQUENCY, "rt", encoding="utf-8") as fh:
-        freq = {w: int(n) for w, n in (line.rstrip("\n").split("\t") for line in fh if not line.startswith("#"))}
+    freq = corpus_counts(FREQUENCY)
     sounds = []
     for line in en_sounds.read_text(encoding="utf-8").splitlines():
         word, template, rank = line.split("\t")
         sounds.append((word, template, int(rank)))
     return build_lexicon(
         freq=freq,
+        words=corpus_counts(WORD_FREQUENCY),
         entries=dictionary.entries,
         es_words=wordfreq.top_n_list("es", 20000),
         en_sounds=sounds,

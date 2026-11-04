@@ -241,6 +241,87 @@ def test_loans_follow_the_corpus_then_the_source():
     assert choose_vowels("nagduktur", lex) == ("nagdoktor", "loan-es")
 
 
+# --- whole words vs lemmas (tunatale-h0q3.38) -------------------------------------------------
+#
+# freq counts by LEMMA: a form the lemma table knows is folded into its root, so
+# magsige (307 as written) is not a key at all and the misspelling magsigi (48)
+# was the only whole word left. ``words`` counts the word as written. The counts
+# below are the committed tables' (FineWeb-2 ceb).
+
+
+def _two_tables(entries, freq, words, es=()):
+    return build_lexicon(
+        freq=freq,
+        words=words,
+        entries={e: e for e in entries},
+        es_words=list(es),
+        en_sounds=[],
+        english_common=set(),
+    )
+
+
+def test_whole_words_beat_the_lemma_table_when_they_are_clear():
+    lex = _two_tables(["sigi"], freq={"sige": 1324, "magsigi": 48}, words={"magsige": 307, "magsigi": 48}, es=["sigue"])
+    assert choose_vowels("magsigi", lex) == ("magsige", "loan-es")
+
+
+def test_a_close_whole_word_count_defers_to_the_bare_root_as_a_word():
+    # mosiguro 8 vs moseguro 9 is no evidence. The lemma table credits 'seguro'
+    # with 1019 because it chose that spelling for the lemma; as words, writers
+    # use siguro four times as often (935 vs 230).
+    lex = _two_tables(
+        ["siguru"],
+        freq={"seguro": 1019, "siguro": 935},
+        words={"siguro": 935, "seguro": 230, "mosiguro": 8, "moseguro": 9},
+        es=["seguro"],
+    )
+    assert choose_vowels("musiguru", lex) == ("mosiguro", "loan-es-convention")
+    assert choose_vowels("siguru", lex) == ("siguro", "loan-es-convention")
+
+
+def test_with_no_word_evidence_the_lemma_table_decides_the_root():
+    lex = _two_tables(["tumar"], freq={"tumar": 40, "tomar": 2}, words={}, es=["tomar"])
+    assert choose_vowels("mitumar", lex) == ("mitumar", "loan-es-convention")
+
+
+def test_an_unknown_word_follows_whole_words_at_ten_and_twice_the_rule():
+    lex = _two_tables([], freq={}, words={"kwentada": 16, "politikanhon": 25, "pulitikanhon": 10, "ded": 9})
+    assert choose_vowels("kwintada", lex) == ("kwentada", "unknown-corpus")
+    assert choose_vowels("pulitikanhun", lex) == ("politikanhon", "unknown-corpus")
+    # English in Wolff's examples: 9 is under the floor (ded is a name or a typo)
+    assert choose_vowels("did", lex) == ("did", "unknown")
+
+
+def test_an_unknown_word_with_too_many_spellings_takes_the_rule():
+    # ten i/u letters are 1024 e/o spellings: the corpus is not searched
+    lex = _two_tables([], freq={}, words={"kolekolekolekolekolo": 500})
+    assert choose_vowels("kulikulikulikulikulu", lex) == ("kulikulikulikulikulo", "unknown")
+
+
+@pytest.mark.parametrize(
+    ("base", "settled"),
+    [
+        # Whole-word 'belen' is the name Belen (59) and 'boboi' a nickname: a lowercased
+        # count cannot tell them from the word. bilin 'left behind' is native (lemma
+        # bilin 704 vs belen 67; the Wolff book writes bílin), as is bùbù 'pour'.
+        ("bilin", "bilin"),
+        ("hibilin", "hibilin"),
+        ("nanghibilin", "nanghibilin"),
+        ("bubui", "buboi"),
+        # bíli 'price' + -ng ('Biling makalípung', a dizzyingly high price), not Belén + g
+        ("biling", "biling"),
+        # síging is sígi + -ng; the analyser reads the fish net sígin (+ g). Writers
+        # write sige (1324 vs 42) and magsige.
+        ("siging", "sigeng"),
+        # túru 'bull', Spanish toro: turo 'point, teach' shares the letters (6 vs 6)
+        ("turu", "toro"),
+        ("muturu", "motoro"),
+    ],
+)
+def test_words_the_corpus_counts_as_another_word_are_settled(base, settled):
+    assert choose_vowels(base, _lex()) == (settled, "override")
+
+
 def test_affixes_hyphens_doubling_and_clitics():
     lex = _lex(
         {"una": "first", "mag-una": "go first", "tawu": "person", "libru": "book"},
