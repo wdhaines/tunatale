@@ -215,3 +215,99 @@ def test_a_reading_the_lesson_agrees_with_still_shows(lexicon, word, english, li
 def test_ma_on_an_adjective_root_is_the_adjective_with_no_english_to_go_by(lexicon):
     # the reader's word may come with no gloss: mainit is still 'hot', not 'will become hot'
     assert lexicon.parts_line("mainit") is None
+
+
+# ── the build-up rows the Wolff EPUB withholds (tunatale-30t0) ────────────────────────────────
+# The owner's review of the book (2026-10-28) found these lines wrong; the book hides them until
+# TT reads them right or says nothing. Written from Wolff's entries before any fix.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "line"),
+    [
+        # bílin 'leave s.t. behind' [A; c] is native: Belén (bilin, the nativity scene) is a
+        # different entry, and the Handbook spelling of bílin keeps its i
+        ("ibílin", "will leave", "i- will bring it + bílin leave something behind"),
+        # hángyò {1} [A; b5c] 'ask for s.t., request as a favor' is a verb sense with its class
+        # code, and it comes first: 'haggle the price down' is {2}
+        ("mohángyò", "propose, ask a favor", "mo- will + hángyò ask for, request as a favor"),
+    ],
+)
+def test_a_withheld_row_reads_right(lexicon, word, english, line):
+    assert lexicon.parts_line(word, english) == line
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "right", "wrong"),
+    [
+        # the word's stress is sakít 'painful, sick'; sákit 'torture' is the other stress word
+        ("nagsakít", "aches", "nag- is, or was + sakít ", ("sákit", "torture")),
+        # báyad {1} 'pay for s.t.' is the row; {2} 'pay a moral debt' licenses mag- but is not it
+        ("nagbayád", "were paying", "nag- is, or was + báyad pay for", ("moral debt",)),
+        ("makakàón", "can eat", "maka- can / get to / happen to + kâon eat", ("destroy",)),
+        ("napíldi", "lost", "na- got + píldi lose in a contest", ("die of",)),
+        # buhî here is the → stress form of búhì 'set free' (its own entry), not of búhì 'alive'
+        ("buhîi", "to be let go", "buhî set free", ("raise", "family")),
+        # ingón {1} 'say, tell' takes -an and i- [b5c]; only {1a} 'said to be' takes -a
+        ("íngna", "tell him", "ingón say, tell", ("said to be",)),
+        # sóod is sulúd 'go in' with its l dropped (Wolff §5.2), not sùód 'close in space'
+        ("mosóod", "will enter", "mo- will + sulód go in, into", ("sùód", "close in space")),
+        # guwà is gulà 'go out from' with its l dropped; gúwa = gúla is raw food
+        ("moguwâ", "get out", "mo- will + gulâ go out from", ("cooked",)),
+        # maN- + ádto (Wolff's mangádtu), never ma- + ngádto
+        ("mangádto", "will go (plural)", "maN- ", ("ngádto", "can be")),
+        ("mangádto", "go", "maN- ", ("ngádto", "can be")),
+    ],
+)
+def test_a_withheld_row_reads_right_or_says_nothing(lexicon, word, english, right, wrong):
+    line = lexicon.parts_line(word, english)
+    assert line is None or line.startswith(right), line
+    assert line is None or not any(w in line for w in wrong), line
+
+
+# Known wrong, still withheld from the book: each row's English reaches a verb sense only through
+# one loose word ('pay' in súhul's 'hire for wages, pay a certain wage'; 'do' in unay's 'do some
+# harm …'), and every rule tried that silences them also silenced right lines that agree the same
+# way (molakáw 'want to go out' is lakáw 'walk'). Strict: fixing them turns this red.
+_LOOSE_ENGLISH = pytest.mark.xfail(
+    strict=True, reason="tunatale-30t0: no rule yet separates these from rows that agree as loosely"
+)
+
+
+@pytest.mark.parametrize(
+    ("word", "english"),
+    [
+        # a noun: the row is 'money to pay a salary', which no inflection of súhul says
+        pytest.param("isúhol", "money to pay a salary", marks=_LOOSE_ENGLISH),
+        # no sense of unay is 'do by oneself'; 'mainland' is a noun
+        pytest.param("nangunáy", "do by oneself", marks=_LOOSE_ENGLISH),
+    ],
+)
+def test_a_withheld_row_with_no_reading_says_nothing(lexicon, word, english):
+    assert lexicon.parts_line(word, english) is None
+
+
+# --- the helpers the 30t0 readings stand on ----------------------------------------------------
+
+
+def test_a_card_word_gives_back_the_letters_that_spell_the_root_with_their_marks():
+    from app.plugins.languages.ceb.wolff_cards import _card_letters
+
+    assert _card_letters("ibílin", "bílin", "i-") == "bílin"
+    # a mark with no letter before it is dropped, not an error
+    assert _card_letters("́ibílin", "bílin", "i-") == "bílin"
+    # a word §5 does not derive from that root has no root letters
+    assert _card_letters("zzz", "bílin", "i-") is None
+
+
+def test_marked_letters_ignores_a_mark_that_is_no_stress_or_glottal_mark():
+    from app.plugins.languages.ceb.wolff_cards import _marked_letters
+
+    assert _marked_letters("́ä") == [("a", frozenset())]
+    assert _marked_letters("sakít") == [
+        ("s", frozenset()),
+        ("a", frozenset()),
+        ("k", frozenset()),
+        ("i", frozenset({"́"})),
+        ("t", frozenset()),
+    ]
