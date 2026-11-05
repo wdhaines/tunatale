@@ -47,7 +47,7 @@ class TestMatchesLanguageLiteral:
             "ceb",  # Cebuano, registered ahead of its plugin (tunatale-w4m7.2)
             "Cebuano",
             "Visayan",
-            "bisaya",  # the deck is "3. Bisaya"; core must not hardcode it
+            "bisaya",  # the old deck name was "3. Bisaya"; core must not hardcode it
             "Binisaya",  # the native name; "bisaya" is not a substring of it
             # ── The Gemini voice family (tunatale-u8nz.3) ──
             # Same id shape as <locale>-<Name>Neural, so the locale still slices

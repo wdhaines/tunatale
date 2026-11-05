@@ -116,11 +116,11 @@ register(
             },
         ),
         preprocessor_factory=TagalogPreprocessor,
-        deck_name="2. Pimsleur Tagalog",
+        deck_id=1740616836962,  # "2. Pimsleur Tagalog"
         # TT reads the whole Pimsleur tree (every card is in a Level::Lesson
         # subdeck) but mints its own cards into a subdeck of their own: the
         # user's call, 2026-09-23 (tunatale-w4m7.8). Create it in Anki first.
-        mint_deck_name="2. Pimsleur Tagalog::TunaTale",
+        mint_deck_id=1790175595142,  # "2. Pimsleur Tagalog::TunaTale"
         # The Pimsleur deck's notetype (all 609 notes, measured 2026-09-23).
         # Scoped to Tagalog because the name is what EVERY genanki export is
         # called. Read from its template text: Card 1 (ord 0) is

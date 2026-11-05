@@ -149,7 +149,7 @@ def test_every_language_with_a_deck_has_a_prod_database(services):
     stale when a fourth language lands.
     """
     discover()
-    with_deck = {code for code, cfg in _CONFIGS.items() if cfg.deck_name}
+    with_deck = {code for code, cfg in _CONFIGS.items() if cfg.deck_id}
 
     compose_keys = set(yaml.safe_load(services["api"]["environment"]["DATABASE_URLS"]))
     assert compose_keys == with_deck

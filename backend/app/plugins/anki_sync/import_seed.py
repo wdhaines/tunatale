@@ -17,7 +17,7 @@ from typing import Any
 
 from app.common.guid import compute_guid
 from app.config import settings
-from app.languages import card_surface_variants, get_deck_name, get_l2_css_class, get_l2_scorer, resolve_db_path
+from app.languages import card_surface_variants, get_deck_id, get_l2_css_class, get_l2_scorer, resolve_db_path
 from app.media.importer import compute_sha256, copy_media_file
 from app.models.srs_item import Direction, DirectionState
 from app.models.syntactic_unit import BackField, SyntacticUnit
@@ -36,6 +36,7 @@ from app.plugins.anki_sync.sqlite_reader import (
     fetch_notes_for_deck_tree,
     find_deck_id,
     list_media_refs,
+    resolve_deck_name,
 )
 from app.srs.database import SRSDatabase
 from app.srs.lemmatizer import headword_lemma
@@ -217,6 +218,7 @@ def _build_directions(
 
 def import_seed(
     deck_name: str | None = None,
+    deck_id: int | None = None,
     anki_collection_path: Path | None = None,
     anki_media_path: Path | None = None,
     anki_backup_dir: Path | None = None,
@@ -232,10 +234,14 @@ def import_seed(
     GUIDs); defaults to ``settings.target_language``. One DB per language, so a
     Norwegian import (`language_code="no"`) lands in its own ``tunatale_no.db``.
 
+    ``deck_id`` names the deck by Anki id, which survives a rename; its current
+    name is looked up once the collection is open, and it wins over
+    ``deck_name``. With neither, ``settings.anki_deck_name`` is read.
+
     Returns a summary dict with counts: new_parents, new_directions,
     new_media, skipped_guid_collisions.
     """
-    if deck_name is None:
+    if deck_name is None and deck_id is None:
         deck_name = settings.anki_deck_name
     if language_code is None:
         language_code = settings.target_language
@@ -271,6 +277,8 @@ def import_seed(
 
     # Safety envelope: backup + read-only open (before TunaTale transaction)
     with safe_open(anki_collection_path, backup_dir=anki_backup_dir) as ctx:
+        if deck_id is not None:
+            deck_name = resolve_deck_name(ctx.conn, deck_id)
         if find_deck_id(ctx.conn, deck_name) is None:
             raise RuntimeError(f"Deck '{deck_name}' not found in {anki_collection_path}")
 
@@ -401,7 +409,7 @@ def import_seed(
 
 def _cli() -> None:
     parser = argparse.ArgumentParser(description="Import Anki deck into TunaTale (Stage 2a)")
-    parser.add_argument("--deck", default=None, help="Anki deck name (default: the language's registered deck)")
+    parser.add_argument("--deck", default=None, help="Anki deck name (default: the language's registered deck id)")
     parser.add_argument("--language", default=None, help="language code (default: target_language setting)")
     parser.add_argument(
         "--dry-run",
@@ -411,8 +419,9 @@ def _cli() -> None:
     args = parser.parse_args()
 
     language_code = args.language or settings.target_language
-    deck_name = args.deck or get_deck_name(language_code)
-    result = import_seed(deck_name=deck_name, language_code=language_code, dry_run=args.dry_run)
+    # --deck is a name; without it, the registered deck id (which survives renames).
+    deck_id = None if args.deck else get_deck_id(language_code)
+    result = import_seed(deck_name=args.deck, deck_id=deck_id, language_code=language_code, dry_run=args.dry_run)
 
     mode = "DRY RUN" if args.dry_run else "IMPORTED"
     print(

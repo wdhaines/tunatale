@@ -868,6 +868,42 @@ class TestLanguageCode:
         assert row["language_code"] == "no"
         assert dirs == {"recognition"}  # single card → recognition-only, no phantom production
 
+    def test_deck_id_imports_a_renamed_deck(self, tmp_path):
+        """A deck registered by id is found under whatever name it has now."""
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path, deck_name="9. Renamed Norwegian", deck_id=22345)
+        import_seed(
+            anki_collection_path=db_path,
+            anki_backup_dir=tmp_path / "bak",
+            anki_media_path=tmp_path / "fake_media",
+            deck_id=22345,
+            language_code="no",
+            tunatale_db_path=str(tmp_path / "tunatale_no.db"),
+            media_dir=tmp_path / "media",
+            fallback_log_path=tmp_path / "fallback.log",
+        )
+        with closing(sqlite3.connect(str(tmp_path / "tunatale_no.db"))) as db:
+            texts = [r[0] for r in db.execute("SELECT text FROM collocations")]
+        assert texts == ["være"]
+
+    def test_a_missing_deck_id_fails_loudly(self, tmp_path):
+        from app.plugins.anki_sync.sqlite_reader import DeckNotFoundError
+        from tests.conftest import build_norwegian_anki_db
+
+        db_path = build_norwegian_anki_db(tmp_path)
+        with pytest.raises(DeckNotFoundError, match="999"):
+            import_seed(
+                anki_collection_path=db_path,
+                anki_backup_dir=tmp_path / "bak",
+                anki_media_path=tmp_path / "fake_media",
+                deck_id=999,
+                language_code="no",
+                tunatale_db_path=str(tmp_path / "tunatale_no.db"),
+                media_dir=tmp_path / "media",
+                fallback_log_path=tmp_path / "fallback.log",
+            )
+
     def test_homographs_with_different_word_class_stay_separate(self, tmp_path):
         """Two notes sharing 'løfte' (noun 'promise' / verb 'lift') must import as
         TWO collocations — Word class is the disambig, so they don't collapse."""
@@ -933,7 +969,26 @@ class TestCLI:
         monkeypatch.setattr(mod, "import_seed", fake_import_seed)
         mod._cli()
         assert captured["language_code"] == "no"
-        assert captured["deck_name"] == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        # By deck ID: import_seed looks up the current name once the collection is open.
+        assert captured["deck_id"] == 1726348699710
+        assert captured["deck_name"] is None
+
+    def test_cli_deck_flag_overrides_the_registered_deck(self, monkeypatch):
+        from app.plugins.anki_sync import import_seed as mod
+
+        captured = {}
+
+        def fake_import_seed(**kw):
+            captured.update(kw)
+            return dict.fromkeys(
+                ("new_parents", "new_directions", "new_media", "skipped_guid_collisions", "skipped_non_vocab"), 0
+            )
+
+        monkeypatch.setattr("sys.argv", ["import_seed", "--language", "no", "--deck", "Some Deck", "--dry-run"])
+        monkeypatch.setattr(mod, "import_seed", fake_import_seed)
+        mod._cli()
+        assert captured["deck_name"] == "Some Deck"
+        assert captured["deck_id"] is None
 
 
 class TestTransactionRollback:

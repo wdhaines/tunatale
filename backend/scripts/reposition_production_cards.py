@@ -53,7 +53,7 @@ from app.plugins.anki_sync.reposition_production_cards import (
     read_cloze_base_note_ids,
 )
 from app.plugins.anki_sync.safety import safe_open
-from app.plugins.anki_sync.sqlite_reader import find_deck_id
+from app.plugins.anki_sync.sqlite_reader import DeckNotFoundError, find_deck_id, resolve_deck_name
 from app.srs.anki_mirror.queue_stats import new_cards_gather_descending
 from app.srs.database import SRSDatabase
 
@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     # move these cards to the BACK — the exact bug being fixed, inverted.
     if new_cards_gather_descending(db):
         print(
-            f"REFUSING: deck {context.deck_name!r} gathers new cards by DESCENDING position, "
+            f"REFUSING: deck {context.deck_name or context.deck_id!r} gathers new cards by DESCENDING position, "
             "where MAX(due)+1 is already the front of the queue. Repositioning would move "
             "these cards to the back. Nothing to do here."
         )
@@ -90,14 +90,22 @@ def main(argv: list[str] | None = None) -> int:
 
     mode = "rw" if args.apply else "ro"
     with safe_open(settings.anki_collection_path, mode=mode) as ctx:
-        deck_id = find_deck_id(ctx.conn, context.deck_name)
+        # A registry language names its deck by id (it survives renames).
+        try:
+            deck_name = (
+                resolve_deck_name(ctx.conn, context.deck_id) if context.deck_id is not None else context.deck_name
+            )
+        except DeckNotFoundError as e:
+            print(f"REFUSING: {e}")
+            return 2
+        deck_id = find_deck_id(ctx.conn, deck_name)
         if deck_id is None:
-            print(f"REFUSING: deck {context.deck_name!r} not found in the collection")
+            print(f"REFUSING: deck {deck_name!r} not found in the collection")
             return 2
 
         plan = plan_repositioning(ctx.conn, deck_id, sort_keys=sort_keys)
         stranded = cards_outside_band(ctx.conn, deck_id)
-        print(f"deck            {context.deck_name}")
+        print(f"deck            {deck_name}")
         print(f"minted cards    {plan.total}")
         print(f"outside band    {len(stranded)}")
         print(f"already placed  {plan.already_placed}")

@@ -105,7 +105,9 @@ class TestPeerSync:
         )
         s = _tt_settings("no")
         assert s.database_url.endswith("/backend/tunatale_no.db")
-        assert s.anki_deck_name == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        # By deck ID; sync.main looks up its current name in the collection.
+        assert s.anki_deck_id == 1726348699710
+        assert s.anki_deck_name is None
         assert s.target_language == "no"
 
     def test_tt_settings_unknown_or_none_language_uses_default(self, monkeypatch):
@@ -118,6 +120,7 @@ class TestPeerSync:
         for code in (None, "zz"):
             s = _tt_settings(code)
             assert s.anki_deck_name == "1. Slovene", code
+            assert s.anki_deck_id is None, code
             assert s.database_url.endswith("/backend/tunatale_sl.db"), code
 
     def test_anki_with_spec(self):
@@ -731,13 +734,13 @@ class TestSociableSync:
         if peer_sync fell back to the default db (the bug) nothing is pending, the
         push leg is skipped, and the collocation stays unlinked. No peer_sync patch.
         """
-        from app.languages import get_deck_name
+        from app.languages import get_deck_id
         from app.srs.database import SRSDatabase
         from tests.anki_oracle.synthetic_collection import SyntheticCollection
 
-        no_deck = get_deck_name("no")
+        no_deck = get_deck_id("no")  # registered by id; the name is free
         coll = SyntheticCollection(settings.tt_collection_path)
-        coll.set_deck(no_deck, 1)
+        coll.set_deck("Norsk (renamed)", no_deck)
         coll.add_notetype(CLOZE_NOTETYPE_MID, "Cloze", ("Text", "Back Extra"), template_count=1)
         coll.save()
         monkeypatch.setattr(settings, "anki_model_name", "Cloze")

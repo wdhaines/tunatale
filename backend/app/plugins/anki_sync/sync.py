@@ -17,6 +17,7 @@ from pathlib import Path
 from app.cards.media.vocab_media import safe_stem as _safe_stem  # noqa: F401 — re-export (archive scripts, cloze_tts)
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media  # noqa: F401 — re-export (archive scripts)
 from app.config import settings
+from app.plugins.anki_sync.sqlite_reader import DeckNotFoundError, resolve_deck_name
 
 # Phase 9 split: leaf helpers live in sync_common / sync_reader; imported here both
 # for use by the remaining sync code AND as the stable re-export surface (tests +
@@ -572,13 +573,20 @@ def main(
             # the language threading lives there, not in a loop here.
             import asyncio
 
-            from app.languages import get_mint_deck_name
+            from app.languages import get_mint_deck_id
 
             # No getattr fallback: a settings object without target_language used to
             # sync silently as Slovene, which for a Norwegian deck means the wrong
             # vocab notetype AND the wrong L2 markup class. Settings always defines
             # it; the fallback existed only for test doubles that omitted it.
             language_code = _s.target_language
+            # A registry language names its decks by id, which Anki keeps through
+            # a rename; look up the current names now that the collection is open.
+            # A missing id raises DeckNotFoundError before any phase runs.
+            if _s.anki_deck_id is not None:
+                deck_name = resolve_deck_name(ctx.conn, _s.anki_deck_id)
+            mint_deck_id = get_mint_deck_id(language_code)
+            mint_deck_name = resolve_deck_name(ctx.conn, mint_deck_id) if mint_deck_id is not None else deck_name
             reader = OfflineReader(ctx.conn, deck_name, language_code=language_code)
             # The deck's mirrored gather priority decides which end of the position
             # range a newly written card must land on to be seen at all (Layer 83).
@@ -603,7 +611,7 @@ def main(
                     deck_name=deck_name,
                     model_name=model_name,
                     sync_log_path=_sync_log,
-                    mint_deck_name=get_mint_deck_name(language_code, default=deck_name),
+                    mint_deck_name=mint_deck_name,
                     media_fn=_media_fn,
                     media_dir=_media_dir,
                     dry_run=args.dry_run,
@@ -617,6 +625,11 @@ def main(
                 # leaving the log untouched is a contract the dry-run tests pin.
                 _write_reconcile_timing_log(_sync_log, timings, dry_run=args.dry_run)
             return 0
+    except DeckNotFoundError as e:
+        # A deck deleted in Anki, or a collection that is not the user's: refuse
+        # rather than read an empty deck, which looks like every card was deleted.
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
     except OrphanThresholdExceededError as e:
         # run_full_sync runs detect_and_reset_orphans on this path; its threshold
         # guard raises a plain Exception (not RuntimeError). Return non-zero so the

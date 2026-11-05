@@ -221,7 +221,7 @@ def do_check(app_dir: Path = APP_DIR) -> int:
         for literal, count in sorted(counter.items()):
             print(
                 f"FAIL: {rel_path}:{count}x `{_preview(literal)}` — resolve it through "
-                "app/languages.py (get_language / get_deck_name / get_l2_css_class / …) "
+                "app/languages.py (get_language / get_deck_id / get_l2_css_class / …) "
                 "or move the data out of app/**/*.py.",
             )
             exit_code = 1

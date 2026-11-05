@@ -17,7 +17,13 @@ import sqlite3
 
 import pytest
 
-from app.plugins.anki_sync.sqlite_reader import fetch_notes_for_deck_tree, find_deck_id, find_deck_tree_ids
+from app.plugins.anki_sync.sqlite_reader import (
+    DeckNotFoundError,
+    fetch_notes_for_deck_tree,
+    find_deck_id,
+    find_deck_tree_ids,
+    resolve_deck_name,
+)
 
 ROOT = "2. Pimsleur Tagalog"
 DECKS = {
@@ -139,3 +145,32 @@ def test_malformed_legacy_deck_entries_are_skipped_not_fatal():
     conn.execute("INSERT INTO col VALUES (?)", (json.dumps(decks),))
     assert find_deck_tree_ids(conn, ROOT) == [4]
     conn.close()
+
+
+# ── Decks by id (2026-11-05) ────────────────────────────────────────────────
+# The user renamed "3. Bisaya" to "1. Binisayâ"; Anki kept the deck's id. TT
+# registers decks by id and looks up the CURRENT name when the collection is
+# open, so a rename (or a renumbering) needs no code change.
+
+
+def test_resolve_deck_name_returns_the_current_name_of_a_deck_id(conn):
+    assert resolve_deck_name(conn, 10) == ROOT
+
+
+def test_resolve_deck_name_gives_a_subdeck_in_double_colon_form(conn):
+    assert resolve_deck_name(conn, 12) == f"{ROOT}::Level 1::Lesson 01"
+
+
+def test_resolve_deck_name_follows_a_rename(conn):
+    renamed = "1. Binisay\u00e2"
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='decks'").fetchone():
+        conn.execute("UPDATE decks SET name=? WHERE id=30", (renamed,))
+    else:
+        conn.execute("UPDATE col SET decks=?", (json.dumps({"30": {"name": renamed}}),))
+    assert resolve_deck_name(conn, 30) == renamed
+    assert [n.id for n in fetch_notes_for_deck_tree(conn, resolve_deck_name(conn, 30))] == [104]
+
+
+def test_resolve_deck_name_fails_loudly_for_a_missing_id(conn):
+    with pytest.raises(DeckNotFoundError, match="424242"):
+        resolve_deck_name(conn, 424242)

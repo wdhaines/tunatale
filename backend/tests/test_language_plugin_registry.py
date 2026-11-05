@@ -98,13 +98,12 @@ class TestOnePluginIsSufficient:
             mod._CONFIGS.pop("no", None)
             assert "no" not in mod.known_language_codes()
 
-            from app.languages import get_deck_name, get_preprocessor, get_vocab_notetype
+            from app.languages import get_deck_id, get_preprocessor, get_vocab_notetype
 
             preprocessor = get_preprocessor("sl")
             assert preprocessor is not None
 
-            deck = get_deck_name("sl")
-            assert "Slovene" in deck
+            assert get_deck_id("sl") == 1
 
             vnt = get_vocab_notetype("sl")
             assert vnt is not None
