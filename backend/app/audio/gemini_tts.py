@@ -39,6 +39,7 @@ import google.oauth2.service_account
 import httpx
 
 from app.audio.ports import Enunciation, TTSExhausted
+from app.audio.speech_length import longest_pause as measure_longest_pause
 from app.audio.speech_length import speech_seconds as measure_speech_seconds
 from app.audio.take_check import TAKE_CHECK_REROLLS, TakeChecker
 from app.audio.word_gaps import rewrite_word_gaps
@@ -168,6 +169,37 @@ REPEAT_FACTOR_MEASURED_ON_PROMPT_VERSION = 1
 # (about a tenth of a cent for a line); at the measured rate that is two or
 # three re-rolls in a 140-line lesson.
 MAX_LINE_TAKES = 3
+
+# ── A card's word, told which syllable it stresses (bd tunatale-h0q3.39) ──────
+#
+# The owner's ear, blind, on fresh takes of Cebuano card words (2026-11-05):
+# told the word's reading as IPA, the voice stressed it exactly as it did the
+# plain word (simbahan wrong 3 of 3 either way); told the syllable in words,
+# by position and spelled out ("Put the stress on the LAST syllable, "han":
+# sim-ba-HAN."), it was right on 40 of 56 takes where the plain word managed
+# 27, and it said 4 of 7 mispronounced words properly. That wording is
+# ``_stress_prompt``, and STRESS_PROMPT_VERSION is in the cache key for the same
+# reason PROMPT_VERSION is.
+#
+# It also said the word TWICE on 5 of its 56 takes (none of the plain ones), so
+# a take is measured before it is kept: the longest silence INSIDE it, between
+# two stretches of speech (``speech_length.longest_pause``). Over all 148 takes
+# of that session:
+#
+#     said once: 126 takes with no inner pause, 16 with one of 0.12-0.28 s
+#       (a stop closure: sabot, kape, ari).
+#     said twice: 6 takes, inner pause 0.61-1.16 s (Babay twice, bilar, tiyo,
+#       kaon, kalma); the owner caught most by ear, not tiyo's.
+#
+# Neither the take's length nor its speech-only length separates them (a
+# doubled two-syllable word speaks for 1.15 s, a single "bus" for 0.86 s), the
+# pause does. 0.45 sits between the two. A word that fails every take keeps the
+# take with the shortest pause, logged as WORD_TAKE_GAVE_UP: a card left with no
+# audio is worse than one that may say its word twice.
+STRESS_PROMPT_VERSION = 1
+WORD_PAUSE_LIMIT_SECONDS = 0.45
+MAX_WORD_TAKES = 3
+_ORDINALS = ("FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH")
 
 # cloud-platform, not the narrower speech scope: the token is minted for the
 # service account's own role, and a wrong scope is a 403 at synthesis time.
@@ -321,6 +353,23 @@ def _phrase_ipa_prompt(name: str, ipa: str) -> str:
     return (
         f"Say exactly this {name}phrase, once, with nothing before or after it. "
         f"Pronounce it exactly as the IPA /{ipa}/."
+    )
+
+
+def _stress_prompt(name: str, spelling: str) -> str:
+    """The instruction for a card's word, told its stressed syllable. *name* carries its own trailing space.
+
+    *spelling* is the word in syllables, hyphen-joined, the stressed one in
+    capitals ("sim-ba-HAN"). The syllable is named by its position from the
+    start, or as the LAST, and quoted in lower case: the wording the owner's ear
+    measured (see STRESS_PROMPT_VERSION).
+    """
+    syllables = spelling.split("-")
+    at = next(i for i, syllable in enumerate(syllables) if syllable.isupper())
+    position = "LAST" if at == len(syllables) - 1 else _ORDINALS[at]
+    return (
+        f"Say only this one {name}word, exactly once, with nothing before or after it. "
+        f'Put the stress on the {position} syllable, "{syllables[at].lower()}": {spelling}.'
     )
 
 
@@ -495,6 +544,7 @@ class GeminiTTSService:
         sleep: Callable[[float], Awaitable[None]] | None = None,
         now: Callable[[], float] | None = None,
         speech_seconds: Callable[[bytes], float] | None = None,
+        longest_pause: Callable[[bytes], float] | None = None,
         rewrite_gaps: Callable[[bytes, int], bytes | None] | None = None,
         take_checker: Callable[[str], TakeChecker | None] | None = None,
     ) -> None:
@@ -523,6 +573,7 @@ class GeminiTTSService:
         # repeat guard is a real code path, and a test pins it by handing it a
         # measurement rather than by patching ffmpeg out of the process.
         self._speech_seconds = speech_seconds if speech_seconds is not None else measure_speech_seconds
+        self._longest_pause = longest_pause if longest_pause is not None else measure_longest_pause
         self._rewrite_gaps = rewrite_gaps if rewrite_gaps is not None else rewrite_enunciated_take
         # The per-minute quota is exhausted for a WINDOW, not for a request, so
         # the refusal is remembered here rather than in the caller that hit it.
@@ -558,6 +609,7 @@ class GeminiTTSService:
         enunciation: Enunciation | None = None,
         line: bool = False,
         stressed: tuple[int, int] | None = None,
+        stress_spelling: str | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Google Cloud TTS.
 
@@ -590,6 +642,12 @@ class GeminiTTSService:
                 the target language, which is never stressed: the stressed words
                 are the narrator's English, so there is nothing to mark up and
                 nothing to branch on.
+            stress_spelling: *text* is one word said on its own (a card's),
+                written in syllables with the stressed one in capitals
+                ("sim-ba-HAN"). It is sent with ``_stress_prompt`` in place of
+                the reading, keys the cache, and each take is checked for the
+                word said twice. Ignored for a line, which has its own
+                instructions.
         """
         language_code, name = _parse_voice_id(voice_id)
         speaking_rate = _speaking_rate(rate)
@@ -599,9 +657,15 @@ class GeminiTTSService:
         # resolve_ipa, which is also called by callers that never render.
         if phonemes and ipa is None:
             self._warn_phonemes_unsupported()
+        # The named syllable REPLACES the reading: the reading was measured to
+        # change nothing a listener could hear, and two instructions about one
+        # word's sound would be two chances to disagree.
+        stress = stress_spelling if stress_spelling is not None and not (enunciated or line) else None
+        if stress is not None:
+            ipa = None
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, ipa, enunciated)
+            cached = self._cache_path(text, voice_id, rate, ipa, enunciated, stress)
             if cached.exists():
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(cached, output_path)
@@ -615,6 +679,10 @@ class GeminiTTSService:
 
             async def draw() -> bytes:
                 return await self._line_take(text, language_code, name, speaking_rate, ipa, phrase, enunciated, words)
+        elif stress is not None:
+
+            async def draw() -> bytes:
+                return await self._word_take(text, language_code, name, speaking_rate, stress)
         else:
 
             async def draw() -> bytes:
@@ -628,7 +696,7 @@ class GeminiTTSService:
         output_path.write_bytes(audio)
 
         if self._cache_dir is not None:
-            cached = self._cache_path(text, voice_id, rate, ipa, enunciated)
+            cached = self._cache_path(text, voice_id, rate, ipa, enunciated, stress)
             cached.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output_path, cached)
 
@@ -690,7 +758,13 @@ class GeminiTTSService:
         )
 
     def _cache_path(
-        self, text: str, voice_id: str, rate: str, ipa: str | None = None, enunciated: bool = False
+        self,
+        text: str,
+        voice_id: str,
+        rate: str,
+        ipa: str | None = None,
+        enunciated: bool = False,
+        stress: str | None = None,
     ) -> Path:
         """The cache file for one (model, voice, rate, text, ipa, enunciated) tuple.
 
@@ -713,10 +787,15 @@ class GeminiTTSService:
         version. The natural-speed section says this same text in this same
         voice, so without it the two would be one file — and with no IPA to
         tell them apart, the natural clip would play as the Enunciated one.
+
+        A card's word told its stressed syllable adds the spelling and its
+        instruction's version: the same word with the stress put elsewhere is a
+        different clip, and a plain render of it must not be served.
         """
+        stress_part = f"|stress:{stress}|s{STRESS_PROMPT_VERSION}" if stress is not None else ""
         ipa_part = f"|ipa:{ipa}|p{PROMPT_VERSION}" if ipa is not None else ""
         say_part = f"|say:words|e{ENUNCIATION_VERSION}" if enunciated else ""
-        key = f"gemini|{self._model}|{voice_id}|{rate}|{text}{ipa_part}{say_part}"
+        key = f"gemini|{self._model}|{voice_id}|{rate}|{text}{ipa_part}{say_part}{stress_part}"
         digest = hashlib.sha256(key.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.mp3"  # type: ignore[operator]
 
@@ -729,6 +808,7 @@ class GeminiTTSService:
         ipa: str | None = None,
         phrase: bool = False,
         enunciated: bool = False,
+        stress: str | None = None,
     ) -> dict:
         """The JSON body, exactly as the endpoint is measured to accept it.
 
@@ -744,7 +824,10 @@ class GeminiTTSService:
         line has a prompt whether or not it has a reading.
         """
         request_input: dict[str, str] = {"text": text}
-        if enunciated or ipa is not None:
+        if stress is not None:
+            language_name = language_name_for_tts_locale(language_code)
+            request_input["prompt"] = _stress_prompt(f"{language_name} " if language_name else "", stress)
+        elif enunciated or ipa is not None:
             language_name = language_name_for_tts_locale(language_code)
             named = f"{language_name} " if language_name else ""
             if enunciated:
@@ -827,6 +910,33 @@ class GeminiTTSService:
             "with fewer pauses than the line has word gaps cannot have its gaps set. Nothing was cached."
         )
 
+    async def _word_take(self, text: str, language_code: str, name: str, speaking_rate: float, stress: str) -> bytes:
+        """A take of a card's word told its stressed syllable, said once if any take is.
+
+        A take with a pause longer than WORD_PAUSE_LIMIT_SECONDS inside it said
+        the word twice and is drawn again, up to MAX_WORD_TAKES. If every take
+        pauses, the one with the shortest pause is kept and WORD_TAKE_GAVE_UP is
+        logged with every measurement. The measurement is a subprocess, so it
+        runs off the event loop.
+        """
+        takes: list[tuple[float, bytes]] = []
+        for take in range(1, MAX_WORD_TAKES + 1):
+            audio = await self._synthesize_with_retry(text, language_code, name, speaking_rate, stress=stress)
+            pause = await asyncio.to_thread(self._longest_pause, audio)
+            if pause <= WORD_PAUSE_LIMIT_SECONDS:
+                return audio
+            takes.append((pause, audio))
+            logger.info("Gemini TTS take %d of %r paused %.2f s inside it; taking it again", take, text, pause)
+        logger.warning(
+            "WORD_TAKE_GAVE_UP %r: every one of %d takes paused inside the word (%s s, limit %.2f s); "
+            "kept the shortest. Evict it with scripts/reroll_tts_clip.py",
+            text,
+            MAX_WORD_TAKES,
+            ", ".join(f"{pause:.2f}" for pause, _ in takes),
+            WORD_PAUSE_LIMIT_SECONDS,
+        )
+        return min(takes, key=lambda t: t[0])[1]
+
     async def _synthesize_with_retry(
         self,
         text: str,
@@ -836,11 +946,14 @@ class GeminiTTSService:
         ipa: str | None = None,
         phrase: bool = False,
         enunciated: bool = False,
+        stress: str | None = None,
     ) -> bytes:
         last_error: Exception | None = None
         for attempt in range(MAX_RETRIES):
             try:
-                return await self._do_synthesize(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
+                return await self._do_synthesize(
+                    text, language_code, name, speaking_rate, ipa, phrase, enunciated, stress
+                )
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 if _is_fatal(status):
@@ -884,6 +997,7 @@ class GeminiTTSService:
         ipa: str | None = None,
         phrase: bool = False,
         enunciated: bool = False,
+        stress: str | None = None,
     ) -> bytes:
         token = await self._token_provider()
         headers = {
@@ -891,7 +1005,7 @@ class GeminiTTSService:
             "Content-Type": "application/json",
             "User-Agent": "tunatale",
         }
-        body = self._request_body(text, language_code, name, speaking_rate, ipa, phrase, enunciated)
+        body = self._request_body(text, language_code, name, speaking_rate, ipa, phrase, enunciated, stress)
         # The pacing delay is paid on EVERY attempt — success or failure — so
         # that consecutive request STARTS are at least min_delay apart. A
         # throttled request that exits instantly is what turns a burst into a

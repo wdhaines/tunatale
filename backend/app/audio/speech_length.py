@@ -105,3 +105,15 @@ def speech_stretches(audio: bytes) -> list[tuple[float, float]]:
     if total - at > _MIN_STRETCH_SECONDS:
         stretches.append((at, total))
     return stretches
+
+
+def longest_pause(audio: bytes) -> float:
+    """The longest silence between two stretches of speech in *audio*, or ``0.0``.
+
+    The silence at either end is not inside the clip's speech and does not
+    count. Built on ``speech_stretches``, so it agrees with it about what a
+    pause is. One word said once has no pause in it that long; the same word
+    said twice has one between the sayings (tunatale-h0q3.39).
+    """
+    stretches = speech_stretches(audio)
+    return max((nxt[0] - prev[1] for prev, nxt in zip(stretches, stretches[1:], strict=False)), default=0.0)

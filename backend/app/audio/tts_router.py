@@ -79,6 +79,7 @@ class RoutingTTSService:
         enunciation: Enunciation | None = None,
         line: bool = False,
         stressed: tuple[int, int] | None = None,
+        stress_spelling: str | None = None,
     ) -> None:
         """Hand *voice_id* to the adapter that serves it.
 
@@ -98,6 +99,8 @@ class RoutingTTSService:
             stressed: The span of *text* said with the focus marked, passed
                 through uninterpreted. Which adapter makes it audible is the
                 adapter's own business.
+            stress_spelling: A word's syllables, the stressed one in capitals,
+                passed through uninterpreted.
         """
         adapter = self._adapter_for(voice_id)
         await adapter.synthesize(
@@ -110,6 +113,7 @@ class RoutingTTSService:
             enunciation=enunciation,
             line=line,
             stressed=stressed,
+            stress_spelling=stress_spelling,
         )
 
     async def list_voices(self, language_code: str | None = None) -> list[dict]:

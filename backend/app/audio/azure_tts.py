@@ -228,6 +228,7 @@ class AzureTTSService:
         enunciation: Enunciation | None = None,
         line: bool = False,
         stressed: tuple[int, int] | None = None,
+        stress_spelling: str | None = None,
     ) -> None:
         """Synthesize *text* to *output_path* using Azure Speech.
 
@@ -262,6 +263,9 @@ class AzureTTSService:
                 *phonemes* or *enunciation* (it raises rather than silently
                 dropping one of them), and ``None`` changes nothing at all,
                 cache key included.
+            stress_spelling: Accepted and IGNORED, silently. A Neural voice is
+                given no syllable to stress; its reading travels as
+                ``<phoneme>`` markup instead, and that is where its stress is.
         """
         self._require_credentials()
 

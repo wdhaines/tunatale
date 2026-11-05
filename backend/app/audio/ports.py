@@ -54,6 +54,7 @@ class TTSService(Protocol):
         enunciation: Enunciation | None = None,
         line: bool = False,
         stressed: tuple[int, int] | None = None,
+        stress_spelling: str | None = None,
     ) -> None:
         """Synthesize *text*, optionally wrapping known tokens in ``<phoneme>``.
 
@@ -88,6 +89,12 @@ class TTSService(Protocol):
         must behave identically to a provider without the capability, cache key
         included; a provider whose voices never speak the stressed language
         accepts and ignores it.
+
+        *stress_spelling* says *text* is one word said on its own (a card's),
+        written in syllables with the stressed one in capitals ("sim-ba-HAN").
+        ``None`` must behave identically to a provider without the capability,
+        cache key included; a provider that cannot be told a syllable accepts
+        and ignores it.
         """
         ...
 
