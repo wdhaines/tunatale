@@ -614,7 +614,15 @@ _DEIXIS_BALL_R = 16.0
 _DEIXIS_X = {"both": 110.0, "mine": 40.0, "yours": 178.0, "far": 234.0}
 #: The pronoun pictures stand people on a ground two units higher than this one.
 _PEOPLE_DY = 2.0
-_TIME_ARROW_Y = 24.0
+
+#: The clock that says whether the absent person was or will be there: a face at
+#: this height, and a turning accent arc around it — clockwise for "will be",
+#: anticlockwise for "was". It replaces the sideways arrow, which pointed by
+#: available room rather than by time. Small enough to sit above the speech
+#: bubble at the near spots, where the bubble occupies x 57-123, y 36-74.
+_CLOCK_Y = 19.0
+_CLOCK_FACE_R = 6.5
+_CLOCK_ARC_R = 13.0
 
 
 def _people() -> str:
@@ -642,19 +650,190 @@ def _zones() -> str:
     )
 
 
+# ── The three signs that tell the deixis rows apart (tunatale-14v2) ──────────
+# A thing word gets a speaker who POINTS at it; an existential gets a lit person
+# who WAVES; a past/future existential gets the same outline figure waving, with
+# a clock above it turning one way for "was" and the other for "will be". The
+# owner's complaint (2026-11-04) was that the three rows were told apart by the
+# object alone ("people vs. balls?"), and that the old sideways arrow pointed by
+# available room: adto (will be, far) pointed left and didto (was, far) pointed
+# right, which reads as past vs future and is backwards.
+
+
+def _limb(x0: float, y0: float, x1: float, y1: float, fill: str, stroke: str, w: float = 9, hand: float = 5.5) -> str:
+    """An arm drawn the way the figures draw a body: a filled, outlined capsule, with a round hand."""
+    angle = math.degrees(math.atan2(y1 - y0, x1 - x0))
+    length = math.hypot(x1 - x0, y1 - y0)
+    return (
+        f'<rect x="{_n(x0)}" y="{_n(y0 - w / 2)}" width="{_n(length)}" height="{_n(w)}" rx="{_n(w / 2)}" '
+        f'fill="{fill}" stroke="{stroke}" stroke-width="2" transform="rotate({_n(angle)} {_n(x0)} {_n(y0)})"/>'
+        f'<circle cx="{_n(x1)}" cy="{_n(y1)}" r="{_n(hand)}" fill="{fill}" stroke="{stroke}" stroke-width="2"/>'
+    )
+
+
+def _arrowhead(tip: tuple[float, float], frm: tuple[float, float], size: float = 9) -> str:
+    """A filled triangle whose POINT is *tip*, opening back toward *frm*."""
+    a = math.atan2(tip[1] - frm[1], tip[0] - frm[0])
+    p1 = (tip[0] - size * math.cos(a - 0.5), tip[1] - size * math.sin(a - 0.5))
+    p2 = (tip[0] - size * math.cos(a + 0.5), tip[1] - size * math.sin(a + 0.5))
+    return (
+        f'<polygon points="{_n(tip[0])},{_n(tip[1])} {_n(p1[0])},{_n(p1[1])} {_n(p2[0])},{_n(p2[1])}" '
+        f'fill="{_ACCENT}"/>'
+    )
+
+
+def _pointing(x: float) -> tuple[str, str]:
+    """The speaker's arm aimed at the ball, and — far enough away — the dotted line on to it.
+
+    The aim is at the ball's CENTRE, not its edge: an arm aimed at an edge reads
+    as pointing past the thing. Near enough that dots would have no room (only
+    ~7 units between the speaker's body and kini's ball), the hand simply rests
+    on the ball's edge, so pointing-by-touching is the whole of the sign.
+    """
+    from app.cards.pronoun_scenes import _BODY_TOP
+
+    side = -1.0 if x < _SPEAKER_X else 1.0
+    near = abs(x - _SPEAKER_X) < 60
+    shoulder = (_SPEAKER_X + side * 8, _BODY_TOP + _PEOPLE_DY + (4 if near else 16))
+    ball_c = (x, _G - _DEIXIS_BALL_R)
+    a = math.atan2(ball_c[1] - shoulder[1], ball_c[0] - shoulder[0])
+    if near:
+        reach = math.hypot(ball_c[0] - shoulder[0], ball_c[1] - shoulder[1]) - _DEIXIS_BALL_R - 4
+        hand = (shoulder[0] + reach * math.cos(a), shoulder[1] + reach * math.sin(a))
+        return _limb(*shoulder, *hand, _ROD_FILL, _BOX_STROKE), ""
+    hand = (shoulder[0] + 30 * math.cos(a), shoulder[1] + 30 * math.sin(a))
+    arm = _limb(*shoulder, *hand, _ROD_FILL, _BOX_STROKE)
+    tip = (ball_c[0] - (_DEIXIS_BALL_R + 3) * math.cos(a), ball_c[1] - (_DEIXIS_BALL_R + 3) * math.sin(a))
+    start = (hand[0] + 9 * math.cos(a), hand[1] + 9 * math.sin(a))
+    line = (
+        f'<line x1="{_n(start[0])}" y1="{_n(start[1])}" x2="{_n(tip[0])}" y2="{_n(tip[1])}" '
+        f'stroke="{_ACCENT}" stroke-width="3" stroke-dasharray="1 7" stroke-linecap="round"/>'
+    )
+    return arm, line + _arrowhead(tip, start)
+
+
+#: Which way each distance's waving arm goes, so it clears the cast and the
+#: speech bubble: both and yours wave to the right, mine and far to the left.
+_WAVE_SIDE = {"both": 1.0, "mine": -1.0, "yours": 1.0, "far": -1.0}
+
+
+def _wave_pose(d: str) -> tuple[tuple[float, float], tuple[float, float], float]:
+    """The shoulder, the hand and the side of the wave for distance *d*.
+
+    One pose for both wave styles, so the lit arm and the outline arm can only
+    differ in how they are painted.
+    """
+    from app.cards.pronoun_scenes import _BODY_TOP, _HEAD_CY, _HEAD_R
+
+    x = _DEIXIS_X[d]
+    side = _WAVE_SIDE[d]
+    spread = 24.0 if d in ("yours", "far") else 13.0
+    shoulder = (x + side * 7, _BODY_TOP + _PEOPLE_DY + 14)
+    hand = (x + side * spread, _HEAD_CY + _PEOPLE_DY - _HEAD_R - (8 if spread > 13 else 14))
+    return shoulder, hand, side
+
+
+def _wave_arc(hand: tuple[float, float], side: float, r: float, width: float, stroke: str) -> str:
+    """One motion arc beside the hand, opening away from the figure."""
+    a0, a1 = math.radians(-40), math.radians(40)
+    if side < 0:
+        a0, a1 = math.pi - a1, math.pi - a0
+    p0 = (hand[0] + r * math.cos(a0), hand[1] + r * math.sin(a0))
+    p1 = (hand[0] + r * math.cos(a1), hand[1] + r * math.sin(a1))
+    return (
+        f'<path d="M{_n(p0[0])} {_n(p0[1])} A{_n(r)} {_n(r)} 0 0 1 {_n(p1[0])} {_n(p1[1])}" fill="none" '
+        f'stroke="{stroke}" stroke-width="{_n(width)}" stroke-linecap="round"/>'
+    )
+
+
+def _waving(d: str) -> tuple[str, str]:
+    """The lit person's raised arm, and the two accent arcs beside the hand."""
+    from app.cards.pronoun_scenes import _REF_STROKE
+
+    shoulder, hand, side = _wave_pose(d)
+    arm = _limb(*shoulder, *hand, _DOT_FILL, _REF_STROKE, w=9, hand=6.5)
+    arcs = "".join(_wave_arc(hand, side, r, 3 - 0.5 * k, _ACCENT) for k, r in enumerate((10.0, 17.0)))
+    return arm, arcs
+
+
+def _outline_wave(d: str) -> tuple[str, str]:
+    """The same wave drawn as the absent figure is: background fill, dashed outline."""
+    shoulder, hand, side = _wave_pose(d)
+    angle = math.degrees(math.atan2(hand[1] - shoulder[1], hand[0] - shoulder[0]))
+    length = math.hypot(hand[0] - shoulder[0], hand[1] - shoulder[1])
+    dash = 'stroke-width="2.5" stroke-dasharray="5 4"'
+    arm = (
+        f'<rect x="{_n(shoulder[0])}" y="{_n(shoulder[1] - 4.5)}" width="{_n(length)}" height="9" rx="4.5" '
+        f'fill="{_BG}" stroke="{_BOX_STROKE}" {dash} '
+        f'transform="rotate({_n(angle)} {_n(shoulder[0])} {_n(shoulder[1])})"/>'
+        f'<circle cx="{_n(hand[0])}" cy="{_n(hand[1])}" r="6.5" fill="{_BG}" stroke="{_BOX_STROKE}" {dash}/>'
+    )
+    arcs = "".join(_wave_arc(hand, side, r, 3 - 0.5 * k, _BOX_STROKE) for k, r in enumerate((10.0, 17.0)))
+    return arm, arcs
+
+
+def _clock(cx: float, future: bool) -> str:
+    """The time clock above the outline figure: face, hands, and a turning accent arc.
+
+    Clockwise for "will be" (start 150 deg, end 390 deg, head at the lower
+    right) and anticlockwise for "was" (start 30 deg, end -210 deg, head at the
+    lower left). The sweep flag and the head's side are the whole of what tells
+    the two words apart, and both are read off the markup by the tests.
+    """
+    face = (
+        f'<circle cx="{_n(cx)}" cy="{_n(_CLOCK_Y)}" r="{_n(_CLOCK_FACE_R)}" fill="{_BG}" '
+        f'stroke="{_BOX_STROKE}" stroke-width="2"/>'
+        f'<line x1="{_n(cx)}" y1="{_n(_CLOCK_Y)}" x2="{_n(cx)}" y2="{_n(_CLOCK_Y - 4)}" '
+        f'stroke="{_BOX_STROKE}" stroke-width="2" stroke-linecap="round"/>'
+        f'<line x1="{_n(cx)}" y1="{_n(_CLOCK_Y)}" x2="{_n(cx + 3)}" y2="{_n(_CLOCK_Y)}" '
+        f'stroke="{_BOX_STROKE}" stroke-width="2" stroke-linecap="round"/>'
+    )
+    if future:  # clockwise over the top, head at the lower right
+        a0, a1, sweep = 150.0, 390.0, 1
+        th = math.radians(a1)
+        tangent = (-math.sin(th), math.cos(th))
+    else:  # anticlockwise over the top, head at the lower left
+        a0, a1, sweep = 30.0, -210.0, 0
+        th = math.radians(a1)
+        tangent = (math.sin(th), -math.cos(th))
+    p0 = (cx + _CLOCK_ARC_R * math.cos(math.radians(a0)), _CLOCK_Y + _CLOCK_ARC_R * math.sin(math.radians(a0)))
+    p1 = (cx + _CLOCK_ARC_R * math.cos(math.radians(a1)), _CLOCK_Y + _CLOCK_ARC_R * math.sin(math.radians(a1)))
+    arc = (
+        f'<path d="M{_n(p0[0])} {_n(p0[1])} A{_n(_CLOCK_ARC_R)} {_n(_CLOCK_ARC_R)} 0 1 {sweep} '
+        f'{_n(p1[0])} {_n(p1[1])}" fill="none" stroke="{_ACCENT}" stroke-width="4.5" stroke-linecap="round"/>'
+    )
+    tip = (p1[0] + 5 * tangent[0], p1[1] + 5 * tangent[1])
+    return face + arc + _arrowhead(tip, (tip[0] - tangent[0], tip[1] - tangent[1]), size=12)
+
+
 def _deixis(where: str, thing: bool, present: bool = False) -> list[str]:
+    """One distance's picture: the zones and the cast, plus the sign its row carries.
+
+    A thing word points (and the genitive inherits that arm), an existential
+    waves, and a place word gets neither — the flag alone is the sign there.
+    """
     x = _DEIXIS_X[where]
     if present:
-        obj = _present(x)
-    elif thing:
-        obj = f'<circle class="ball" cx="{_n(x)}" cy="{_n(_G - _DEIXIS_BALL_R)}" r="{_n(_DEIXIS_BALL_R)}" fill="{_DOT_FILL}"/>'
-    else:
-        obj = _flag(x, height=62.0, pennant_w=22.0, pennant_h=18.0)
-    return [_zones(), _people(), obj]
+        arm, arcs = _waving(where)
+        return [
+            _zones(),
+            _people(),
+            f'<g class="wave-arm">{arm}</g>',
+            _present(x),
+            f'<g class="wave-arcs">{arcs}</g>',
+        ]
+    if thing:
+        arm, pointer = _pointing(x)
+        ball = f'<circle class="ball" cx="{_n(x)}" cy="{_n(_G - _DEIXIS_BALL_R)}" r="{_n(_DEIXIS_BALL_R)}" fill="{_DOT_FILL}"/>'
+        parts = [_zones(), f'<g class="pointing-arm">{arm}</g>', _people(), ball]
+        if pointer:
+            parts.append(f'<g class="pointer">{pointer}</g>')
+        return parts
+    return [_zones(), _people(), _flag(x, height=62.0, pennant_w=22.0, pennant_h=18.0)]
 
 
-#: Where a time arrow's dotted tether starts: just under the arrow.
-_TETHER_TOP_Y = 30.0
+#: Where the clock's dotted tether starts: just below the turning arc.
+_TETHER_TOP_Y = _CLOCK_Y + _CLOCK_ARC_R + 4
 
 
 def _absent_person(x: float) -> str:
@@ -669,7 +848,7 @@ def _absent_person(x: float) -> str:
 
 
 def _tether(x: float) -> str:
-    """The dotted line from the time arrow down to 12 units above the outline's head top."""
+    """The dotted line from below the clock down to 12 units above the outline's head top."""
     from app.cards.pronoun_scenes import _HEAD_CY, _HEAD_R
 
     head_top = _PEOPLE_DY + _HEAD_CY - _HEAD_R
@@ -681,20 +860,34 @@ def _tether(x: float) -> str:
 
 
 def _time_arrow_past(d: str) -> list[str]:
-    """Was here, has gone: the tail sits over the figure and the arrow points away."""
+    """Was here, has gone: the outline figure waves, and the clock turns anticlockwise."""
     x = _DEIXIS_X[d]
-    tip = 150.0 if d == "far" else 254.0
-    arrow = _arrow(x, _TIME_ARROW_Y, tip, _TIME_ARROW_Y)
+    arm, arcs = _outline_wave(d)
     # The tether is painted before the people, so the speech bubble covers it where they cross.
-    return [_zones(), _tether(x), _people(), _absent_person(x), arrow]
+    return [
+        _zones(),
+        _tether(x),
+        _people(),
+        f'<g class="wave-arm">{arm}</g>',
+        _absent_person(x),
+        f'<g class="wave-arcs">{arcs}</g>',
+        f'<g class="clock">{_clock(x, future=False)}</g>',
+    ]
 
 
 def _time_arrow_future(d: str) -> list[str]:
-    """Will be here: the tip sits over the figure and the arrow comes from where we are."""
+    """Will be here: the same outline figure and wave, with the clock turning clockwise."""
     x = _DEIXIS_X[d]
-    tail = _DEIXIS_X["both"] if d == "far" else 254.0
-    arrow = _arrow(tail, _TIME_ARROW_Y, x, _TIME_ARROW_Y)
-    return [_zones(), _tether(x), _people(), _absent_person(x), arrow]
+    arm, arcs = _outline_wave(d)
+    return [
+        _zones(),
+        _tether(x),
+        _people(),
+        f'<g class="wave-arm">{arm}</g>',
+        _absent_person(x),
+        f'<g class="wave-arcs">{arcs}</g>',
+        f'<g class="clock">{_clock(x, future=True)}</g>',
+    ]
 
 
 # ── A place in a line ────────────────────────────────────────────────────────
