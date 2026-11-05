@@ -65,7 +65,12 @@ class Settings(BaseSettings):
 
     anki_collection_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
     anki_media_path: Path = Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
-    anki_deck_name: str = "1. Slovene"
+    # The single-language fallback deck, by NAME (a CLI/.env override). A
+    # registry language syncs by ``anki_deck_id`` instead: ``_tt_settings`` sets
+    # the id and clears this name, and ``sync.main`` looks the name up in the
+    # collection, so renaming a deck in Anki needs no change here.
+    anki_deck_name: str | None = "3. Slovene"
+    anki_deck_id: int | None = None
     anki_backup_dir: Path = Field(default_factory=lambda: tt_home() / "anki-backups")
     # Retention cap for the safe_open backup directory. safe_open writes a full
     # ~16 MB collection snapshot on every call; without a cap the directory grows

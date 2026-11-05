@@ -40,6 +40,7 @@ def test_a_reverse_imported_note_takes_the_synced_language_not_the_global_defaul
     class SloveneSync:
         anki_collection_path = "unused"
         anki_deck_name = "0. Slovene"
+        anki_deck_id = None
         anki_model_name = "Slovene Vocabulary"
         target_language = "sl"
         database_url = "sqlite:///:memory:"

@@ -142,8 +142,8 @@ register(
             },
         ),
         preprocessor_factory=CebuanoPreprocessor,
-        deck_name="3. Bisaya",
-        mint_deck_name="3. Bisaya::TunaTale",
+        deck_id=1790360755220,  # "1. Binisayâ" (was "3. Bisaya" until 2026-11-05)
+        mint_deck_id=1790360755221,  # "1. Binisayâ::TunaTale"
         vocab_notetype=CEBUANO_VOCAB,
         # TT's own vocab notes store the headword as plain text, with no L2
         # markup class, so without this the reader has to GUESS which field is

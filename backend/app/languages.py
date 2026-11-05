@@ -209,7 +209,7 @@ class LanguageConfig:
     Fields are added in the phase that first needs them:
 
     * Phase 0: ``language``, ``preprocessor_factory``
-    * Phase 1: ``deck_name``
+    * Phase 1: ``deck_id`` (was ``deck_name`` until 2026-11-05)
     * Phase 3: ``vocab_notetype`` — the TT-managed notetype new cards are minted
       into (recognition + production). ``None`` for languages TT doesn't mint
       into (``en``).
@@ -225,19 +225,22 @@ class LanguageConfig:
 
     ``en`` (English) is the gloss/translation language — it has a ``Language``
     entry but **no** preprocessor and **no** TT-managed Anki deck of its own
-    (both fields are ``None``). ``get_preprocessor("en")`` / ``get_deck_name("en")``
+    (both fields are ``None``). ``get_preprocessor("en")`` / ``get_deck_id("en")``
     raise ``ValueError``.
     """
 
     language: Language
     preprocessor_factory: type[TextPreprocessor] | None = None
-    deck_name: str | None = None
-    #: The deck TT-MINTED notes go into, when it differs from ``deck_name``
-    #: (which TT reads, with all its subdecks). ``None`` (the default) mints into
-    #: the read deck, as every language did before. A subdeck is written
-    #: ``Parent::Child``; it must already exist in Anki, and minting fails loudly
-    #: if it does not (tunatale-w4m7.8). See ``get_mint_deck_name``.
-    mint_deck_name: str | None = None
+    #: The Anki deck TT reads, with all its subdecks, by deck ID. Anki keeps a
+    #: deck's id through a rename and AnkiWeb carries it to every synced copy,
+    #: so the user can rename or renumber decks freely (they did on 2026-11-05).
+    #: The current name is looked up once the collection is open
+    #: (``sqlite_reader.resolve_deck_name``); a missing id stops the sync.
+    deck_id: int | None = None
+    #: The deck TT-MINTED notes go into, by id, when it differs from ``deck_id``.
+    #: ``None`` (the default) mints into the read deck. It must already exist
+    #: in Anki, and the sync fails loudly if it does not (tunatale-w4m7.8).
+    mint_deck_id: int | None = None
     #: Field-role profiles for notetypes whose names are too generic to be
     #: global, keyed by notetype name. Consulted before the global ones in
     #: ``app.cards.field_map``; see ``get_profile`` (tunatale-w4m7.8).
@@ -527,7 +530,6 @@ def _facet(code: str, attr: str, default: object = None) -> object:
 
     Only for that plain shape. A getter that CALLS what it fetches
     (:func:`get_lexicon`, :func:`get_phoneme_planner`, :func:`get_multiword_traps`),
-    post-processes it (:func:`get_mint_deck_name` tests truthiness, not ``None``),
     or branches further (:func:`get_syllabifier` falls back to a default function)
     keeps its own body — folding those in would hide the extra step, not remove it.
     """
@@ -613,8 +615,8 @@ def get_preprocessor(code: str) -> TextPreprocessor:
     return factory()
 
 
-def get_deck_name(code: str) -> str:
-    """Return the TT-managed Anki deck name for *code*.
+def get_deck_id(code: str) -> int:
+    """Return the TT-managed Anki deck id for *code*.
 
     Raises ``KeyError`` for unknown codes and ``ValueError`` for codes that have
     no TT-managed deck (e.g. ``en``).
@@ -622,10 +624,10 @@ def get_deck_name(code: str) -> str:
     discover()
     if code not in _CONFIGS:
         raise KeyError(f"Unknown language code: {code!r}. Valid: {sorted(_CONFIGS)}")
-    deck_name = _CONFIGS[code].deck_name
-    if deck_name is None:
+    deck_id = _CONFIGS[code].deck_id
+    if deck_id is None:
         raise ValueError(f"Language {code!r} has no TT-managed deck configured")
-    return deck_name
+    return deck_id
 
 
 def get_tts_voice(code: str, role: str = "female-1") -> str:
@@ -951,17 +953,13 @@ def get_variant_separator(code: str) -> str | None:
     return _facet(code, "variant_separator", None)
 
 
-def get_mint_deck_name(code: str, *, default: str) -> str:
-    """The deck TT-minted notes for *code* go into.
+def get_mint_deck_id(code: str) -> int | None:
+    """The id of the deck TT-minted notes for *code* go into.
 
-    The language's registered ``mint_deck_name`` when it has one, else *default*
-    (the deck the sync is reading). Unknown codes → *default*. Taking the read
-    deck as a parameter, not re-deriving it, keeps a per-request deck override
-    authoritative for languages that register no mint deck.
+    ``None`` means "mint into the deck the sync is reading", which is also the
+    answer for an unknown code.
     """
-    discover()
-    config = _CONFIGS.get(code)
-    return config.mint_deck_name if config is not None and config.mint_deck_name else default
+    return _facet(code, "mint_deck_id", None)
 
 
 def get_notetype_profiles(code: str) -> Mapping[str, NotetypeProfile]:
@@ -1246,12 +1244,17 @@ class LanguageContext:
     ``db_url`` is the RAW registry/settings value; a caller needing a
     CWD-independent path (the sync adapter) absolutizes it itself — keeping this
     module free of filesystem-anchoring concerns.
+
+    The deck is EITHER ``deck_id`` (a registry language; its current name is
+    looked up once the collection is open) OR ``deck_name`` (the singular
+    ``settings.anki_deck_name`` fallback). Exactly one is set.
     """
 
     code: str | None
     db_url: str
     deck_name: str | None
     target_language: str
+    deck_id: int | None = None
     language: Language | None = None
     preprocessor_factory: type[TextPreprocessor] | None = None
     lemmatizer_type: str = "lowercase"
@@ -1272,8 +1275,10 @@ def resolve_language_context(code: str | None, settings: Settings) -> LanguageCo
     discover()
     config = _CONFIGS.get(code) if code else None
     configured_db = settings.database_urls.get(code) if code else None
+    deck_id: int | None = None
+    deck_name: str | None = None
     if configured_db:
-        db_url, deck_name, target_language = configured_db, get_deck_name(code), code
+        db_url, deck_id, target_language = configured_db, get_deck_id(code), code
     else:
         db_url = settings.database_url
         deck_name = settings.anki_deck_name
@@ -1282,6 +1287,7 @@ def resolve_language_context(code: str | None, settings: Settings) -> LanguageCo
         code=code,
         db_url=db_url,
         deck_name=deck_name,
+        deck_id=deck_id,
         target_language=target_language,
         language=config.language if config else None,
         preprocessor_factory=config.preprocessor_factory if config else None,

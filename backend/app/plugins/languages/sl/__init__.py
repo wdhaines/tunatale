@@ -98,7 +98,7 @@ register(
             },
         ),
         preprocessor_factory=SlovenePreprocessor,
-        deck_name="1. Slovene",
+        deck_id=1,  # "3. Slovene" (was "1. Slovene"); Anki's original Default deck
         vocab_notetype=SLOVENE_VOCAB,
         l2_scorer=score_slovene_l2,
         lemmatizer_type="classla",

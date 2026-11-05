@@ -128,7 +128,7 @@ register(
             },
         ),
         preprocessor_factory=NorwegianPreprocessor,
-        deck_name="0. 6000 Most Frequent Norwegian Words [Part 1]",
+        deck_id=1726348699710,  # "0. 6000 Most Frequent Norwegian Words [Part 1]"
         vocab_notetype=NORWEGIAN_VOCAB,
         l2_scorer=score_norwegian_l2,
         lemmatizer_type="stanza",

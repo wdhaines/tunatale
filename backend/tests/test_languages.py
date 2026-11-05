@@ -10,10 +10,10 @@ from app.languages import (
     card_surface_variants,
     cloze_answer_spelling,
     format_vocab_headword,
-    get_deck_name,
+    get_deck_id,
     get_infinitive_marker,
     get_language,
-    get_mint_deck_name,
+    get_mint_deck_id,
     get_morphology_profile,
     get_planner_example,
     get_preprocessor,
@@ -243,7 +243,10 @@ class TestResolveLanguageContext:
         ctx = resolve_language_context("no", s)
         assert isinstance(ctx, LanguageContext)
         assert ctx.db_url == "sqlite:///./tunatale_no.db"
-        assert ctx.deck_name == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        # The registry names its deck by ID; the name is looked up in the
+        # collection at sync time, so a configured language carries no name.
+        assert ctx.deck_id == 1726348699710
+        assert ctx.deck_name is None
         assert ctx.target_language == "no"
         # static registry facets attached
         assert ctx.language is not None and ctx.language.code == "no"
@@ -254,6 +257,7 @@ class TestResolveLanguageContext:
         ctx = resolve_language_context(None, self._settings())
         assert ctx.db_url == "sqlite:///./tunatale_sl.db"
         assert ctx.deck_name == "1. Slovene"
+        assert ctx.deck_id is None
         assert ctx.target_language == "sl"
         assert ctx.language is None
         assert ctx.preprocessor_factory is None
@@ -603,21 +607,44 @@ class TestGetPreprocessor:
         assert type(pp).__name__ == "SlovenePreprocessor"
 
 
-class TestGetDeckName:
-    def test_returns_slovene_deck(self):
-        assert get_deck_name("sl") == "1. Slovene"
+class TestGetDeckId:
+    """Decks are registered by Anki deck ID, which survives a rename.
 
-    def test_returns_norwegian_deck(self):
-        assert get_deck_name("no") == "0. 6000 Most Frequent Norwegian Words [Part 1]"
+    The user renumbered their decks on 2026-11-05 (``3. Bisaya`` became
+    ``1. Binisayâ``, ``1. Slovene`` became ``3. Slovene``) and both kept their
+    ids. These are the ids in the user's collection, read that day.
+    """
+
+    @pytest.mark.parametrize(
+        ("code", "deck_id"),
+        [
+            ("sl", 1),
+            ("no", 1726348699710),
+            ("tl", 1740616836962),
+            ("ceb", 1790360755220),
+        ],
+    )
+    def test_returns_the_registered_deck_id(self, code, deck_id):
+        assert get_deck_id(code) == deck_id
 
     def test_raises_keyerror_for_unknown_code(self):
         with pytest.raises(KeyError, match="xyz"):
-            get_deck_name("xyz")
+            get_deck_id("xyz")
 
     def test_raises_valueerror_for_language_without_deck(self):
         # en is the gloss language — no TT-managed deck of its own.
         with pytest.raises(ValueError, match="en"):
-            get_deck_name("en")
+            get_deck_id("en")
+
+
+class TestGetMintDeckId:
+    @pytest.mark.parametrize(("code", "deck_id"), [("tl", 1790175595142), ("ceb", 1790360755221)])
+    def test_a_language_with_a_mint_subdeck_returns_its_id(self, code, deck_id):
+        assert get_mint_deck_id(code) == deck_id
+
+    @pytest.mark.parametrize("code", ["sl", "no", "xx"])
+    def test_none_means_mint_into_the_read_deck(self, code):
+        assert get_mint_deck_id(code) is None
 
 
 class TestGetVocabNotetype:
@@ -786,9 +813,10 @@ class TestCebuanoRegistration:
             "ceb-PH-OrusGemini": -5.0,
         }
 
-    def test_deck_and_mint_deck_names(self):
-        assert get_deck_name("ceb") == "3. Bisaya"
-        assert get_mint_deck_name("ceb", default="ignored") == "3. Bisaya::TunaTale"
+    def test_deck_and_mint_deck_ids(self):
+        # "1. Binisayâ" and "1. Binisayâ::TunaTale" (formerly "3. Bisaya").
+        assert get_deck_id("ceb") == 1790360755220
+        assert get_mint_deck_id("ceb") == 1790360755221
 
     def test_the_facets_later_beads_own_are_left_unset(self):
         """Absent, not defaulted to something plausible.

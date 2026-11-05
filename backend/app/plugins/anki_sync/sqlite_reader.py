@@ -132,6 +132,29 @@ def find_deck_id(conn: sqlite3.Connection, deck_name: str) -> int | None:
     return None
 
 
+class DeckNotFoundError(LookupError):
+    """A registered deck id is absent from the collection."""
+
+
+def resolve_deck_name(conn: sqlite3.Connection, deck_id: int) -> str:
+    """The CURRENT name of deck *deck_id*, in ``Parent::Child`` form.
+
+    Languages register their decks by id because Anki keeps a deck's id when
+    the user renames it, and AnkiWeb carries the id to every synced copy of
+    the collection (on 2026-11-05 the user renamed ``3. Bisaya`` to
+    ``1. Binisayâ``; its id held). Resolve once the collection is open, then
+    hand the name to the name-based readers below.
+
+    Raises :class:`DeckNotFoundError` for an id the collection lacks: the deck
+    was deleted, or this is a different collection. There is no fallback to a
+    name, because reading an empty deck would look like every card was deleted.
+    """
+    for did, name in _all_decks(conn):
+        if did == deck_id:
+            return name
+    raise DeckNotFoundError(f"Anki deck id {deck_id} is not in this collection (deleted, or a different collection?)")
+
+
 def find_deck_tree_ids(conn: sqlite3.Connection, deck_name: str) -> list[int]:
     """*deck_name* and every descendant deck, as sorted unique ids.
 

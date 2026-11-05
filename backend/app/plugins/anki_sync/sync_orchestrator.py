@@ -238,8 +238,9 @@ def _tt_settings(language_code: str | None = None):
 
     ``language_code`` selects the per-language db + deck (Phase 5 multi-language).
     When it names a configured language (``settings.database_urls``), override
-    ``database_url``, ``anki_deck_name`` and ``target_language`` so the reconcile
-    runs against the language the UI is actually syncing. Without this the Sync
+    ``database_url``, the deck (``anki_deck_id``, with ``anki_deck_name`` cleared)
+    and ``target_language`` so the reconcile runs against the language the UI is
+    actually syncing. Without this the Sync
     button always reconciled the .env default language's deck/db (e.g. a Slovene
     grade pushed nothing because the reconcile targeted the Norwegian deck). A
     ``None`` / unconfigured code falls back to the singular defaults unchanged.
@@ -253,6 +254,7 @@ def _tt_settings(language_code: str | None = None):
             "anki_collection_path": settings.tt_collection_path,
             "database_url": abs_url if abs_url is not None else ctx.db_url,
             "anki_deck_name": ctx.deck_name,
+            "anki_deck_id": ctx.deck_id,
             "target_language": ctx.target_language,
         }
     )

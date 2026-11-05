@@ -428,6 +428,7 @@ class TestMainDelegatesToRunFullSync:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
             database_url = "sqlite:///:memory:"
@@ -485,6 +486,7 @@ class TestMainDelegatesToRunFullSync:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
             database_url = "sqlite:///:memory:"
@@ -551,6 +553,7 @@ class TestMainOrphanThreshold:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
             database_url = "sqlite:///:memory:"
@@ -579,6 +582,7 @@ class TestMainCreateNew:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
             database_url = "sqlite:///:memory:"
@@ -665,6 +669,7 @@ class TestMainCreateNew:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
             database_url = "sqlite:///:memory:"
@@ -739,6 +744,7 @@ class TestMainCreateNew:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = ""
             target_language = "zz"
             database_url = "sqlite:///:memory:"
@@ -791,6 +797,7 @@ class TestMain:
         class FakeSettings:
             anki_collection_path = str(db_path)
             anki_deck_name = "Test"
+            anki_deck_id = None
             anki_model_name = "Basic"
             target_language = "sl"
             sqlite_db_path = ":memory:"
@@ -825,6 +832,7 @@ class TestMain:
         class FakeSettings:
             anki_collection_path = str(db_path)
             anki_deck_name = "Test"
+            anki_deck_id = None
             anki_model_name = "Basic"
             target_language = "sl"
             database_url = "sqlite:///:memory:"
@@ -977,6 +985,7 @@ class TestSyncSoakLog:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
 
@@ -1029,6 +1038,7 @@ class TestSyncSoakLog:
         class FakeSettings:
             anki_collection_path = str(db_path)
             anki_deck_name = "Test"
+            anki_deck_id = None
             anki_model_name = "Basic"
             target_language = "sl"
 
@@ -1057,6 +1067,7 @@ class TestResolveModelName:
     class _S:
         target_language = "no"
         anki_deck_name = "0. 6000 Most Frequent Norwegian Words [Part 1]"
+        anki_deck_id = None
         anki_model_name = ""
         target_language = "sl"
         database_urls = {"sl": "sqlite:///./tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}
@@ -1361,6 +1372,7 @@ class TestReconcileTiming:
         class FakeSettings:
             anki_collection_path = "unused"
             anki_deck_name = "0. Slovene"
+            anki_deck_id = None
             anki_model_name = "Slovene Vocabulary"
             target_language = "sl"
             database_url = "sqlite:///:memory:"

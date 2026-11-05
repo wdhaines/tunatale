@@ -492,8 +492,8 @@ print(textwrap.fill(', '.join(names), 100))
 
 ```output
 48 LanguageConfig fields:
-language, preprocessor_factory, deck_name, mint_deck_name, notetype_profiles, vocab_notetype,
-l2_scorer, lemmatizer_type, syllabifier_fn, morphology_profile, slow_word_fn, story_text_normalizer,
+language, preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, l2_scorer,
+lemmatizer_type, syllabifier_fn, morphology_profile, slow_word_fn, story_text_normalizer,
 definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, variant_pairs_fn,
 dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, infinitive_marker,
 verb_headword_fn, gender_articles, noun_gender_fn, style_notes, function_words_path, numbers_path,
@@ -509,7 +509,7 @@ Every field is optional except `language`; a language opts into a capability by 
 
 Three behaviours are worth knowing before reading any call site:
 
-- **Unknown codes.** `get_language`, `get_preprocessor`, `get_deck_name` and `get_tts_locale` raise `KeyError`/`ValueError`; most facet getters return a neutral default instead. `known_language_codes()` is the single source for request validation (`app/api/srs.py::_VALID_LANGUAGE_CODES`), so adding a plugin widens it automatically.
+- **Unknown codes.** `get_language`, `get_preprocessor`, `get_deck_id` and `get_tts_locale` raise `KeyError`/`ValueError`; most facet getters return a neutral default instead. `known_language_codes()` is the single source for request validation (`app/api/srs.py::_VALID_LANGUAGE_CODES`), so adding a plugin widens it automatically.
 - **Selector purity.** `get_planner_example` and `language_name_for_tts_locale` delegate to pure functions (`_select_planner_example`, `_select_name_for_tts_locale`) that take the config mapping as an argument. That is deliberate: tests exercise the one-language and ambiguous-locale cases by passing a mapping, not by mutating the module-level registry and leaking into later tests.
 - **`LanguageContext`.** `resolve_language_context(code, settings)` bundles the runtime facets (database URL, deck, target language, which differ between single-language and `database_urls` multi-language mode, §2) with the static ones (`language`, `preprocessor_factory`, `lemmatizer_type`, `vocab_notetype`). `resolve_db_path(code, settings)` is the only sanctioned way to ask "which database file does this language use?"; the hand-rolled `settings.database_url.removeprefix(...)` answers for the *singular* setting and silently queries the wrong language, which is how a graving CLI once reported "nothing to grave" for a month. `backend/scripts/check_singular_database_url.py` fails the gate on that shape.
 
@@ -533,8 +533,8 @@ for code in sorted(L._CONFIGS):
 
 ```output
 ceb Cebuano    locale=ceb-PH  lemmatizer=table  style=True
-      preprocessor_factory, deck_name, mint_deck_name, notetype_profiles, vocab_notetype,
-      syllabifier_fn, variant_separator, variant_pairs_fn, dictionary_fields_fn, short_form_pairs_fn,
+      preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, syllabifier_fn,
+      variant_separator, variant_pairs_fn, dictionary_fields_fn, short_form_pairs_fn,
       dictionary_gloss_fn, parts_fn, function_words_path, numbers_path, spatial_path, pronouns_path,
       calendar_path, take_check, frequency_table_path, a1_morphology, phoneme_planner_factory,
       ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words,
@@ -542,21 +542,20 @@ ceb Cebuano    locale=ceb-PH  lemmatizer=table  style=True
 en  English    locale=en-US  lemmatizer=lowercase  style=False
       (none: gloss language only)
 no  Norwegian  locale=nb-NO  lemmatizer=stanza  style=True
-      preprocessor_factory, deck_name, vocab_notetype, l2_scorer, syllabifier_fn, slow_word_fn,
+      preprocessor_factory, deck_id, vocab_notetype, l2_scorer, syllabifier_fn, slow_word_fn,
       definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, infinitive_marker,
       gender_articles, noun_gender_fn, function_words_path, numbers_path, spatial_path, pronouns_path,
       calendar_path, breakdown_spans_fn, alignment, planner_example, wordfreq_lang, a1_morphology,
       lexicon_factory, phoneme_planner_factory, lemma_table_path, built_data
 sl  Slovene    locale=sl-SI  lemmatizer=classla  style=True
-      preprocessor_factory, deck_name, vocab_notetype, l2_scorer, syllabifier_fn, morphology_profile,
+      preprocessor_factory, deck_id, vocab_notetype, l2_scorer, syllabifier_fn, morphology_profile,
       function_words_path, numbers_path, spatial_path, pronouns_path, calendar_path, planner_example,
       wordfreq_lang, a1_morphology
 tl  Tagalog    locale=fil-PH  lemmatizer=table  style=True
-      preprocessor_factory, deck_name, mint_deck_name, notetype_profiles, vocab_notetype,
-      syllabifier_fn, slow_word_fn, story_text_normalizer, verb_headword_fn, function_words_path,
-      numbers_path, spatial_path, pronouns_path, calendar_path, planner_example, wordfreq_lang,
-      a1_morphology, phoneme_planner_factory, ipa_read_in_voice_locale, phrase_match_exact_form,
-      lemma_table_path
+      preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, syllabifier_fn,
+      slow_word_fn, story_text_normalizer, verb_headword_fn, function_words_path, numbers_path,
+      spatial_path, pronouns_path, calendar_path, planner_example, wordfreq_lang, a1_morphology,
+      phoneme_planner_factory, ipa_read_in_voice_locale, phrase_match_exact_form, lemma_table_path
 ```
 
 Reading it as design rather than inventory:
@@ -566,7 +565,7 @@ Reading it as design rather than inventory:
 | Lemmatizer | classla (laptop only) | stanza, or its table in prod | table | table |
 | Native TTS | Azure sl-SI (2 voices) | Azure nb-NO (3 voices) | Azure fil-PH (2 voices) | Gemini-TTS (no Azure voice exists) |
 | Distinguishing feature | the plain baseline; planner example, A1 case/dual vocabulary | compounds, NST lexicon, gender articles, lemma guards | pronunciation-first syllabifier, affix-hyphen normalizer, root-keyed verbs | Wolff's dictionary on cards, affix decoder, short forms, affix drill and pace gate, spelling-read IPA everywhere, take checks |
-| Mints into | the imported deck | the imported deck | `2. Pimsleur Tagalog::TunaTale` | `3. Bisaya::TunaTale` |
+| Mints into | the imported deck | the imported deck | `2. Pimsleur Tagalog::TunaTale` | `1. Binisayâ::TunaTale` |
 | Has `planner_example` | yes | yes | yes | deliberately no |
 
 Why Cebuano has no planner example: `get_planner_example(code)` shows each target the example of the lowest-sorting *other* language that supplies one, so the example can never be in the target's own language (an example in the target gets copied into the model's reply, the planner-language-contamination class). `ceb` sorts before every other code, so giving it an example would replace the one every other language is shown.
@@ -751,7 +750,7 @@ sl front "mot, imot" -> ['mot, imot']
 
 `variant_separator` (Norwegian and Cebuano `,`) lets one card front carry alternate accepted spellings (`mot, imot`, `dili, di`); a language that sets nothing has single-surface fronts. Cebuano also registers `variant_pairs_fn`, its listed spellings of one word, so a comma front is a variant list only when every part is a spelling of the same word: `Oo, salamat` is a phrase, not two spellings. Norwegian keeps the bare rule, because its deck's pairs are not listed anywhere.
 
-**Notetypes and mint decks.** `vocab_notetype` is the TT-managed notetype new cards are minted into (`app/cards/vocab_notetype.py`: one `VocabNotetype(name, l2_field, l2_css_class)` per language). `deck_name` is what sync *reads*, including all its subdecks; `mint_deck_name` is where TT-minted notes *go* when different. Tagalog and Cebuano mint into a `::TunaTale` subdeck, which must already exist in Anki, and failure to find it is loud. `l2_scorer` lets the importer pick the L2 field out of an unmarked Anki note by scoring how language-like a string is. Slovene and Norwegian have one (Norwegian's counts only `æøå`, after a Slovene scorer once ranked `snøm` at 0.0 and a headword became an example sentence); Tagalog and Cebuano cannot, because no letters distinguish them from English, so they register `notetype_profiles` instead, field-role maps by notetype name, and TT-minted notes are read by field name. Skipping that is a documented trap: the first sync after minting fails with "No L2 scorer".
+**Notetypes and mint decks.** `vocab_notetype` is the TT-managed notetype new cards are minted into (`app/cards/vocab_notetype.py`: one `VocabNotetype(name, l2_field, l2_css_class)` per language). `deck_id` is the deck sync *reads*, including all its subdecks; `mint_deck_id` is where TT-minted notes *go* when different. Both are Anki deck **ids**, not names: Anki keeps a deck's id when the user renames it, and AnkiWeb carries it to every synced copy, so the sync looks up each id's current name once the collection is open (`sqlite_reader.py::resolve_deck_name`) and an id the collection lacks stops the sync. Names broke this once: the user renumbered their decks and renamed `3. Bisaya` to `1. Binisayâ` (2026-11-05). Tagalog and Cebuano mint into a `::TunaTale` subdeck, which must already exist in Anki, and failure to find it is loud. `l2_scorer` lets the importer pick the L2 field out of an unmarked Anki note by scoring how language-like a string is. Slovene and Norwegian have one (Norwegian's counts only `æøå`, after a Slovene scorer once ranked `snøm` at 0.0 and a headword became an example sentence); Tagalog and Cebuano cannot, because no letters distinguish them from English, so they register `notetype_profiles` instead, field-role maps by notetype name, and TT-minted notes are read by field name. Skipping that is a documented trap: the first sync after minting fails with "No L2 scorer".
 
 **Static data per plugin** (all optional, all registered as paths): `style_notes` loaded from `data/style.md` into the story system prompt (its first job is keeping the *confusable* language out: Croatian/Serbian from Slovene, Nynorsk/Danish/Swedish from Bokmål, Tagalog from Cebuano, with `po`/`opo` and `ng` forbidden in the latter); `function_words_path` (a POS-first policy whose `include`/`exclude`/`glosses` lists decide which words become clozes rather than picture cards; Cebuano's `glosses` map pins `og` to "a / some (object marker)" because the lesson gloss pass kept calling it "and"); and four drawn-picture vocabularies, `numbers_path`, `spatial_path`, `pronouns_path`, `calendar_path` (§11). Calendar data carries `week_start` because which day opens a week is a local custom. Also `wordfreq_lang` (Tagalog `fil`, Norwegian `nb`) or a shipped `frequency_table_path` where wordfreq has no coverage (Cebuano, from FineWeb-2 news), used to rank new-card candidates, and `a1_morphology`, the per-language bundle mapping a UD analysis to a TT feature string, the whitelist of A1 features, and hint rendering. Slovene registers the shared default vocabulary (person/number/case); Norwegian adds definiteness, tense and adjective agreement; Tagalog and Cebuano turn affixed verb forms into inflection clozes on the root card. A language with no bundle gets **no** morphology, never Slovene's (Tagalog once silently inherited Slovene's case vocabulary).
 
@@ -3583,21 +3582,21 @@ Rules that look arbitrary until you know the incident:
 
 ```bash
 cd backend && uv run python -c "
-from app.languages import get_mint_deck_name, get_vocab_notetype
+from app.languages import get_deck_id, get_mint_deck_id, get_vocab_notetype
 for c in ('sl', 'no', 'tl', 'ceb'):
     v = get_vocab_notetype(c)
-    print(c, '|', v.name, '| L2 field', v.l2_field, '| mint deck', get_mint_deck_name(c, default='(the read deck)'))
+    print(c, '|', v.name, '| L2 field', v.l2_field, '| deck id', get_deck_id(c), '| mint deck id', get_mint_deck_id(c) or '(the read deck)')
 "
 ```
 
 ```output
-sl | Slovene Vocabulary | L2 field Slovene | mint deck (the read deck)
-no | Norwegian Vocabulary | L2 field Norwegian | mint deck (the read deck)
-tl | Tagalog Vocabulary | L2 field Tagalog | mint deck 2. Pimsleur Tagalog::TunaTale
-ceb | Cebuano Vocabulary | L2 field Cebuano | mint deck 3. Bisaya::TunaTale
+sl | Slovene Vocabulary | L2 field Slovene | deck id 1 | mint deck id (the read deck)
+no | Norwegian Vocabulary | L2 field Norwegian | deck id 1726348699710 | mint deck id (the read deck)
+tl | Tagalog Vocabulary | L2 field Tagalog | deck id 1740616836962 | mint deck id 1790175595142
+ceb | Cebuano Vocabulary | L2 field Cebuano | deck id 1790360755220 | mint deck id 1790360755221
 ```
 
-`_resolve_model_name` takes `settings.anki_model_name` if set, else the language's registered vocab notetype, else raises `NoMintNotetypeError`. The earlier discovery fallback cached one notetype name globally and so quietly minted a Norwegian word into the Slovene notetype; failing loudly is the fix. A language's deck includes its subdecks when reading, but `LanguageConfig.mint_deck_name` redirects only the minting (Tagalog and Cebuano each mint into a `::TunaTale` subdeck of the imported Pimsleur and Bisaya decks); a missing subdeck is an error, not a silent fall back to the parent.
+`_resolve_model_name` takes `settings.anki_model_name` if set, else the language's registered vocab notetype, else raises `NoMintNotetypeError`. The earlier discovery fallback cached one notetype name globally and so quietly minted a Norwegian word into the Slovene notetype; failing loudly is the fix. A language's deck includes its subdecks when reading, but `LanguageConfig.mint_deck_id` redirects only the minting (Tagalog and Cebuano each mint into a `::TunaTale` subdeck of the imported Pimsleur and Binisayâ decks); a missing subdeck is an error, not a silent fall back to the parent.
 
 Card direction is no longer `ord == 0 means recognition`. `NotetypeProfile.recognition_ord` (default 0) and `field_map.direction_for_ord` decide it per notetype, because Pimsleur's genanki notetype has Card 1 as production (`1a8f5189`; the profile mechanism is §11.1). Per-language L2 scorers are the same kind of fix: the Slovene character scorer used to run on every language's heuristics, and a language with no scorer now refuses loudly (`41bdbe09`).
 

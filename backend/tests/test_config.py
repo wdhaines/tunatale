@@ -64,7 +64,8 @@ def test_anki_settings_defaults(monkeypatch, tmp_path):
     s = Settings(_env_file=None)
     assert s.anki_collection_path == Path("~/Library/Application Support/Anki2/Will/collection.anki2").expanduser()
     assert s.anki_media_path == Path("~/Library/Application Support/Anki2/Will/collection.media").expanduser()
-    assert s.anki_deck_name == "1. Slovene"
+    assert s.anki_deck_name == "3. Slovene"
+    assert s.anki_deck_id is None
     assert s.anki_backup_dir == Path("~/.tunatale/anki-backups").expanduser()
     # Absolute, not the former CWD-relative Path("./media"). This assertion runs
     # under monkeypatch.chdir(tmp_path), so it goes red if the default ever

@@ -81,10 +81,10 @@ class TestPeerSync:
         does not.
         """
         from app.config import settings
-        from app.languages import get_deck_name
+        from app.languages import get_deck_id
         from tests.anki_oracle.synthetic_collection import SyntheticCollection
 
-        no_deck = get_deck_name("no")
+        no_deck = get_deck_id("no")  # registered by id; the name is free
         sl_db_path = tmp_path / "tt_sl.db"
         no_db_path = tmp_path / "tt_no.db"
         monkeypatch.setattr(
@@ -94,7 +94,7 @@ class TestPeerSync:
         )
 
         coll = SyntheticCollection(settings.tt_collection_path)
-        coll.set_deck(no_deck, 1)
+        coll.set_deck("Norsk (renamed)", no_deck)
         coll.add_notetype(1704067201, "Cloze", ("Text", "Back Extra"), template_count=1)
         coll.save()
         monkeypatch.setattr(settings, "anki_model_name", "Cloze")
@@ -479,7 +479,7 @@ class TestSyncMediaUsesTheSyncedLanguage:
         the value that picks the Forvo section and the TTS voice.
         """
         from app.config import settings
-        from app.languages import get_deck_name
+        from app.languages import get_deck_id
         from tests.anki_oracle.synthetic_collection import SyntheticCollection
 
         monkeypatch.setattr(settings, "target_language", "sl")
@@ -489,7 +489,7 @@ class TestSyncMediaUsesTheSyncedLanguage:
             {"sl": f"sqlite:///{tmp_path / 'tt_sl.db'}", "no": f"sqlite:///{tmp_path / 'tt_no.db'}"},
         )
         coll = SyntheticCollection(settings.tt_collection_path)
-        coll.set_deck(get_deck_name("no"), 1)
+        coll.set_deck("Norsk (renamed)", get_deck_id("no"))
         coll.add_notetype(1704067201, "Cloze", ("Text", "Back Extra"), template_count=1)
         coll.save()
         monkeypatch.setattr(settings, "anki_model_name", "Cloze")
@@ -697,7 +697,7 @@ class TestPreStagesCardAudio:
     async def test_a_real_sync_stages_audio_in_the_synced_language(self, fake_driver, tmp_path, monkeypatch):
         from app.api.app_state import background_work
         from app.config import settings
-        from app.languages import get_deck_name
+        from app.languages import get_deck_id
         from tests.anki_oracle.synthetic_collection import SyntheticCollection
 
         monkeypatch.setattr(settings, "target_language", "sl")
@@ -707,7 +707,7 @@ class TestPreStagesCardAudio:
             {"sl": f"sqlite:///{tmp_path / 'tt_sl.db'}", "no": f"sqlite:///{tmp_path / 'tt_no.db'}"},
         )
         coll = SyntheticCollection(settings.tt_collection_path)
-        coll.set_deck(get_deck_name("no"), 1)
+        coll.set_deck("Norsk (renamed)", get_deck_id("no"))
         coll.add_notetype(1704067201, "Cloze", ("Text", "Back Extra"), template_count=1)
         coll.save()
         monkeypatch.setattr(settings, "anki_model_name", "Cloze")
