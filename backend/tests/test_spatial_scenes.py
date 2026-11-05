@@ -32,7 +32,7 @@ from typing import NamedTuple
 
 import pytest
 
-from app.cards.spatial_scenes import SPATIAL_CONCEPTS, render_spatial_svg
+from app.cards.spatial_scenes import _CLOCK_ARC_R, SPATIAL_CONCEPTS, render_spatial_svg
 
 _SVG = "{http://www.w3.org/2000/svg}"
 
@@ -109,15 +109,16 @@ _SHAPES: dict[str, tuple[int, bool, bool]] = {
     # near-you"): the lit person in your zone, not mine.
     "is_there_yours": (0, False, False),
     # Past/future/existential with time and genitive possessive forms (tunatale-tofg.5).
+    # The time rows draw a clock rather than the old sideways arrow, so no shaft.
     "is_here_mine": (0, False, False),
-    "was_here_mine": (0, False, True),
-    "was_here_both": (0, False, True),
-    "was_there_yours": (0, False, True),
-    "was_there_far": (0, False, True),
-    "will_be_here_mine": (0, False, True),
-    "will_be_here_both": (0, False, True),
-    "will_be_there_yours": (0, False, True),
-    "will_be_there_far": (0, False, True),
+    "was_here_mine": (0, False, False),
+    "was_here_both": (0, False, False),
+    "was_there_yours": (0, False, False),
+    "was_there_far": (0, False, False),
+    "will_be_here_mine": (0, False, False),
+    "will_be_here_both": (0, False, False),
+    "will_be_there_yours": (0, False, False),
+    "will_be_there_far": (0, False, False),
     "of_this_mine": (0, True, False),
     "of_this_both": (0, True, False),
     "of_that_yours": (0, True, False),
@@ -320,6 +321,15 @@ class Present(NamedTuple):
     fill: str
 
 
+class Clock(NamedTuple):
+    """The time clock: where its face sits, which way its arc turns, where its head ends."""
+
+    cx: float
+    cy: float
+    sweep: int
+    tip_x: float
+
+
 class Picture(NamedTuple):
     """One render, read into the numbers the predicates talk about.
 
@@ -351,6 +361,7 @@ class Picture(NamedTuple):
     absents: list[Present]  # an outline person
     tethers: list[Arrow]  # tether lines
     owned_bags: list[ET.Element]  # bag groups
+    clocks: list[Clock]  # the time clock: one per was/will-be picture
 
 
 def _root(svg: bytes) -> ET.Element:
@@ -409,6 +420,25 @@ def _present_of(el: ET.Element) -> Present:
     return Present(float(head.get("cx")), float(head.get("r")), feet, head.get("fill"))
 
 
+#: An SVG arc: ``M x0 y0 A rx ry 0 large sweep x1 y1``. The x-axis rotation is
+#: always the literal 0 in these pictures, so it is matched rather than captured.
+_ARC_PATH = re.compile(r"M([-\d.]+) ([-\d.]+) A([-\d.]+) ([-\d.]+) 0 (\d) (\d) ([-\d.]+) ([-\d.]+)")
+
+
+def _clocks(root: ET.Element) -> list[Clock]:
+    """The clock groups, read into the three numbers that tell past from future."""
+    found = []
+    for group in (el for el in root.iter() if "clock" in _classes(el)):
+        face = next(el for el in group.iter() if el.tag == f"{_SVG}circle")
+        arc = next(el for el in group.iter() if el.tag == f"{_SVG}path")
+        head = next(el for el in group.iter() if el.tag == f"{_SVG}polygon")
+        arc_path = _ARC_PATH.fullmatch(arc.get("d") or "")
+        assert arc_path, f"the clock's arc is not an arc: {arc.get('d')!r}"
+        tip_x = float(head.get("points").split()[0].split(",")[0])
+        found.append(Clock(float(face.get("cx")), float(face.get("cy")), int(arc_path.group(6)), tip_x))
+    return found
+
+
 def _parse(svg: bytes) -> Picture:
     root = _root(svg)
     _, _, width, height = _viewbox(root)
@@ -445,6 +475,7 @@ def _parse(svg: bytes) -> Picture:
         absents=[_present_of(el) for el in _by_class(svg, "absent")],
         tethers=_lines(svg, "tether"),
         owned_bags=_by_class(svg, "owned-bag"),
+        clocks=_clocks(root),
     )
 
 
@@ -1080,48 +1111,32 @@ def _classify_zone(p: Picture, cx: float, r: float, feet: float) -> tuple[str, s
 
 
 def _time(when: str, mine: str, yours: str) -> Callable[[Picture], bool]:
+    """Was / will be: the outline figure at the distance, and a clock that turns.
+
+    The clock replaced the old sideways arrow, which pointed by available room
+    rather than by time (the user, 2026-11-04: adto pointed left and didto right).
+    Past and future are now one number apart: the direction the arc is swept in,
+    and the side of the face its arrowhead ends on.
+    """
+
     def predicate(p: Picture) -> bool:
         if p.blocks or p.poles or p.ball is not None or p.presents or len(p.absents) != 1:
             return False
         absent = p.absents[0]
-        where = _classify_zone(p, absent.cx, absent.half, absent.feet)
-        if where != (mine, yours):
+        if _classify_zone(p, absent.cx, absent.half, absent.feet) != (mine, yours):
             return False
-        if p.arrow is None or len(p.tethers) != 1:
-            return False
-        # horizontal arrow whose whole extent lies above every figure's top
-        # Present has cx, half, feet - head top is at feet - 2*half (rough approximation)
-        head_top = absent.feet - 2 * absent.half
-        if abs(_dy(p.arrow)) > _TOUCH:  # horizontal
-            return False
-        # arrow above every figure's top
-        if not (min(p.arrow.y1, p.arrow.y2) < head_top):  # above head top
+        if p.arrow is not None or len(p.tethers) != 1 or len(p.clocks) != 1:
             return False
         tether = p.tethers[0]
-        if abs(_dx(tether)) > _TOUCH or _dy(tether) <= 0:  # vertical going down (dy > 0)
+        if abs(_dx(tether)) > _TOUCH or _dy(tether) <= 0 or abs(tether.x1 - absent.cx) > _TOUCH:
             return False
-        if when == "past":
-            # tether's top touches the arrow's TAIL
-            if abs(tether.x1 - p.arrow.x1) > _TOUCH:  # tail
-                return False
-            if abs(tether.x1 - absent.cx) > _TOUCH:
-                return False
-            # arrow end NOT tethered is farther from the figure than the tethered end
-            tethered_dist = abs(p.arrow.x1 - absent.cx)
-            untethered_dist = abs(p.arrow.x2 - absent.cx)
-            if untethered_dist <= tethered_dist:
-                return False
-        elif when == "future":
-            # tether hangs from the tip
-            if abs(tether.x1 - p.arrow.x2) > _TOUCH:
-                return False
-            if abs(tether.x1 - absent.cx) > _TOUCH:
-                return False
-            tethered_dist = abs(p.arrow.x2 - absent.cx)
-            untethered_dist = abs(p.arrow.x1 - absent.cx)
-            if untethered_dist <= tethered_dist:
-                return False
-        return True
+        clock = p.clocks[0]
+        # The tether hangs from BELOW the clock, not from a sideways arrow above it.
+        if not clock.cy < tether.y1 < tether.y2:
+            return False
+        if when == "future":
+            return clock.sweep == 1 and clock.tip_x > clock.cx
+        return clock.sweep == 0 and clock.tip_x < clock.cx
 
     return predicate
 
@@ -1323,7 +1338,27 @@ def test_the_band_is_thin_and_as_wide_as_the_block(concept: str) -> None:
 
 
 def _extent(el: ET.Element) -> Rect:
-    """The element's own extent, in viewBox units, whatever shape it is."""
+    """The element's own extent, in viewBox units, whatever shape it is.
+
+    A ``rotate`` transform is applied rather than ignored: the arms are capsules
+    drawn as a rect turned about its shoulder, so the rect's untransformed
+    numbers are not where the ink is.
+    """
+    box = _local_extent(el)
+    turn = re.fullmatch(r"rotate\(([-\d.]+) ([-\d.]+) ([-\d.]+)\)", el.get("transform") or "")
+    if turn is None:
+        return box
+    angle, cx, cy = (float(v) for v in turn.groups())
+    radians = math.radians(angle)
+    cos, sin = math.cos(radians), math.sin(radians)
+    corners = [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+    turned = [(cx + (x - cx) * cos - (y - cy) * sin, cy + (x - cx) * sin + (y - cy) * cos) for x, y in corners]
+    xs, ys = [p[0] for p in turned], [p[1] for p in turned]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _local_extent(el: ET.Element) -> Rect:
+    """The element's extent in its own coordinate system, before any transform."""
     if el.tag == f"{_SVG}rect":
         x, y = float(el.get("x")), float(el.get("y"))
         return (x, y, x + float(el.get("width")), y + float(el.get("height")))
@@ -1560,3 +1595,193 @@ def test_someone_present_is_lit_and_the_people_talking_are_not(concept: str) -> 
     figures = _by_class(render_spatial_svg(concept), "figures")
     assert len(figures) == 1
     assert picture.presents[0].fill not in {el.get("fill") for el in figures[0].iter() if el.tag == f"{_SVG}circle"}
+
+
+# ── Pointing, waving and the clock (tunatale-14v2) ─────────────────────────
+# Three signs tell the deixis rows apart, each read off the markup: the speaker
+# POINTS at a thing (this/that, and the genitives, which inherit the arm), a lit
+# person WAVES (so "is here" is not "this"), and a clock turns one way for "was"
+# and the other for "will be" (the old sideways arrow pointed by available room,
+# not by time: adto pointed left and didto right — the user, 2026-11-04).
+
+#: The eight pictures whose speaker points: the four thing words and the four
+#: genitives, which inherit the arm from their nominative (owner, 2026-11-05).
+DEIXIS_POINTING = DEIXIS_THINGS + DEIXIS_GEN
+DEIXIS_NEAR = ("this_both", "this_mine", "of_this_both", "of_this_mine")
+DEIXIS_FAR = ("that_yours", "that_far", "of_that_yours", "of_that_far")
+DEIXIS_TIME = DEIXIS_PAST + DEIXIS_FUTURE
+
+#: How far past the ball's edge a far arm's arrowhead tip stands.
+_TIP_GAP = 3.0
+
+_ROTATE = re.compile(r"rotate\(([-\d.]+) ([-\d.]+) ([-\d.]+)\)")
+_BODY_PATH = re.compile(r"M([-\d.]+) ([-\d.]+) V([-\d.]+) a([-\d.]+) ([-\d.]+) 0 0 1 ([-\d.]+) 0 V([-\d.]+) Z")
+
+
+def _shoulder(svg: bytes) -> tuple[float, float, float]:
+    """The pointing arm's rotate angle and the shoulder it turns about."""
+    (group,) = _by_class(svg, "pointing-arm")
+    (rect,) = [el for el in group.iter() if el.tag == f"{_SVG}rect"]
+    turn = _ROTATE.fullmatch(rect.get("transform") or "")
+    assert turn, f"the pointing arm is not rotated: {rect.get('transform')!r}"
+    angle, x, y = (float(v) for v in turn.groups())
+    return angle, x, y
+
+
+def _group_dy(group: ET.Element) -> float:
+    """A figure group's own vertical translate, which every number inside it inherits."""
+    match = re.fullmatch(r"translate\(0 ([-\d.]+)\)", group.get("transform") or "")
+    return float(match.group(1)) if match else 0.0
+
+
+def _figure_boxes(group: ET.Element) -> list[Rect]:
+    """Every head and body in *group*, moved by the group's own translate."""
+    dy = _group_dy(group)
+    boxes = []
+    for el in group.iter():
+        if el.tag == f"{_SVG}circle":
+            cx, cy, r = (float(el.get(k)) for k in ("cx", "cy", "r"))
+            boxes.append((cx - r, cy - r + dy, cx + r, cy + r + dy))
+        elif el.tag == f"{_SVG}path" and (body := _BODY_PATH.fullmatch(el.get("d") or "")):
+            left, foot, top, _, radius, width, _ = (float(v) for v in body.groups())
+            boxes.append((left, top - radius + dy, left + width, foot + dy))
+    return boxes
+
+
+def _union(one: Rect, other: Rect) -> Rect:
+    return (min(one[0], other[0]), min(one[1], other[1]), max(one[2], other[2]), max(one[3], other[3]))
+
+
+def _arc_box(centre: tuple[float, float], path: ET.Element) -> Rect:
+    """An arc's extent: its two ends plus every cardinal direction it sweeps through."""
+    match = _ARC_PATH.fullmatch(path.get("d") or "")
+    assert match, f"not an arc: {path.get('d')!r}"
+    x0, y0, radius, _, _, sweep, x1, y1 = (float(v) for v in match.groups())
+    cx, cy = centre
+    start = math.atan2(y0 - cy, x0 - cx)
+    end = math.atan2(y1 - cy, x1 - cx)
+    if sweep:
+        while end < start:
+            end += 2 * math.pi
+    else:
+        while end > start:
+            end -= 2 * math.pi
+    low, high = sorted((start, end))
+    angles = [start, end]
+    for quarter in range(4):
+        cardinal = quarter * math.pi / 2
+        turn = math.ceil((low - cardinal) / (2 * math.pi))
+        while cardinal + turn * 2 * math.pi <= high:
+            angles.append(cardinal + turn * 2 * math.pi)
+            turn += 1
+    xs = [cx + radius * math.cos(a) for a in angles]
+    ys = [cy + radius * math.sin(a) for a in angles]
+    half = float(path.get("stroke-width", "0")) / 2
+    return (min(xs) - half, min(ys) - half, max(xs) + half, max(ys) + half)
+
+
+@pytest.mark.parametrize("concept", DEIXIS_POINTING)
+def test_the_pointing_arm_is_aimed_at_the_balls_centre(concept: str) -> None:
+    """At the CENTRE, not at the edge: an arm aimed at an edge reads as pointing past it."""
+    svg = render_spatial_svg(concept)
+    ball = _parse(svg).ball
+    assert ball is not None
+    angle, shoulder_x, shoulder_y = _shoulder(svg)
+    aim = math.degrees(math.atan2(ball.cy - shoulder_y, ball.cx - shoulder_x))
+    assert abs(angle - aim) <= 3.0, f"{concept}: arm at {angle:.1f} deg, ball at {aim:.1f} deg"
+
+
+@pytest.mark.parametrize("concept", DEIXIS_FAR)
+def test_a_far_arm_reaches_the_ball_with_a_dotted_line(concept: str) -> None:
+    """Far enough for dots: the line runs on from the hand to the ball's edge plus a gap."""
+    svg = render_spatial_svg(concept)
+    ball = _parse(svg).ball
+    (group,) = _by_class(svg, "pointer")
+    assert [el for el in group.iter() if el.tag == f"{_SVG}line"], f"{concept}: the dotted line is missing"
+    (head,) = [el for el in group.iter() if el.tag == f"{_SVG}polygon"]
+    tip_x, tip_y = (float(v) for v in head.get("points").split()[0].split(","))
+    gap = math.hypot(tip_x - ball.cx, tip_y - ball.cy)
+    assert gap == pytest.approx(ball.r + _TIP_GAP, abs=0.5), f"{concept}: the tip stands {gap:.1f} from the centre"
+
+
+@pytest.mark.parametrize("concept", DEIXIS_NEAR)
+def test_a_near_arm_points_by_touching_the_ball(concept: str) -> None:
+    """Too little room for dots, so the hand rests on the ball's edge: pointing by touching."""
+    svg = render_spatial_svg(concept)
+    ball = _parse(svg).ball
+    assert [el for group in _by_class(svg, "pointer") for el in group.iter() if el.tag == f"{_SVG}line"] == []
+    (group,) = _by_class(svg, "pointing-arm")
+    (hand,) = [el for el in group.iter() if el.tag == f"{_SVG}circle"]
+    cx, cy, r = (float(hand.get(k)) for k in ("cx", "cy", "r"))
+    gap = math.hypot(cx - ball.cx, cy - ball.cy) - (r + ball.r)
+    assert gap <= 1.0, f"{concept}: the hand stands {gap:.1f} clear of the ball"
+
+
+@pytest.mark.parametrize("concept", DEIXIS_PRESENT)
+def test_the_wave_is_above_the_lit_head_and_clears_the_cast(concept: str) -> None:
+    """A wave nobody can tell from a pointing arm would put two words on one picture.
+
+    The margin is NOT asserted: the owner-approved geometry puts ``is_here_mine``'s
+    left wave at x = 10, which is inside the frame but outside ``_MARGIN``
+    (orchestrator ruling, 2026-11-05).
+    """
+    svg = render_spatial_svg(concept)
+    (present,) = _by_class(svg, "present")
+    head = next(el for el in present.iter() if el.tag == f"{_SVG}circle")
+    head_top = float(head.get("cy")) - float(head.get("r")) + _group_dy(present)
+    (arm,) = _by_class(svg, "wave-arm")
+    (hand,) = [el for el in arm.iter() if el.tag == f"{_SVG}circle"]
+    hx, hy, hr = (float(hand.get(k)) for k in ("cx", "cy", "r"))
+    stroke = float(hand.get("stroke-width", "0")) / 2
+    box = (hx - hr - stroke, hy - hr - stroke, hx + hr + stroke, hy + hr + stroke)
+    assert hy < head_top, f"{concept}: the hand at y={hy} is not above the head top {head_top}"
+    (arcs,) = _by_class(svg, "wave-arcs")
+    for path in [el for el in arcs.iter() if el.tag == f"{_SVG}path"]:
+        box = _union(box, _arc_box((hx, hy), path))
+    _, _, width, _ = _viewbox(_root(svg))
+    assert box[0] >= 0 and box[2] <= width and box[1] >= 0, f"{concept}: the wave runs to {box}"
+    (figures,) = _by_class(svg, "figures")
+    dy = _group_dy(figures)
+    bubble = _rect_of(next(el for el in figures.iter() if el.tag == f"{_SVG}rect"))
+    bubble_rect = (bubble.x, bubble.y + dy, bubble.x + bubble.w, bubble.y + bubble.h)
+    assert _disjoint(box, bubble_rect), f"{concept}: the wave runs into the speech bubble"
+    for other in _figure_boxes(figures):
+        assert _disjoint(box, other), f"{concept}: the wave runs into the figure at {other}"
+
+
+@pytest.mark.parametrize("concept", DEIXIS_TIME)
+def test_the_clock_turns_forward_for_will_be_and_back_for_was(concept: str) -> None:
+    """One number apart: the sweep flag, and the side of the face the head ends on."""
+    (clock,) = _parse(render_spatial_svg(concept)).clocks
+    if concept in DEIXIS_FUTURE:
+        assert clock.sweep == 1, f"{concept}: will-be must turn clockwise"
+        assert clock.tip_x > clock.cx, f"{concept}: the arrowhead must end right of {clock.cx}"
+    else:
+        assert clock.sweep == 0, f"{concept}: was must turn anticlockwise"
+        assert clock.tip_x < clock.cx, f"{concept}: the arrowhead must end left of {clock.cx}"
+
+
+@pytest.mark.parametrize("concept", DEIXIS_TIME)
+def test_no_arrow_in_a_time_picture_spans_more_than_the_clock(concept: str) -> None:
+    """The old sideways arrow is gone: it pointed by room, not by time."""
+    svg = render_spatial_svg(concept)
+    assert _parse(svg).arrow is None, "the sideways shaft is back"
+    limit = 2 * (_CLOCK_ARC_R + 12)
+    for el in _root(svg).iter():
+        if el.tag == f"{_SVG}line" and "ground" not in _classes(el):
+            assert abs(float(el.get("x1")) - float(el.get("x2"))) <= limit
+        if el.tag == f"{_SVG}polygon":
+            xs = [float(point.split(",")[0]) for point in el.get("points").split()]
+            assert max(xs) - min(xs) <= limit
+
+
+@pytest.mark.parametrize("concept", DEIXIS_GEN)
+def test_the_owned_bag_is_still_painted_over_the_ball(concept: str) -> None:
+    """The genitive is the demonstrative plus a bag, and the bag covers the ball."""
+    order = [
+        name
+        for el in _root(render_spatial_svg(concept)).iter()
+        for name in _classes(el)
+        if name in ("ball", "owned-bag")
+    ]
+    assert order == ["ball", "owned-bag"], f"{concept}: painted {order}"
