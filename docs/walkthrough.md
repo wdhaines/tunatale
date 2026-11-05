@@ -3985,7 +3985,7 @@ lakaw   Details           Short form of lakát verb walk Molakát na ang bátà 
 lakaw   Dictionary entry  Wolff, A Dictionary of Cebuano Visayan (1972), in its own spelling lakaw = lak
 hibalo  Spelling          hibaló
 hibalo  Meaning           know s.t., how to do s.t.; take care of a problem
-hibalo  Verb              Verb of state: it happens to someone; nobody does it. not begun begun Stative 
+hibalo  Verb              Verb of state: it happens to someone; nobody does it. Verb forms not begun beg
 hibalo  Details           From the root baló I don’t know verb know s.t., how to do s.t. Kahibaló ka ban
 hibalo  Dictionary entry  Wolff, A Dictionary of Cebuano Visayan (1972), in its own spelling hibalu see 
 short gloss: {'hibalo': 'know', 'pasaylo': 'forgive', 'tulo': ''}

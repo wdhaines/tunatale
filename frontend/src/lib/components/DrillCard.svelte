@@ -611,6 +611,14 @@
 		font-size: 0.78rem;
 		font-weight: 600;
 	}
+	/* The tables fold under one closed "Verb forms" disclosure (tunatale-lvqq). */
+	.extra-value :global(details.wolff-forms > summary) {
+		cursor: pointer;
+		color: var(--color-primary);
+		font-size: 0.85rem;
+		font-weight: 600;
+		margin-top: 0.3rem;
+	}
 	.extra-value :global(.wolff-ceb) {
 		font-style: italic;
 	}
