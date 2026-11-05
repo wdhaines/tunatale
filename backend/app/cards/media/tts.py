@@ -15,12 +15,17 @@ logger = logging.getLogger(__name__)
 
 
 async def generate_tts_audio(
-    text: str, voice: str | None = None, phonemes: Mapping[str, str] | None = None
+    text: str,
+    voice: str | None = None,
+    phonemes: Mapping[str, str] | None = None,
+    stress_spelling: str | None = None,
 ) -> bytes | None:
     """Generate TTS audio for *text*. Returns MP3 bytes, or None on error.
 
     *phonemes* is the per-word reading, passed through to the adapter as a
-    lesson's drill step passes it (``synth_plan.word_readings``).
+    lesson's drill step passes it (``synth_plan.word_readings``). *stress_spelling*
+    is a card word's syllables with the stressed one in capitals, passed through
+    to the adapter likewise.
 
     Returning None rather than raising is the callers' contract (media pipeline
     and cloze backfill both treat None as "no audio for this item"), but the
@@ -48,7 +53,9 @@ async def generate_tts_audio(
     try:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "tts.mp3"
-            await get_tts_service().synthesize(text, voice, out, phonemes=phonemes, speak_locale=speak_locale)
+            await get_tts_service().synthesize(
+                text, voice, out, phonemes=phonemes, speak_locale=speak_locale, stress_spelling=stress_spelling
+            )
             data = out.read_bytes() if out.exists() else b""
         return data or None
     except Exception as exc:

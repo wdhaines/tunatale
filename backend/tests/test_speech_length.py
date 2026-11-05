@@ -15,7 +15,7 @@ import wave
 
 import pytest
 
-from app.audio.speech_length import speech_seconds
+from app.audio.speech_length import longest_pause, speech_seconds
 
 # Every test here shells out to a real ffmpeg. The two hostile-clock CI jobs run
 # `-m "not ffmpeg"` on runners that do not install it (ci.yml says why).
@@ -78,3 +78,23 @@ def test_bytes_that_are_not_audio_raise_rather_than_measure_zero():
     """Zero would PASS a length check; a clip nobody could measure must not."""
     with pytest.raises(RuntimeError, match="could not measure the clip"):
         speech_seconds(b"ID3-audio")
+
+
+def test_the_longest_pause_inside_a_clip_is_measured_between_its_words():
+    """A word said twice: two stretches of speech with a pause between them (tunatale-h0q3.39)."""
+    clip = _wav(_hush(0.3), _tone(0.6), _hush(0.7), _tone(0.6), _hush(0.3))
+
+    assert longest_pause(clip) == pytest.approx(0.7, abs=0.05)
+
+
+def test_the_silence_at_either_end_is_not_a_pause_inside():
+    """One word said once, with the provider's usual lead-in and tail."""
+    clip = _wav(_hush(0.4), _tone(0.8), _hush(0.6))
+
+    assert longest_pause(clip) == 0.0
+
+
+def test_the_longest_of_several_pauses_is_the_one_returned():
+    clip = _wav(_tone(0.4), _hush(0.2), _tone(0.4), _hush(0.9), _tone(0.4))
+
+    assert longest_pause(clip) == pytest.approx(0.9, abs=0.05)

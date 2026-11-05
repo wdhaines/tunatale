@@ -11,7 +11,13 @@ from typing import Any, Literal
 import anyio
 
 from app.audio.synth_plan import word_readings
-from app.languages import card_surface_variants, get_ipa_for_card_words, get_phoneme_planner, get_tts_voice
+from app.languages import (
+    card_surface_variants,
+    get_ipa_for_card_words,
+    get_phoneme_planner,
+    get_syllabifier,
+    get_tts_voice,
+)
 
 from .choose_llm import choose_image_hit
 from .forvo import ForvoOutcome, ForvoResult, fetch_forvo_pronunciation
@@ -101,6 +107,26 @@ def _card_word_readings(word: str, language_code: str) -> dict[str, str] | None:
     if not get_ipa_for_card_words(language_code):
         return None
     return word_readings(word, get_phoneme_planner(language_code))
+
+
+def _card_word_stress(word: str, language_code: str, readings: dict[str, str] | None) -> str | None:
+    """*word* in syllables with its stressed one in capitals ("sim-ba-HAN"), or ``None``.
+
+    Read off the word's own reading (its IPA marks one syllable ``ˈ``) and laid
+    over the language's written syllables, so the voice is told the syllable it
+    should stress in letters it can read (tunatale-h0q3.39). ``None`` for a
+    phrase, a single syllable, a reading with no stress or more than one, and
+    whenever the written and spoken syllables do not line up one to one: a
+    syllable named wrongly is worse than none.
+    """
+    if readings is None or len(readings) != 1:
+        return None
+    spoken = next(iter(readings.values())).split(".")
+    stressed = [i for i, syllable in enumerate(spoken) if "ˈ" in syllable]
+    written = [syllable.strip("-") for syllable in get_syllabifier(language_code)(word)]
+    if len(spoken) < 2 or len(stressed) != 1 or len(written) != len(spoken) or not all(written):
+        return None
+    return "-".join(s.upper() if i == stressed[0] else s.lower() for i, s in enumerate(written))
 
 
 async def fetch_card_media(
@@ -197,7 +223,13 @@ async def fetch_card_media(
         # Every non-FOUND outcome still falls back to TTS — the card must not be
         # blocked on a nice-to-have. audio_status is what keeps that fallback
         # from being silent.
-        audio = await tts_fn(spoken, voice=voice, phonemes=_card_word_readings(spoken, language_code))
+        readings = _card_word_readings(spoken, language_code)
+        audio = await tts_fn(
+            spoken,
+            voice=voice,
+            phonemes=readings,
+            stress_spelling=_card_word_stress(spoken, language_code, readings),
+        )
         if audio is not None:
             result.audio_source = "tts"
             result.audio_bytes = audio

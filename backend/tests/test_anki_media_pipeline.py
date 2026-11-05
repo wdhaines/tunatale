@@ -37,7 +37,7 @@ def _make_fakes(
     def fake_forvo(word, *, language_code="sl", http_client=None):
         return _forvo_result(forvo_returns)
 
-    async def fake_tts(text, *, voice=None, phonemes=None):
+    async def fake_tts(text, *, voice=None, phonemes=None, stress_spelling=None):
         return tts_returns
 
     def fake_search(query, *, api_key, http_client=None, per_page=50):
@@ -253,7 +253,7 @@ class TestLanguageThreading:
         def fake_forvo(word, *, language_code="sl", http_client=None):
             return _forvo_result(None)  # force TTS fallback
 
-        async def recording_tts(text, *, voice=None, phonemes=None):
+        async def recording_tts(text, *, voice=None, phonemes=None, stress_spelling=None):
             captured_voice.append(voice)
             return b"tts_mp3"
 
@@ -276,7 +276,7 @@ class TestLanguageThreading:
             captured_lang.append(language_code)
             return _forvo_result(b"forvo_mp3")
 
-        async def fake_tts(text, *, voice=None, phonemes=None):
+        async def fake_tts(text, *, voice=None, phonemes=None, stress_spelling=None):
             return None
 
         await fetch_card_media(
@@ -300,7 +300,7 @@ class TestLanguageThreading:
     async def test_explicit_tts_voice_overrides_language_default(self):
         captured_voice: list[str | None] = []
 
-        async def recording_tts(text, *, voice=None, phonemes=None):
+        async def recording_tts(text, *, voice=None, phonemes=None, stress_spelling=None):
             captured_voice.append(voice)
             return b"tts_mp3"
 
@@ -1213,7 +1213,7 @@ class TestCardWordReading:
     async def _phonemes(self, word: str, language_code: str) -> list:
         sent: list = []
 
-        async def recording_tts(text, *, voice=None, phonemes=None):
+        async def recording_tts(text, *, voice=None, phonemes=None, stress_spelling=None):
             sent.append(phonemes)
             return b"tts_mp3"
 
@@ -1257,7 +1257,7 @@ class TestVariantFrontAudio:
             heard["forvo"] = word
             return _forvo_result(b"forvo_mp3" if forvo_finds else None)
 
-        async def tts(text, *, voice=None, phonemes=None):
+        async def tts(text, *, voice=None, phonemes=None, stress_spelling=None):
             heard["tts"] = text
             return b"tts_mp3"
 

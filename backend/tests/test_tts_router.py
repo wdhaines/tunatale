@@ -34,6 +34,7 @@ class _RecordingTTS:
         enunciation=None,
         line=False,
         stressed=None,
+        stress_spelling=None,
     ) -> None:
         self.calls.append(
             {

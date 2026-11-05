@@ -593,7 +593,7 @@ class TestADuplicatePictureIsRetriedOnce:
         by_url = {self._URL_1: b"TAKEN", self._URL_2: b"FREE"}
         tts_renders: list[str] = []
 
-        async def _tts(text, *, voice=None, phonemes=None):
+        async def _tts(text, *, voice=None, phonemes=None, stress_spelling=None):
             tts_renders.append(text)
             return b"AUD"
 
