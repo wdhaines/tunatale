@@ -805,6 +805,7 @@ def test_a_printed_spelling_outranks_the_rule(committed):
     assert committed.card_fields("kinabuhi", "life").spelling == "kinabúhì"
 
 
+@pytest.mark.slow(reason="decodes every suffixed form Wolff prints, across the whole lexicon")
 def test_the_rule_agrees_with_wolffs_printed_suffixed_words(committed):
     """The rule against every 25th word Wolff prints in an example (letters only in,
     his marks out). Measured on all 15,444 when the rule was made: 96% exact,

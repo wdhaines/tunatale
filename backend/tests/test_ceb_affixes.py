@@ -539,3 +539,28 @@ def test_a_derivational_prefix_still_takes_the_infix():
 def test_a_prefix_stack_wolff_does_not_print_is_refused():
     with pytest.raises(ValueError, match="mu-"):
         generate("palit", "mu-+mag-")
+
+
+# ── decode is memoized (tunatale-1l26.14) ──────────────────────────────────────────────────
+# Every Cebuano card added builds Wolff's verb tables, which decode each printed form
+# against the whole root list; unmemoized that cost ~1 s per test fixture and was most
+# of CI's October slowdown.
+
+
+def test_a_repeated_decode_is_answered_from_the_cache():
+    from app.plugins.languages.ceb.affixes import _decoded
+
+    roots = frozenset(("palit", "lakaw"))
+    first = decode("mipalit", roots)
+    hits = _decoded.cache_info().hits
+    assert decode("mipalit", roots) == first
+    assert _decoded.cache_info().hits == hits + 1
+
+
+def test_a_caller_changing_its_result_does_not_change_the_next_one():
+    roots = frozenset(("palit", "lakaw"))
+    first = decode("mipalit", roots)
+    assert first  # mi- + palit, so there is something to clobber
+    expected = list(first)
+    first.clear()
+    assert decode("mipalit", roots) == expected

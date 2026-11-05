@@ -198,8 +198,12 @@ jobs:
       - name: Content surface parity check
         run: uv run python scripts/check_content_surface_parity.py
 
+      # --cpu-budget=enforce: same gate as test.sh (tests/_helpers/cpu_budget.py). The
+      # budget is scaled by a calibration workload, so this runner's slower cores get
+      # proportionally more time. Only this job: the hostile-clock jobs re-run the same
+      # tests for timezone coverage, not cost.
       - name: Test
-        run: uv run pytest -n auto
+        run: uv run pytest -n auto --cpu-budget=enforce
 
       # Re-runs every bash block of docs/walkthrough.md (a Showboat document)
       # and fails on any output that no longer matches. This job is the
