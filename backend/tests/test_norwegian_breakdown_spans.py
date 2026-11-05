@@ -133,6 +133,9 @@ class TestFlatSyllables:
         assert flat_syllables("oppklart") == ["opp", "klart"]
         assert flat_syllables("velkommen") == ["vel", "ko", "mmen"]
 
+    @pytest.mark.slow(
+        reason="sweeps the ~50k-word lexicon; whichever sweep runs first also builds the session fixture (~10 s)"
+    )
     def test_no_wordlist_entry_yields_an_unspeakable_chunk(self, repo_syllabified_wordlist):
         """The invariant, over all 50k wordlist entries: every piece has a nucleus.
 
@@ -151,6 +154,9 @@ class TestFlatSyllables:
                 offenders.append((word, pieces))
         assert offenders == [], f"{len(offenders)} unspeakable chunks, e.g. {offenders[:5]}"
 
+    @pytest.mark.slow(
+        reason="sweeps the ~50k-word lexicon; whichever sweep runs first also builds the session fixture (~10 s)"
+    )
     def test_vowel_only_inflection_never_stranded_inside_a_morpheme(self, repo_syllabified_wordlist):
         """The invariant, over all 50k entries: a vowel-only inflection is never
         stranded behind a consonant-final piece **of its own morpheme**.
@@ -209,6 +215,9 @@ class TestFlatSyllables:
                     stranded.append((word, pieces))
         assert stranded == [], f"{len(stranded)} vowel-only inflections stranded inside a morpheme, e.g. {stranded[:5]}"
 
+    @pytest.mark.slow(
+        reason="sweeps the ~50k-word lexicon; whichever sweep runs first also builds the session fixture (~10 s)"
+    )
     def test_non_inflection_all_vowel_pieces_untouched(self, repo_syllabified_wordlist):
         """All-vowel pieces that are NOT inflections keep their slots.
 

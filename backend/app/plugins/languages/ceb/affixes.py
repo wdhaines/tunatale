@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
-from functools import cache
+from functools import cache, lru_cache
 from itertools import chain, repeat
 from typing import Any, NamedTuple
 
@@ -524,11 +524,20 @@ def decode(surface: str, roots: frozenset[str]) -> list[Analysis]:
     A surface that is itself one of *roots* is that root and nothing else: Wolff
     lists strictly by root (§4), so a headword that looks affixed (``gikan``,
     ``ibabaw``) is not a form of a shorter one.
+
+    Memoized: each Cebuano card added decodes every form its verb tables print
+    against the whole root list, and the same roots come back card after card. The
+    caller gets its own list, so changing it cannot reach the cache.
     """
+    return list(_decoded(surface, roots))
+
+
+@lru_cache(maxsize=65536)
+def _decoded(surface: str, roots: frozenset[str]) -> tuple[Analysis, ...]:
     target = strip_marks(surface)
     own = _stripped_roots(roots).get(target)
     if own:
-        return [Analysis(r, "", ()) for r in own]
+        return tuple(Analysis(r, "", ()) for r in own)
     index = _by_first(roots)
     found: dict[tuple[str, str], tuple[str, ...]] = {}
     for pre, inf, suf in _shells():
@@ -543,7 +552,7 @@ def decode(surface: str, roots: frozenset[str]) -> list[Analysis]:
                 rules = _surfaces(root, affix).get(target)
                 if rules is not None:
                     found.setdefault((root, affix), rules)
-    return [Analysis(root, affix, rules) for (root, affix), rules in sorted(found.items())]
+    return tuple(Analysis(root, affix, rules) for (root, affix), rules in sorted(found.items()))
 
 
 # ── what a root's entry licenses, and ranking against the lexicon ─────────────────────────────

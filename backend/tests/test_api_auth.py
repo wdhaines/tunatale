@@ -304,6 +304,7 @@ class TestLoginThrottling:
             ghost = await client.post("/api/auth/login", json={"email": "ghost@example.com", "password": "wrong"})
         assert ghost.status_code == 429
 
+    @pytest.mark.slow(reason="a run of real argon2 logins; argon2 is deliberately slow")
     async def test_a_success_clears_the_account_counter(self, auth_db: AuthDatabase) -> None:
         """Mistype four times, get it right, and the slate is clean.
 
@@ -320,6 +321,7 @@ class TestLoginThrottling:
             after = await client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
         assert after.status_code == 200
 
+    @pytest.mark.slow(reason="IP_THRESHOLD + 5 real argon2 logins; argon2 is deliberately slow")
     async def test_successful_logins_are_never_throttled(self, auth_db: AuthDatabase) -> None:
         """Nothing counts a *success*, at either scope.
 

@@ -209,7 +209,11 @@ log_step() {
   #
   # Re-measure with the loop in tunatale-1l26.1 if the suite shape changes; the
   # flat 6..12 region is a property of this suite's size, not a constant.
-  log_step backend "Tests" uv run pytest --run-oracle -n 6
+  # --cpu-budget=enforce fails the run on any test over its CPU budget, measured on
+  # a warm re-run and scaled to this machine (tests/_helpers/cpu_budget.py). CI's
+  # `backend` job passes it too. Added after one fixture quietly put ~1 s on ~70
+  # tests and the backend job crept from 3 to 5 min (tunatale-1l26.14).
+  log_step backend "Tests" uv run pytest --run-oracle -n 6 --cpu-budget=enforce
 
   # docs/walkthrough.md is a Showboat document: every bash block was run and its
   # output recorded under it. Nothing re-ran them, so between 2026-10-01 and

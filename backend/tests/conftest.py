@@ -918,9 +918,35 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run @pytest.mark.peer_sync tests (requires self-host sync server).",
     )
+    parser.addoption(
+        "--cpu-budget",
+        choices=["off", "report", "enforce"],
+        default="off",
+        help="Per-test CPU budget (tests/_helpers/cpu_budget.py): report offenders, or fail the run on them.",
+    )
+    parser.addoption(
+        "--cpu-budget-scale",
+        type=float,
+        default=1.0,
+        help="Multiply every CPU budget: an environment's measured residual after calibration (CI passes it).",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    if config.getoption("--cpu-budget") != "off":
+        from tests._helpers.cpu_budget import CpuBudget
+
+        config.pluginmanager.register(
+            CpuBudget(
+                enforce=config.getoption("--cpu-budget") == "enforce",
+                allowance=config.getoption("--cpu-budget-scale"),
+            ),
+            "cpu-budget",
+        )
+    config.addinivalue_line(
+        "markers",
+        "slow(reason): a test that must be slow; raises its CPU budget (tests/_helpers/cpu_budget.py).",
+    )
     config.addinivalue_line(
         "markers",
         "oracle: requires --run-oracle (drives Anki's scheduler via subprocess).",
