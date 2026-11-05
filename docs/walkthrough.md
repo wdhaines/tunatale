@@ -4889,11 +4889,12 @@ sed -n '/^def pytest_addoption/,/^def pytest_configure/p' backend/tests/conftest
 "--run-stanza"
 "--run-peer-sync"
 "--cpu-budget"
+"--cpu-budget-scale"
 ```
 
 `--run-oracle` (drives Anki's real scheduler in a `uv run --with anki` subprocess, §9), `--run-peer-sync`, `--run-classla` and `--run-stanza` gate their `@pytest.mark` equivalents. `test.sh` passes `--run-oracle -n 6` to pytest; peer-sync is its own group. `-n 6` was measured against the other concurrent groups rather than guessed.
 
-`--cpu-budget` is not a marker gate but a cost gate. `test.sh` and CI's `backend` job pass `--cpu-budget=enforce`, which fails the run when any test uses more than 1 s of CPU (10 s on its first, cold run). The figure is in the owner's laptop's seconds: each worker times a fixed workload and scales, so a slower CI core gets proportionally more. A test over budget is re-run warm at the end of the session before it counts, so filling a process-wide cache never fails anything; a test that must be slow carries `@pytest.mark.slow(reason=...)`. It exists because one fixture once added a second to ~70 tests and nothing failed while CI went from 3 to 5 minutes (tunatale-1l26.14). `tests/_helpers/cpu_budget.py` explains the rest.
+`--cpu-budget` is not a marker gate but a cost gate. `test.sh` and CI's `backend` job pass `--cpu-budget=enforce`, which fails the run when any test uses more than 1 s of CPU (10 s on its first, cold run). The figure is in the owner's laptop's seconds: each worker times a fixed workload and scales, so a slower core gets proportionally more, and CI adds `--cpu-budget-scale=1.8` for the residual a GitHub runner still shows after that. A test over budget is re-run warm at the end of the session before it counts, so filling a process-wide cache never fails anything; a test that must be slow carries `@pytest.mark.slow(reason=...)`. It exists because one fixture once added a second to ~70 tests and nothing failed while CI went from 3 to 5 minutes (tunatale-1l26.14). `tests/_helpers/cpu_budget.py` explains the rest.
 
 Helpers that are not fixtures live in `backend/tests/_helpers/`: `anki_db.py`, the `sync_server.py` session fixture, `localtz.py`, the `cpu_budget.py` plugin, and `lemmatizer.py::StubLemmatizer` (stub the lemmatizer instead of loading stanza).
 

@@ -10,8 +10,12 @@ runs its three groups at once or a CI runner is busy. A subprocess's CPU is not 
 and neither is sleeping: this guards against work done in-process.
 
 Machines: every budget is in REFERENCE-machine seconds. Each worker times a fixed
-workload (:func:`_calibrate`) and scales what it measures, so a GitHub runner, slower per
-core, gets proportionally more time and a test passes or fails the same in both places.
+workload (:func:`_calibrate`) and scales what it measures, so a slower core gets
+proportionally more time. The loop is small and pure Python, and real tests run under
+coverage over much more memory, so a GitHub x86 runner still reads ~1.7x the laptop after
+calibration (measured 2026-11-05: the Wolff sweep 21.8 s vs 12.6 s, a warm test 1.06 s
+vs ~0.6 s). CI declares that residual with ``--cpu-budget-scale``; re-measure it if CI's
+budget failures start naming tests the laptop passes.
 
 Cold caches: a process-wide cache (Wolff's lexicon, the affix decoder's per-root forms)
 is filled by whichever test touches it first, and under xdist that test is random. So a
@@ -77,8 +81,9 @@ def _budgets(item: pytest.Item) -> tuple[float, float]:
 
 
 class CpuBudget:
-    def __init__(self, enforce: bool) -> None:
+    def __init__(self, enforce: bool, allowance: float = 1.0) -> None:
         self.enforce = enforce
+        self.allowance = allowance  # --cpu-budget-scale: multiplies every budget
         self.scale = 1.0  # this worker's CPU second, in reference seconds
         self.suspects: list[pytest.Item] = []  # over the warm budget on their first run
         self.cold_over: list[tuple[str, float, float]] = []  # over the cold ceiling: no re-run
@@ -113,7 +118,7 @@ class CpuBudget:
         yield
         if call.when == "teardown" and not self.rerunning:
             cpu = item.stash.get(_CPU, 0.0) * self.scale
-            warm_budget, cold_budget = _budgets(item)
+            warm_budget, cold_budget = (b * self.allowance for b in _budgets(item))
             if cpu > cold_budget:
                 self.cold_over.append((f"{item.nodeid} (first run)", cpu, cold_budget))
             elif cpu > warm_budget:
@@ -149,7 +154,7 @@ class CpuBudget:
         verdict = list(self.cold_over)
         self.rerunning = True
         for item in self.suspects:
-            warm, (warm_budget, _) = self._warm_cpu(item), _budgets(item)
+            warm, warm_budget = self._warm_cpu(item), _budgets(item)[0] * self.allowance
             if warm > warm_budget:
                 verdict.append((item.nodeid, warm, warm_budget))
         self.rerunning = False

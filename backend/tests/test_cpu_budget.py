@@ -14,7 +14,7 @@ from tests._helpers.cpu_budget import CpuBudget
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow(reason): slow on purpose")
-    config.pluginmanager.register(CpuBudget(enforce={enforce}), "cpu-budget")
+    config.pluginmanager.register(CpuBudget(enforce={enforce}, allowance={allowance}), "cpu-budget")
 """
 
 _TESTS = """
@@ -56,8 +56,8 @@ def small_budget(monkeypatch):
     monkeypatch.setattr(cpu_budget, "REFERENCE_CALIBRATION_S", 1.0)
 
 
-def _run(pytester, enforce: bool, tests: str = _TESTS):
-    pytester.makeconftest(_CONFTEST.format(enforce=enforce))
+def _run(pytester, enforce: bool, tests: str = _TESTS, allowance: float = 1.0):
+    pytester.makeconftest(_CONFTEST.format(enforce=enforce, allowance=allowance))
     pytester.makepyfile(tests)
     return pytester.runpytest_inprocess("-p", "no:cacheprovider", "-p", "no:randomly", "-p", "no:asyncio")
 
@@ -151,3 +151,51 @@ def test_caches_its_own_work():
     result = _run(pytester, enforce=True, tests=tests)
     assert result.ret == pytest.ExitCode.TESTS_FAILED
     assert "test_caches_its_own_work (first run)" in result.stdout.str()
+
+
+def test_an_allowance_multiplies_every_budget(pytester, small_budget):
+    # CI's --cpu-budget-scale: a 0.06 s burn is over 0.02 s, but not over 0.02 s x 10.
+    result = _run(pytester, enforce=True, allowance=10.0)
+    assert result.ret == pytest.ExitCode.OK
+    assert "CPU budget" not in result.stdout.str()
+
+
+def test_an_allowance_raises_the_cold_ceiling_too(pytester, small_budget, monkeypatch):
+    # The first run is judged against the cold ceiling alone, never re-run, so the
+    # allowance must reach it as well as the warm budget.
+    monkeypatch.setattr(cpu_budget, "COLD_BUDGET_S", 0.03)
+    tests = """
+import time
+
+_DONE = []
+
+def test_caches_its_own_work():
+    if not _DONE:
+        end = time.process_time() + 0.06
+        while time.process_time() < end:
+            pass
+        _DONE.append(True)
+"""
+    result = _run(pytester, enforce=True, tests=tests, allowance=10.0)
+    assert result.ret == pytest.ExitCode.OK
+
+
+def test_an_allowance_reaches_the_warm_re_run(pytester, small_budget):
+    # Cold 0.3 s is over the scaled 0.2 s, so it is re-run; warm it burns 0.06 s, under
+    # 0.2 s but over the unscaled 0.02 s, so only an allowance-aware re-run passes it.
+    tests = """
+import time
+
+_RUNS = []
+
+def burn(seconds):
+    end = time.process_time() + seconds
+    while time.process_time() < end:
+        pass
+
+def test_cold_then_warm():
+    burn(0.3 if not _RUNS else 0.06)
+    _RUNS.append(True)
+"""
+    result = _run(pytester, enforce=True, tests=tests, allowance=10.0)
+    assert result.ret == pytest.ExitCode.OK
