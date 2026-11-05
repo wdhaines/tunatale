@@ -146,7 +146,7 @@ class Settings(BaseSettings):
     # Prefer this over `sync_password`, which puts the secret in the environment.
     sync_password_file: str = ""
     # Pin for the anki subprocess (`uv run --with anki==X`). Empty → latest anki.
-    # Pinned to match the user's desktop Anki (26.09.3, build 29bb700b → PyPI `anki==26.9.3`): the sync
+    # Pinned to match the user's desktop Anki (26.09.4, build c06370ff → PyPI `anki==26.9.4`): the sync
     # subprocess must speak the same sync-protocol and mirror the same scheduler the
     # parity code (see .claude/rules/anki-queue-parity.md, "trust the binary") is tuned
     # to. This spec also drives the peer-sync server (via _anki_with_spec) and the
@@ -167,12 +167,16 @@ class Settings(BaseSettings):
     # 26.5 failed 4 (the SInc(Hard) tests) — the control proving the override reached
     # the oracle rather than a cached 26.8.1.
     #
+    # 26.9.3 → 26.9.4 (2026-11-04) was routine too: 118/118 parity under
+    # ANKI_PKG_VERSION=26.9.4 with no TT-side change; the 26.5 control again failed
+    # exactly the 4 SInc(Hard) tests.
+    #
     # `ANKI_PKG_VERSION=<version>` overrides this, and the oracle harness reads it
     # through _anki_with_spec, so the whole parity suite can be run against any Anki
     # release without editing anything:
     #   ANKI_PKG_VERSION=26.9 uv run pytest tests/test_parity_*.py --run-oracle
     # That is the cheap way to answer "is this Anki release safe for us".
-    anki_pkg_version: str = "26.9.3"
+    anki_pkg_version: str = "26.9.4"
     # Interpreter for the anki driver subprocess. It runs isolated + project-free
     # (--no-project), which escapes the project lock's stale protobuf 4.21.2 (dragged in
     # by the classla+anki extras; no cp314 wheel) — a clean resolve pulls a current

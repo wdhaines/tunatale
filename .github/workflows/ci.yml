@@ -941,7 +941,7 @@ jobs:
       # while a broken SETUP correctly skips it.
       - name: Warm anki subprocess env
         id: warm
-        run: uv run --isolated --no-project --python 3.14 --with anki==26.9.3 python -c "import anki"
+        run: uv run --isolated --no-project --python 3.14 --with anki==26.9.4 python -c "import anki"
 
       # ⚠️ Both gates below run at Anki's 04:00 rollover (and the oracle gate
       # again at 01:00, just before it), NOT at the workflow's TZ=UTC. This is the point of the job, not a detail: parity with Anki is
