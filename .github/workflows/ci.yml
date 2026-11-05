@@ -207,14 +207,10 @@ jobs:
       - name: Test
         run: uv run pytest -n auto --cpu-budget=enforce --cpu-budget-scale=1.8
 
-      # Re-runs every bash block of docs/walkthrough.md (a Showboat document)
-      # and fails on any output that no longer matches. This job is the
-      # environment the walkthrough says its blocks run in: the lean dev-group
-      # install, UV_NO_SYNC, and the NST lexicon built above. Same step as
-      # test.sh's "Walkthrough check"; the fix command is in its comment there.
-      - name: Walkthrough check
-        working-directory: .
-        run: uvx showboat@0.6.1 verify docs/walkthrough.md
+      # The walkthrough check used to run here, after Test, adding ~31 s to the
+      # job that sets CI's wall-clock. It now runs at the end of `anki-gates`,
+      # which has the same lean environment and finished ~1.5 min sooner
+      # (tunatale-1l26.14).
 
   # Runs the backend suite at a deliberately hostile UTC offset, because pinning
   # TZ everywhere else makes both gates blind to time-zone fragility rather than
@@ -993,3 +989,23 @@ jobs:
       - name: Peer-sync gate
         if: always() && steps.warm.outcome == 'success'
         run: TZ="$HOSTILE_TZ" uv run pytest tests/test_anki_peer_sync_selfhost.py --run-peer-sync --no-cov -v
+
+      # Re-runs every bash block of docs/walkthrough.md (a Showboat document) and
+      # fails on any output that no longer matches. Same step as test.sh's
+      # "Walkthrough check"; the fix command is in its comment there. It lives in
+      # this job, not `backend`, only for wall-clock: `backend` is CI's longest job
+      # and this one finished ~1.5 min sooner, so the check's ~31 s now overlaps
+      # instead of extending the run, without a seventh job (job count drives tail
+      # latency, .claude/rules/gate-and-ci.md). The environment the walkthrough says
+      # its blocks run in is the lean dev-group install with UV_NO_SYNC, which this
+      # job has, plus the NST lexicon, built here. The workflow's TZ: UTC holds: the
+      # gates above set their hostile TZ per command, not for the job. No ffmpeg:
+      # no block runs the binary (verified 2026-11-05 by a full verify with ffmpeg
+      # absent from PATH). always(): a red Anki gate must not hide a stale doc.
+      - name: Build NST lexicon
+        if: always()
+        run: uv run python scripts/build_nst_lexicon.py build
+      - name: Walkthrough check
+        if: always()
+        working-directory: .
+        run: uvx showboat@0.6.1 verify docs/walkthrough.md

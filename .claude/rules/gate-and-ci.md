@@ -40,10 +40,12 @@ necessary but not sufficient. Adding a check to `test.sh` obliges you to add it 
 `ci.yml` in the same commit; the reverse is not required.
 
 `.github/workflows/ci.yml` runs six parallel jobs: `backend` (ruff → checkers →
-pytest → the walkthrough's Showboat blocks), `backend-hostile-tz`, `backend-hostile-hour`, `frontend`, `e2e`, and
-`anki-gates` (oracle parity and peer-sync in one job). Job count, not job speed,
-drives CI's tail latency — which is why the two Anki gates share a job and why
-none of these is a matrix.
+pytest with the CPU budget), `backend-hostile-tz`, `backend-hostile-hour`, `frontend`, `e2e`, and
+`anki-gates` (oracle parity and peer-sync, then the walkthrough's Showboat blocks).
+Job count, not job speed, drives CI's tail latency — which is why the two Anki
+gates share a job, why none of these is a matrix, and why the walkthrough check
+moved into `anki-gates` rather than a job of its own: `backend` is the longest job,
+and the check's ~31 s at its end set CI's wall-clock (tunatale-1l26.14).
 
 - `backend-hostile-tz` runs one instance at `Etc/GMT-3`, inside UTC+2..+4. That
   band is where the only offset bug this repo has found reproduces; a matrix at
