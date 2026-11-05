@@ -1191,10 +1191,18 @@ class WolffLexicon:
         out = [f'<div class="wolff-kind">{html.escape(" ".join(lead))}</div>'] if lead else []
         examples = [tuple(s["ex"]) for s in verbs if s["ex"]]
         word = letters_key(hit.surface if hit.decoded is None else hit.decoded.spelling)
+        forms: list[str] = []
         for gloss, rows in shown:
             if len(shown) > 1:
-                out.append(f'<div class="wolff-h">{html.escape(gloss)}</div>')
-            out.append(self._table(rows, examples, word))
+                forms.append(f'<div class="wolff-h">{html.escape(gloss)}</div>')
+            forms.append(self._table(rows, examples, word))
+        if forms:
+            # Open, the tables took over the back of the card (tunatale-lvqq): the kind
+            # line stays in view, the forms open on a tap. Class `dict` reuses the
+            # notetype's disclosure style, so no notetype CSS has to change.
+            out.append(
+                '<details class="dict wolff-forms"><summary>Verb forms</summary>' + "".join(forms) + "</details>"
+            )
         return "".join(out)
 
     def _table(self, rows: list[_Row], examples: list[tuple[str, str]], word: str) -> str:

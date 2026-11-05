@@ -1047,6 +1047,33 @@ def test_a_sense_is_one_table_whose_columns_are_not_begun_and_begun(committed):
     assert committed.card_fields("hatod", "take someone somewhere").verb.count('<table class="wolff-verb">') == 2
 
 
+_FORMS_OPEN = '<details class="dict wolff-forms"><summary>Verb forms</summary>'
+
+
+@pytest.mark.parametrize(
+    ("word", "english"), [("pasaylo", "forgive"), ("hatod", "take someone somewhere"), ("tan-aw", "look, watch")]
+)
+def test_the_verb_tables_fold_under_one_closed_verb_forms_disclosure(committed, word, english):
+    """The owner found the open table too big (tunatale-lvqq): the kind line stays in view,
+    and every sense heading and table sits inside one closed disclosure after it."""
+    f = committed.card_fields(word, english)
+    kind, sep, rest = f.verb.partition(_FORMS_OPEN)
+    assert sep, f.verb[:200]
+    assert kind.startswith('<div class="wolff-kind">') and kind.endswith("</div>")
+    assert "<table" not in kind and "wolff-h" not in kind
+    assert rest.endswith("</table></details>")
+    assert f.verb.count(_FORMS_OPEN) == 1
+    assert rest.count("<table") == f.verb.count("<table") >= 1
+    # closed: the forms open on a tap, never on their own
+    assert " open" not in f.verb.split("<summary>Verb forms")[0].rsplit("<details", 1)[1]
+
+
+def test_a_verb_whose_senses_print_no_affixes_gets_no_empty_verb_forms(committed):
+    # Wolff prints no affix class for pangatribír's verb sense: there are no forms to fold
+    f = committed.card_fields("pangatribír", "touch something one has no business touching")
+    assert "Verb forms" not in f.verb and "<details" not in f.verb
+
+
 def test_a_trigger_row_says_the_subject_once_for_the_rows_under_it(committed):
     f = committed.card_fields("pasaylo", "forgive")
     assert re.findall(r'<tr class="wolff-trigger">(.*?)</tr>', f.verb) == [
