@@ -1424,3 +1424,167 @@ describe("DrillCard has no cloze-rewrite control (tunatale-keb0)", () => {
     });
   });
 });
+
+// tunatale-h0q3.42. A sentence card: the line before (target language, its own
+// audio) cues who answers; no English on the front. The back shows the English
+// openly and keeps the glosses and the cue's meaning in closed disclosures.
+describe("sentence card", () => {
+  const sentence = {
+    speaker: "Per",
+    text: "Jeg bor i Oslo.",
+    blank_start: null as number | null,
+    blank_end: null as number | null,
+    blank_gloss_html: "",
+    english: "I live in Oslo.",
+    glosses: [{ word: "bor", gloss_html: "live(s) <i>here</i>" }],
+    picture_url: null as string | null,
+    cue: {
+      speaker: "Kari",
+      text: "Hvor bor du?",
+      english: "Where do you live?",
+      glosses: [{ word: "hvor", gloss_html: "where?" }],
+      audio_url: "/api/srs/media/take_cue.mp3" as string | null,
+    } as null | {
+      speaker: string;
+      text: string;
+      english: string;
+      glosses: { word: string; gloss_html: string }[];
+      audio_url: string | null;
+    },
+  };
+  const make = (over: Partial<typeof sentence> = {}) =>
+    makeSRSItemDetail({
+      text: "Jeg bor i Oslo.",
+      translation: "I live in Oslo.",
+      card_type: "cloze",
+      source_sentence: "{{c1::Jeg bor i Oslo.}}",
+      source_sentence_translation: "",
+      audio_url: "/api/srs/media/take_ans.mp3",
+      sentence: { ...sentence, ...over },
+    });
+
+  it("front: the cue with its own audio, then who answers and the blank; no English", () => {
+    const { container } = render(DrillCard, {
+      item: make(),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    const prompt = container.querySelector(".prompt")!;
+    expect(prompt.querySelector(".sentence-cue")!.textContent).toContain("Kari");
+    expect(prompt.querySelector(".sentence-cue")!.textContent).toContain("Hvor bor du?");
+    expect(prompt.querySelector("audio")!.getAttribute("src")).toBe("/api/srs/media/take_cue.mp3");
+    expect(prompt.querySelector(".sentence-say")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
+      "Per: [...]",
+    );
+    for (const english of ["I live", "Where do you", "live(s)", "where?"]) {
+      expect(prompt.textContent).not.toContain(english);
+    }
+  });
+
+  it("front of a blank card keeps the rest of the sentence", () => {
+    const { container } = render(DrillCard, {
+      item: make({ blank_start: 4, blank_end: 7, blank_gloss_html: "live(s)" }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    const say = container.querySelector(".sentence-say")!.textContent!.replace(/\s+/g, " ").trim();
+    expect(say).toBe("Per: Jeg [...] i Oslo.");
+  });
+
+  it("the cue's play button replays it, and a refused play is swallowed", async () => {
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValue(new Error("NotAllowedError"));
+    const { getByLabelText } = render(DrillCard, {
+      item: make(),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByLabelText("Play the cue"));
+    expect(play).toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it("a cue with no take has no play button", () => {
+    const { container, queryByLabelText } = render(DrillCard, {
+      item: make({ cue: { ...sentence.cue!, audio_url: null } }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    expect(container.querySelector(".sentence-cue")).not.toBeNull();
+    expect(queryByLabelText("Play the cue")).toBeNull();
+  });
+
+  it("an opener shows its picture where a cue would be", () => {
+    const { container } = render(DrillCard, {
+      item: make({ cue: null, picture_url: "/api/srs/media/door.svg" }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    expect(container.querySelector(".sentence-cue")).toBeNull();
+    expect(container.querySelector(".prompt img")!.getAttribute("src")).toBe(
+      "/api/srs/media/door.svg",
+    );
+  });
+
+  it("an opener with neither is just who answers", () => {
+    const { container } = render(DrillCard, {
+      item: make({ cue: null }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    expect(container.querySelector(".prompt img")).toBeNull();
+    expect(container.querySelector(".sentence-cue")).toBeNull();
+    expect(container.querySelector(".sentence-say")).not.toBeNull();
+  });
+
+  it("back: the answer, its English openly, glosses and the cue's meaning closed", async () => {
+    const { container, getByText } = render(DrillCard, {
+      item: make(),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByText("Show"));
+    const answer = container.querySelector(".answer")!;
+    expect(answer.querySelector(".sentence-answer")!.textContent!.replace(/\s+/g, " ").trim()).toBe(
+      "Per: Jeg bor i Oslo.",
+    );
+    expect(answer.querySelector(".answer-text.english")!.textContent).toBe("I live in Oslo.");
+    expect(answer.querySelectorAll(".answer-text.english")).toHaveLength(1);
+    const words = answer.querySelector("details.sentence-words")!;
+    expect(words.hasAttribute("open")).toBe(false);
+    expect(words.querySelector("summary")!.textContent).toBe("Word by word");
+    expect(words.innerHTML).toContain("<b>bor</b> live(s) <i>here</i>");
+    const means = answer.querySelector("details.sentence-cue-means")!;
+    expect(means.hasAttribute("open")).toBe(false);
+    expect(means.textContent).toContain("where?");
+    expect(means.textContent).toContain("Where do you live?");
+    expect(answer.querySelector(".sentence-blank-gloss")).toBeNull();
+    expect(answer.querySelector("audio")!.getAttribute("src")).toBe("/api/srs/media/take_ans.mp3");
+  });
+
+  it("back of a blank card marks the blank and shows its gloss openly", async () => {
+    const { container, getByText } = render(DrillCard, {
+      item: make({ blank_start: 4, blank_end: 7, blank_gloss_html: "live(s) <i>x</i>" }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByText("Show"));
+    const answer = container.querySelector(".answer")!;
+    expect(answer.querySelector(".sentence-answer mark")!.textContent).toBe("bor");
+    // Svelte leaves an empty comment anchor after {@html}; it is not content.
+    expect(answer.querySelector(".sentence-blank-gloss")!.innerHTML.replace(/<!---->/g, "")).toBe(
+      "<b>bor</b> = live(s) <i>x</i>",
+    );
+  });
+
+  it("back of an opener has no cue disclosure", async () => {
+    const { container, getByText } = render(DrillCard, {
+      item: make({ cue: null }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByText("Show"));
+    expect(container.querySelector("details.sentence-cue-means")).toBeNull();
+  });
+});

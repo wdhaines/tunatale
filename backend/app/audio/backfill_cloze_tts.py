@@ -43,6 +43,9 @@ def backfill_cloze_tts(
             WHERE c.card_type = 'cloze'
               AND c.source_sentence IS NOT NULL
               AND c.source_sentence != ''
+              -- A sentence card's audio is the lesson's own take, attached by
+              -- app.audio.sentence_card_audio; never a fresh default-voice render.
+              AND c.disambig_key NOT LIKE 'sent:%'
             ORDER BY c.id
             """,
         ).fetchall()

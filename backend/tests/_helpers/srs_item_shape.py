@@ -49,6 +49,7 @@ SRS_ITEM_KEYS = {
     "grammar",
     "paradigm",
     "focus",
+    "sentence",
     "note",
     "article",
     "extras",
@@ -61,7 +62,7 @@ DIRECTION_WITHOUT_LEFT = DIRECTION_KEYS - {"left"}
 # ── Batch 6c: the two queue routes ──────────────────────────────────────────
 #
 # ``srs.py::_queue_item_to_dict`` is ``_item_to_dict``'s output plus exactly two
-# keys, so this composes the hand-written literal above rather than restating 28
+# keys, so this composes the hand-written literal above rather than restating 29
 # keys. Still an independent oracle: SRS_ITEM_KEYS is a literal, never
 # ``set(Model.model_fields)``.
 QUEUE_ITEM_KEYS = SRS_ITEM_KEYS | {"direction", "word_audio_url"}

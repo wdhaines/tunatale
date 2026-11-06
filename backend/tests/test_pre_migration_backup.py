@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 
 import app.srs.migrations as M
-from app.models.syntactic_unit import SyntacticUnit
 from app.srs.database import SRSDatabase
 from app.srs.db_base import _CREATE_COLLOCATIONS_V0
 from app.srs.migrations import CURRENT_VERSION, SchemaTooNewError, migrate
@@ -300,7 +299,7 @@ class TestMigrateTakesTheSnapshot:
 
         monkeypatch.setattr(M, "CURRENT_VERSION", older)
         db = SRSDatabase(str(db_path))
-        db.add_collocation(SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus"))
+        _seed_row(db)
         monkeypatch.undo()
 
         SRSDatabase(str(db_path), pre_migration_backup_dir=backup_dir)
@@ -424,8 +423,20 @@ class TestReversibilityIsDocumented:
     def test_class_counts_match_the_prose(self) -> None:
         """The summary sentence above the table states these three numbers."""
         counts = Counter(c.strip("*") for c in self._rows().values())
-        assert counts == {"Additive": 30, "Backfill": 4, "Destructive": 14}
+        assert counts == {"Additive": 31, "Backfill": 4, "Destructive": 14}
         assert f"{counts['Additive']} of the {len(M._MIGRATIONS)} are additive" in self.DOC.read_text()
+
+
+def _seed_row(db: SRSDatabase) -> None:
+    """One content row, written the way the OLDER build would: by its own columns.
+
+    Not ``add_collocation``: under a lowered ``CURRENT_VERSION`` that is still
+    today's code, and it names every column today's schema has, so the moment a
+    migration adds one (v48→v49 ``card_data``) it cannot write to the older
+    schema the test is simulating.
+    """
+    with db._get_conn() as conn:
+        conn.execute("INSERT INTO collocations (text, translation) VALUES ('banka', 'bank')")
 
 
 class TestRoundTripThroughSRSDatabase:
@@ -442,7 +453,7 @@ class TestRoundTripThroughSRSDatabase:
 
         monkeypatch.setattr(M, "CURRENT_VERSION", older)
         db = SRSDatabase(str(db_path))
-        db.add_collocation(SyntacticUnit(text="banka", translation="bank", word_count=1, difficulty=1, source="corpus"))
+        _seed_row(db)
         assert _version(db_path) == older
         monkeypatch.undo()
 

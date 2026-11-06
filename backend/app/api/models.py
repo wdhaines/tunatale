@@ -1107,11 +1107,43 @@ class ItemFocus(BaseModel):
     answer: list[FocusRun]
 
 
+class SentenceGloss(BaseModel):
+    word: str
+    gloss_html: str
+
+
+class SentenceCueModel(BaseModel):
+    speaker: str
+    text: str
+    english: str
+    glosses: list[SentenceGloss]
+    audio_url: str | None
+
+
+class ItemSentence(BaseModel):
+    """A sentence card's parts (tunatale-h0q3.42), read from the row's ``card_data``.
+
+    The front is the cue (target language, with its own audio) and who answers,
+    with the sentence, or the span ``blank_start``-``blank_end`` of it, left to
+    say. No English on the front: ``english`` and both gloss lists are the back.
+    """
+
+    speaker: str
+    text: str
+    blank_start: int | None
+    blank_end: int | None
+    blank_gloss_html: str
+    english: str
+    glosses: list[SentenceGloss]
+    picture_url: str | None
+    cue: SentenceCueModel | None
+
+
 class SrsItemResponse(BaseModel):
     """Response of create_item, patch_item, reset_item, restore_known_item,
     set_item_state, and suspend_item; the element of list_items and untrack_item.
 
-    Exactly 28 keys, one per ``_item_to_dict`` output key.
+    Exactly 29 keys, one per ``_item_to_dict`` output key.
     """
 
     id: int
@@ -1142,6 +1174,8 @@ class SrsItemResponse(BaseModel):
     paradigm: ItemParadigm | None = None
     # Set on a focus card only; the review screen draws the prompt on the front.
     focus: ItemFocus | None = None
+    # Set on a sentence card only (h0q3.42); the review screen draws it whole.
+    sentence: ItemSentence | None = None
     note: str
     article: str
     extras: list[ItemExtra]

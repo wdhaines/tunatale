@@ -1772,6 +1772,90 @@
         "title": "ItemParadigm",
         "type": "object"
       },
+      "ItemSentence": {
+        "description": "A sentence card's parts (tunatale-h0q3.42), read from the row's ``card_data``.\n\nThe front is the cue (target language, with its own audio) and who answers,\nwith the sentence, or the span ``blank_start``-``blank_end`` of it, left to\nsay. No English on the front: ``english`` and both gloss lists are the back.",
+        "properties": {
+          "blank_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blank End"
+          },
+          "blank_gloss_html": {
+            "title": "Blank Gloss Html",
+            "type": "string"
+          },
+          "blank_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blank Start"
+          },
+          "cue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SentenceCueModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "glosses": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceGloss"
+            },
+            "title": "Glosses",
+            "type": "array"
+          },
+          "picture_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Picture Url"
+          },
+          "speaker": {
+            "title": "Speaker",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "speaker",
+          "text",
+          "blank_start",
+          "blank_end",
+          "blank_gloss_html",
+          "english",
+          "glosses",
+          "picture_url",
+          "cue"
+        ],
+        "title": "ItemSentence",
+        "type": "object"
+      },
       "LangeekCandidatesResponse": {
         "description": "Response of GET /api/srs/items/{item_id}/image/langeek.\n\n``status`` is langeek.search_langeek's: ok, no_results, api_error, or\ndisabled (the source switched off). ``term`` is the word looked up, empty\nwhen the card's gloss has none.",
         "properties": {
@@ -2253,6 +2337,16 @@
           "reps": {
             "title": "Reps",
             "type": "integer"
+          },
+          "sentence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemSentence"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_sentence": {
             "title": "Source Sentence",
@@ -3814,6 +3908,16 @@
             "title": "Reps",
             "type": "integer"
           },
+          "sentence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemSentence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source_sentence": {
             "title": "Source Sentence",
             "type": "string"
@@ -4754,6 +4858,67 @@
         "title": "SectionSelection",
         "type": "object"
       },
+      "SentenceCueModel": {
+        "properties": {
+          "audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Url"
+          },
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "glosses": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceGloss"
+            },
+            "title": "Glosses",
+            "type": "array"
+          },
+          "speaker": {
+            "title": "Speaker",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "speaker",
+          "text",
+          "english",
+          "glosses",
+          "audio_url"
+        ],
+        "title": "SentenceCueModel",
+        "type": "object"
+      },
+      "SentenceGloss": {
+        "properties": {
+          "gloss_html": {
+            "title": "Gloss Html",
+            "type": "string"
+          },
+          "word": {
+            "title": "Word",
+            "type": "string"
+          }
+        },
+        "required": [
+          "word",
+          "gloss_html"
+        ],
+        "title": "SentenceGloss",
+        "type": "object"
+      },
       "SetClozeSentenceRequest": {
         "description": "Body of PUT /api/srs/items/{item_id}/cloze/sentence.\n\nEither form is accepted: a sentence already carrying ``{{c1::...}}`` (what\n``propose`` returns) or a plain one (what a human types into the edit box).\n``make_cloze_text`` is idempotent, so the server wraps the second and passes\nthe first through. A sentence the word does not occur in is a 422 \u2014 it would\nblank nothing, and Anki calls such a note an empty card.",
         "properties": {
@@ -4828,7 +4993,7 @@
         "type": "object"
       },
       "SrsItemResponse": {
-        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 28 keys, one per ``_item_to_dict`` output key.",
+        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 29 keys, one per ``_item_to_dict`` output key.",
         "properties": {
           "anki_note_id": {
             "anyOf": [
@@ -4969,6 +5134,16 @@
           "reps": {
             "title": "Reps",
             "type": "integer"
+          },
+          "sentence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemSentence"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "source_sentence": {
             "title": "Source Sentence",

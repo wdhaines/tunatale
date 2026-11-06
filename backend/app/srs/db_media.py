@@ -101,10 +101,14 @@ class DbMediaMixin:
 
     def get_sentence_audio_filename(self, collocation_id: int) -> str | None:
         """Return filename of the audio_tts_sentence media row, or None."""
+        return self.get_media_filename(collocation_id, "audio_tts_sentence")
+
+    def get_media_filename(self, collocation_id: int, kind: str) -> str | None:
+        """Return the filename of *collocation_id*'s first *kind* media row, or None."""
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT filename FROM media WHERE collocation_id = ? AND kind = 'audio_tts_sentence' LIMIT 1",
-                (collocation_id,),
+                "SELECT filename FROM media WHERE collocation_id = ? AND kind = ? LIMIT 1",
+                (collocation_id, kind),
             ).fetchone()
         return row["filename"] if row is not None else None
 

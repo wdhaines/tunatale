@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from app.audio.cloze_tts import synthesize_cloze_audios
@@ -62,6 +63,7 @@ from app.srs.fsrs import (
 )
 from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
 from app.srs.lemmatizer import headword_lemma
+from app.srs.sentence_card import is_sentence_key, sentence_card
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
 # tests/test_anki_sync_pull.py (caplog.at_level(..., logger="app.anki.sync"))
@@ -947,6 +949,12 @@ class AnkiSync:
                 serialize_extras(rec.extras) if rec.extras is not None and rec.extras != local_extras else None
             )
             new_dirty_fields = dirty_set.copy()
+            if is_sentence_key(local_item.syntactic_unit.disambig_key):
+                # TT authors a sentence card's content and builds the note's fields
+                # from it (h0q3.42); read back, its Back Extra would parse into a
+                # wrong translation. Anki gives this card its schedule, nothing else.
+                rec = replace(rec, translation=local_translation, sentence_translation=local_sent_trans, note=None)
+                article_update = extras_update = None
 
             if rec.translation != local_translation:
                 note_changed = True
@@ -1351,7 +1359,20 @@ class AnkiSync:
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
             cloze_text_update: str | None = None
-            if item.syntactic_unit.card_type == "cloze":
+            card = sentence_card(item.syntactic_unit) if item.syntactic_unit.card_type == "cloze" else None
+            if card is not None:
+                # A sentence card's two fields are built from the card, together, on
+                # ANY flag: every field of the note comes from the card, so no flag
+                # can be left with nothing to write and pin the row dirty (h0q3.42).
+                cue_audio = self._db.get_media_filename(coll_id, "audio_cue")
+                answer_audio = self._db.get_sentence_audio_filename(coll_id)
+                fields["Back Extra"] = card.back_extra(answer_audio)
+                cloze_text_update = card.note_text(cue_audio)
+                if not dry_run:
+                    for audio in (cue_audio, answer_audio):
+                        if audio:
+                            _copy_tt_media_to_anki(self._writer, audio)
+            elif item.syntactic_unit.card_type == "cloze":
                 # Cloze notes: any of {translation, sentence_translation, note, audio}
                 # dirty → rebuild Back Extra. Cloze has no separate "English" field.
                 if dirty_set & {"translation", "sentence_translation", "note", "grammar", "audio"}:
@@ -1802,6 +1823,53 @@ class AnkiSync:
         mint_l2_field: str | None = None
 
         for guid, item, coll_id in items:
+            card = sentence_card(item.syntactic_unit) if item.syntactic_unit.card_type == "cloze" else None
+            if card is not None:
+                # A sentence card (tunatale-h0q3.42): both fields are built from the
+                # card, and its audio is the lesson's own takes, attached as media
+                # rows when the card was made. Never synthesized here: the lesson
+                # already paid for those takes, on a metered voice.
+                cue_audio = self._db.get_media_filename(coll_id, "audio_cue")
+                answer_audio = self._db.get_sentence_audio_filename(coll_id)
+                if answer_audio is None:
+                    _log.warning(
+                        "SENTENCE_CARD_NO_AUDIO key=%s cid=%d — no lesson take attached; note created with no [sound:]",
+                        card.key,
+                        coll_id,
+                    )
+                try:
+                    note_id = self._writer.create_cloze_note(
+                        deck_name,
+                        card.note_text(cue_audio),
+                        back_extra=card.back_extra(answer_audio),
+                        tags=["tunatale", "cloze", "sentence"],
+                        language_code=self._language_code,
+                    )
+                    created += 1
+                except DuplicateNoteError as exc:
+                    owner = self._db.get_collocation_by_anki_note_id(exc.note_id)
+                    if owner is not None and owner.guid != guid:
+                        # The same field 0 from two rows (one line in two lessons).
+                        # Linking both to one note is the Layer 35 hazard; this row
+                        # stays unlinked, and says so on every sync until resolved.
+                        _log.warning(
+                            "SENTENCE_CARD_DUPLICATE key=%s cid=%d — note %d already belongs to %s; not linked",
+                            card.key,
+                            coll_id,
+                            exc.note_id,
+                            owner.syntactic_unit.disambig_key,
+                        )
+                        skipped += 1
+                        continue
+                    note_id = exc.note_id
+                    linked += 1
+                for audio in (cue_audio, answer_audio):  # a dry run returned before this loop
+                    if audio:
+                        _copy_tt_media_to_anki(self._writer, audio)
+                self._db.set_anki_ids(
+                    guid, note_id, {Direction.PRODUCTION: self._writer.get_cards_for_note(note_id)[0]}
+                )
+                continue
             if item.syntactic_unit.card_type == "cloze":
                 # Two texts, and they differ only for a contrast card: the
                 # sentence is what is SPOKEN, the note text is field 0, which
