@@ -98,8 +98,9 @@ class DbCollocationsMixin:
                     INSERT INTO collocations
                         (text, translation, language_code, word_count, unit_difficulty,
                          source, corpus_frequency, lemma, guid, disambig_key, article, extras, grammar, note,
-                         source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type,
+                         card_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -121,6 +122,7 @@ class DbCollocationsMixin:
                         unit.source_lesson_id,
                         unit.source_line_index,
                         unit.card_type,
+                        unit.card_data,
                     ),
                 )
                 coll_id = conn.execute(
@@ -563,8 +565,8 @@ class DbCollocationsMixin:
                         (text, translation, language_code, word_count, unit_difficulty,
                          source, corpus_frequency, lemma, guid, anki_note_id, disambig_key,
                          article, extras, grammar, note, source_sentence, sentence_translation,
-                         source_lesson_id, source_line_index, card_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source_lesson_id, source_line_index, card_type, card_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -587,6 +589,7 @@ class DbCollocationsMixin:
                         unit.source_lesson_id,
                         unit.source_line_index,
                         unit.card_type,
+                        unit.card_data,
                     ),
                 )
                 coll_id = cursor.lastrowid

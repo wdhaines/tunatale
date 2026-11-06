@@ -118,6 +118,7 @@ from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatiz
 from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
 from app.srs.sense_match import names_same_sense, sense_label
+from app.srs.sentence_card import rich, sentence_card
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import (
     LemmaCard,
@@ -208,6 +209,38 @@ def _focus_dict(language_code: str, unit: SyntacticUnit) -> dict | None:
     }
 
 
+def _sentence_dict(unit: SyntacticUnit, cue_audio_url: str | None = None) -> dict | None:
+    """A sentence card's parts for the review screen (tunatale-h0q3.42), or ``None`` for every other card.
+
+    The parts, not the Anki note's HTML: the screen draws the cue, the speaker
+    and the blank itself. Glosses come as HTML through the same ``rich`` the
+    note's back uses, so ``_word_`` reads as italics in both apps.
+    """
+    card = sentence_card(unit)
+    if card is None:
+        return None
+    cue = card.cue
+    return {
+        "speaker": card.speaker,
+        "text": card.text,
+        "blank_start": card.blank[0] if card.blank else None,
+        "blank_end": card.blank[1] if card.blank else None,
+        "blank_gloss_html": rich(card.blank_gloss),
+        "english": card.english,
+        "glosses": [{"word": g.word, "gloss_html": rich(g.gloss)} for g in card.glosses],
+        "picture_url": f"/api/srs/media/{card.picture}" if card.picture else None,
+        "cue": None
+        if cue is None
+        else {
+            "speaker": cue.speaker,
+            "text": cue.text,
+            "english": cue.english,
+            "glosses": [{"word": g.word, "gloss_html": rich(g.gloss)} for g in cue.glosses],
+            "audio_url": cue_audio_url,
+        },
+    }
+
+
 def _item_to_dict(
     row_id: int,
     item: SRSItem,
@@ -257,6 +290,7 @@ def _item_to_dict(
         "grammar": item.syntactic_unit.grammar,
         "paradigm": _paradigm_dict(language_code, item.syntactic_unit),
         "focus": _focus_dict(language_code, item.syntactic_unit),
+        "sentence": _sentence_dict(item.syntactic_unit),
         "note": item.syntactic_unit.note,
         # Gender article (en/ei/et) — display-time prefix on the headword.
         "article": item.syntactic_unit.article,
@@ -3712,6 +3746,8 @@ def _queue_item_to_dict(
     base = _item_to_dict(row_id, item, lang, image_url, audio_url, ambiguous_surfaces, homograph_surfaces)
     base["direction"] = direction.value
     base["word_audio_url"] = word_audio_url
+    if base["sentence"] is not None and (cue_aud := db.get_media_filename(row_id, "audio_cue")):
+        base["sentence"] = _sentence_dict(item.syntactic_unit, f"/api/srs/media/{cue_aud}")
     # `_item_to_dict` populates flat fields from recognition (or production for
     # cloze). For a queue item that's the OTHER direction, those values misrepresent
     # the actual card on screen: a production card due today + heavily-reviewed can

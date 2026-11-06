@@ -123,4 +123,6 @@ def test_public_method_count_pinned() -> None:
     #  dictionary layers written into TT directly — tunatale-h0q3.2)
     # +list_shared_photo_groups (photographs two or more cards already share,
     #  for the one-off repair that re-pictures the less common word — tunatale-jlwy)
-    assert count == 146
+    # +get_media_filename / +update_sentence_card (the sentence card: its cue take is
+    #  a second audio kind, and a card edit re-pushes both note fields — h0q3.42)
+    assert count == 148

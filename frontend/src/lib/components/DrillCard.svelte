@@ -53,6 +53,17 @@
 	let inFlight = $state(false);
 	let audioEl: HTMLAudioElement | undefined = $state();
 	let wordAudioEl: HTMLAudioElement | undefined = $state();
+	let cueAudioEl: HTMLAudioElement | undefined = $state();
+
+	// A sentence card (tunatale-h0q3.42): the sentence split around its blank.
+	// A whole-sentence card is all blank: nothing before or after.
+	const sentenceParts = $derived.by(() => {
+		const s = item.sentence;
+		if (!s) return null;
+		const start = s.blank_start ?? 0;
+		const end = s.blank_end ?? s.text.length;
+		return { before: s.text.slice(0, start), blank: s.text.slice(start, end), after: s.text.slice(end) };
+	});
 	const startedAt = performance.now();
 
 	function show() {
@@ -117,6 +128,10 @@
 
 	function playWordAudio() {
 		wordAudioEl?.play().catch(() => {});
+	}
+
+	function playCueAudio() {
+		cueAudioEl?.play().catch(() => {});
 	}
 
 	function escapeRegex(s: string): string {
@@ -221,7 +236,26 @@
 				<p class="context-sentence slovene">{item.context_sentence}</p>
 			{/if}
 		{:else if direction === 'production'}
-			{#if item.card_type === 'cloze' && item.source_sentence}
+			{#if sentenceParts && item.sentence}
+				<!-- No English on the front (h0q3.42): the line before, with its own
+				     take, then who answers it. An opener has a picture, or nothing. -->
+				{#if item.sentence.picture_url}
+					<img src={item.sentence.picture_url} alt="" class="prompt-image" />
+				{:else if item.sentence.cue}
+					<div class="sentence-cue">
+						<span class="sentence-who">{item.sentence.cue.speaker}</span>
+						<span class="slovene">{item.sentence.cue.text}</span>
+						{#if item.sentence.cue.audio_url}
+							<audio bind:this={cueAudioEl} src={item.sentence.cue.audio_url} autoplay preload="auto"></audio>
+							<button class="play-btn" onclick={playCueAudio} aria-label={t('drillCard.playCue')}>▶</button>
+						{/if}
+					</div>
+				{/if}
+				<p class="main-text sentence-say slovene">
+					<span class="sentence-who">{item.sentence.speaker}:</span>
+					{sentenceParts.before}[...]{sentenceParts.after}
+				</p>
+			{:else if item.card_type === 'cloze' && item.source_sentence}
 				{#if item.focus}
 					<!-- A whole sentence to say (tunatale-ve4p.9): the English, its
 					     focus in bold, is the whole front. -->
@@ -277,6 +311,34 @@
 					<div class="note">{@html item.note}</div>
 				{/if}
 				{@render backExtras()}
+			{:else if direction === 'production' && sentenceParts && item.sentence}
+				{#if item.audio_url}
+					<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
+					<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
+				{/if}
+				<p class="main-text slovene sentence-answer">
+					<span class="sentence-who">{item.sentence.speaker}:</span>
+					{#if item.sentence.blank_start != null}{sentenceParts.before}<mark class="cloze-answer">{sentenceParts.blank}</mark>{sentenceParts.after}{:else}{item.sentence.text}{/if}
+				</p>
+				{#if item.sentence.blank_start != null}
+					<div class="sentence-blank-gloss"><b>{sentenceParts.blank}</b> = {@html item.sentence.blank_gloss_html}</div>
+				{/if}
+				<p class="answer-text english">{item.sentence.english}</p>
+				<details class="sentence-words">
+					<summary>{t('drillCard.wordByWord')}</summary>
+					{#each item.sentence.glosses as g, i (i)}
+						<div class="sentence-gloss"><b>{g.word}</b> {@html g.gloss_html}</div>
+					{/each}
+				</details>
+				{#if item.sentence.cue}
+					<details class="sentence-cue-means">
+						<summary>{t('drillCard.cueMeans')}</summary>
+						{#each item.sentence.cue.glosses as g, i (i)}
+							<div class="sentence-gloss"><b>{g.word}</b> {@html g.gloss_html}</div>
+						{/each}
+						<p class="english">{item.sentence.cue.english}</p>
+					</details>
+				{/if}
 			{:else if direction === 'production'}
 				{#if item.card_type === 'cloze' && item.source_sentence}
 					{#if item.audio_url}
@@ -340,6 +402,36 @@
 	.drill-card {
 		text-align: center;
 		padding: 0.75rem;
+	}
+	/* A sentence card reads as a dialogue: left-aligned, the speaker first (owner, 11-05). */
+	.sentence-cue,
+	.sentence-say,
+	.sentence-answer,
+	.sentence-blank-gloss,
+	.sentence-words,
+	.sentence-cue-means {
+		text-align: left;
+	}
+	.sentence-cue {
+		background: var(--color-surface-alt, rgba(127, 127, 127, 0.1));
+		border-radius: 8px;
+		padding: 0.4rem 0.7rem;
+		margin-bottom: 0.6rem;
+		font-size: 1.15rem;
+	}
+	.sentence-who {
+		display: inline-block;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-muted);
+		margin-right: 0.3rem;
+	}
+	.sentence-blank-gloss {
+		margin: 0.25rem 0 0.5rem;
+	}
+	.sentence-words,
+	.sentence-cue-means {
+		margin-top: 0.5rem;
 	}
 	.main-text {
 		font-size: 1.5rem;

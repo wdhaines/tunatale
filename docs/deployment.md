@@ -1551,7 +1551,7 @@ Three classes:
   rebuilds a table. **Not reversible: the pre-migration snapshot IS the
   rollback.**
 
-30 of the 48 are additive, 4 are backfills, and 14 are destructive.
+31 of the 49 are additive, 4 are backfills, and 14 are destructive.
 
 | From → to | Class | What it does |
 |---|---|---|
@@ -1603,6 +1603,7 @@ Three classes:
 | v45 → v46 | **Destructive** | Deletes `media` rows whose collocation no longer exists — 8 on the Norwegian deck, debris from table rebuilds run under `PRAGMA foreign_keys = OFF`. Destructive by class, not by risk: the rows point at nothing, and the files they named are left on disk |
 | v46 → v47 | Additive | `cloze_sentence_cache.sentence_translation` — a translation OF THE SENTENCE. Without it the mint had only the WORD's gloss in scope and wrote it into both slots of a cloze card's Back Extra (tunatale-ml06) |
 | v47 → v48 | Backfill | Blanks the 18 cloze rows whose sentence gloss is a byte-for-byte copy of the word gloss, and marks `sentence_translation` dirty so the next sync rewrites their Anki Back Extra. Empty is the honest repair — a duplicated gloss reads as a translation of the sentence and is not |
+| v48 → v49 | Additive | Adds `collocations.card_data` (TEXT, default `''`): a sentence card's authored content as JSON (tunatale-h0q3.42). Empty for every existing row; an older build ignores the column |
 
 `test_pre_migration_backup.py::TestReversibilityIsDocumented` fails if a new
 migration lands without a row here, so the table cannot silently fall behind

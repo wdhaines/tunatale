@@ -18,7 +18,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 48
+CURRENT_VERSION = 49
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1474,6 +1474,21 @@ def migrate_v47_to_v48(conn: sqlite3.Connection) -> None:
     _set_version(conn, 48)
 
 
+def migrate_v48_to_v49(conn: sqlite3.Connection) -> None:
+    """Add ``collocations.card_data`` (tunatale-h0q3.42).
+
+    A card whose content is authored rather than computed from a language
+    table, the sentence card (``app.srs.sentence_card``), stores itself here
+    as JSON: its cue, speaker, glosses and blank are a course's text, which
+    lives only in the learner's database, never in the repo. TT-only: the
+    note's fields are built from it, and sync never reads it back from Anki.
+    Empty for every existing row.
+    """
+    if not _column_exists(conn, "collocations", "card_data"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN card_data TEXT NOT NULL DEFAULT ''")
+    _set_version(conn, 49)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1552,6 +1567,7 @@ _MIGRATIONS = {
     45: migrate_v45_to_v46,
     46: migrate_v46_to_v47,
     47: migrate_v47_to_v48,
+    48: migrate_v48_to_v49,
 }
 
 

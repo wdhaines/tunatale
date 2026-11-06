@@ -399,3 +399,30 @@ def test_backfill_clean_text_untouched(monkeypatch, db_path):
     assert db2.get_sentence_audio_filename(coll_id) == sentence_filename(
         "Odprto je vsak dan", get_tts_voice("sl")
     )  # the clean text was named
+
+
+def test_backfill_never_synthesizes_a_sentence_card(monkeypatch, db_path):
+    """A sentence card's audio is the lesson's own take (h0q3.42); a fresh render
+    in the default voice would bill a metered voice for the wrong speaker."""
+    import app.audio.cloze_tts as cloze_tts_mod
+    from app.srs.database import SRSDatabase
+    from app.srs.sentence_card import SentenceCard
+
+    db = SRSDatabase(db_path)
+    card = SentenceCard("a-visit-1234", 0, "Per", "Dober dan.", "Dober dan.", "Good day.", ())
+    unit = card.unit()
+    unit.lemma = "dober"  # even with a lemma, which the backfill otherwise requires
+    db.add_collocation(unit, language_code="sl")
+    _seed_cloze_row(db, "vsak", "Odprto je vsak dan")
+
+    rows = []
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", lambda text, voice=None: rows.append(text) or _ok())
+
+    result = backfill_cloze_tts(db_path=db_path, dry_run=False)
+
+    assert "Dober dan." not in rows
+    assert result["synthesized"] == 1
+
+
+async def _ok():
+    return b"fake-mp3"

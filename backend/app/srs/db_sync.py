@@ -9,10 +9,13 @@ before changing anything here.
 
 import logging
 from datetime import UTC, datetime
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.srs.db_base import _DIR_COLUMNS, _parse_last_review
+
+if TYPE_CHECKING:
+    from app.srs.sentence_card import SentenceCard
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +560,21 @@ class DbSyncMixin:
                 (",".join(sorted(existing)), guid),
             )
             self._commit(conn)
+
+    def update_sentence_card(self, guid: str, card: SentenceCard) -> None:
+        """Replace a sentence card's content and mark it for push (tunatale-h0q3.42).
+
+        The row's translation and sentence follow the card, and ``card_data`` is
+        flagged dirty, so the next ``sync_push`` rebuilds both note fields from it.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocations SET card_data = ?, translation = ?, source_sentence = ?, "
+                "updated_at = datetime('now') WHERE guid = ?",
+                (card.to_json(), card.english, card.cloze(), guid),
+            )
+            self._commit(conn)
+        self.add_dirty_field(guid, "card_data")
 
     def add_dirty_field_by_id(self, collocation_id: int, field: str) -> None:
         """Append *field* to the comma-separated dirty_fields set (no dupes), by row id."""

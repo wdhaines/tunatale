@@ -92,6 +92,10 @@ class SyntacticUnit:
     source_lesson_id: str | None = None
     source_line_index: int | None = None
     card_type: str = "vocab"  # "vocab" | "cloze"
+    # A card whose content is authored rather than derived (the sentence card,
+    # ``app.srs.sentence_card``): its JSON, TT-only. Sync never reads it from
+    # Anki; the note's fields are built from it.
+    card_data: str = ""
 
     def __post_init__(self) -> None:
         if self.word_count < 1:

@@ -3184,6 +3184,33 @@ export interface components {
       root: string;
     };
     /**
+     * ItemSentence
+     * @description A sentence card's parts (tunatale-h0q3.42), read from the row's ``card_data``.
+     *
+     *     The front is the cue (target language, with its own audio) and who answers,
+     *     with the sentence, or the span ``blank_start``-``blank_end`` of it, left to
+     *     say. No English on the front: ``english`` and both gloss lists are the back.
+     */
+    ItemSentence: {
+      /** Blank End */
+      blank_end: number | null;
+      /** Blank Gloss Html */
+      blank_gloss_html: string;
+      /** Blank Start */
+      blank_start: number | null;
+      cue: components["schemas"]["SentenceCueModel"] | null;
+      /** English */
+      english: string;
+      /** Glosses */
+      glosses: components["schemas"]["SentenceGloss"][];
+      /** Picture Url */
+      picture_url: string | null;
+      /** Speaker */
+      speaker: string;
+      /** Text */
+      text: string;
+    };
+    /**
      * LangeekCandidatesResponse
      * @description Response of GET /api/srs/items/{item_id}/image/langeek.
      *
@@ -3393,6 +3420,7 @@ export interface components {
       pos: string;
       /** Reps */
       reps: number;
+      sentence?: components["schemas"]["ItemSentence"] | null;
       /** Source Sentence */
       source_sentence: string;
       /** Source Sentence Translation */
@@ -4079,6 +4107,7 @@ export interface components {
       pos: string;
       /** Reps */
       reps: number;
+      sentence?: components["schemas"]["ItemSentence"] | null;
       /** Source Sentence */
       source_sentence: string;
       /** Source Sentence Translation */
@@ -4448,6 +4477,26 @@ export interface components {
       /** Section Types */
       section_types?: string[] | null;
     };
+    /** SentenceCueModel */
+    SentenceCueModel: {
+      /** Audio Url */
+      audio_url: string | null;
+      /** English */
+      english: string;
+      /** Glosses */
+      glosses: components["schemas"]["SentenceGloss"][];
+      /** Speaker */
+      speaker: string;
+      /** Text */
+      text: string;
+    };
+    /** SentenceGloss */
+    SentenceGloss: {
+      /** Gloss Html */
+      gloss_html: string;
+      /** Word */
+      word: string;
+    };
     /**
      * SetClozeSentenceRequest
      * @description Body of PUT /api/srs/items/{item_id}/cloze/sentence.
@@ -4500,7 +4549,7 @@ export interface components {
      * @description Response of create_item, patch_item, reset_item, restore_known_item,
      *     set_item_state, and suspend_item; the element of list_items and untrack_item.
      *
-     *     Exactly 28 keys, one per ``_item_to_dict`` output key.
+     *     Exactly 29 keys, one per ``_item_to_dict`` output key.
      */
     SrsItemResponse: {
       /** Anki Note Id */
@@ -4542,6 +4591,7 @@ export interface components {
       pos: string;
       /** Reps */
       reps: number;
+      sentence?: components["schemas"]["ItemSentence"] | null;
       /** Source Sentence */
       source_sentence: string;
       /** Source Sentence Translation */

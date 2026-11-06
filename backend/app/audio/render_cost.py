@@ -500,3 +500,56 @@ def estimate_render(
         cached_clips=cost.hits + cost.gemini_hits,
         gemini_usd=cost.gemini_usd,
     )
+
+
+def natural_take(lesson: Lesson, text: str, *, cache_dir: Path, voice_id: str | None = None) -> Path | None:
+    """The cached clip of *text* as *lesson*'s Natural Speed section said it, or ``None``.
+
+    A sentence card's audio (tunatale-h0q3.42): the card sounds like the lesson,
+    and the take is already paid for. The clip is addressed exactly as the cost
+    report addresses it, ``plan_section`` and the adapter's own ``_cache_path``
+    (``gemini_cache_path`` for a Gemini voice), with the app renderer's
+    resolvers (``estimate_render``'s: no slicer). ``None`` when the lesson never
+    says *text* in its Natural Speed section, or says it but the clip is not in
+    *cache_dir*: nothing here synthesizes. *voice_id* picks between two
+    speakers saying the same line.
+    """
+    section = next((s for s in lesson.sections if s.section_type is SectionType.NATURAL_SPEED), None)
+    if section is None:
+        return None
+    code = lesson.language_code
+    requests = plan_section(
+        section,
+        code,
+        preprocessor=get_preprocessor(code),
+        planner=get_phoneme_planner(code),
+        locale_for=get_tts_locale,
+        slow_word=get_slow_word(code),
+    )
+    for phrase, request in zip(section.phrases, requests, strict=True):
+        if phrase.text != text or phrase.language_code != code or voice_id not in (None, phrase.voice_id):
+            continue
+        if provider_for(request.voice_id) == "gemini":
+            value: _SynthValue = (
+                request.text,
+                request.voice_id,
+                request.rate,
+                request.phonemes,
+                request.speak_locale,
+                request.enunciation,
+                request.line,
+                request.stressed,
+            )
+            path = gemini_cache_path(GeminiTTSService(cache_dir=cache_dir), value)
+        else:
+            path = AzureTTSService(cache_dir=cache_dir)._cache_path(
+                request.text,
+                request.voice_id,
+                request.rate,
+                request.phonemes,
+                request.speak_locale,
+                request.enunciation,
+                request.stressed,
+            )
+        return path if path.exists() else None
+    return None

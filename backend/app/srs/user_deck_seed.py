@@ -97,6 +97,8 @@ COLLOCATION_KEEP = frozenset(
         "extras",
         "base_collocation_id",
         "image_unavailable_at",
+        # A sentence card's content (h0q3.42): the card itself, as the note shows it.
+        "card_data",
     }
 )
 #: collocations: the Anki pairing and pointers into the source's lessons.

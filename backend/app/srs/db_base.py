@@ -375,6 +375,7 @@ class SRSDatabaseBase:
             source_lesson_id=row["source_lesson_id"],
             source_line_index=row["source_line_index"],
             card_type=row["card_type"] if "card_type" in row.keys() else "vocab",  # noqa: SIM118
+            card_data=row["card_data"] if "card_data" in row.keys() else "",  # noqa: SIM118
         )
         directions = self._load_directions(conn, row["id"])
         return SRSItem(

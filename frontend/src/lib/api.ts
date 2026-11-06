@@ -533,6 +533,9 @@ export interface SRSItemDetail {
   paradigm?: components["schemas"]["ItemParadigm"] | null;
   /** A focus card's two sides as runs of plain and bold text; null or absent on every other card. */
   focus?: components["schemas"]["ItemFocus"] | null;
+  /** A sentence card's parts (tunatale-h0q3.42): the cue, who answers, the blank, and the back's
+   * glosses; null or absent on every other card. */
+  sentence?: components["schemas"]["ItemSentence"] | null;
   note?: string;
   // Gender/indefinite article (en/ei/et) — rendered as a display-time prefix on
   // the headword (e.g. "en orden"). Empty for non-nouns / languages without it.
