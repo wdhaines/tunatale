@@ -63,6 +63,7 @@ from app.srs.fsrs import (
 )
 from app.srs.function_words import is_function_word, make_cloze_text, uncloze_text
 from app.srs.lemmatizer import headword_lemma
+from app.srs.lesson_cards import COURSE_SOURCE
 from app.srs.sentence_card import is_sentence_key, sentence_card
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
@@ -1807,7 +1808,10 @@ class AnkiSync:
         # (Layer 83). It used to be MAX(due)+1 unconditionally, which is the front
         # only under HighestPosition; on a DECK-gather deck that put every fresh
         # add at the very back.
-        items.sort(key=lambda gi: self._db.get_created_at_by_guid(gi[0]) or "")
+        # created_at has one-second precision, so a batch minted together ties;
+        # the row id breaks the tie in insertion order, which for a course's card
+        # list IS the course's order (tunatale-h0q3.43).
+        items.sort(key=lambda gi: (self._db.get_created_at_by_guid(gi[0]) or "", gi[2]))
 
         used_image_urls: set[str] = set()
         created = 0
@@ -1844,6 +1848,7 @@ class AnkiSync:
                         back_extra=card.back_extra(answer_audio),
                         tags=["tunatale", "cloze", "sentence"],
                         language_code=self._language_code,
+                        course=item.syntactic_unit.source == COURSE_SOURCE,
                     )
                     created += 1
                 except DuplicateNoteError as exc:
@@ -1934,6 +1939,7 @@ class AnkiSync:
                         back_extra=back_extra,
                         tags=["tunatale", "cloze"],
                         language_code=self._language_code,
+                        course=item.syntactic_unit.source == COURSE_SOURCE,
                     )
                     created += 1
                 except DuplicateNoteError as exc:
@@ -2107,7 +2113,12 @@ class AnkiSync:
 
             try:
                 note_id = self._writer.create_note(
-                    deck_name, model_name, fields, ["tunatale"], language_code=self._language_code
+                    deck_name,
+                    model_name,
+                    fields,
+                    ["tunatale"],
+                    language_code=self._language_code,
+                    course=item.syntactic_unit.source == COURSE_SOURCE,
                 )
                 created += 1
             except DuplicateNoteError as exc:

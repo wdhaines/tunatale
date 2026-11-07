@@ -20,6 +20,7 @@ from app.models.lesson import (
     extract_sentence_translations_from_translated,
     project_key_phrases,
 )
+from app.srs.lesson_cards import validate_cards
 from app.storage.store import ContentStore
 
 
@@ -80,6 +81,9 @@ def validate_story(story: object, language: Language | None = None) -> None:
                         f"speaker '{speaker}' is not in the {language.code} voice map; "
                         f"known roles: {', '.join(sorted(language.tts_voice_map))}"
                     )
+    if "cards" in story:
+        line_texts = {line["text"] for scene in scenes for line in scene.get("lines", [])}
+        validate_cards(story["cards"], line_texts=line_texts, language=language)
 
 
 def export_lesson(store: ContentStore, lesson_id: str) -> dict:

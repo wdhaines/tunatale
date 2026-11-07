@@ -19,6 +19,7 @@ from app.api.models import (
     LessonSourceResponse,
     ReglossLessonResponse,
 )
+from app.config import settings
 from app.generation.glossing import ensure_dialogue_glosses
 from app.generation.json_parsing import parse_json_object
 from app.generation.publishing import CurriculumDayTarget, publish_lesson
@@ -30,6 +31,7 @@ from app.generation.story import (
 )
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
+from app.srs.lesson_card_mint import attach_lesson_card_audio, day_was_studied, mint_lesson_cards
 from app.storage.lesson_io import export_lesson, validate_story
 from app.storage.user_dbs import pipeline_user_id
 
@@ -179,6 +181,21 @@ async def import_story(body: ImportLessonRequest, request: Request):
         replace=False,
         llm=app_state.llm(request),
     )
+
+    # A card list for a day already studied mints now (tunatale-h0q3.43): the
+    # import is a new lesson id, so the day's earlier listen is what counts.
+    # Otherwise the cards wait for this lesson's own "I listened".
+    cards = story.get("cards")
+    if cards and srs_db is not None and day_was_studied(srs_db, store, body.curriculum_id, body.day):
+        minted = mint_lesson_cards(srs_db, request.state.language_code, cards)
+        attach_lesson_card_audio(
+            srs_db,
+            minted,
+            lesson,
+            language.tts_voice_map,
+            cache_dir=settings.tts_cache_dir,
+            media_dir=settings.media_dir,
+        )
 
     sections = [{"type": s.section_type.value, "phrase_count": len(s.phrases)} for s in lesson.sections]
     return {

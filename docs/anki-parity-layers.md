@@ -1817,3 +1817,16 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 - *The checker could not see the shape.* `check_date_today.py` catches `date.today()` composites only. `scripts/check_anki_day_index.py` (zero tolerance, in `./test.sh` and CI) fails any `compute_anki_day_index` call in `app/` whose day argument is "now" or omitted. Run on history, it flags main before this fix (1 site) and the tree before 77cf421 (5 sites), and passes this tree.
 
 **Files.** `app/srs/fsrs.py` (`_day_level_elapsed_days`, `_elapsed_days_for_fsrs`, `_grade_elapsed_days`); `scripts/check_anki_day_index.py`; `.github/actions/hostile-hour-tz/action.yml` (`hour`, `env-name`), `.github/workflows/ci.yml` (`anki-gates` pre-rollover pass, checker), `test.sh`. Tests: `test_fsrs.py`, `test_parity_no_lrt_elapsed.py`, `test_parity_set_due_date_interval.py`, `test_anki_sync_round_trip.py`, `test_check_anki_day_index.py`.
+
+## Layer 92 — a course's card list would have reached the deck backwards
+
+**The report.** Measured before building tunatale-h0q3.43 (2026-11-06, a copy of the live Cebuano `tt_collection`): the deck gathers new cards by ascending position (DECK, TEMPLATE sort), and both `create_note` and `create_cloze_note` place each TT addition at `MIN(due) - slots` (`_next_front_position`, Layers 24/83), newest frontmost. `sync_create_new` adds in `created_at` order, which has one-second precision. Wolff 1's ~60 cards minted in one listen would have served last-sentence-first, sentences ahead of the words they use, and a later lesson's cards ahead of an earlier lesson's remainder.
+
+**Mechanism.** The front allocator is right for a word met in a lesson (it should surface at once) and wrong for a list whose order is the point.
+
+**Fix.** A course card (`source == "course"`, built by `app/srs/lesson_cards.py`) is created with `course=True`: the note is tagged `tt-course` (`COURSE_TAG`) and its cards go to `_next_course_position`, one past the highest course card still new (one below the lowest under HighestPosition), or, with none new, a fresh region `COURSE_REGION_GAP` (100,000) ahead of every new card. Later front adds still land ahead of the region, and the frequency deck stays behind it. `sync_create_new` breaks `created_at` ties by row id, the list's insertion order.
+
+**Not mirrored in TT before the sync.** TT orders unsynced NEW rows by `created_at DESC` (`get_new_items`, `anki_due NULLS FIRST`), so between a listen and the next sync TT serves a batch newest first. The sync assigns the positions, and TT follows them from then on: bounded drift, resolved at sync.
+
+**Files.** `app/plugins/anki_sync/sync_writer.py` (`COURSE_TAG`, `COURSE_REGION_GAP`, `_next_course_position`, `course=` on both creates), `app/plugins/anki_sync/sync_engine.py` (`sync_create_new`). Tests: `test_anki_course_card_position.py`.
+

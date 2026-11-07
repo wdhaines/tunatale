@@ -3328,10 +3328,10 @@ grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; 
 ```
 
 ```output
-## Layer 88 — a schedule change nobody graded reached Anki as a review (mark known, restore, relabel, promote)
 ## Layer 89 — a pushed due date wrote `ivl = days from today`, which is the interval only on the day of the gr
 ## Layer 90 — a reset pushed to Anki forgot the card but logged nothing, so its old reviews still counted
 ## Layer 91 — a card with no `lrt` counted its elapsed days from a "today" that runs a day ahead after midnigh
+## Layer 92 — a course's card list would have reached the deck backwards
 ```
 
 The four newest, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
@@ -3604,7 +3604,7 @@ New cards are also held back when they would be bad cards. A vocab row with an e
 
 ### 10.7 New-card positions (Layer 84)
 
-Anki orders its new queue by `cards.due`, which for a new card is a position. TT-written cards must land at the end of that range the deck actually gathers from, or they exist but never surface. `OfflineWriter` has two allocators, and the choice depends on the deck's mirrored new-card gather priority (`new_cards_gather_descending`, passed to the writer by `main`):
+Anki orders its new queue by `cards.due`, which for a new card is a position. TT-written cards must land at the end of that range the deck actually gathers from, or they exist but never surface. `OfflineWriter` has three allocators, and the choice depends on the deck's mirrored new-card gather priority (`new_cards_gather_descending`, passed to the writer by `main`):
 
 ```bash
 cd backend && sed -n '/^_PRODUCTION_BAND_FLOOR/,/^_PRODUCTION_BAND_CEILING/p' app/plugins/anki_sync/sync_writer.py; grep -o "def _next_[a-z_]*position" app/plugins/anki_sync/sync_writer.py
@@ -3614,10 +3614,12 @@ cd backend && sed -n '/^_PRODUCTION_BAND_FLOOR/,/^_PRODUCTION_BAND_CEILING/p' ap
 _PRODUCTION_BAND_FLOOR = -1_000_000
 _PRODUCTION_BAND_CEILING = 0
 def _next_front_position
+def _next_course_position
 def _next_production_position
 ```
 
 - **`_next_front_position(slots)`** is for TT's own additions (listen adds, clozes), which should surface immediately: `MAX(due)+1` under HighestPosition gather, `MIN(due)-slots` under DECK gather, written at `base + ord` so a note's templates stay contiguous.
+- **`_next_course_position(slots)`** is for a course's card list (Layer 92, notes tagged `tt-course`), whose order is the point: first-in-first-out after the highest course card still new, or a fresh region `COURSE_REGION_GAP` ahead of every new card; later front adds still land ahead of it.
 - **`_next_production_position()`** is for production cards minted by `promote`. Under DECK gather they fill the reserved band `[-1_000_000, 0)` upward, so the first card minted is the first served and mint order survives across syncs. Under HighestPosition there is no band (`MAX(due)+1` is already the front), which is documented residual behaviour.
 
 Negative positions are load-bearing, not a hack. `cards.due` is an i32 and no Anki UI offers a negative start, so `tests/test_parity_front_positions.py` pins against the Anki binary that the scheduler gathers `[-1_000_000, -999_999, -5, 0, 7, 1518]` in that order. The assumption that `MAX(due)+1` was "the front" had been true for Slovene and was wrong for Norwegian, where it placed every fresh add behind 1,400 imported words; the diagnosis and the one-shot repair (`reposition_production_cards`, which refuses a second run keyed on the band) are recorded as Layers 83 and 84 in `docs/anki-parity-layers.md`.
