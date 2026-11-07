@@ -324,12 +324,15 @@
 					<div class="sentence-blank-gloss"><b>{sentenceParts.blank}</b> = {@html item.sentence.blank_gloss_html}</div>
 				{/if}
 				<p class="answer-text english">{item.sentence.english}</p>
-				<details class="sentence-words">
-					<summary>{t('drillCard.wordByWord')}</summary>
-					{#each item.sentence.glosses as g, i (i)}
-						<div class="sentence-gloss"><b>{g.word}</b> {@html g.gloss_html}</div>
-					{/each}
-				</details>
+				<!-- A line with no build-up rows (Wolff's "Màáyo.") would open onto nothing. -->
+				{#if item.sentence.glosses.length}
+					<details class="sentence-words">
+						<summary>{t('drillCard.wordByWord')}</summary>
+						{#each item.sentence.glosses as g, i (i)}
+							<div class="sentence-gloss"><b>{g.word}</b> {@html g.gloss_html}</div>
+						{/each}
+					</details>
+				{/if}
 				{#if item.sentence.cue}
 					<details class="sentence-cue-means">
 						<summary>{t('drillCard.cueMeans')}</summary>

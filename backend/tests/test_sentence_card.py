@@ -149,6 +149,19 @@ class TestBackExtra:
         assert back.startswith('<div class="tt-blank"><b>bor</b> = live(s)</div>')
         assert "[sound:" not in back
 
+    def test_no_glosses_no_word_by_word(self):
+        """Wolff's line 1 has no build-up rows: an empty disclosure opens onto nothing (owner, 2026-11-06)."""
+        card = SentenceCard("l", 0, "Per", "Hei.", "Hei.", "Hello.", ())
+        back = card.back_extra()
+        assert "tt-words" not in back
+        assert '<div class="tt-en">Hello.</div>' in back
+
+    def test_a_cue_without_glosses_still_says_what_it_means(self):
+        """The cue's disclosure always has its English, so it stays."""
+        card = SentenceCard("l", 1, "Per", "Ja.", "Ja.", "Yes.", (), cue=Cue("Kari", "Hei.", "Hei.", "Hello."))
+        means = card.back_extra()[card.back_extra().index('<details class="tt-cue-means">') :]
+        assert '<div class="tt-en">Hello.</div>' in means
+
     def test_no_cue_no_cue_disclosure(self):
         card = SentenceCard("l", 0, "Per", "Hei.", "Hei.", "Hello.", (Gloss("hei", "hi"),))
         assert "tt-cue-means" not in card.back_extra()
