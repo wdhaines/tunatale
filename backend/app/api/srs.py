@@ -115,6 +115,7 @@ from app.srs.gloss_definiteness import align_gloss_definiteness
 from app.srs.gloss_verb_form import align_gloss_verb_form
 from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
+from app.srs.lesson_card_mint import attach_lesson_card_audio, mint_lesson_cards
 from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
 from app.srs.sense_match import names_same_sense, sense_label
@@ -1934,6 +1935,14 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     pending_cloze += contrast
     created_count += len(contrast)
 
+    # ── The lesson's own card list (tunatale-h0q3.43) ─────────────────────
+    # All of it, NEW, outside the listen budget: the deck's new-card limit paces
+    # it, and the Anki writer's course region keeps the list's order.
+    course_list = (lesson.generation_metadata.get("story") or {}).get("cards")
+    course = mint_lesson_cards(db, lesson.language_code, course_list) if course_list else []
+    created_count += len(course)
+    pending_vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
+
     # Server-side listened state (TT-only, never syncs): one row per listen.
     db.record_listen(body.content_id)
 
@@ -1952,6 +1961,17 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             clozes=pending_cloze,
             reglosses=pending_regloss,
             language_code=lesson.language_code,
+        )
+
+    if course:
+        background_tasks.add_task(
+            app_state.background_work(request.app).track("lesson_card_audio", attach_lesson_card_audio),
+            db,
+            course,
+            lesson,
+            get_language(lesson.language_code).tts_voice_map,
+            cache_dir=settings.tts_cache_dir,
+            media_dir=_MEDIA_DIR,
         )
 
     return {

@@ -142,7 +142,9 @@ class FakeCreateWriter:
     def get_sort_field_name(self, model_name: str) -> str:
         return "Slovene"
 
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, language_code: str = "sl") -> int:
+    def create_note(
+        self, deck_name: str, model_name: str, fields: dict, tags: list, language_code: str = "sl", course: bool = False
+    ) -> int:
         self.calls.append(("create_note", deck_name, model_name, dict(fields), list(tags)))
         return self._new_note_id
 
@@ -1177,7 +1179,7 @@ class TestSyncCreateNew:
         _add_item(db, "voda", "water")
 
         class OfflineDupWriter(FakeCreateWriter):
-            def create_note(self, deck, model, fields, tags, language_code="sl"):
+            def create_note(self, deck, model, fields, tags, language_code="sl", course=False):
                 raise DuplicateNoteError(note_id=8888)
 
         writer = OfflineDupWriter()
@@ -1392,10 +1394,10 @@ class _ReverseFakeWriter:
     def get_sort_field_name(self, model_name):
         return "Slovene"
 
-    def create_note(self, deck_name, model_name, fields, tags, language_code="sl"):
+    def create_note(self, deck_name, model_name, fields, tags, language_code="sl", course=False):
         return 5001
 
-    def create_cloze_note(self, deck_name, cloze_text, back_extra, tags, language_code="sl"):
+    def create_cloze_note(self, deck_name, cloze_text, back_extra, tags, language_code="sl", course=False):
         return 5001
 
     def get_cards_for_note(self, note_id):

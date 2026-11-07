@@ -85,6 +85,44 @@ Field notes (all load-bearing):
   gloss. Surface + lemma both keyed (lemma via the sentence-aware lemmatizer).
 - **`morphology_focus`** — optional list, passed through to metadata.
 
+### `cards`: the lesson's own card list (optional, tunatale-h0q3.43)
+
+A course lesson (Wolff's *Beginning Cebuano*) says which cards it adds, in the
+order they should reach the deck:
+
+```json
+"cards": {
+  "set": "wolff-01b",
+  "items": [
+    { "kind": "word", "form": "nagdali", "translation": "am (is, are) in a hurry" },
+    { "kind": "sentence", "line": 15, "speaker": "Ínting", "role": "male-1",
+      "text": "Kay nagdalî man ko.", "spoken": "Kay nagdali man ko.",
+      "english": "Because I'm in a hurry.",
+      "glosses": [{ "word": "kay", "gloss": "because" }],
+      "cue": { "speaker": "Ínting", "role": "male-1", "text": "Aa, ayáw na lang.",
+               "spoken": "Aa, ayaw na lang.", "english": "No thank you!", "glosses": [] },
+      "whole": true,
+      "blanks": [{ "form": "man", "gloss": "here: giving a reason" }] }
+  ]
+}
+```
+
+- **`set`** — a slug that stays the same across re-imports. Card keys use it
+  (`sent:<set>:<line>[:<start>-<end>]`), never the lesson id, so a re-import
+  mints nothing twice.
+- **Order is the author's**: the words a sentence uses come before it, and within a
+  sentence the blank cards come before the whole-sentence card (one unknown at a time).
+- **`text`** is what the card shows (Wolff's accents); **`spoken`** must be one of the
+  story's own lines, because its take is the card's audio. `role` and `cue.role`
+  must be in the voice map.
+- **When cards mint**: all of them, NEW, when the lesson is marked studied ("I
+  listened"); at import if that curriculum day was studied already. The deck's
+  new-card limit paces them, and the Anki writer places course notes (tag
+  `tt-course`) first-in-first-out ahead of the frequency deck
+  (`sync_writer.py::_next_course_position`).
+- Format rules and their messages: `tests/test_lesson_card_list.py`;
+  `app/srs/lesson_cards.py::validate_cards`.
+
 ## File format & location
 
 **Recommendation: JSON**, 1:1 with the schema above (no transform, no new

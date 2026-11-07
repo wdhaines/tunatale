@@ -62,6 +62,24 @@ class MintedCard(NamedTuple):
 _PRODUCTION_BAND_FLOOR = -1_000_000
 _PRODUCTION_BAND_CEILING = 0
 
+#: A course's card list (tunatale-h0q3.43) must reach the deck in ITS order, which
+#: the front allocator reverses: newest frontmost. A course note carries this tag,
+#: and its cards go first-in-first-out from a region opened ``COURSE_REGION_GAP``
+#: ahead of every new card in the collection (``_next_course_position``). Later TT
+#: front adds still land ahead of the region; the frequency deck stays behind it.
+#: The gap is room for ~1,800 Wolff cards fifty times over; the tag is how a later
+#: sync finds the course's newest position again.
+COURSE_TAG = "tt-course"
+COURSE_REGION_GAP = 100_000
+
+
+def _with_course_tag(tags: list[str] | None, course: bool) -> list[str]:
+    """*tags*, plus ``COURSE_TAG`` once when the note is a course card."""
+    tags = list(tags or [])
+    if course and COURSE_TAG not in tags:
+        tags.append(COURSE_TAG)
+    return tags
+
 
 def _strip_markup(field: str) -> str:
     """A field as its sort value: tags removed, trimmed (how ``create_note`` derives ``sfld``)."""
@@ -142,6 +160,32 @@ class OfflineWriter:
         row = self._conn.execute("SELECT MIN(due) FROM cards WHERE type = 0").fetchone()
         lowest = int(row[0]) if row is not None and row[0] is not None else 1
         return lowest - slots
+
+    def _next_course_position(self, slots: int = 1) -> int:
+        """Base position for a course note's ``slots`` cards: right after the course's newest new card.
+
+        FIFO in the deck's gather direction: one past the highest course position
+        under DECK gather, ``slots`` below the lowest under HighestPosition. With no
+        course card still new, it opens a region ``COURSE_REGION_GAP`` ahead of every
+        new card, so a course is never behind the frequency deck it is meant to
+        precede. Cards are then written at ``base + ord``, like the front allocator.
+        """
+        course_sql = (
+            "SELECT {agg}(c.due) FROM cards c JOIN notes n ON n.id = c.nid "
+            "WHERE c.type = 0 AND (' ' || n.tags || ' ') LIKE ?"
+        )
+        like = f"% {COURSE_TAG} %"
+        if self._gather_descending:
+            row = self._conn.execute(course_sql.format(agg="MIN"), (like,)).fetchone()
+            if row[0] is not None:
+                return int(row[0]) - slots
+            row = self._conn.execute("SELECT IFNULL(MAX(due), 0) FROM cards WHERE type = 0").fetchone()
+            return int(row[0]) + COURSE_REGION_GAP
+        row = self._conn.execute(course_sql.format(agg="MAX"), (like,)).fetchone()
+        if row[0] is not None:
+            return int(row[0]) + 1
+        row = self._conn.execute("SELECT IFNULL(MIN(due), 1) FROM cards WHERE type = 0").fetchone()
+        return int(row[0]) - COURSE_REGION_GAP
 
     def _next_production_position(self) -> int:
         """Next position in the reserved production band — FIFO, ahead of the deck.
@@ -796,13 +840,18 @@ class OfflineWriter:
             raise ValueError(f"Notetype {model_name!r} has no fields")
         return row["name"]
 
-    def create_note(self, deck_name: str, model_name: str, fields: dict, tags: list, *, language_code: str) -> int:
+    def create_note(
+        self, deck_name: str, model_name: str, fields: dict, tags: list, *, language_code: str, course: bool = False
+    ) -> int:
         """Insert a new note + cards into the collection.
 
         The note's field layout is read from the collection's ``fields`` table
         for *model_name* (ord order), so any TT vocab notetype works — the L2
         word lives in field ord 0 (the sort field) and ``fields`` is keyed by
         the notetype's Anki field names. ``language_code`` folds into the GUID.
+
+        ``course=True`` tags the note ``COURSE_TAG`` and places its cards after the
+        course's earlier cards (``_next_course_position``) instead of at the front.
 
         Raises DuplicateNoteError if the computed GUID already exists.
         No col.scm change — data-only insert against an existing notetype.
@@ -839,6 +888,7 @@ class OfflineWriter:
         flds = "\x1f".join(fields.get(name, "") for name in field_names)
         csum = int(hashlib.sha1(sfld.encode()).hexdigest()[:8], 16)
         ts = int(_time.time())
+        tags = _with_course_tag(tags, course)
         tags_str = f" {' '.join(tags)} " if tags else ""
 
         self._conn.execute(
@@ -848,7 +898,8 @@ class OfflineWriter:
         )
 
         tmpl_rows = self._conn.execute("SELECT ord FROM templates WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
-        next_due = self._next_front_position(slots=len(tmpl_rows) or 1)
+        slots = len(tmpl_rows) or 1
+        next_due = self._next_course_position(slots) if course else self._next_front_position(slots=slots)
 
         for (ord_,) in tmpl_rows:
             card_id = note_id + ord_
@@ -873,6 +924,7 @@ class OfflineWriter:
         tags: list[str] | None = None,
         *,
         language_code: str,
+        course: bool = False,
     ) -> int:
         """Insert a new Cloze note + cards into the collection.
 
@@ -880,6 +932,8 @@ class OfflineWriter:
         per c1, c2, ... cloze number. For Phase F we use c1 only → one card per note.
         ``language_code`` folds into the GUID (so Slovene and Norwegian clozes of
         the same surface don't collide).
+
+        ``course=True``: as for ``create_note``.
 
         Raises DuplicateNoteError if the computed GUID already exists.
         Raises ValueError if the Cloze notetype is not found.
@@ -910,6 +964,7 @@ class OfflineWriter:
         flds = f"{cloze_text}\x1f{back_extra}"
         csum = int(hashlib.sha1(sfld.encode()).hexdigest()[:8], 16)
         ts = int(_time.time())
+        tags = _with_course_tag(tags, course)
         tags_str = f" {' '.join(tags)} " if tags else ""
 
         self._conn.execute(
@@ -919,7 +974,8 @@ class OfflineWriter:
         )
 
         tmpl_rows = self._conn.execute("SELECT ord FROM templates WHERE ntid = ? ORDER BY ord", (mid,)).fetchall()
-        next_due = self._next_front_position(slots=len(tmpl_rows) or 1)
+        slots = len(tmpl_rows) or 1
+        next_due = self._next_course_position(slots) if course else self._next_front_position(slots=slots)
 
         for (ord_,) in tmpl_rows:
             card_id = note_id + ord_
