@@ -1538,6 +1538,19 @@ describe("sentence card", () => {
     expect(container.querySelector(".sentence-say")).not.toBeNull();
   });
 
+  it("back: a line with no glosses has no empty Word by word", async () => {
+    const { container, getByText } = render(DrillCard, {
+      item: make({ glosses: [] }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByText("Show"));
+    const answer = container.querySelector(".answer")!;
+    expect(answer.querySelector("details.sentence-words")).toBeNull();
+    expect(answer.querySelector(".answer-text.english")!.textContent).toBe("I live in Oslo.");
+    expect(answer.querySelector("details.sentence-cue-means")).not.toBeNull();
+  });
+
   it("back: the answer, its English openly, glosses and the cue's meaning closed", async () => {
     const { container, getByText } = render(DrillCard, {
       item: make(),

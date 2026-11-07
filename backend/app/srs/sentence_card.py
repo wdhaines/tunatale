@@ -149,7 +149,10 @@ class SentenceCard:
         if answer_audio:
             parts.append(f"[sound:{answer_audio}]")
         parts.append(f'<div class="tt-en">{_esc(self.english)}</div>')
-        parts.append(f'<details class="tt-words"><summary>Word by word</summary>{_gloss_rows(self.glosses)}</details>')
+        if self.glosses:  # a line with no build-up rows would open onto nothing
+            parts.append(
+                f'<details class="tt-words"><summary>Word by word</summary>{_gloss_rows(self.glosses)}</details>'
+            )
         if self.cue is not None:
             parts.append(
                 '<details class="tt-cue-means"><summary>What the cue means</summary>'

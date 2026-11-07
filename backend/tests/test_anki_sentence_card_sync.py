@@ -178,6 +178,40 @@ class TestPull:
 
 
 class TestPush:
+    async def test_an_openers_picture_reaches_anki_media_at_mint(self, tmp_path, no_tts):
+        """The note's front is ``<img src=picture>``: without the file in collection.media it is a broken image."""
+        import app.plugins.anki_sync.sync as sync_mod
+
+        opener = SentenceCard("a-visit-1234", 1, "Per", "Hei.", "Hei.", "Hello.", (), picture="opener_door.svg")
+        (sync_mod._MEDIA_DIR / "opener_door.svg").write_bytes(b"<svg/>")
+        db = SRSDatabase(":memory:")
+        _add(db, opener)
+        anki_conn = _make_dual_collection_conn()
+
+        await _mint(db, anki_conn, media_dir=tmp_path)
+
+        assert _flds(anki_conn)[0][0].startswith('<div class="tt-pic"><img src="opener_door.svg"></div>')
+        assert (tmp_path / "opener_door.svg").read_bytes() == b"<svg/>"
+
+    async def test_a_picture_added_later_reaches_anki_media_on_push(self, tmp_path, no_tts):
+        """Wolff 1's opener was minted with no picture; giving it one is a card edit, pushed like any other."""
+        import app.plugins.anki_sync.sync as sync_mod
+
+        opener = SentenceCard("a-visit-1234", 1, "Per", "Hei.", "Hei.", "Hello.", ())
+        db = SRSDatabase(":memory:")
+        guid, _ = _add(db, opener)
+        anki_conn = _make_dual_collection_conn()
+        await _mint(db, anki_conn)
+
+        pictured = SentenceCard(**{**opener.__dict__, "picture": "opener_door.svg"})
+        (sync_mod._MEDIA_DIR / "opener_door.svg").write_bytes(b"<svg/>")
+        db.update_sentence_card(guid, pictured)
+        writer = OfflineWriter(anki_conn, media_dir=tmp_path)
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert _flds(anki_conn)[0][0] == pictured.note_text(None)
+        assert (tmp_path / "opener_door.svg").read_bytes() == b"<svg/>"
+
     async def test_card_edit_rewrites_both_fields(self, no_tts):
         db = SRSDatabase(":memory:")
         guid, coll_id = _add(db, CARD)

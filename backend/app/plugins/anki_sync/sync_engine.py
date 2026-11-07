@@ -1370,9 +1370,9 @@ class AnkiSync:
                 fields["Back Extra"] = card.back_extra(answer_audio)
                 cloze_text_update = card.note_text(cue_audio)
                 if not dry_run:
-                    for audio in (cue_audio, answer_audio):
-                        if audio:
-                            _copy_tt_media_to_anki(self._writer, audio)
+                    for media in (cue_audio, answer_audio, card.picture):
+                        if media:
+                            _copy_tt_media_to_anki(self._writer, media)
             elif item.syntactic_unit.card_type == "cloze":
                 # Cloze notes: any of {translation, sentence_translation, note, audio}
                 # dirty → rebuild Back Extra. Cloze has no separate "English" field.
@@ -1868,9 +1868,10 @@ class AnkiSync:
                         continue
                     note_id = exc.note_id
                     linked += 1
-                for audio in (cue_audio, answer_audio):  # a dry run returned before this loop
-                    if audio:
-                        _copy_tt_media_to_anki(self._writer, audio)
+                # The opener's picture too: the front is <img src=picture>.
+                for media in (cue_audio, answer_audio, card.picture):  # a dry run returned before this loop
+                    if media:
+                        _copy_tt_media_to_anki(self._writer, media)
                 self._db.set_anki_ids(
                     guid, note_id, {Direction.PRODUCTION: self._writer.get_cards_for_note(note_id)[0]}
                 )
