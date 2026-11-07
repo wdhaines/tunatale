@@ -224,6 +224,7 @@ _MAX_SPEAKING_RATE = 4.0
 _FATAL_STATUS_MIN = 400
 _FATAL_STATUS_MAX = 500
 _THROTTLED = 429
+_UNAUTHORIZED = 401
 
 # google-auth's credential object, cached process-wide. The cache holds the
 # OBJECT rather than the token: building one is the expensive part, and a
@@ -231,8 +232,8 @@ _THROTTLED = 429
 _CREDENTIALS: Any = None
 
 
-async def default_token_provider() -> str:
-    """Return an OAuth access token for the synthesis endpoint.
+def _default_credentials() -> Any:
+    """The cached credential object, built on first use and never rebuilt.
 
     Reads the service-account JSON at ``settings.google_application_credentials``
     when one is configured, and otherwise hands the question to google-auth's
@@ -241,10 +242,8 @@ async def default_token_provider() -> str:
     because Pydantic loads ``.env`` into settings and NOT into
     ``os.environ`` — its own lookup would never see the value.
 
-    The refresh is blocking I/O, so it runs in a worker thread; on the event
-    loop it would stall every other render task for the length of an HTTP round
-    trip. No key file is read until this is called, and a cache hit never
-    calls it at all.
+    Shared by :func:`default_token_provider` and :func:`refresh_default_token`
+    so the two cannot disagree about which object they are refreshing.
     """
     global _CREDENTIALS
     if _CREDENTIALS is None:
@@ -256,11 +255,40 @@ async def default_token_provider() -> str:
                 path, scopes=list(_SCOPES)
             )
         else:
-            credentials, _project = google.auth.default(scopes=list(_SCOPES))
-            _CREDENTIALS = credentials
-    if not _CREDENTIALS.valid:
-        await asyncio.to_thread(_CREDENTIALS.refresh, google.auth.transport.requests.Request())
-    return _CREDENTIALS.token
+            _CREDENTIALS, _project = google.auth.default(scopes=list(_SCOPES))
+    return _CREDENTIALS
+
+
+async def default_token_provider() -> str:
+    """Return an OAuth access token for the synthesis endpoint.
+
+    The refresh is blocking I/O, so it runs in a worker thread; on the event
+    loop it would stall every other render task for the length of an HTTP round
+    trip. No key file is read until this is called, and a cache hit never
+    calls it at all.
+    """
+    credentials = _default_credentials()
+    if not credentials.valid:
+        await asyncio.to_thread(credentials.refresh, google.auth.transport.requests.Request())
+    return credentials.token
+
+
+async def refresh_default_token() -> None:
+    """Force a fresh access token for the default credential (tunatale-c0da).
+
+    Refreshes UNCONDITIONALLY, even when google-auth reports the credential
+    valid: measured 2026-11-06 on the live instance, the synthesis endpoint
+    answered 401 mid-render while the credential object still said ``valid``,
+    so :func:`default_token_provider` had no reason to refresh it and the whole
+    lesson render ended with no audio. A re-render minutes later succeeded, so
+    the token, not the key, had gone stale under the render. This is the
+    caller's way to say "the provider disagrees with google-auth".
+
+    The refresh is blocking I/O, so it runs in a worker thread for the same
+    reason as the provider's.
+    """
+    credentials = _default_credentials()
+    await asyncio.to_thread(credentials.refresh, google.auth.transport.requests.Request())
 
 
 def _parse_voice_id(voice_id: str) -> tuple[str, str]:
@@ -539,6 +567,7 @@ class GeminiTTSService:
         cache_dir: Path | None = None,
         model: str | None = None,
         token_provider: Callable[[], Awaitable[str]] | None = None,
+        token_refresher: Callable[[], Awaitable[None]] | None = None,
         min_delay: float | None = None,
         timeout: float = 60.0,
         sleep: Callable[[float], Awaitable[None]] | None = None,
@@ -586,6 +615,8 @@ class GeminiTTSService:
         # one caller and a render opened as a burst against a per-minute quota.
         self._request_lock = asyncio.Lock()
         self._token_provider = token_provider if token_provider is not None else default_token_provider
+        # A 401 forces a refresh through this, once per request (tunatale-c0da).
+        self._token_refresher = token_refresher if token_refresher is not None else refresh_default_token
         # The one degradation this adapter has to announce. Once per instance:
         # the renderer would otherwise emit a line per render, and one line is
         # the entire diagnostic value here.
@@ -949,6 +980,9 @@ class GeminiTTSService:
         stress: str | None = None,
     ) -> bytes:
         last_error: Exception | None = None
+        # One forced refresh per CALL, not per service: a long render outlives
+        # more than one token, and each request is entitled to its own.
+        refreshed = False
         for attempt in range(MAX_RETRIES):
             try:
                 return await self._do_synthesize(
@@ -956,6 +990,14 @@ class GeminiTTSService:
                 )
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
+                if status == _UNAUTHORIZED and not refreshed:
+                    # The provider disagreed with google-auth's own view of the
+                    # credential (tunatale-c0da): refresh and send it once more,
+                    # with no backoff — a fresh token is the fix, not patience.
+                    refreshed = True
+                    logger.warning("Gemini TTS 401: refreshing the token and retrying once")
+                    await self._token_refresher()
+                    continue
                 if _is_fatal(status):
                     # Not retried, and the body is in the message: it is the only
                     # place the provider writes down why.

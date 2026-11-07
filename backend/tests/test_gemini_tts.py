@@ -734,7 +734,7 @@ async def test_a_transport_error_is_retried(tmp_path):
 
 
 @respx.mock
-@pytest.mark.parametrize("status", [400, 401, 403, 404])
+@pytest.mark.parametrize("status", [400, 403, 404])
 async def test_any_other_4xx_raises_immediately_with_the_body(tmp_path, status):
     """403 is a credentials or IAM problem; retrying it only spends the quota
     it is already short of. The body is the only place the reason is written
