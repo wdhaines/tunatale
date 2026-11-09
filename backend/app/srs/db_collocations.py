@@ -249,6 +249,20 @@ class DbCollocationsMixin:
             row = conn.execute("SELECT guid FROM collocations WHERE id = ?", (collocation_id,)).fetchone()
             return row["guid"] if row else None
 
+    def get_collocation_by_anki_card_id(self, anki_card_id: int) -> SRSItem | None:
+        """The row one of whose directions is linked to Anki card *anki_card_id*.
+
+        How a card of a shared "TT Sentence" note finds its row (tunatale-h0q3.55):
+        the note id names several rows, the card id exactly one.
+        """
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT c.* FROM collocations c JOIN collocation_directions d ON d.collocation_id = c.id "
+                "WHERE d.anki_card_id = ? LIMIT 1",
+                (anki_card_id,),
+            ).fetchone()
+            return None if row is None else self._row_to_item(conn, row)
+
     def get_collocation_by_anki_note_id(self, anki_note_id: int) -> SRSItem | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE anki_note_id = ? LIMIT 1", (anki_note_id,)).fetchone()
@@ -407,6 +421,7 @@ class DbCollocationsMixin:
         with self._get_conn() as conn:
             row = conn.execute("SELECT text FROM collocations WHERE id = ?", (row_id,)).fetchone()
             if row is not None:
+                _flag_line_of_deleted(conn, [row_id])
                 conn.execute("DELETE FROM violations WHERE collocation_text = ?", (row["text"],))
                 conn.execute("DELETE FROM collocations WHERE id = ?", (row_id,))
                 self._commit(conn)
@@ -421,6 +436,7 @@ class DbCollocationsMixin:
             if texts:
                 text_ph = ",".join("?" * len(texts))
                 conn.execute(f"DELETE FROM violations WHERE collocation_text IN ({text_ph})", texts)
+            _flag_line_of_deleted(conn, row_ids)
             conn.execute(f"DELETE FROM collocations WHERE id IN ({placeholders})", row_ids)
             self._commit(conn)
         return len(texts)
@@ -715,3 +731,29 @@ class DbCollocationsMixin:
                         )
             self._commit(conn)
         return coll_id
+
+
+def _flag_line_of_deleted(conn: sqlite3.Connection, row_ids: list[int]) -> None:
+    """Flag the linked siblings of rows about to be deleted (tunatale-h0q3.55).
+
+    The rows of a line are cards of one "TT Sentence" note. A deleted row's
+    cloze must leave that note and its card be graved, which the next push does
+    when it rebuilds the note from the line's remaining rows; this flag is what
+    makes it rebuild. A line deleted whole leaves its note in Anki, as a deleted
+    vocab row leaves its note (nothing here reaches Anki).
+    """
+    placeholders = ",".join("?" * len(row_ids))
+    conn.execute(
+        f"""
+        UPDATE collocations SET dirty_fields = CASE
+            WHEN dirty_fields IS NULL OR dirty_fields = '' THEN 'card_data'
+            WHEN (',' || dirty_fields || ',') LIKE '%,card_data,%' THEN dirty_fields
+            ELSE dirty_fields || ',card_data' END
+        WHERE anki_note_id IS NOT NULL
+          AND id NOT IN ({placeholders})
+          AND sibling_group IN (
+            SELECT sibling_group FROM collocations WHERE id IN ({placeholders}) AND sibling_group IS NOT NULL
+          )
+        """,
+        [*row_ids, *row_ids],
+    )

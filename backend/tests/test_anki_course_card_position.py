@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from app.plugins.anki_sync.add_sentence_notetype import add_sentence_notetype
 from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
 from app.plugins.anki_sync.sync_writer import COURSE_REGION_GAP, COURSE_TAG
 from app.srs.database import SRSDatabase
@@ -171,6 +172,7 @@ class TestSyncCreateNewCourse:
         for line, text in [(1, "Hei!"), (2, "Hvordan går det?"), (3, "Bra, takk.")]:
             db.add_collocation(replace(_course_sentence(line, text).unit(), source="course"), language_code="no")
         conn = _make_dual_collection_conn()
+        add_sentence_notetype(conn)
         _seed_new_card(conn, 1, 5)
         await AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn)).sync_create_new(
             deck_name="0. Slovene", model_name="Slovene Vocabulary"
@@ -182,6 +184,42 @@ class TestSyncCreateNewCourse:
         firsts = [r["flds"] for r in rows]
         assert ["Hei!" in firsts[0], "Hvordan" in firsts[1], "Bra, takk" in firsts[2]] == [True, True, True]
         assert [r["due"] for r in rows] == [5 - COURSE_REGION_GAP + i for i in range(3)]
+
+    async def test_a_word_listed_before_a_sentence_reaches_the_deck_before_it(self):
+        """n+1: a lesson lists the words a sentence uses before the sentence. A line is minted
+        as one note when the mint reaches its FIRST row, so a word between two of its rows (or
+        before it) keeps its place: word, the line's cards, then the next word."""
+        from app.models.syntactic_unit import SyntacticUnit
+
+        db = _make_db()
+        base = _course_sentence(1, "Hei, Kari!")
+        blank = base.with_blank((0, 3), "hi")
+
+        def word(text):
+            return SyntacticUnit(text=text, translation="-", word_count=1, difficulty=1, source="course", lemma=text)
+
+        for unit in (word("hei"), blank.unit(), base.unit(), word("takk")):
+            db.add_collocation(replace(unit, source="course"), language_code="no")
+        with db._get_conn() as c:
+            c.execute("UPDATE collocations SET created_at = '2026-11-09 10:00:00'")
+        conn = _make_dual_collection_conn()
+        add_sentence_notetype(conn)
+        await AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn)).sync_create_new(
+            deck_name="0. Slovene", model_name="Slovene Vocabulary"
+        )
+        rows = conn.execute(
+            "SELECT n.sfld, c.ord FROM notes n JOIN cards c ON c.nid = n.id ORDER BY c.due, c.ord"
+        ).fetchall()
+        # A vocab note brings two cards (recognition, production); the line, its blank (ord 1)
+        # then its whole card (ord 0).
+        assert [(r["sfld"].split("::")[0][:6], r["ord"]) for r in rows] == [
+            ("hei", 0),
+            ("hei", 1),
+            ("{{c1", 1),
+            ("{{c1", 0),
+            ("takk", 0),
+            ("takk", 1),
+        ]
 
     async def test_a_course_word_is_a_course_note(self):
         db = _make_db()

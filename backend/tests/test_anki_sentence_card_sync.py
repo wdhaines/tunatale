@@ -1,4 +1,10 @@
-"""The sentence card through sync (tunatale-h0q3.42): mint, pull, push.
+"""A LEGACY sentence card through sync (tunatale-h0q3.42): pull and push of a separate Cloze note.
+
+Since h0q3.55 phase 2 a new sentence card mints into its line's "TT Sentence"
+note (``test_anki_sentence_note_sync.py``). The cards minted before that — Wolff
+1's 52 separate c1 Cloze notes — keep ``sibling_group`` NULL until phase 3
+re-mints them, and sync must keep reading and writing them as they are. Each
+test here builds that shape: an ungrouped row linked to its own Cloze note.
 
 The card's content is TT's: both note fields are built from ``card_data`` on the
 way out, and nothing on the way back may rewrite it from Anki's Back Extra
@@ -12,8 +18,6 @@ the real ``OfflineReader``'s records, replayed.
 """
 
 from __future__ import annotations
-
-import logging
 
 import pytest
 
@@ -74,89 +78,22 @@ def _media(db, coll_id, kind, name):
 
 
 async def _mint(db, anki_conn, media_dir=None):
+    """Build the legacy shape: each ungrouped row on its own c1 Cloze note, as h0q3.42 minted it."""
     writer = OfflineWriter(anki_conn, media_dir=media_dir)
-    await AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_create_new(
-        deck_name=DECK, model_name="Slovene Vocabulary"
-    )
+    with db._get_conn() as conn:
+        rows = conn.execute("SELECT id, guid FROM collocations WHERE anki_note_id IS NULL ORDER BY id").fetchall()
+        conn.execute("UPDATE collocations SET sibling_group = NULL")
+    for row in rows:
+        card = sentence_card(db.get_collocation_by_guid(row["guid"]).syntactic_unit)
+        note_id = writer.create_cloze_note(
+            DECK, card.note_text(None), back_extra=card.back_extra(None), language_code="sl"
+        )
+        db.set_anki_ids(row["guid"], note_id, {Direction.PRODUCTION: writer.get_cards_for_note(note_id)[0]})
     return writer
 
 
 def _flds(anki_conn) -> list[list[str]]:
     return [r[0].split("\x1f") for r in anki_conn.execute("SELECT flds FROM notes ORDER BY id")]
-
-
-class TestMint:
-    async def test_fields_come_from_the_card_with_both_takes(self, tmp_path, no_tts):
-        db = SRSDatabase(":memory:")
-        guid, coll_id = _add(db, CARD)
-        _media(db, coll_id, "audio_cue", "cue_take.mp3")
-        _media(db, coll_id, "audio_tts_sentence", "answer_take.mp3")
-        anki_conn = _make_dual_collection_conn()
-
-        await _mint(db, anki_conn, media_dir=tmp_path)
-
-        assert _flds(anki_conn) == [[CARD.note_text("cue_take.mp3"), CARD.back_extra("answer_take.mp3")]]
-        assert (tmp_path / "cue_take.mp3").read_bytes() == b"cue_take.mp3"
-        assert (tmp_path / "answer_take.mp3").read_bytes() == b"answer_take.mp3"
-        item = db.get_collocation_by_guid(guid)
-        assert item.anki_note_id is not None
-        assert set(item.directions) == {Direction.PRODUCTION}
-
-    async def test_no_take_mints_without_sound_and_without_synthesis(self, no_tts, caplog):
-        db = SRSDatabase(":memory:")
-        _add(db, CARD)
-        anki_conn = _make_dual_collection_conn()
-
-        with caplog.at_level(logging.WARNING):
-            await _mint(db, anki_conn)
-
-        [[front, back]] = _flds(anki_conn)
-        assert front == CARD.note_text(None)
-        assert back == CARD.back_extra(None)
-        assert "SENTENCE_CARD_NO_AUDIO" in caplog.text
-
-    async def test_whole_and_blank_cards_are_separate_notes(self, no_tts):
-        db = SRSDatabase(":memory:")
-        blank = CARD.with_blank(blank_span(CARD.text, "bor"), "live(s)")
-        _add(db, CARD)
-        _add(db, blank)
-        anki_conn = _make_dual_collection_conn()
-
-        await _mint(db, anki_conn)
-
-        fronts = sorted(f[0] for f in _flds(anki_conn))
-        assert fronts == sorted([CARD.note_text(None), blank.note_text(None)])
-
-    async def test_a_note_already_written_for_this_card_is_adopted(self, no_tts):
-        """A mint that wrote the note but never linked it (a crash between the two) links on the next sync."""
-        db = SRSDatabase(":memory:")
-        guid, _ = _add(db, CARD)
-        anki_conn = _make_dual_collection_conn()
-        note_id = OfflineWriter(anki_conn).create_cloze_note(
-            DECK, CARD.note_text(None), back_extra="", language_code="sl"
-        )
-
-        await _mint(db, anki_conn)
-
-        assert db.get_collocation_by_guid(guid).anki_note_id == note_id
-        assert len(_flds(anki_conn)) == 1
-
-    async def test_two_cards_never_share_one_note(self, no_tts, caplog):
-        """The Layer 35 hazard: two rows linked to one note. The same line in two lessons makes
-        the same field 0; the second card is refused, loudly, and stays unlinked."""
-        db = SRSDatabase(":memory:")
-        first_guid, _ = _add(db, CARD)
-        twin = SentenceCard(**{**CARD.__dict__, "lesson_id": "another-lesson-99"})
-        twin_guid, _ = _add(db, twin)
-        anki_conn = _make_dual_collection_conn()
-
-        with caplog.at_level(logging.WARNING):
-            await _mint(db, anki_conn)
-
-        assert len(_flds(anki_conn)) == 1
-        linked = [g for g in (first_guid, twin_guid) if db.get_collocation_by_guid(g).anki_note_id is not None]
-        assert len(linked) == 1
-        assert "SENTENCE_CARD_DUPLICATE" in caplog.text
 
 
 class TestPull:
@@ -178,21 +115,6 @@ class TestPull:
 
 
 class TestPush:
-    async def test_an_openers_picture_reaches_anki_media_at_mint(self, tmp_path, no_tts):
-        """The note's front is ``<img src=picture>``: without the file in collection.media it is a broken image."""
-        import app.plugins.anki_sync.sync as sync_mod
-
-        opener = SentenceCard("a-visit-1234", 1, "Per", "Hei.", "Hei.", "Hello.", (), picture="opener_door.svg")
-        (sync_mod._MEDIA_DIR / "opener_door.svg").write_bytes(b"<svg/>")
-        db = SRSDatabase(":memory:")
-        _add(db, opener)
-        anki_conn = _make_dual_collection_conn()
-
-        await _mint(db, anki_conn, media_dir=tmp_path)
-
-        assert _flds(anki_conn)[0][0].startswith('<div class="tt-pic"><img src="opener_door.svg"></div>')
-        assert (tmp_path / "opener_door.svg").read_bytes() == b"<svg/>"
-
     async def test_a_picture_added_later_reaches_anki_media_on_push(self, tmp_path, no_tts):
         """Wolff 1's opener was minted with no picture; giving it one is a card edit, pushed like any other."""
         import app.plugins.anki_sync.sync as sync_mod

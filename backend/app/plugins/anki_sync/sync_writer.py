@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from app.cards.field_map import get_profile
+from app.cards.sentence_notetype import NAME as SENTENCE_NOTETYPE
 from app.common.guid import compute_guid
 from app.plugins.anki_sync.add_production_template import IMAGE_FIELD, PRODUCTION_TEMPLATE
 from app.plugins.anki_sync.sqlite_reader import find_deck_id
@@ -991,6 +992,126 @@ class OfflineWriter:
         self._bump_col(ts)
         self._conn.commit()
         return note_id
+
+    def _sentence_mid(self) -> int:
+        row = self._conn.execute("SELECT id FROM notetypes WHERE name = ?", (SENTENCE_NOTETYPE,)).fetchone()
+        if row is None:
+            raise ValueError(f"notetype {SENTENCE_NOTETYPE!r} is not in the collection")
+        return row[0]
+
+    def has_sentence_notetype(self) -> bool:
+        """Whether the "TT Sentence" notetype exists (``add_sentence_notetype`` creates it)."""
+        return self._conn.execute("SELECT 1 FROM notetypes WHERE name = ?", (SENTENCE_NOTETYPE,)).fetchone() is not None
+
+    def _add_sentence_cards(self, note_id: int, did: int, ords: list[int], *, course: bool, ts: int) -> None:
+        """Insert a card for each of *ords* (in that order) the note lacks, at consecutive new positions."""
+        have = {r[0] for r in self._conn.execute("SELECT ord FROM cards WHERE nid = ?", (note_id,))}
+        missing = [o for o in ords if o not in have]
+        if not missing:
+            return
+        slots = len(missing)
+        base = self._next_course_position(slots) if course else self._next_front_position(slots=slots)
+        for i, ord_ in enumerate(missing):
+            card_id = note_id + ord_
+            while self._conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone():
+                card_id += 1
+            self._conn.execute(
+                "INSERT INTO cards (id, nid, did, ord, mod, usn, type, queue, due, ivl, "
+                "factor, reps, lapses, left, odue, odid, flags, data) "
+                "VALUES (?, ?, ?, ?, ?, -1, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, '')",
+                (card_id, note_id, did, ord_, ts, base + i),
+            )
+
+    def create_sentence_note(
+        self,
+        deck_name: str,
+        fields: list[str],
+        ords: list[int],
+        *,
+        guid: str,
+        tags: list[str],
+        course: bool = False,
+    ) -> int:
+        """Insert a "TT Sentence" note (tunatale-h0q3.55) with one card per Anki ord in *ords*.
+
+        *fields* are in the notetype's field order (``sentence_note_fields``);
+        *ords* are card ords (cloze number - 1) in the order the cards should
+        reach the deck: each takes the next new position, so a line's blanks can
+        come before its whole-line card although the whole line is ord 0.
+
+        *guid* is the caller's (from the line, never the text, so an edited line
+        keeps its note). Raises DuplicateNoteError if a note already has it,
+        ValueError if the notetype or deck is missing. No col.scm change.
+        """
+        mid = self._sentence_mid()
+        did = find_deck_id(self._conn, deck_name)
+        if did is None:
+            raise ValueError(f"Deck {deck_name!r} not found")
+        existing = self._conn.execute("SELECT id FROM notes WHERE guid = ?", (guid,)).fetchone()
+        if existing:
+            raise DuplicateNoteError(existing[0])
+
+        ts_ms = int(_time.time() * 1000)
+        max_row = self._conn.execute("SELECT MAX(id) FROM notes").fetchone()
+        note_id = max(ts_ms, (max_row[0] or 0) + 1)
+        ts = int(_time.time())
+        tags = _with_course_tag(tags, course)
+        tags_str = f" {' '.join(tags)} " if tags else ""
+        sfld, csum = self._sort_field(fields[0])
+        self._conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (?, ?, ?, ?, -1, ?, ?, ?, ?, 0, '')",
+            (note_id, guid, mid, ts, tags_str, _FIELD_SEP.join(fields), sfld, csum),
+        )
+        self._add_sentence_cards(note_id, did, ords, course=course, ts=ts)
+        self._bump_col(ts)
+        self._conn.commit()
+        return note_id
+
+    def rewrite_sentence_note(
+        self, note_id: int, fields: list[str], ords: list[int], *, deck_name: str | None = None, course: bool = False
+    ) -> bool:
+        """Make *note_id* hold *fields* and exactly the cards *ords*. Returns whether the note exists.
+
+        Every field is written together, ``sfld``/``csum`` with ``Text`` (keb0: never
+        ``flds`` alone); the guid stays. A card for an ord the note lacks is added
+        (a row joining the line); a card whose ord is not in *ords* is DELETED
+        through a card grave, because its cloze has left ``Text`` and Anki would
+        otherwise keep an empty card (a row deleted in TT). The note itself is
+        never graved here. Data-only: rows ``usn = -1``, ``col.mod`` bumped, never
+        ``col.usn`` (Layer 61).
+        """
+        row = self._conn.execute("SELECT mid FROM notes WHERE id = ?", (note_id,)).fetchone()
+        if row is None:
+            return False
+        if row[0] != self._sentence_mid():
+            raise ValueError(f"note {note_id} is not a {SENTENCE_NOTETYPE!r} note")
+        ts = int(_time.time())
+        sfld, csum = self._sort_field(fields[0])
+        self._conn.execute(
+            "UPDATE notes SET flds = ?, sfld = ?, csum = ?, mod = ?, usn = -1 WHERE id = ?",
+            (_FIELD_SEP.join(fields), sfld, csum, ts, note_id),
+        )
+        for card_id, ord_ in self._conn.execute("SELECT id, ord FROM cards WHERE nid = ?", (note_id,)).fetchall():
+            if ord_ not in ords:
+                self._conn.execute("INSERT OR REPLACE INTO graves (oid, type, usn) VALUES (?, 0, -1)", (card_id,))
+                self._conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+        sibling = self._conn.execute("SELECT did FROM cards WHERE nid = ? LIMIT 1", (note_id,)).fetchone()
+        if sibling is not None:
+            did = sibling[0]
+        elif deck_name is None or (did := find_deck_id(self._conn, deck_name)) is None:
+            raise ValueError(f"note {note_id} has no card to take a deck from, and deck {deck_name!r} is not found")
+        self._add_sentence_cards(note_id, did, ords, course=course, ts=ts)
+        self._bump_col(ts)
+        self._conn.commit()
+        return True
+
+    @staticmethod
+    def _sort_field(text: str) -> tuple[str, int]:
+        import hashlib
+
+        sfld = _strip_markup(text)
+        return sfld, int(hashlib.sha1(sfld.encode()).hexdigest()[:8], 16)
 
     def _production_ord(self, mid: int) -> int | None:
         """The ord of *mid*'s ``Production`` template, or None if it has none."""

@@ -693,6 +693,18 @@ class DbSyncMixin:
             rows = conn.execute("SELECT * FROM collocations WHERE anki_note_id IS NULL").fetchall()
             return [(row["guid"], self._row_to_item(conn, row), row["id"]) for row in rows]
 
+    def list_sibling_rows(self, sibling_group: str) -> list[tuple[str, SRSItem, int]]:
+        """(guid, SRSItem, id) for every row of *sibling_group*, linked or not, by row id.
+
+        Row-id order is the line's card order (``lesson_cards`` inserts the blanks
+        before the whole line), which ``cloze_ords`` numbers new blanks in.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collocations WHERE sibling_group = ? ORDER BY id", (sibling_group,)
+            ).fetchall()
+            return [(row["guid"], self._row_to_item(conn, row), row["id"]) for row in rows]
+
     def count_words_awaiting_production(self) -> int:
         """How many linked words have a graduated recognition and no production card.
 

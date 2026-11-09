@@ -16,7 +16,7 @@ import pytest
 
 from app.cards.sentence_notetype import FIELD_NAMES
 from app.srs.sentence_card import Cue, Gloss, SentenceCard, blank_span
-from app.srs.sentence_note import WHOLE_ORD, cloze_ords, sentence_note_fields
+from app.srs.sentence_note import WHOLE_ORD, cloze_ords, sentence_note_fields, source_label
 
 _BASE = SentenceCard(
     lesson_id="wolff-1",
@@ -72,6 +72,32 @@ class TestClozeOrds:
     def test_the_same_card_twice_is_refused(self):
         with pytest.raises(ValueError, match="twice"):
             cloze_ords([NAA, NAA])
+
+    def test_numbers_already_taken_are_kept_and_a_new_blank_takes_the_next(self):
+        """A note's minted cards keep their cloze numbers (a card's ord is its number - 1);
+        a blank joining later never renumbers them."""
+        assert cloze_ords([NAA, BA, _BASE], taken={_BASE.key: 1, BA.key: 2}) == {
+            _BASE.key: 1,
+            BA.key: 2,
+            NAA.key: 3,
+        }
+
+    def test_a_number_freed_by_a_deleted_card_is_not_reused_below_the_highest(self):
+        assert cloze_ords([NAA, BA], taken={BA.key: 3}) == {BA.key: 3, NAA.key: 4}
+
+    def test_a_taken_number_used_twice_is_refused(self):
+        with pytest.raises(ValueError, match="cloze 2"):
+            cloze_ords([NAA, BA], taken={NAA.key: 2, BA.key: 2})
+
+    def test_fields_follow_the_given_numbers(self):
+        ords = {_BASE.key: 1, BA.key: 2, NAA.key: 3}
+        assert _fields(ords=ords)["Text"] == "{{c1::{{c3::Nâa}} {{c2::ba}} si Místir Abáya?}}"
+
+
+class TestSourceLabel:
+    def test_the_set_slug_reads_as_a_title(self):
+        assert source_label(NAA) == "Wolff 1 · line 4"
+        assert source_label(SentenceCard(**{**NAA.__dict__, "lesson_id": "wolff-2a"})) == "Wolff 2a · line 4"
 
 
 class TestText:

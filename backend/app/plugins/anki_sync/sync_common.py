@@ -98,6 +98,10 @@ class NoteRecord:
     # so nothing is concluded from it. False takes the word off the image-repair
     # queue — a picture could never reach such a card (tunatale-w4m7.8).
     image_field: bool | None = None
+    # A "TT Sentence" note (tunatale-h0q3.55): one note, a card per row of a
+    # lesson line. Its text fields are empty (TT authors them); sync_pull resolves
+    # each card's row by card id, and nothing imports such a note as a new row.
+    sentence_note: bool = False
 
 
 @dataclass

@@ -198,3 +198,47 @@ def test_upsert_by_guid_groups_a_sentence_row_and_leaves_vocab_ungrouped() -> No
     with db._get_conn() as conn:
         groups = dict(conn.execute("SELECT text, sibling_group FROM collocations").fetchall())
     assert groups == {LINE[0].text: "sent:wolff-1:4", "balay": None}
+
+
+@pytest.mark.oracle
+async def test_a_line_minted_by_sync_is_a_note_anki_keeps_as_written(synthetic_collection: SyntheticCollection) -> None:
+    """TT's own create path, then Anki: Check Database passes and generates or removes no card
+    (TT's cards are exactly the ords Anki derives from Text), the cards are one note's siblings
+    (one new card gathered), and after a row's deletion is pushed the graved card stays gone
+    and the rest still check clean.
+
+    The hand-built notes above pin the bury; this pins that sync writes that note."""
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
+    from tests._helpers.anki_sync_create_new import FakeReader
+
+    synthetic_collection.enable_fsrs(weights=FSRS_WEIGHTS, retention=DEFAULT_DESIRED_RETENTION)
+    synthetic_collection.set_bury(bury_new=True, bury_reviews=True)
+    synthetic_collection.save()
+    db = _tt_line({0: NEW, 1: NEW, 2: NEW})
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        assert add_sentence_notetype(conn, now_ms=NOW_MS) == "created"
+        sync = AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb")
+        await sync.sync_create_new(deck_name=synthetic_collection.deck_name, model_name="unused")
+        assert conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
+
+    raw = run_oracle(
+        synthetic_collection.path,
+        [{"op": "check_database"}, {"op": "note_ords"}, {"op": "get_queue", "deck_id": 1, "fetch_limit": 50}],
+    ).raw()
+    assert raw["check_database_0"]["ok"], raw["check_database_0"]["report"]
+    [ords] = raw["note_ords_1"]["ords"].values()
+    assert ords == [0, 1, 2]
+    assert raw["get_queue_2"]["counts"]["new"] == 1
+
+    with db._get_conn() as tt:
+        ba_id = tt.execute("SELECT id FROM collocations WHERE disambig_key = ?", (LINE[1].key,)).fetchone()[0]
+    db.delete_collocation(ba_id)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="ceb").sync_push()
+
+    raw = run_oracle(synthetic_collection.path, [{"op": "check_database"}, {"op": "note_ords"}]).raw()
+    assert raw["check_database_0"]["ok"], raw["check_database_0"]["report"]
+    [ords] = raw["note_ords_1"]["ords"].values()
+    assert ords == [0, 1], "the blank whose row was deleted (cloze 3, ord 2) is graved and not regenerated"

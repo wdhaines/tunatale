@@ -23,11 +23,12 @@ from app.cards.media.vocab_media import audio_filename as _audio_filename
 from app.cards.media.vocab_media import image_filename as _image_filename
 from app.cards.media.vocab_media import image_no_other_card_holds as _image_no_other_card_holds
 from app.cards.media.vocab_media import store_tt_media as _store_tt_media
+from app.cards.sentence_notetype import NAME as SENTENCE_NOTETYPE
 from app.common.guid import compute_guid
 from app.config import settings
 from app.languages import card_surface_variants, cloze_answer_spelling, dictionary_note_fields, get_tts_voice
 from app.llm.cloze_quality import UNJUDGED, carries_a_blank
-from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSState
+from app.models.srs_item import Direction, DirectionState, Rating, RevlogRow, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit, serialize_extras
 from app.plugins.anki_sync.sync_common import (
     _FSRS_REPLAY_TOLERANCE,
@@ -35,6 +36,7 @@ from app.plugins.anki_sync.sync_common import (
     CardRecord,
     CreateNewReport,
     DuplicateNoteError,
+    NoteRecord,
     OrphanThresholdExceededError,
     PromotionReport,
     PullReport,
@@ -65,6 +67,7 @@ from app.srs.function_words import is_function_word, make_cloze_text, uncloze_te
 from app.srs.lemmatizer import headword_lemma
 from app.srs.lesson_cards import COURSE_SOURCE
 from app.srs.sentence_card import is_sentence_key, sentence_card
+from app.srs.sentence_note import cloze_ords, sentence_note_fields, source_label
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
 # tests/test_anki_sync_pull.py (caplog.at_level(..., logger="app.anki.sync"))
@@ -380,6 +383,17 @@ def _derive_revlog_shape(
     return (type_, new_ivl, last_ivl)
 
 
+def _split_sentence_notes(records: list[NoteRecord]) -> list[NoteRecord]:
+    """*records*, with each "TT Sentence" note split into one record per card (tunatale-h0q3.55)."""
+    out: list[NoteRecord] = []
+    for rec in records:
+        if rec.sentence_note:
+            out.extend(replace(rec, cards=[card]) for card in rec.cards)
+        else:
+            out.append(rec)
+    return out
+
+
 class AnkiSync:
     """Orchestrate bidirectional sync between TunaTale and Anki."""
 
@@ -441,6 +455,8 @@ class AnkiSync:
         """
         groups: dict[tuple[str, str], list[int]] = {}
         for rec in self._reader.get_note_records():
+            if rec.sentence_note:
+                continue  # keyed by its line, not its text; it has no l2_text to collide on
             key = (rec.l2_text.casefold(), rec.disambig_key.casefold())
             groups.setdefault(key, []).append(rec.anki_note_id)
 
@@ -906,11 +922,18 @@ class AnkiSync:
 
         today_start_ms = self._compute_today_start_ms()
 
-        for rec in self._reader.get_note_records():
+        for rec in _split_sentence_notes(self._reader.get_note_records()):
             # Primary: stable pointer set by sync_create_new. Handles duplicate
             # computed-guid homonyms by ignoring the un-linked orphan Anki notes.
-            local_item = self._db.get_collocation_by_anki_note_id(rec.anki_note_id)
-            if local_item is None:
+            # A "TT Sentence" note holds several rows' cards, so each of its cards
+            # (split into its own record above) is resolved by card id.
+            if rec.sentence_note:
+                local_item = self._db.get_collocation_by_anki_card_id(rec.cards[0].anki_card_id)
+                if local_item is None:
+                    report.skipped_unknown_guid += 1
+                    continue
+                guid = local_item.guid
+            elif (local_item := self._db.get_collocation_by_anki_note_id(rec.anki_note_id)) is None:
                 # Fallback: row was never linked (e.g., imported before anki_note_id
                 # column was populated). Validate guid before trusting it.
                 expected_guid = compute_guid(rec.l2_text, self._language_code, rec.disambig_key)
@@ -1338,6 +1361,37 @@ class AnkiSync:
             lapses_bump=0,
         )
 
+    def _push_sentence_line(self, line: str, note_id: int, report: PushReport, *, dry_run: bool) -> None:
+        """Rebuild a "TT Sentence" note from its whole line, on any flag of any of its rows (h0q3.55).
+
+        Every field comes from the line's cards, so no flag can be left with
+        nothing to write. A row deleted since the last push is simply absent: its
+        cloze leaves Text and its card is graved (``rewrite_sentence_note``).
+        """
+        from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
+
+        rows = [r for r in self._db.list_sibling_rows(line) if r[1].anki_note_id == note_id]
+        ords = self._sentence_line_ords(rows, note_id)
+        cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
+        fields, media = self._sentence_line_fields(rows, cards, ords)
+        anki_ords = [ords[c.key] - 1 for c in cards]
+        if dry_run:
+            report.notes_pushed += 1
+            return
+        for m in media:
+            _copy_tt_media_to_anki(self._writer, m)
+        course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
+        if not self._writer.rewrite_sentence_note(note_id, fields, anki_ords, course=course):
+            # Not in THIS collection (peer-sync writes tt_collection): keep the
+            # flags for a later sync, as for any other note (tunatale-7p4f).
+            report.write_noop += 1
+            return
+        card_ids = self._writer.get_cards_for_note(note_id)
+        for (guid, _item, _), anki_ord in zip(rows, anki_ords, strict=True):
+            self._db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: card_ids[anki_ord]})
+            self._db.set_dirty_fields(guid, "")
+        report.notes_pushed += 1
+
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         # Deferred: lives in app.plugins.anki_sync.sync so it reads the patched _MEDIA_DIR.
         from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
@@ -1352,10 +1406,18 @@ class AnkiSync:
         # SM2 fallback (oracle gotcha #1).
         push_desired_retention = resolve_fsrs_params(self._db)[0].desired_retention
 
+        sibling_groups = self._db.sibling_groups()
+        pushed_lines: set[str] = set()
         for guid, anki_note_id, dirty_fields_str, item, coll_id in self._db.list_dirty_field_edits():
             report.rows_considered += 1
             if anki_note_id is None:
                 report.no_anki_id += 1
+                continue
+            line = sibling_groups.get(coll_id) if sentence_card(item.syntactic_unit) is not None else None
+            if line is not None:
+                if line not in pushed_lines:
+                    pushed_lines.add(line)
+                    self._push_sentence_line(line, anki_note_id, report, dry_run=dry_run)
                 continue
             dirty_set = {f for f in dirty_fields_str.split(",") if f}
             fields: dict[str, str] = {}
@@ -1746,6 +1808,87 @@ class AnkiSync:
                 bury_reviews=bury_review,
             )
 
+    def _sentence_line_fields(
+        self, rows: list[tuple[str, SRSItem, int]], cards: list, ords: dict[str, int]
+    ) -> tuple[list[str], list[str]]:
+        """A line's note fields, and the media files they reference.
+
+        The takes are the lesson's own, attached to the line's rows as media when
+        the cards were made (never synthesized here: the lesson already paid for
+        them on a metered voice). Any row of the line carries the same takes.
+        """
+        cue_audio = next((a for _, _, c in rows if (a := self._db.get_media_filename(c, "audio_cue"))), None)
+        answer_audio = next((a for _, _, c in rows if (a := self._db.get_sentence_audio_filename(c))), None)
+        if answer_audio is None:
+            _log.warning(
+                "SENTENCE_CARD_NO_AUDIO key=%s — no lesson take attached; note written with no [sound:]",
+                cards[0].line_key,
+            )
+        fields = sentence_note_fields(
+            cards, cue_audio=cue_audio, answer_audio=answer_audio, source=source_label(cards[0]), ords=ords
+        )
+        return fields, [m for m in (cue_audio, answer_audio, cards[0].picture) if m]
+
+    def _sentence_line_ords(self, rows: list[tuple[str, SRSItem, int]], note_id: int | None) -> dict[str, int]:
+        """Cloze numbers for a line's rows: a linked row keeps its card's (ord + 1)."""
+        cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
+        taken: dict[str, int] = {}
+        if note_id is not None:
+            ord_of = {cid: ord_ for ord_, cid in self._writer.get_cards_for_note(note_id).items()}
+            for card, (_, item, _) in zip(cards, rows, strict=True):
+                ds = item.directions.get(Direction.PRODUCTION)
+                if ds is not None and ds.anki_card_id in ord_of:
+                    taken[card.key] = ord_of[ds.anki_card_id] + 1
+        return cloze_ords(cards, taken)
+
+    def _mint_sentence_line(self, group: str, new_ids: list[int], deck_name: str) -> tuple[int, int, int]:
+        """Mint a line's unlinked rows *new_ids* into the line's ONE "TT Sentence" note. Returns (created, linked, skipped).
+
+        A line's rows share ``sibling_group``. A line with no note yet gets one, a
+        card per row; a row joining a line whose note exists adds its card to that
+        note, whose fields are rebuilt from the whole line. Each row is linked to
+        its own card (ord = cloze number - 1), so pull and push resolve it by card.
+        """
+        from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
+
+        rows = [r for r in self._db.list_sibling_rows(group) if r[1].anki_note_id is not None or r[2] in new_ids]
+        note_ids = {i.anki_note_id for _, i, _ in rows if i.anki_note_id is not None}
+        if len(note_ids) > 1:
+            _log.warning("SENTENCE_NOTE_SPLIT line=%s nids=%s — rows on two notes; held", group, sorted(note_ids))
+            return 0, 0, len(new_ids)
+        note_id = next(iter(note_ids), None)
+        ords = self._sentence_line_ords(rows, note_id)
+        cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
+        fields, media = self._sentence_line_fields(rows, cards, ords)
+        anki_ords = [ords[c.key] - 1 for c in cards]
+        course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
+        created = linked = 0
+        if note_id is None:
+            try:
+                note_id = self._writer.create_sentence_note(
+                    deck_name,
+                    fields,
+                    anki_ords,
+                    guid=compute_guid(group, self._language_code, SENTENCE_NOTETYPE),
+                    tags=["tunatale", "sentence"],
+                    course=course,
+                )
+                created = len(new_ids)
+            except DuplicateNoteError as exc:
+                # Written but never linked (a crash between the two): adopt it.
+                note_id = exc.note_id
+                self._writer.rewrite_sentence_note(note_id, fields, anki_ords, deck_name=deck_name, course=course)
+                linked = len(new_ids)
+        else:
+            self._writer.rewrite_sentence_note(note_id, fields, anki_ords, deck_name=deck_name, course=course)
+            linked = len(new_ids)
+        for m in media:
+            _copy_tt_media_to_anki(self._writer, m)
+        card_ids = self._writer.get_cards_for_note(note_id)
+        for (guid, _item, _), anki_ord in zip(rows, anki_ords, strict=True):
+            self._db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: card_ids[anki_ord]})
+        return created, linked, 0
+
     async def sync_create_new(
         self,
         *,
@@ -1813,6 +1956,17 @@ class AnkiSync:
         # list IS the course's order (tunatale-h0q3.43).
         items.sort(key=lambda gi: (self._db.get_created_at_by_guid(gi[0]) or "", gi[2]))
 
+        # A lesson line's cards are minted together, as one "TT Sentence" note
+        # (tunatale-h0q3.55), when the loop reaches the line's first row: so a
+        # course's words still reach the deck ahead of the sentences using them.
+        sibling_groups = self._db.sibling_groups()
+        pending_lines: dict[str, list[int]] = {}
+        for _g, i, c in items:
+            if sentence_card(i.syntactic_unit) is not None and c in sibling_groups:
+                pending_lines.setdefault(sibling_groups[c], []).append(c)
+        minted_lines: set[str] = set()
+        has_sentence_notetype = bool(pending_lines) and self._writer.has_sentence_notetype()
+
         used_image_urls: set[str] = set()
         created = 0
         linked = 0
@@ -1827,54 +1981,29 @@ class AnkiSync:
         mint_l2_field: str | None = None
 
         for guid, item, coll_id in items:
-            card = sentence_card(item.syntactic_unit) if item.syntactic_unit.card_type == "cloze" else None
-            if card is not None:
-                # A sentence card (tunatale-h0q3.42): both fields are built from the
-                # card, and its audio is the lesson's own takes, attached as media
-                # rows when the card was made. Never synthesized here: the lesson
-                # already paid for those takes, on a metered voice.
-                cue_audio = self._db.get_media_filename(coll_id, "audio_cue")
-                answer_audio = self._db.get_sentence_audio_filename(coll_id)
-                if answer_audio is None:
+            if sentence_card(item.syntactic_unit) is not None:
+                group = sibling_groups.get(coll_id)
+                if group is None:
+                    # Every sentence row is grouped at insert, and v50 grouped the
+                    # unlinked ones, so this is a bug to see, not a card to mint alone.
                     _log.warning(
-                        "SENTENCE_CARD_NO_AUDIO key=%s cid=%d — no lesson take attached; note created with no [sound:]",
-                        card.key,
+                        "SENTENCE_CARD_NO_GROUP key=%s cid=%d — no sibling_group; held unlinked",
+                        item.syntactic_unit.disambig_key,
                         coll_id,
                     )
-                try:
-                    note_id = self._writer.create_cloze_note(
-                        deck_name,
-                        card.note_text(cue_audio),
-                        back_extra=card.back_extra(answer_audio),
-                        tags=["tunatale", "cloze", "sentence"],
-                        language_code=self._language_code,
-                        course=item.syntactic_unit.source == COURSE_SOURCE,
-                    )
-                    created += 1
-                except DuplicateNoteError as exc:
-                    owner = self._db.get_collocation_by_anki_note_id(exc.note_id)
-                    if owner is not None and owner.guid != guid:
-                        # The same field 0 from two rows (one line in two lessons).
-                        # Linking both to one note is the Layer 35 hazard; this row
-                        # stays unlinked, and says so on every sync until resolved.
+                    skipped += 1
+                elif group not in minted_lines:
+                    minted_lines.add(group)
+                    if has_sentence_notetype:
+                        c, lk, sk = self._mint_sentence_line(group, pending_lines[group], deck_name)
+                        created, linked, skipped = created + c, linked + lk, skipped + sk
+                    else:
                         _log.warning(
-                            "SENTENCE_CARD_DUPLICATE key=%s cid=%d — note %d already belongs to %s; not linked",
-                            card.key,
-                            coll_id,
-                            exc.note_id,
-                            owner.syntactic_unit.disambig_key,
+                            "SENTENCE_NOTE_NO_NOTETYPE line=%s — the TT Sentence notetype is not in the "
+                            "collection; held unlinked until add_sentence_notetype has run",
+                            group,
                         )
-                        skipped += 1
-                        continue
-                    note_id = exc.note_id
-                    linked += 1
-                # The opener's picture too: the front is <img src=picture>.
-                for media in (cue_audio, answer_audio, card.picture):  # a dry run returned before this loop
-                    if media:
-                        _copy_tt_media_to_anki(self._writer, media)
-                self._db.set_anki_ids(
-                    guid, note_id, {Direction.PRODUCTION: self._writer.get_cards_for_note(note_id)[0]}
-                )
+                        skipped += len(pending_lines[group])
                 continue
             if item.syntactic_unit.card_type == "cloze":
                 # Two texts, and they differ only for a contrast card: the
@@ -2140,6 +2269,10 @@ class AnkiSync:
 
         for rec in records:
             if rec.anki_note_id in linked_anki_ids:
+                continue
+            if rec.sentence_note:
+                # TT authors these from card_data, which lives only in TT; a note
+                # with no row (its rows deleted) has nothing to be rebuilt from.
                 continue
 
             card_type = "cloze" if rec.is_cloze else "vocab"
