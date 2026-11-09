@@ -22,6 +22,17 @@ describe("isDrillOnly", () => {
     expect(isDrillOnly(lesson(["affix_drill"], drill))).toBe(true);
   });
 
+  it("is true of a lesson of authored drills alone, which has no affix-drill table", () => {
+    // A Wolff Practice lesson (bd tunatale-h0q3.58): its drills come from the
+    // lesson file, so `drill` (the affix drill's table) is absent.
+    expect(isDrillOnly(lesson(["affix_drill"], null))).toBe(true);
+    expect(isDrillOnly(lesson(["affix_drill"], undefined))).toBe(true);
+  });
+
+  it("is false of a lesson with no sections at all", () => {
+    expect(isDrillOnly(lesson([], drill))).toBe(false);
+  });
+
   it("is false of a story lesson that ends with a drill", () => {
     expect(isDrillOnly(lesson(["key_phrases", "natural_speed", "affix_drill"], drill))).toBe(false);
   });

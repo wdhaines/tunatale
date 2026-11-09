@@ -35,7 +35,7 @@ from app.languages import get_story_text_normalizer
 from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
-from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Section, SectionType
 from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.database import SRSDatabase
 from app.srs.function_words import fixed_gloss
@@ -568,37 +568,43 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
     key_phrases = data.get("key_phrases", [])
     scenes = data.get("scenes", [])
 
-    if not key_phrases and not scenes:
+    drills = data.get("drills") or []
+    if not key_phrases and not scenes and not drills:
         raise StoryGenerationError("LLM response missing 'key_phrases' and 'scenes'")
 
     narrator_voice = language.tts_voice_map.get("narrator", NARRATOR_VOICE)
 
-    sections = [
-        build_key_phrases_section(
-            key_phrases, language.tts_voice_map, narrator_voice, language.code, rules=story_buildup_rules(data)
-        ),
-        build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
-        build_translated_section(
-            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
-        ),
-        build_slow_translated_section(
-            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
-        ),
-        build_en_translated_section(
-            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
-        ),
-        build_slow_en_translated_section(
-            scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
-        ),
-    ]
+    # A story of drills alone (a Wolff Practice lesson, tunatale-h0q3.58) is its
+    # drill section and nothing else: empty key-phrase and dialogue tracks would
+    # be rendered narrator titles with nothing under them.
+    sections: list[Section] = []
+    if key_phrases or scenes:
+        sections = [
+            build_key_phrases_section(
+                key_phrases, language.tts_voice_map, narrator_voice, language.code, rules=story_buildup_rules(data)
+            ),
+            build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+            build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
+            build_translated_section(
+                scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+            ),
+            build_slow_translated_section(
+                scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+            ),
+            build_en_translated_section(
+                scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+            ),
+            build_slow_en_translated_section(
+                scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
+            ),
+        ]
 
     # A story may author its own drills (tunatale-h0q3.3). They ride in ONE
     # AFFIX_DRILL section, after the dialogue sections, because that is the
     # section type the player's Drill phase and the hands-free run already play.
-    if data.get("drills"):
+    if drills:
         sections.append(
-            build_story_drill_section(data["drills"], scenes, language.tts_voice_map, narrator_voice, language.code)
+            build_story_drill_section(drills, scenes, language.tts_voice_map, narrator_voice, language.code)
         )
 
     kp_infos = []

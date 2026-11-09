@@ -12,7 +12,7 @@ Design: docs/lesson-authoring.md.
 from __future__ import annotations
 
 from app.generation.ids import mint_id
-from app.generation.section_builder import STORY_DRILL_INSTRUCTIONS
+from app.generation.section_builder import STORY_DRILL_KINDS
 from app.generation.story import build_lesson_from_story
 from app.models.language import Language
 from app.models.lesson import (
@@ -82,8 +82,8 @@ def validate_story(story: object, language: Language | None = None) -> None:
         raise ValueError("key_phrases must be a list")
     if not isinstance(scenes, list):
         raise ValueError("scenes must be a list")
-    if not key_phrases and not scenes:
-        raise ValueError("story needs at least one of 'key_phrases' or 'scenes'")
+    if not key_phrases and not scenes and not story.get("drills"):
+        raise ValueError("story needs at least one of 'key_phrases', 'scenes' or 'drills'")
     for i, kp in enumerate(key_phrases):
         _require(kp, f"key_phrases[{i}]", ("phrase", "translation"))
     known = set(language.tts_voice_map) if language is not None else None
@@ -102,10 +102,12 @@ def validate_story(story: object, language: Language | None = None) -> None:
     for i, drill in enumerate(drills):
         _require(drill, f"drills[{i}]", ("kind",))
         kind = drill["kind"]
-        if kind not in STORY_DRILL_INSTRUCTIONS:
-            raise ValueError(f"drills[{i}].kind must be one of {', '.join(sorted(STORY_DRILL_INSTRUCTIONS))}")
+        if kind not in STORY_DRILL_KINDS:
+            raise ValueError(f"drills[{i}].kind must be one of {', '.join(sorted(STORY_DRILL_KINDS))}")
         if kind == "substitution":
             _require(drill, f"drills[{i}]", ("model",))
+        if kind == "transformation" or "instruction" in drill:
+            _require(drill, f"drills[{i}]", ("instruction",))
         for field in ("speaker", "answer_speaker"):
             if field in drill:
                 _require(drill, f"drills[{i}]", (field,))
