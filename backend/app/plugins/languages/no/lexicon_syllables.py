@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import threading
 from pathlib import Path
 
 from app.plugins.languages.no.lexicon import NstLexicon, nst_lexicon_installed
@@ -307,6 +308,37 @@ def _pieces_from_cuts(word: str, cuts: list[int]) -> tuple[list[str] | None, str
     return out, ""
 
 
+_LOCAL = threading.local()
+
+
+def _lexicon_for(path: Path) -> NstLexicon:
+    """One read-only NstLexicon per (thread, path), reused across lookups.
+
+    sqlite3 connections may not cross threads (check_same_thread), so the
+    reuse is per thread. Opening one per word cost 3.7 s of a 50k-word sweep
+    (tunatale-1l26.14). Never opened on the import path.
+    """
+    cache: dict[Path, NstLexicon] | None = getattr(_LOCAL, "lexicons", None)
+    if cache is None:
+        cache = _LOCAL.lexicons = {}
+    lex = cache.get(path)
+    if lex is None:
+        lex = cache[path] = NstLexicon(path)
+    return lex
+
+
+def close_shared_lexicons() -> None:
+    """Close and forget this thread's shared lexicons; the next lookup reopens.
+
+    For the test harness: ``tests/conftest.py::_autoclose_sqlite_connections``
+    closes every connection a test opened, which would leave a dead connection
+    in the cache for the next test. Idempotent.
+    """
+    for lex in getattr(_LOCAL, "lexicons", {}).values():
+        lex.close()
+    _LOCAL.lexicons = {}
+
+
 @functools.lru_cache(maxsize=4096)
 def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], str | None] | None:
     """The orthographic split plus the reading that produced it, or ``None``.
@@ -327,8 +359,9 @@ def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], 
       most-enunciated tiebreak CHOSE one reading; *transcription* is that
       winner's raw X-SAMPA. Boundaries and sound BOTH come from this reading.
 
-    Opens a fresh :class:`NstLexicon` per call (the function is cached, so
-    this only runs once per distinct word).  Never opens the database on the
+    Opens a shared :class:`NstLexicon` per (thread, path) via
+    :func:`_lexicon_for` rather than one per call, so a whole-wordlist sweep
+    does not open a connection per word.  Never opens the database on the
     import path.
 
     *db_path* exists so a test can point at a fixture database or at a missing
@@ -345,11 +378,12 @@ def lexicon_reading(word: str, db_path: Path | None = None) -> tuple[list[str], 
     # is absent. The remaining window — the file vanishing between the probe and
     # the query — is not reachable through this function, and an untested
     # except: is worse than no except:.
-    # Context-managed: this constructs a lexicon PER WORD, so leaking the
-    # connection to the collector exhausts file descriptors on a whole-
-    # wordlist sweep (the lru_cache below is 4096 against ~50k entries).
-    with NstLexicon(path) as _lex:
-        candidates = _lex.candidate_transcriptions(word)
+    # Shared, not context-managed: one lexicon per (thread, path) is reused for
+    # the process's lifetime. Opening one PER WORD was 3.7 s of a 50k-word
+    # sweep — 63,990 sqlite3.connect calls — because the lru_cache below is
+    # 4096 against ~50k entries (tunatale-1l26.14).
+    _lex = _lexicon_for(path)
+    candidates = _lex.candidate_transcriptions(word)
     if not candidates:
         return None
 
@@ -477,16 +511,16 @@ def lexicon_has_secondary_stress(word: str, db_path: Path | None = None) -> bool
 
     The ``any`` (not ``all``) is deliberate and conservative: a word with
     several readings keeps its split if ANY reading carries ``%``. Mirrors
-    ``lexicon_syllable_split``'s caching and signature — opens a fresh lexicon
-    per distinct word, cached at module level, never opened on the import path.
+    ``lexicon_syllable_split``'s caching and signature — reuses one lexicon per
+    (thread, path), cached at module level, never opened on the import path.
     """
     from app.plugins.languages.no.lexicon import DB_PATH
 
     path = DB_PATH if db_path is None else db_path
     if not nst_lexicon_installed(path):
         return None
-    with NstLexicon(path) as _lex:
-        candidates = _lex.all_transcriptions(word)
+    _lex = _lexicon_for(path)
+    candidates = _lex.all_transcriptions(word)
     if not candidates:
         return None
     return any("%" in transcription for transcription in candidates)
@@ -509,9 +543,9 @@ def lexicon_syllable_split(word: str, db_path: Path | None = None) -> list[str] 
     agreed.  Where the tiebreak CHOSE a reading, ``phoneme_plan`` takes its
     sound from that same reading, so boundaries and phonemes still cannot cross.
 
-    Opens a fresh :class:`NstLexicon` per call (the function is cached, so
-    this only runs once per distinct word).  Never opens the database on the
-    import path.
+    Opens a shared :class:`NstLexicon` per (thread, path) through
+    :func:`lexicon_reading` — not a fresh one per call. Never opens the
+    database on the import path.
 
     *db_path* exists so a test can point at a fixture database or at a missing
     one; production callers leave it ``None`` and get ``DB_PATH``.

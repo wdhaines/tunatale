@@ -9,6 +9,7 @@ source. All oracles below were measured against the real built lexicon
 from __future__ import annotations
 
 import gzip
+import threading
 from pathlib import Path
 
 from app.plugins.languages.no.lexicon import build_lexicon_db
@@ -16,7 +17,9 @@ from app.plugins.languages.no.lexicon_syllables import (
     REFUSE_EMPTY,
     REFUSE_NO_PATH,
     REFUSE_SILENT_AT_CUT,
+    _lexicon_for,
     _pieces_from_cuts,
+    close_shared_lexicons,
     lexicon_reading,
     lexicon_syllable_split,
     orthographic_syllables,
@@ -608,3 +611,56 @@ class TestGuardRefusalStillDiscardsTheWord:
         pieces, reason = orthographic_syllables("borden", '"bu:$n`=')
         assert pieces is None
         assert reason == REFUSE_SILENT_AT_CUT
+
+
+class TestSharedLexiconPerThread:
+    """tunatale-1l26.14: one read-only lexicon per (thread, path), reused.
+
+    A fresh ``NstLexicon`` per distinct word cost 63,990 ``sqlite3.connect``
+    calls — 3.7 s of a 50k-word sweep. The share is per THREAD because sqlite3
+    connections may not cross threads (``check_same_thread``).
+    """
+
+    @staticmethod
+    def _fixture_db(tmp_path: Path, name: str) -> Path:
+        gz = tmp_path / f"{name}.tsv.gz"
+        payload = name + '\tNN\t"h}:s\t1\n'
+        gz.write_bytes(gzip.compress(payload.encode("utf-8"), mtime=0))
+        db = tmp_path / f"{name}.sqlite3"
+        build_lexicon_db(gz, db)
+        return db
+
+    def test_same_thread_same_path_reuses_one_lexicon(self, tmp_path: Path) -> None:
+        db = self._fixture_db(tmp_path, "hus")
+        assert _lexicon_for(db) is _lexicon_for(db)
+
+    def test_second_thread_gets_its_own_lexicon(self, tmp_path: Path) -> None:
+        """sqlite3 connections may not cross threads, so the cache is per thread."""
+        db = self._fixture_db(tmp_path, "bil")
+        main_lexicon = _lexicon_for(db)
+        seen: dict[str, object] = {}
+
+        def lookup() -> None:
+            seen["lexicon"] = _lexicon_for(db)
+
+        thread = threading.Thread(target=lookup)
+        thread.start()
+        thread.join()
+
+        assert seen["lexicon"] is not main_lexicon
+
+    def test_different_paths_get_different_lexicons(self, tmp_path: Path) -> None:
+        first = self._fixture_db(tmp_path, "bok")
+        second = self._fixture_db(tmp_path, "bord")
+        assert _lexicon_for(first) is not _lexicon_for(second)
+
+    def test_close_shared_lexicons_reopens_on_next_lookup(self, tmp_path: Path) -> None:
+        """tests/conftest.py closes every connection a test opened; the cache must
+        then hand out a fresh lexicon that can still answer, not the dead one."""
+        db = self._fixture_db(tmp_path, "tak")
+        before = _lexicon_for(db)
+        assert before.candidate_transcriptions("tak")
+        close_shared_lexicons()
+        after = _lexicon_for(db)
+        assert after is not before
+        assert after.candidate_transcriptions("tak")

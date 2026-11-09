@@ -266,6 +266,12 @@ def _autoclose_sqlite_connections(monkeypatch):
     for conn in opened:
         with contextlib.suppress(sqlite3.ProgrammingError):
             conn.close()
+    # The Norwegian lexicon keeps one connection per thread across lookups; one
+    # opened in this test is now closed, so drop it rather than hand the next
+    # test a dead connection (tunatale-ivbw).
+    from app.plugins.languages.no.lexicon_syllables import close_shared_lexicons
+
+    close_shared_lexicons()
 
 
 @pytest.fixture
