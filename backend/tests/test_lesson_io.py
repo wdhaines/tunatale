@@ -399,3 +399,26 @@ class TestRoundTrip:
         assert exported["story"] == file["story"]
         assert exported["curriculum_id"] == "c1"
         assert exported["day"] == 4
+
+    def test_export_after_import_is_byte_exact_with_drills(self, store, language):
+        """A story's authored drills are part of the source, so they round-trip verbatim too."""
+        story = _story()
+        story["drills"] = [
+            {
+                "kind": "substitution",
+                "speaker": "female-1",
+                "model": "Dober dan.",
+                "steps": [{"cue": "prosim", "answer": "Prosim kavo."}],
+            },
+            {
+                "kind": "question_answer",
+                "speaker": "female-1",
+                "answer_speaker": "male-1",
+                "steps": [{"cue": "Kje je kava?", "answer": "Tukaj je kava."}],
+            },
+        ]
+        file = {"curriculum_id": "c1", "day": 5, "story": story}
+
+        lesson_id, _ = import_lesson(store, file, language)
+
+        assert export_lesson(store, lesson_id)["story"] == file["story"]

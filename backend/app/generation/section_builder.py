@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 KeyPhrase = dict  # {"phrase": str, "translation": str}
 DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
 Scene = dict  # {"label": str, "lines": list[DialogueLine]}
+Drill = dict  # {"kind": str, "speaker": str, "answer_speaker": str, "model": str, "steps": list[dict]}
 
 # Narrator-spoken section titles matching the demo format.
 # The "Slow" pass is enunciated speech — each word of the line said apart, no
@@ -41,6 +42,18 @@ SECTION_TITLES: dict[SectionType, str] = {
     SectionType.EN_TRANSLATED: "English Before",
     SectionType.SLOW_EN_TRANSLATED: "Enunciated, English Before",
     SectionType.AFFIX_DRILL: "Affix Drill",
+}
+
+# What the narrator says once before a story's own drills (tunatale-h0q3.3). Not
+# in SECTION_TITLES: the section type is still AFFIX_DRILL, which the player's
+# Drill phase already plays, but a story's drills are not an affix drill.
+STORY_DRILL_TITLE = "Drill"
+
+# The one English line the narrator says at the start of each authored drill.
+STORY_DRILL_INSTRUCTIONS: dict[str, str] = {
+    "substitution": "Change the sentence.",
+    "question_answer": "Answer the question.",
+    "true_false": "True or false?",
 }
 
 
@@ -547,4 +560,86 @@ def build_affix_drill_section(drill: AffixDrill, *, narrator_voice: str, l2_voic
                     syllable_span=step.span,
                 )
             )
+    return Section(section_type=SectionType.AFFIX_DRILL, phrases=phrases)
+
+
+def _default_drill_speaker(scenes: list[Scene]) -> str:
+    """The first character in the dialogue, in scene order — narration is not one.
+
+    A drill with no ``speaker`` of its own is given to the dialogue's first
+    character so the lesson sounds like the same two people throughout. A story
+    with no dialogue at all has no character to borrow, so female-1 speaks.
+    """
+    for scene in scenes:
+        for line in scene.get("lines", []):
+            speaker = line.get("speaker", "").lower()
+            if speaker not in ("narration", "narrator"):
+                return speaker
+    return "female-1"
+
+
+def _answer_speaker(drill: Drill, cue_speaker: str, scenes: list[Scene]) -> str:
+    """Who says *drill*'s answers.
+
+    Only a question-and-answer drill has two voices: its own ``answer_speaker``
+    if it names one, else the first character in the dialogue who is not the
+    one asking. Every other kind is one voice — the cue's — and an
+    ``answer_speaker`` on it is ignored.
+    """
+    if drill["kind"] != "question_answer":
+        return cue_speaker
+    named = drill.get("answer_speaker")
+    if named:
+        return named.lower()
+    for scene in scenes:
+        for line in scene.get("lines", []):
+            speaker = line.get("speaker", "").lower()
+            if speaker not in ("narration", "narrator") and speaker != cue_speaker:
+                return speaker
+    return cue_speaker
+
+
+def build_story_drill_section(
+    drills: list[Drill],
+    scenes: list[Scene],
+    l2_voice_map: dict[str, str],
+    narrator_voice: str,
+    l2_code: str,
+) -> Section:
+    """Build the AFFIX_DRILL section a story's own ``drills`` become (tunatale-h0q3.3).
+
+    The section type stays ``AFFIX_DRILL`` on purpose: that is the player's
+    Drill phase and the hands-free run's, and neither needs to learn a second
+    kind of drill to play these.
+
+    The narrator opens with :data:`STORY_DRILL_TITLE`, then says one short
+    English line before each drill (:data:`STORY_DRILL_INSTRUCTIONS`). A
+    substitution drill models its sentence before asking for the changes; every
+    drill then gives each step's cue and its answer back to back, which is the
+    shape the pause calculator and the cues already understand.
+
+    Voices come from the drill or from the dialogue: the cue (and the model) is
+    the drill's ``speaker``, else the dialogue's first character
+    (:func:`_default_drill_speaker`); the answer is :func:`_answer_speaker`'s
+    call. Every role is resolved through :func:`_resolve_voice`, so a role no
+    voice map names is refused here rather than at render time.
+    """
+    default_speaker = _default_drill_speaker(scenes)
+    phrases: list[Phrase] = [
+        Phrase(text=STORY_DRILL_TITLE, voice_id=narrator_voice, language_code="en", role="narrator")
+    ]
+    for drill in drills:
+        kind = drill["kind"]
+        phrases.append(
+            Phrase(text=STORY_DRILL_INSTRUCTIONS[kind], voice_id=narrator_voice, language_code="en", role="narrator")
+        )
+        # Lower-cased, as validation and the dialogue's own lines read a role.
+        cue_speaker = (drill.get("speaker") or default_speaker).lower()
+        cue_voice = _resolve_voice(cue_speaker, l2_voice_map)
+        answer_voice = _resolve_voice(_answer_speaker(drill, cue_speaker, scenes), l2_voice_map)
+        if kind == "substitution":
+            phrases.append(Phrase(text=drill["model"], voice_id=cue_voice, language_code=l2_code, role="model"))
+        for step in drill["steps"]:
+            phrases.append(Phrase(text=step["cue"], voice_id=cue_voice, language_code=l2_code, role=DRILL_PROMPT_ROLE))
+            phrases.append(Phrase(text=step["answer"], voice_id=answer_voice, language_code=l2_code, role="answer"))
     return Section(section_type=SectionType.AFFIX_DRILL, phrases=phrases)

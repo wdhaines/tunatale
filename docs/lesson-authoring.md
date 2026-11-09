@@ -148,6 +148,41 @@ order they should reach the deck:
 - Format rules and their messages: `tests/test_lesson_card_list.py`;
   `app/srs/lesson_cards.py::validate_cards`.
 
+### `drills`: the story's own drills (optional, tunatale-h0q3.3)
+
+A story may author the drills its lesson ends on. They become ONE section — the
+type the affix drill already uses, so the player's Drill phase and the hands-free
+run play them unchanged — after the dialogue sections:
+
+```json
+"drills": [
+  { "kind": "substitution", "speaker": "female-1", "model": "Jeg skal hjem.",
+    "steps": [{ "cue": "hun", "answer": "Hun skal hjem." },
+              { "cue": "vi",  "answer": "Vi skal hjem." }] },
+  { "kind": "question_answer", "speaker": "female-1", "answer_speaker": "male-1",
+    "steps": [{ "cue": "Hvor skal du?", "answer": "Jeg skal hjem." }] },
+  { "kind": "true_false",
+    "steps": [{ "cue": "Hun skal hjem.", "answer": "Nei." }] }
+]
+```
+
+- **`kind`** — `substitution`, `question_answer` or `true_false`. A substitution
+  drill needs its **`model`**, the sentence the learner changes; the other kinds
+  have none.
+- **`steps`** — non-empty, each with a `cue` (what the learner hears, then
+  answers into the pause) and its `answer` (always given, then repeated).
+- **`speaker`** — the role that says the cue and the model; optional. Without it
+  the drill goes to the dialogue's first character. **`answer_speaker`** — the
+  role that says the answer, on a question-and-answer drill only; without it the
+  answer is the first character who is not asking. The other kinds answer in the
+  cue's voice and ignore `answer_speaker`. Every role must be in the language's
+  voice map, or the import is refused by name.
+- **What the narrator says** — "Drill" once, then one short English line at the
+  start of each drill: "Change the sentence.", "Answer the question.", "True or
+  false?". Nothing between steps.
+- Export writes `drills` back verbatim (they are part of the persisted source),
+  and their target-language text is normalised like every other L2 field.
+
 ## File format & location
 
 **Recommendation: JSON**, 1:1 with the schema above (no transform, no new

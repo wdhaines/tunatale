@@ -141,7 +141,9 @@ def add_closing_drill(
     A root the story said in both forms leads; the rest follow in the order
     the story first says them, up to :data:`DRILLED`. Fewer than ``MIN_ROOTS``
     is a word and not a pattern, and the lesson is left as it was. So is a
-    lesson that already has a drill, and a grammar lesson, which is one.
+    lesson that already recorded this drill, and a grammar lesson, which is one.
+    A story that authored its own drills already has the lesson's one
+    AFFIX_DRILL section: this drill's phrases join it, after the authored ones.
 
     Up to :data:`NEW` more roots are asked for and not modelled. Each is one
     the learner understands, whose forms mean what the root means
@@ -172,7 +174,7 @@ def add_closing_drill(
     and is recorded with the drill. ``None`` drills the whole pattern.
     """
     cells = pattern.halves[half] if half is not None else ()
-    if lesson.kind != "thematic" or any(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections):
+    if lesson.kind != "thematic" or "affix_drill" in lesson.generation_metadata:
         return
     story = list(dict.fromkeys(lesson_lines(lesson)))
     first_said: dict[str, int] = {}
@@ -233,11 +235,19 @@ def add_closing_drill(
         cells=cells,
     )
     voices = language.tts_voice_map
-    lesson.sections.append(
-        build_affix_drill_section(
-            drill, narrator_voice=voices["narrator"], l2_voice=voices.get("key-phrases") or voices["female-1"]
-        )
+    section = build_affix_drill_section(
+        drill, narrator_voice=voices["narrator"], l2_voice=voices.get("key-phrases") or voices["female-1"]
     )
+    # A story may bring its own drills, which already hold the lesson's one
+    # AFFIX_DRILL section (tunatale-h0q3.3). The affix drill joins them there,
+    # authored steps first, rather than opening a second drill section the
+    # player would play as two. ``affix_drill`` in the metadata is the
+    # idempotency guard, so this runs once either way.
+    authored = next((s for s in lesson.sections if s.section_type is SectionType.AFFIX_DRILL), None)
+    if authored is None:
+        lesson.sections.append(section)
+    else:
+        authored.phrases.extend(section.phrases)
     lesson.generation_metadata["affix_drill"] = {
         "pattern": pattern.key,
         "roots": roots,

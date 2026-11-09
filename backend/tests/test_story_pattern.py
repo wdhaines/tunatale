@@ -27,11 +27,12 @@ import pytest
 from app.generation import publishing
 from app.generation.grammar_lesson import contrast_cards
 from app.generation.publishing import CurriculumDayTarget, publish_lesson
+from app.generation.section_builder import SECTION_TITLES
 from app.generation.story import PROMPT_TOKEN_BUDGET, build_story_prompts
 from app.generation.story_pattern import add_closing_drill, add_day_drill, named_pattern, pattern_block, pattern_for_day
 from app.languages import get_a1_morphology, get_language
 from app.models.curriculum import Curriculum, CurriculumDay
-from app.models.lesson import KeyPhraseInfo, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, RevlogRow, SRSState
 from app.models.strategy import ContentStrategy
 from app.srs.contrast_card import contrast_card
@@ -702,6 +703,47 @@ def test_adding_it_twice_adds_it_once():
     sections = len(lesson.sections)
     add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
     assert len(lesson.sections) == sections
+
+
+def _with_authored_drills() -> Lesson:
+    """The wake, carrying a story's own drills as the build leaves them: one AFFIX_DRILL section."""
+    lesson = _story_lesson("An Evening Wake", _WAKE)
+    lesson.sections.append(
+        Section(
+            section_type=SectionType.AFFIX_DRILL,
+            phrases=[
+                Phrase(text="Drill", voice_id=lesson.narrator_voice, language_code="en", role="narrator"),
+                Phrase(
+                    text="Change the sentence.", voice_id=lesson.narrator_voice, language_code="en", role="narrator"
+                ),
+                Phrase(text="Miuban ko.", voice_id=lesson.narrator_voice, language_code="ceb", role="prompt"),
+                Phrase(text="Miuban ko.", voice_id=lesson.narrator_voice, language_code="ceb", role="answer"),
+            ],
+        )
+    )
+    return lesson
+
+
+def test_authored_drills_gain_the_affix_drill_in_the_same_section():
+    lesson = _with_authored_drills()
+
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
+
+    drills = [s for s in lesson.sections if s.section_type is SectionType.AFFIX_DRILL]
+    assert len(drills) == 1
+    # The authored steps stay first, then the affix drill's own title and steps.
+    assert [p.text for p in drills[0].phrases[:4]] == ["Drill", "Change the sentence.", "Miuban ko.", "Miuban ko."]
+    assert drills[0].phrases[4].text == SECTION_TITLES[SectionType.AFFIX_DRILL]
+    assert drills[0].phrases[5].language_code == "en"
+
+
+def test_authored_drills_are_given_the_affix_drill_once():
+    lesson = _with_authored_drills()
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
+    phrases = len(lesson.sections[-1].phrases)
+    add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
+    assert len(lesson.sections[-1].phrases) == phrases
+    assert sum(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections) == 1
 
 
 def test_the_story_lesson_then_adds_contrast_cards_like_a_grammar_lesson(owner):  # noqa: F811

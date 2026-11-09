@@ -12,6 +12,7 @@ Design: docs/lesson-authoring.md.
 from __future__ import annotations
 
 from app.generation.ids import mint_id
+from app.generation.section_builder import STORY_DRILL_INSTRUCTIONS
 from app.generation.story import build_lesson_from_story
 from app.models.language import Language
 from app.models.lesson import (
@@ -38,6 +39,21 @@ def _require(entry: object, path: str, fields: tuple[str, ...]) -> None:
             raise ValueError(f"{path}.{field} must be a non-empty string")
 
 
+def _require_known_speaker(speaker: str, language: Language) -> None:
+    """Reject a role the language's voice map does not name.
+
+    ``section_builder._resolve_voice`` raises for exactly this case at build
+    time; the door check reports it first, with the same wording, for a
+    dialogue line and a drill's ``speaker`` / ``answer_speaker`` alike.
+    """
+    speaker = speaker.lower()
+    if speaker not in language.tts_voice_map:
+        raise ValueError(
+            f"speaker '{speaker}' is not in the {language.code} voice map; "
+            f"known roles: {', '.join(sorted(language.tts_voice_map))}"
+        )
+
+
 def validate_story(story: object, language: Language | None = None) -> None:
     """Reject malformed Story JSON with a clear message (not a deep KeyError).
 
@@ -49,7 +65,11 @@ def validate_story(story: object, language: Language | None = None) -> None:
 
     When a *language* is passed, an unknown ``lines[].speaker`` is rejected
     too — ``_resolve_voice`` raises for exactly that case at render time, and
-    red over a warning is the user's standing preference.
+    red over a warning is the user's standing preference. The same goes for an
+    optional ``drills`` list (tunatale-h0q3.3): its ``kind`` must be one the
+    builder knows, a substitution drill needs its ``model``, every drill needs
+    steps with a cue and an answer, and a ``speaker`` / ``answer_speaker`` is a
+    known role when a *language* is given.
     """
     if not isinstance(story, dict):
         raise ValueError("story must be a JSON object")
@@ -75,12 +95,27 @@ def validate_story(story: object, language: Language | None = None) -> None:
         for j, line in enumerate(lines):
             _require(line, f"scenes[{i}].lines[{j}]", ("speaker", "text", "translation"))
             if known is not None:
-                speaker = line["speaker"].lower()
-                if speaker not in known:
-                    raise ValueError(
-                        f"speaker '{speaker}' is not in the {language.code} voice map; "
-                        f"known roles: {', '.join(sorted(language.tts_voice_map))}"
-                    )
+                _require_known_speaker(line["speaker"], language)
+    drills = story.get("drills", [])
+    if not isinstance(drills, list):
+        raise ValueError("drills must be a list")
+    for i, drill in enumerate(drills):
+        _require(drill, f"drills[{i}]", ("kind",))
+        kind = drill["kind"]
+        if kind not in STORY_DRILL_INSTRUCTIONS:
+            raise ValueError(f"drills[{i}].kind must be one of {', '.join(sorted(STORY_DRILL_INSTRUCTIONS))}")
+        if kind == "substitution":
+            _require(drill, f"drills[{i}]", ("model",))
+        for field in ("speaker", "answer_speaker"):
+            if field in drill:
+                _require(drill, f"drills[{i}]", (field,))
+                if known is not None:
+                    _require_known_speaker(drill[field], language)
+        steps = drill.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError(f"drills[{i}].steps must be a non-empty list")
+        for j, step in enumerate(steps):
+            _require(step, f"drills[{i}].steps[{j}]", ("cue", "answer"))
     if "cards" in story:
         line_texts = {line["text"] for scene in scenes for line in scene.get("lines", [])}
         validate_cards(story["cards"], line_texts=line_texts, language=language)
