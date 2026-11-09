@@ -27,6 +27,7 @@ from app.generation.section_builder import (
     build_slow_en_translated_section,
     build_slow_speed_section,
     build_slow_translated_section,
+    build_story_drill_section,
     build_translated_section,
 )
 from app.generation.story_pattern import named_pattern, pattern_block, pattern_for_day
@@ -536,8 +537,9 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
     # `data` (tunatale-w4m7.11): Tagalog's affix-hyphen cleanup turns the LLM's
     # `mag‑kape` (often U+2011) into standard `magkape`. Applied on a DEEP COPY
     # so the caller's dict is never mutated. Only scenes[*].lines[*].text,
-    # key_phrases[*].phrase and dialogue_glosses[*].word/.lemma are touched —
-    # never translation/title/base or any English.
+    # key_phrases[*].phrase, dialogue_glosses[*].word/.lemma and the target-
+    # language text of drills[*] are touched — never translation/title/base or
+    # any English.
     normalizer = get_story_text_normalizer(language.code)
     if normalizer is not None:
         data = copy.deepcopy(data)
@@ -554,6 +556,14 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             for field in ("word", "lemma"):
                 if field in gloss:
                     gloss[field] = normalizer(gloss[field])
+        # A story's authored drills are target-language text too. ``model`` is
+        # optional (only a substitution drill has one); every step has both.
+        for drill in data.get("drills", []):
+            if "model" in drill:
+                drill["model"] = normalizer(drill["model"])
+            for step in drill.get("steps", []):
+                for field in ("cue", "answer"):
+                    step[field] = normalizer(step[field])
 
     key_phrases = data.get("key_phrases", [])
     scenes = data.get("scenes", [])
@@ -582,6 +592,14 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
             scenes, language.tts_voice_map, narrator_voice, language.code, en_voice_map=language.tts_en_voice_map
         ),
     ]
+
+    # A story may author its own drills (tunatale-h0q3.3). They ride in ONE
+    # AFFIX_DRILL section, after the dialogue sections, because that is the
+    # section type the player's Drill phase and the hands-free run already play.
+    if data.get("drills"):
+        sections.append(
+            build_story_drill_section(data["drills"], scenes, language.tts_voice_map, narrator_voice, language.code)
+        )
 
     kp_infos = []
     for kp in key_phrases:

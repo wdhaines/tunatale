@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.generation.section_builder import key_phrase_groups
-from app.models.lesson import Lesson, SectionType
+from app.models.lesson import DRILL_PROMPT_ROLE, Lesson, SectionType
 
 
 @dataclass
@@ -40,6 +40,14 @@ def _next_is_l2(section, timing: list[CueTiming], idx: int, l2_code: str) -> boo
         return False
     next_phrase = section.phrases[timing[idx + 1].phrase_index]
     return next_phrase.language_code == l2_code
+
+
+def _next_is_prompt(section, timing: list[CueTiming], idx: int) -> bool:
+    """Whether the phrase after ``timing[idx]`` is an L2 drill prompt.
+
+    Only asked once :func:`_next_is_l2` has said there is an L2 phrase there.
+    """
+    return section.phrases[timing[idx + 1].phrase_index].role == DRILL_PROMPT_ROLE
 
 
 def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
@@ -97,15 +105,22 @@ def _build_dialogue_refs(lesson: Lesson, timing: list[CueTiming], section_idx: i
 
 
 def _build_drill_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int) -> list[Cue]:
-    """Build cues for the affix drill: an English line and the forms after it are one item.
+    """Build cues for a drill section: a step's cue and its answer are one item.
 
     That grouping is the drill's unit every way it occurs, the narrator naming a
-    form before it is built up and a prompt before its answer, so the cues share
-    one ``drill`` ref and the player's sentence step and repeat latch move by the
+    form before it is built up, a prompt before its answer, and an authored
+    story drill's cue before the answer it expects — so the cues share one
+    ``drill`` ref and the player's sentence step and repeat latch move by the
     item. English with no form after it (the section title, "Listen and
-    repeat.") is narration. The section always opens on its English title, so
-    a form never comes before the first item; ``max`` only keeps a malformed
-    section's index from going negative.
+    repeat.", a story drill's instruction) is narration.
+
+    An authored drill's L2 prompt opens its own item (tunatale-h0q3.3): the
+    answer after it belongs to the question, not to whatever the previous drill
+    ended on. An English line therefore opens an item only when the L2 phrase
+    after it is not a prompt — when it is, the prompt itself opens the item and
+    the English before it is the narrator's introduction. The section always
+    opens on an English title, so a form never comes before the first item;
+    ``max`` only keeps a malformed section's index from going negative.
 
     Never a ``line`` ref: that is an index into the transcript's dialogue, and
     a drill item is not in it.
@@ -113,16 +128,19 @@ def _build_drill_refs(lesson: Lesson, timing: list[CueTiming], section_idx: int)
     section = lesson.sections[section_idx]
     cues: list[Cue] = []
     l2_code = lesson.language_code
-    # The item the cues are in; an English line with a form after it opens the
-    # next one. Every form until the next English stays in it, so a built-up
-    # form (whole, its pieces, whole again) is ONE item, as a key phrase is.
+    # The item the cues are in; an L2 prompt, or an English line with a
+    # non-prompt form after it, opens the next one. Every form until then stays
+    # in it, so a built-up form (whole, its pieces, whole again) is ONE item, as
+    # a key phrase is.
     item_n = -1
 
     for i, te in enumerate(timing):
         phrase = section.phrases[te.phrase_index]
         if phrase.language_code == l2_code:
+            if phrase.role == DRILL_PROMPT_ROLE:
+                item_n += 1
             ref: dict = {"kind": "drill", "target_index": max(item_n, 0)}
-        elif _next_is_l2(section, timing, i, l2_code):
+        elif _next_is_l2(section, timing, i, l2_code) and not _next_is_prompt(section, timing, i):
             item_n += 1
             ref = {"kind": "drill", "target_index": item_n}
         else:

@@ -52,9 +52,12 @@ class SectionType(Enum):
     play the L2 line first then its English translation; EN_TRANSLATED /
     SLOW_EN_TRANSLATED play the English translation first then the L2 line.
 
-    AFFIX_DRILL is the one section not made from the story: a rule-built drill
-    on one affix pattern (``app.generation.affix_drill``), where the narrator
-    asks for a form, the learner says it into a pause, and the answer follows.
+    AFFIX_DRILL is the section the lesson drills in: a rule-built drill on one
+    affix pattern (``app.generation.affix_drill``), where the narrator asks for
+    a form, the learner says it into a pause, and the answer follows. A story
+    that authors its own ``drills`` gets them in the same section type
+    (``section_builder.build_story_drill_section``) — same player phase, and
+    the same cue and pause rules.
     """
 
     KEY_PHRASES = "key_phrases"
