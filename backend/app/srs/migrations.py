@@ -6,6 +6,7 @@ a single transaction. Migrations must be idempotent (safe to re-run).
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
@@ -18,7 +19,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 49
+CURRENT_VERSION = 50
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1489,6 +1490,37 @@ def migrate_v48_to_v49(conn: sqlite3.Connection) -> None:
     _set_version(conn, 49)
 
 
+def migrate_v49_to_v50(conn: sqlite3.Connection) -> None:
+    """Add ``collocations.sibling_group``: the rows whose cards share one Anki note (tunatale-h0q3.55).
+
+    A lesson line's blanks and its whole-line card are clozes of one "TT Sentence"
+    note, so Anki buries them as siblings. TT keeps one row per card, so the row
+    id can no longer be the sibling identity: every TT bury test keys on
+    ``COALESCE(sibling_group, row id)``, and ``sync_create_new`` mints one note per
+    group. A line's group is ``sent:<lesson>:<line>`` (``SentenceCard.line_key``).
+
+    Backfilled for UNLINKED sentence rows only. A linked one sits on a separate
+    Cloze note of h0q3.42, a sibling of nothing in Anki; grouping it here would
+    bury in TT what Anki serves. The live migration (phase 3) groups those as it
+    re-mints them. NULL for every other row.
+    """
+    if not _column_exists(conn, "collocations", "sibling_group"):
+        conn.execute("ALTER TABLE collocations ADD COLUMN sibling_group TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_collocations_sibling_group ON collocations(sibling_group)")
+    rows = conn.execute(
+        "SELECT id, card_data FROM collocations "
+        "WHERE disambig_key LIKE 'sent:%' AND anki_note_id IS NULL AND sibling_group IS NULL"
+    ).fetchall()
+    for row_id, raw in rows:
+        try:
+            card = json.loads(raw)
+            group = f"sent:{card['lesson_id']}:{card['line_index']}"
+        except ValueError, TypeError, KeyError:
+            continue
+        conn.execute("UPDATE collocations SET sibling_group = ? WHERE id = ?", (group, row_id))
+    _set_version(conn, 50)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1568,6 +1600,7 @@ _MIGRATIONS = {
     46: migrate_v46_to_v47,
     47: migrate_v47_to_v48,
     48: migrate_v48_to_v49,
+    49: migrate_v49_to_v50,
 }
 
 

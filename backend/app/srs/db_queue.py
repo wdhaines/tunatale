@@ -174,6 +174,16 @@ class DbQueueMixin:
             ).fetchall()
             return [(int(r[0]), r[1]) for r in rows]
 
+    def sibling_groups(self) -> dict[int, str]:
+        """``{row id: sibling_group}`` for every row that has one (tunatale-h0q3.55).
+
+        Rows of one group are cards of one Anki note, so the queue buries them as
+        siblings; a row missing here is its own note (``queue_engine._sibling_key``).
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT id, sibling_group FROM collocations WHERE sibling_group IS NOT NULL")
+            return {r[0]: r[1] for r in rows}
+
     def list_collocations_reviewed_today(self, today: date) -> set[int]:
         """Return set of collocation IDs reviewed during the local day `today`.
 

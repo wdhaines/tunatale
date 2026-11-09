@@ -3080,11 +3080,11 @@ last_unbury_day       TT_STATE    day_scoped=True  logic_version=None
 last_grade_undo       TT_STATE    day_scoped=False logic_version=None
 last_preset_change    TT_STATE    day_scoped=False logic_version=None
 learning_cutoff       TT_SESSION  day_scoped=True  logic_version=None
-session_main_queue    TT_SESSION  day_scoped=True  logic_version=2
+session_main_queue    TT_SESSION  day_scoped=True  logic_version=3
 ANKI_CONFIG: daily_new_cap, daily_review_cap, desired_retention, new_spread, new_card_sort_order, new_card_gather_priority, bury_new, bury_review, col_crt, fsrs_params, fsrs_preset_snapshot, learn_steps, relearn_steps, easy_days_percentages, load_balancer_enabled, new_cards_ignore_review_limit, fsrs_short_term_with_steps_enabled, maximum_review_interval
 ```
 
-`TT_SESSION` and `TT_STATE` keys are not Anki config: the frozen queue, the learning cutoff, the unbury day, the single-level grade-undo snapshot, and the preset-change alert. `logic_version` is how a deploy invalidates a cached queue: `session_main_queue` is at version 2 (bumped by the Layer 83 order change), and a cached payload with a different version is discarded exactly like one from yesterday. Every `ANKI_CONFIG` key must be rewritten by every non-dry-run `sync_pull`; `tests/test_sync_cache_conservation.py` derives that check from the registry, so a missing `refresh_*` fails a test rather than a user.
+`TT_SESSION` and `TT_STATE` keys are not Anki config: the frozen queue, the learning cutoff, the unbury day, the single-level grade-undo snapshot, and the preset-change alert. `logic_version` is how a deploy invalidates a cached queue: `session_main_queue` is at version 3 (2 for the Layer 83 order change, 3 when siblings came to be keyed on the note rather than the row, h0q3.55), and a cached payload with a different version is discarded exactly like one from yesterday. Every `ANKI_CONFIG` key must be rewritten by every non-dry-run `sync_pull`; `tests/test_sync_cache_conservation.py` derives that check from the registry, so a missing `refresh_*` fails a test rather than a user.
 
 ### 9.5 Three day rules
 
@@ -3317,7 +3317,7 @@ Two TT-only refinements sit on top. `budget_neutral` marks a "Check your work" r
 | Learning steps and fuzz | 6, 41 | Bit-exact RNG, single-step Hard delay |
 | Load balancer | 53, 55 | The residual `due_at` gap, the live port |
 | New-card gather, bury and order | 14, 24, 25, 28, 32, 33, 64, 65, 83, 84 | Gather order, cross-direction bury, Template sort, production gate, writer positions |
-| Sibling bury and unbury | 27, 35, 47, 56, 64, 67 | `bury_kind`, the daily sweep, the 04:00 window |
+| Sibling bury and unbury | 27, 35, 47, 56, 64, 67, 93 | `bury_kind`, the daily sweep, the 04:00 window, siblings keyed on the note (`sibling_group`) |
 | Badges and daily caps | 8a, 16, 26, 36, 73, 75 to 77, 79 | Counts from TT state only, `introduced_at`, review budget, new cap |
 | Sync merge and push/pull seams | 17 to 22, 30, 37, 58, 60 to 61, 68 to 74, 80, 86 to 90 | What the diff compares, Anki-ahead deferral, graves, revlog ids, per-grade push, suspension round trip, what a change nobody graded writes to Anki |
 | Pending bucket and isolation | 81 (retired), 82 | Staged grades, per-language injection |
@@ -3328,13 +3328,13 @@ grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; 
 ```
 
 ```output
-## Layer 89 — a pushed due date wrote `ivl = days from today`, which is the interval only on the day of the gr
 ## Layer 90 — a reset pushed to Anki forgot the card but logged nothing, so its old reviews still counted
 ## Layer 91 — a card with no `lrt` counted its elapsed days from a "today" that runs a day ahead after midnigh
 ## Layer 92 — a course's card list would have reached the deck backwards
+## Layer 93 — a lesson line's cards are one note's siblings, so TT's sibling identity became the note
 ```
 
-The four newest, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
+Layer 93 (2026-11-09) made a lesson line's cards one note's siblings, so TT's sibling identity is now the note (`sibling_group`), not the row. Layers 88 to 91, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
 
 **The oracle harness** pins TT against the real Anki scheduler rather than against TT's idea of it. A pytest fixture (`synthetic_collection`) builds a minimal modern `collection.anki2`, and a subprocess driver (`backend/tests/anki_oracle/oracle.py`, run with `uv run --with anki python`) opens it, enables the V3 scheduler, and answers JSON ops: queue order and counts, post-grade stability, `get_today`, `deck_today`, and so on. Tests are `backend/tests/test_parity_*.py`, marked `@pytest.mark.oracle`, opt-in via `--run-oracle`. The subprocess boundary is the architectural point: backend code and backend tests never `import anki`. Where the oracle and the Anki source disagree, trust the binary (Layer 38 was found that way). The harness mechanics, its fifteen gotchas and the CI wiring are in §10 and §14; the rule file is `.claude/rules/anki-oracle-harness.md`. Two CI facts belong here: `anki-gates` runs the oracle at the 04:00 rollover instead of the workflow's UTC, so a boundary-only failure there means TT and Anki genuinely disagree about the day (suspect product code first); and a finding that the harness surfaces is first filed `xfail(strict=True)` and fixed in its own commit.
 
@@ -3358,32 +3358,32 @@ The schema is a chain of functions in `app/srs/migrations.py`, keyed on `PRAGMA 
 grep -n "^CURRENT_VERSION" backend/app/srs/migrations.py
 cd backend && uv run python -c "
 import inspect, app.srs.migrations as m
-for n in range(42, 49):
+for n in range(43, 50):
     f = getattr(m, f'migrate_v{n}_to_v{n+1}')
     print(f'{f.__name__}: {inspect.getdoc(f).splitlines()[0]}')
 "
 ```
 
 ```output
-21:CURRENT_VERSION = 49
-migrate_v42_to_v43: Link a base cloze to the word it covers (``base_collocation_id``).
+22:CURRENT_VERSION = 50
 migrate_v43_to_v44: Record that a word's image search came back empty (``image_unavailable_at``).
 migrate_v44_to_v45: LLM-written cloze sentences, cached per word (``cloze_sentence_cache``).
 migrate_v45_to_v46: Delete media rows whose collocation no longer exists.
 migrate_v46_to_v47: A translation OF THE SENTENCE for the LLM cloze tier (``sentence_translation``).
 migrate_v47_to_v48: Blank the 18 cloze rows whose sentence gloss is a copy of the word gloss.
 migrate_v48_to_v49: Add ``collocations.card_data`` (tunatale-h0q3.42).
+migrate_v49_to_v50: Add ``collocations.sibling_group``: the rows whose cards share one Anki note (tunatale-h0q3.55).
 ```
 
 | Version | Purpose |
 |---|---|
-| v43 | `collocations.base_collocation_id`: link a cloze to the word it covers |
 | v44 | `collocations.image_unavailable_at`: remember an image search came back empty (§11) |
 | v45 | `cloze_sentence_cache`: LLM-written cloze sentences per word (§11) |
 | v46 | Delete media rows whose collocation is gone |
 | v47 | `sentence_translation` for the LLM cloze tier |
 | v48 | Blank cloze rows whose sentence gloss was a copy of the word gloss |
 | v49 | `collocations.card_data`: a sentence card's authored content, as JSON (TT-only) |
+| v50 | `collocations.sibling_group`: a lesson line's cards, which share one Anki note and bury as siblings |
 
 Opening a database is itself guarded, because the app opens every language DB at boot and a deploy can overlap two backends:
 

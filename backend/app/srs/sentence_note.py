@@ -23,22 +23,42 @@ def _esc(s: str) -> str:
     return html.escape(s, quote=False)
 
 
-def cloze_ords(cards: list[SentenceCard]) -> dict[str, int]:
-    """Each card's cloze number, by card key: the whole line 1, the blanks 2.. in list order."""
+def cloze_ords(cards: list[SentenceCard], taken: dict[str, int] | None = None) -> dict[str, int]:
+    """Each card's cloze number, by card key: the whole line 1, the blanks 2.. in list order.
+
+    *taken* holds the numbers of cards already minted (an Anki card's ord is its
+    cloze number - 1), which are kept: renumbering a cloze would hand its card,
+    and its review history, to another blank. A blank without one takes the
+    next number above every number in use, so a number freed by a deleted card
+    is never handed to a different blank.
+    """
     lines = {(c.lesson_id, c.line_index) for c in cards}
     if len(lines) != 1:
         raise ValueError(f"a TT Sentence note holds one line's cards, got {sorted(lines)}")
+    taken = {k: n for k, n in (taken or {}).items() if k in {c.key for c in cards}}
     ords: dict[str, int] = {}
-    next_blank = WHOLE_ORD + 1
+    next_blank = max([WHOLE_ORD, *taken.values()]) + 1
     for card in cards:
         if card.key in ords:
             raise ValueError(f"card {card.key} listed twice")
-        if card.blank is None:
+        if card.key in taken:
+            ords[card.key] = taken[card.key]
+        elif card.blank is None:
             ords[card.key] = WHOLE_ORD
         else:
             ords[card.key] = next_blank
             next_blank += 1
+    numbers = sorted(ords.values())
+    for a, b in zip(numbers, numbers[1:], strict=False):
+        if a == b:
+            raise ValueError(f"cloze {a} given to two cards of {cards[0].line_key}")
     return ords
+
+
+def source_label(card: SentenceCard) -> str:
+    """Where the line comes from, as the back's fold-out names it: ``Wolff 1 · line 4``."""
+    title = card.lesson_id.replace("-", " ")
+    return f"{title[:1].upper()}{title[1:]} · line {card.line_index}"
 
 
 def _text(cards: list[SentenceCard], ords: dict[str, int]) -> str:
@@ -69,10 +89,16 @@ def _sound(filename: str | None) -> str:
 
 
 def sentence_note_fields(
-    cards: list[SentenceCard], *, cue_audio: str | None, answer_audio: str | None, source: str
+    cards: list[SentenceCard],
+    *,
+    cue_audio: str | None,
+    answer_audio: str | None,
+    source: str,
+    ords: dict[str, int] | None = None,
 ) -> list[str]:
-    """The note's fields in ``FIELD_NAMES`` order, for one line's *cards*."""
-    ords = cloze_ords(cards)
+    """The note's fields in ``FIELD_NAMES`` order, for one line's *cards*, numbered *ords*
+    (``cloze_ords``; computed fresh when omitted)."""
+    ords = ords if ords is not None else cloze_ords(cards)
     line = cards[0]
     cue = line.cue
     blank_glosses = "".join(

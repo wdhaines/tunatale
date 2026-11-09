@@ -1830,3 +1830,15 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 
 **Files.** `app/plugins/anki_sync/sync_writer.py` (`COURSE_TAG`, `COURSE_REGION_GAP`, `_next_course_position`, `course=` on both creates), `app/plugins/anki_sync/sync_engine.py` (`sync_create_new`). Tests: `test_anki_course_card_position.py`.
 
+
+## Layer 93 — a lesson line's cards are one note's siblings, so TT's sibling identity became the note
+
+**The report.** Owner, 2026-11-09 (tunatale-h0q3.55): several cards of one Wolff sentence came up the same day. Each blank and each whole-line card was its own c1 Cloze note (h0q3.42), so neither Anki nor TT had any reason to space them.
+
+**Mechanism.** Anki buries by note. A line's cards now share one "TT Sentence" note (whole line cloze 1, blanks 2..), so `bury_new` / `bury_reviews` space them. TT keeps one collocation per card, and every TT sibling test keyed on the row id, which would have served all of a line's cards on one day while Anki served one.
+
+**Fix.** `collocations.sibling_group` (migration v50; `SentenceCard.line_key`, set at insert). `count_new_available_collocations` and `count_review_due_collocations` count `DISTINCT COALESCE(sibling_group, 'id:' || id)` and bury on the same key; `_compute_live_main` maps every bury set through `_sib`. `session_main_queue` `logic_version` 3. Sync works card by card: `sync_create_new` mints one note per line (`_mint_sentence_line`, ords kept once minted), `sync_pull` resolves each card of a shared note by card id (`_split_sentence_notes`, `get_collocation_by_anki_card_id`), `sync_push` rebuilds the whole note on any row's flag, and deleting a row flags its line so the push drops its cloze and graves its card (`rewrite_sentence_note`). The reader recognises the notetype and parses nothing back from it; the reverse import and `warn_if_guid_collisions` skip it.
+
+**Not grouped: the cards minted before this.** The v50 backfill groups unlinked sentence rows only. A linked one sits on its own Cloze note, a sibling of nothing in Anki, so grouping it would bury in TT what Anki serves; those keep `sibling_group` NULL and the h0q3.42 push path until phase 3 re-mints them.
+
+**Files.** `app/srs/migrations.py` (v50), `app/srs/db_counts.py`, `app/srs/anki_mirror/queue_engine.py`, `app/srs/sentence_note.py` (`cloze_ords(taken=)`), `app/plugins/anki_sync/sync_{engine,reader,writer}.py`, `app/srs/db_collocations.py` (`_flag_line_of_deleted`). Tests: `test_parity_sentence_sibling_bury.py` (oracle), `test_anki_sentence_note_sync.py`, `test_anki_sentence_card_sync.py` (the legacy shape).

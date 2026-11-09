@@ -103,7 +103,8 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
         name="session_main_queue",
         source=CacheSource.TT_SESSION,
         day_scoped=True,
-        logic_version=2,
+        # 3: siblings keyed on the note (sibling_group), not the row (tunatale-h0q3.55).
+        logic_version=3,
     ),
     # ANKI_CONFIG keys (18 total)
     "daily_new_cap": CacheKeySpec(

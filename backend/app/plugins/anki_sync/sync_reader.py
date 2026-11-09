@@ -7,8 +7,10 @@ Moved verbatim out of ``app/anki/sync.py`` (Phase 9 mechanical split).
 from __future__ import annotations
 
 import sqlite3
+from contextlib import suppress
 
 from app.cards.field_map import get_profile
+from app.cards.sentence_notetype import NAME as SENTENCE_NOTETYPE
 from app.languages import get_l2_css_class, get_l2_scorer
 from app.models.syntactic_unit import BackField
 from app.plugins.anki_sync.add_production_template import IMAGE_FIELD
@@ -150,10 +152,24 @@ class OfflineReader:
         except sqlite3.OperationalError:
             pass  # notetypes table may not exist in test/minimal collections
 
+        # The "TT Sentence" notetype (tunatale-h0q3.55): TT authors every field of
+        # it from the row's card_data, so nothing is parsed back; the record only
+        # carries the cards' schedules, which sync_pull resolves card by card.
+        sentence_mid = None
+        with suppress(sqlite3.OperationalError):
+            row = self._conn.execute("SELECT id FROM notetypes WHERE name = ?", (SENTENCE_NOTETYPE,)).fetchone()
+            sentence_mid = row[0] if row else None
+
         records = []
         for note in notes:
             is_cloze = cloze_mid is not None and note.mid == cloze_mid
-            if is_cloze:
+            is_sentence_note = sentence_mid is not None and note.mid == sentence_mid
+            if is_sentence_note:
+                translation = sentence_translation = l2_text = disambig_key = ""
+                note_text = None
+                article = None
+                extras = None
+            elif is_cloze:
                 back_extra = note.fields[1] if len(note.fields) > 1 else ""
                 translation = extract_cloze_translation(back_extra)
                 sentence_translation = extract_cloze_sentence_translation(back_extra)
@@ -213,14 +229,15 @@ class OfflineReader:
                     anki_guid=note.anki_guid,
                     l2_text=l2_text,
                     translation=translation,
-                    sentence_translation=sentence_translation if is_cloze else "",
+                    sentence_translation=sentence_translation if is_cloze or is_sentence_note else "",
                     note=note_text,
                     disambig_key=disambig_key,
                     article=article,
                     extras=extras,
                     mod=note.mod,
                     cards=card_records,
-                    is_cloze=is_cloze,
+                    is_cloze=is_cloze or is_sentence_note,
+                    sentence_note=is_sentence_note,
                     image_field=IMAGE_FIELD in note.field_names if note.field_names else None,
                 )
             )

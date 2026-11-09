@@ -248,13 +248,21 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
         interday_learning_due=db.count_interday_learning_due(today),
         new_cards_ignore_review_limit=ignore_review_limit,
     )
-    buried = db.list_collocations_reviewed_today(today)
+    # Sibling identity is the NOTE, as in Anki: a row's sibling_group when it has
+    # one (a lesson line's cards share a "TT Sentence" note, tunatale-h0q3.55), else
+    # the row. Every bury below compares these keys, never bare row ids.
+    groups = db.sibling_groups()
+
+    def _sib(row_id: int) -> int | str:
+        return groups.get(row_id, row_id)
+
+    buried = {_sib(row_id) for row_id in db.list_collocations_reviewed_today(today)}
 
     due_rec = db.get_due_items(today, Direction.RECOGNITION)
     due_prod = db.get_due_items(today, Direction.PRODUCTION)
     due = _merge_by_retrievability_ascending(due_rec, due_prod, today, col_crt=col_crt, params=params)
     if bury_review:
-        due = [t for t in due if t[0] not in buried]
+        due = [t for t in due if _sib(t[0]) not in buried]
     # F-14 (2026-08-05): a staged listen grade no longer filters its card out of
     # `due`. It is provisional, not applied, so the card is genuinely still due —
     # Anki counts and serves it, and now so does TT. Grading it here clears the
@@ -281,24 +289,24 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     )
     new_combined = _merge_directions(new_rec, new_prod, gather_descending=gather_descending)
     if bury_new:
-        new_combined = [t for t in new_combined if t[0] not in buried]
+        new_combined = [t for t in new_combined if _sib(t[0]) not in buried]
 
     learning_rec = db.get_learning_items(direction=Direction.RECOGNITION)
     learning_prod = db.get_learning_items(direction=Direction.PRODUCTION)
-    learning_collocation_ids = {row_id for row_id, _, _ in learning_rec}
-    learning_collocation_ids.update(row_id for row_id, _, _ in learning_prod)
+    learning_collocation_ids = {_sib(row_id) for row_id, _, _ in learning_rec}
+    learning_collocation_ids.update(_sib(row_id) for row_id, _, _ in learning_prod)
 
     nonlearning_due = [t for t in due if t[1].directions[t[3]].state not in (SRSState.LEARNING, SRSState.RELEARNING)]
-    nonlearning_new = [t for t in new_combined if t[0] not in learning_collocation_ids]
+    nonlearning_new = [t for t in new_combined if _sib(t[0]) not in learning_collocation_ids]
 
-    seen_collocation_ids: set[int] = set(learning_collocation_ids)
+    seen_collocation_ids: set[int | str] = set(learning_collocation_ids)
 
     def _bury(cards, when):
         survivors = []
         for t in cards:
-            if t[0] in seen_collocation_ids and when:
+            if _sib(t[0]) in seen_collocation_ids and when:
                 continue
-            seen_collocation_ids.add(t[0])
+            seen_collocation_ids.add(_sib(t[0]))
             survivors.append(t)
         return survivors
 

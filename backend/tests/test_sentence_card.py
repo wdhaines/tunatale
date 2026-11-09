@@ -123,6 +123,10 @@ class TestNoteText:
         card = SentenceCard("l", 0, "Per", "Hei.", "Hei.", "Hello.", (), picture="door.svg")
         assert card.note_text().startswith('<div class="tt-pic"><img src="door.svg"></div>')
 
+    def test_a_blank_card_clozes_only_its_blank(self):
+        card = CARD.with_blank(blank_span(CARD.text, "bor"), "live(s)")
+        assert card.note_text().endswith('<span class="tt-who">Per:</span> Jeg {{c1::bor}} i Oslo.</div>')
+
     def test_text_is_escaped(self):
         card = SentenceCard("l", 0, "Per <b>", "A & B.", "A & B.", "x", ())
         text = card.note_text()

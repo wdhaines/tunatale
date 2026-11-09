@@ -16,15 +16,17 @@ here knows a language. The owner's rules (2026-11-05, on the bead):
 * **The back** shows the blanked word's own gloss and the sentence's English
   openly; its word-by-word glosses and "What the cue means" start closed.
 
-The card is an Anki **Cloze** note like the focus card (no new notetype, so no
-forced full upload). Unlike the focus card its content is not computed from a
-language table: it is the course's text, which lives only in the learner's
-database and deck, never in this repo. So the card is stored whole as JSON in
-the row's ``card_data``, and field 0 and Back Extra are built from it, here,
-for both TT and the Anki write.
+Its content is not computed from a language table: it is the course's text,
+which lives only in the learner's database and deck, never in this repo. So the
+card is stored whole as JSON in the row's ``card_data``, and the note is built
+from it, for both TT and the Anki write.
 
-Each blank is its own note for now (owner, 2026-11-06: separate notes now,
-real siblings later, tunatale-h0q3.55): TT maps one collocation to one note.
+A line's cards are clozes of ONE "TT Sentence" note (tunatale-h0q3.55), so
+Anki buries them as siblings: one row per card, the rows of a line sharing
+``collocations.sibling_group`` (``line_key``), the note's fields built by
+``app.srs.sentence_note``. ``note_text`` and ``back_extra`` below are the
+earlier shape, each card its own c1 Cloze note (h0q3.42); they still write the
+cards minted that way, which keep ``sibling_group`` NULL until re-minted.
 
 The key is ``sent:<lesson>:<line>`` for the whole sentence and
 ``sent:<lesson>:<line>:<start>-<end>`` for a blank. ``sent:`` keeps the card
@@ -108,9 +110,13 @@ class SentenceCard:
     picture: str = ""  # an opener's picture (a media filename), shown where a cue would be
 
     @property
+    def line_key(self) -> str:
+        """The line's key: the whole-line card's key, and the sibling group of all the line's cards."""
+        return f"{SENTENCE_KEY_PREFIX}{self.lesson_id}:{self.line_index}"
+
+    @property
     def key(self) -> str:
-        base = f"{SENTENCE_KEY_PREFIX}{self.lesson_id}:{self.line_index}"
-        return f"{base}:{self.blank[0]}-{self.blank[1]}" if self.blank else base
+        return f"{self.line_key}:{self.blank[0]}-{self.blank[1]}" if self.blank else self.line_key
 
     def with_blank(self, span: tuple[int, int], gloss: str) -> SentenceCard:
         return replace(self, blank=span, blank_gloss=gloss)
@@ -200,6 +206,16 @@ class SentenceCard:
             source_line_index=self.line_index,
             card_data=self.to_json(),
         )
+
+
+def sibling_group(unit: SyntacticUnit) -> str | None:
+    """The sibling group a new row for *unit* joins: its line, for a sentence card; else none.
+
+    The rows of one group become the cards of one "TT Sentence" note
+    (``collocations.sibling_group``, tunatale-h0q3.55).
+    """
+    card = sentence_card(unit)
+    return card.line_key if card is not None else None
 
 
 def sentence_card(unit: SyntacticUnit) -> SentenceCard | None:

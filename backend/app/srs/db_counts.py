@@ -15,6 +15,17 @@ from app.srs.db_base import (
     _anki_day_bounds_utc,
 )
 
+#: Every direction with its card's sibling identity, ``sib``: the row's
+#: ``sibling_group`` when it has one (a lesson line's cards share one "TT Sentence"
+#: note, tunatale-h0q3.55), else the row itself (one note per row). Anki buries by
+#: note, so every sibling test below keys on ``sib``, never on ``collocation_id``.
+_WITH_SIBLING_KEY = """
+    WITH d AS (
+        SELECT cd.*, COALESCE(c.sibling_group, 'id:' || c.id) AS sib
+        FROM collocation_directions cd JOIN collocations c ON c.id = cd.collocation_id
+    )
+"""
+
 
 class DbCountsMixin:
     """Badge counters. Mixed into SRSDatabase; relies on SRSDatabaseBase infra."""
@@ -49,8 +60,9 @@ class DbCountsMixin:
            does NOT bury (verified against the Anki binary): pushing the
            sibling's ``due`` forward flips Anki's ``counts.new`` 0 → 1.
 
-        ``COUNT(DISTINCT collocation_id)`` collapses a both-new note to one,
-        mirroring Anki burying the second new sibling. Only meaningful when
+        ``COUNT(DISTINCT sib)`` collapses a both-new note to one (and a lesson
+        line's new cards, which share a note), mirroring Anki burying the second
+        new sibling. Only meaningful when
         ``bury_new`` is set — the caller falls back to ``count_new_available``
         otherwise. (`_compute_live_main` already applies the same bury to the
         served queue; this keeps the badge consistent with it.)
@@ -62,11 +74,12 @@ class DbCountsMixin:
         end_of_day_utc = datetime.combine(today, time.max).isoformat()
         with self._get_conn() as conn:
             return conn.execute(
-                """
-                SELECT COUNT(DISTINCT cd.collocation_id) FROM collocation_directions cd
-                WHERE cd.state = 'new'
-                  AND cd.collocation_id NOT IN (
-                    SELECT collocation_id FROM collocation_directions
+                _WITH_SIBLING_KEY
+                + """
+                SELECT COUNT(DISTINCT d.sib) FROM d
+                WHERE d.state = 'new'
+                  AND d.sib NOT IN (
+                    SELECT sib FROM d
                     WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
                        OR (length(last_review) = 10 AND last_review = ?)
                        OR state IN ('learning', 'relearning')
@@ -132,11 +145,12 @@ class DbCountsMixin:
         end_of_day_utc = datetime.combine(today, time.max).isoformat()
         with self._get_conn() as conn:
             return conn.execute(
-                """
-                SELECT COUNT(DISTINCT cd.collocation_id) FROM collocation_directions cd
-                WHERE cd.due_at <= ? AND cd.state = 'review'
-                  AND cd.collocation_id NOT IN (
-                    SELECT collocation_id FROM collocation_directions
+                _WITH_SIBLING_KEY
+                + """
+                SELECT COUNT(DISTINCT d.sib) FROM d
+                WHERE d.due_at <= ? AND d.state = 'review'
+                  AND d.sib NOT IN (
+                    SELECT sib FROM d
                     WHERE (length(last_review) > 10 AND last_review >= ? AND last_review < ?)
                        OR (length(last_review) = 10 AND last_review = ?)
                        OR state IN ('learning', 'relearning')
