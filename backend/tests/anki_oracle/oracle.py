@@ -29,6 +29,7 @@ Operations
     Anki's own Set Due Date and Forget. Read the manual revlog row each leaves
     with ``get_revlog``.
 ``{"op": "get_card_row", "card_id": 1}``
+``{"op": "render_cards"}`` — every card's rendered question/answer HTML, by note sort field and ord
     The card's stored columns, as opposed to ``get_card``'s scheduler view.
 """
 
@@ -448,8 +449,25 @@ def _op_check_database(col: Any, op: dict) -> dict:
     return {"ran": True, "ok": ok, "report": str(report)}
 
 
+def _op_render_cards(col: Any, op: dict) -> dict:
+    """Every card's question and answer as Anki renders them, keyed ``"<sfld>/<ord>"``.
+
+    The notetype's ``<style>`` block is dropped from each side: the subject is the
+    card's own markup (which cloze is active, which fields reached which side).
+    """
+    out: dict[str, dict[str, str]] = {}
+    for cid, sfld, ord_ in col.db.all("select c.id, n.sfld, c.ord from cards c join notes n on n.id = c.nid"):
+        card = col.get_card(cid)
+        out[f"{sfld}/{ord_}"] = {
+            "question": card.question().split("</style>")[-1],
+            "answer": card.answer().split("</style>")[-1],
+        }
+    return out
+
+
 _OPERATIONS: dict[str, Any] = {
     "note_ords": _op_note_ords,
+    "render_cards": _op_render_cards,
     "check_database": _op_check_database,
     "get_queue": _op_get_queue,
     "set_config": _op_set_config,

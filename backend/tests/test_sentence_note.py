@@ -1,0 +1,155 @@
+"""One TT Sentence note per lesson line: its blanks and its whole-line card as siblings (tunatale-h0q3.55).
+
+The design (``.beads-tasks/briefs/design-sentence-notetype-siblings-2026-11.md``):
+a line's cards share ONE Anki note of the "TT Sentence" notetype, so Anki buries
+them as siblings. The whole line is always cloze 1, wrapping the blanks (nested
+clozes; measured against the anki engine 2026-11-09), and the blanks take 2, 3, …
+in the order the lesson lists them. Each blank's gloss sits in ``BlankGlosses``
+tagged with its cloze number, so the card's CSS shows only the active one.
+
+The fixture is Wolff 1, line 4, as it is live in the owner's deck.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.cards.sentence_notetype import FIELD_NAMES
+from app.srs.sentence_card import Cue, Gloss, SentenceCard, blank_span
+from app.srs.sentence_note import WHOLE_ORD, cloze_ords, sentence_note_fields
+
+_BASE = SentenceCard(
+    lesson_id="wolff-1",
+    line_index=4,
+    speaker="Ínting",
+    text="Nâa ba si Místir Abáya?",
+    spoken="Nâa ba si Místir Abáya?",
+    english="Is Mr. Abaya there?",
+    glosses=(
+        Gloss("nâa", "is there, are there"),
+        Gloss("ba", "question particle"),
+        Gloss("si", "particle preceding names"),
+    ),
+    cue=Cue(
+        speaker="Inday",
+        text="Únsa may átò?",
+        spoken="Únsa may átò?",
+        english="What can I do for you? (Lit. What is ours?)",
+        glosses=(Gloss("únsa", "what?"),),
+    ),
+)
+
+
+def _blank(form: str, gloss: str) -> SentenceCard:
+    return _BASE.with_blank(blank_span(_BASE.text, form), gloss)
+
+
+NAA = _blank("nâa", "there (near you), not nîa")
+BA = _blank("ba", "yes/no question particle")
+LINE = [NAA, BA, _BASE]  # the lesson's order: blanks first, the whole line last
+
+
+def _fields(cards=LINE, **kw) -> dict[str, str]:
+    kw.setdefault("cue_audio", "take_cue.mp3")
+    kw.setdefault("answer_audio", "take_answer.mp3")
+    kw.setdefault("source", "Wolff 1 · line 4")
+    return dict(zip(FIELD_NAMES, sentence_note_fields(cards, **kw), strict=True))
+
+
+class TestClozeOrds:
+    def test_whole_line_is_cloze_one_blanks_follow_in_lesson_order(self):
+        assert cloze_ords(LINE) == {_BASE.key: WHOLE_ORD, NAA.key: 2, BA.key: 3}
+        assert WHOLE_ORD == 1
+
+    def test_without_a_whole_card_cloze_one_is_unused(self):
+        assert cloze_ords([NAA, BA]) == {NAA.key: 2, BA.key: 3}
+
+    def test_cards_of_two_lines_are_refused(self):
+        other = SentenceCard(**{**_BASE.__dict__, "line_index": 5})
+        with pytest.raises(ValueError, match="one line"):
+            cloze_ords([NAA, other])
+
+    def test_the_same_card_twice_is_refused(self):
+        with pytest.raises(ValueError, match="twice"):
+            cloze_ords([NAA, NAA])
+
+
+class TestText:
+    def test_blanks_nest_inside_the_whole_line(self):
+        assert _fields()["Text"] == "{{c1::{{c2::Nâa}} {{c3::ba}} si Místir Abáya?}}"
+
+    def test_no_whole_card_no_outer_cloze(self):
+        assert _fields([NAA, BA])["Text"] == "{{c2::Nâa}} {{c3::ba}} si Místir Abáya?"
+
+    def test_whole_card_alone(self):
+        assert _fields([_BASE])["Text"] == "{{c1::Nâa ba si Místir Abáya?}}"
+
+    def test_a_suffix_blank_stays_attached(self):
+        base = SentenceCard(**{**_BASE.__dict__, "text": "Màáyong búntag."})
+        ng = base.with_blank(blank_span(base.text, "-ng"), "linker")
+        assert _fields([ng, base])["Text"] == "{{c1::Màáyo{{c2::ng}} búntag.}}"
+
+    def test_text_is_escaped(self):
+        base = SentenceCard(**{**_BASE.__dict__, "text": "A <b> & c"})
+        assert _fields([base])["Text"] == "{{c1::A &lt;b&gt; &amp; c}}"
+
+    def test_overlapping_blanks_are_refused(self):
+        na_lang = _BASE.with_blank((0, 6), "x")
+        with pytest.raises(ValueError, match="overlap"):
+            sentence_note_fields([NAA, na_lang], cue_audio="", answer_audio="", source="")
+
+    def test_cloze_syntax_in_the_text_is_refused(self):
+        base = SentenceCard(**{**_BASE.__dict__, "text": "a :: b"})
+        with pytest.raises(ValueError, match="cloze syntax"):
+            sentence_note_fields([base], cue_audio="", answer_audio="", source="")
+
+
+class TestFields:
+    def test_speakers_cue_audio_and_english(self):
+        f = _fields()
+        assert f["Speaker"] == "Ínting"
+        assert f["CueSpeaker"] == "Inday"
+        assert f["Cue"] == "Únsa may átò?"
+        assert f["CueAudio"] == "[sound:take_cue.mp3]"
+        assert f["AnswerAudio"] == "[sound:take_answer.mp3]"
+        assert f["English"] == "Is Mr. Abaya there?"
+        assert f["Source"] == "Wolff 1 · line 4"
+
+    def test_each_blank_gloss_is_tagged_with_its_cloze_number(self):
+        assert _fields()["BlankGlosses"] == (
+            '<div class="tt-bg" data-c="2"><b>Nâa</b> there (near you), not nîa</div>'
+            '<div class="tt-bg" data-c="3"><b>ba</b> yes/no question particle</div>'
+        )
+
+    def test_word_by_word_rows(self):
+        assert _fields()["Glosses"] == (
+            '<div class="tt-w">nâa</div><div class="tt-g">is there, are there</div>'
+            '<div class="tt-w">ba</div><div class="tt-g">question particle</div>'
+            '<div class="tt-w">si</div><div class="tt-g">particle preceding names</div>'
+        )
+
+    def test_cue_means_holds_its_glosses_then_its_english(self):
+        assert _fields()["CueMeans"] == (
+            '<div class="tt-glosses"><div class="tt-w">únsa</div><div class="tt-g">what?</div></div>'
+            '<div class="tt-en">What can I do for you? (Lit. What is ours?)</div>'
+        )
+
+    def test_wolff_italics_markup_in_glosses(self):
+        base = SentenceCard(**{**_BASE.__dict__, "glosses": (Gloss("ba", "a _yes/no_ particle"),)})
+        assert (
+            _fields([base])["Glosses"] == '<div class="tt-w">ba</div><div class="tt-g">a <i>yes/no</i> particle</div>'
+        )
+
+    def test_an_opener_has_a_picture_and_no_cue(self):
+        base = SentenceCard(**{**_BASE.__dict__, "cue": None, "picture": "opener_door.svg"})
+        f = _fields([base], cue_audio=None)
+        assert f["Picture"] == '<img src="opener_door.svg">'
+        assert (f["Cue"], f["CueSpeaker"], f["CueAudio"], f["CueMeans"]) == ("", "", "", "")
+
+    def test_missing_audio_leaves_the_field_empty(self):
+        f = _fields(cue_audio=None, answer_audio=None)
+        assert (f["CueAudio"], f["AnswerAudio"]) == ("", "")
+
+    def test_a_line_without_glosses_has_empty_glosses(self):
+        base = SentenceCard(**{**_BASE.__dict__, "glosses": ()})
+        assert _fields([base])["Glosses"] == ""
