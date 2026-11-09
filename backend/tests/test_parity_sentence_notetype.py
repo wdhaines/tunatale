@@ -88,4 +88,9 @@ def test_one_note_renders_a_sibling_card_per_cloze(synthetic_collection: Synthet
     # Anki copies the hidden text into a data-cloze attribute; what shows is the rest.
     assert "Místir" not in re.sub(r'data-cloze="[^"]*"', "", whole_front)
     blank_front = cards[f"{sfld}/2"]["question"]
+    # What the blank shows is Anki's own placeholder, as on any cloze card (owner 2026-11-09):
+    # the CSS leaves this text visible rather than drawing its own mark over it.
+    assert re.search(r'<span class="cloze" data-cloze="[^"]*" data-ordinal="3">\[\.\.\.\]</span>', blank_front), (
+        blank_front
+    )
     assert "Nâa" in blank_front and "Místir Abáya?" in blank_front
