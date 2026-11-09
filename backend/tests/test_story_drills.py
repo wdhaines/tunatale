@@ -23,7 +23,7 @@ import pytest
 
 from app.audio.cues import CueTiming, build_cue_manifest
 from app.audio.pause_calculator import NaturalPauseCalculator
-from app.generation.story import build_lesson_from_story
+from app.generation.story import StoryGenerationError, build_lesson_from_story
 from app.languages import get_language
 from app.models.lesson import Lesson, SectionType
 from app.storage.lesson_io import validate_story
@@ -163,6 +163,66 @@ def test_a_story_with_no_dialogue_drills_in_female_1():
     assert [p.voice_id for p in section.phrases[2:]] == [_F1, _F1]
 
 
+# --- a lesson that is drills only (tunatale-h0q3.58) -------------------------
+# Owner, 2026-11-09: a Practice lesson that replayed its lesson's whole dialogue
+# was "weird ... new lessons with most of the same content, just new drills".
+
+
+def _drills_only(drills: list[dict]) -> dict:
+    return {"title": "Practice", "drills": drills}
+
+
+def test_a_story_of_drills_alone_is_one_drill_section_and_nothing_else():
+    story = _drills_only(_drills())
+    validate_story(story, _NO)
+    lesson = build_lesson_from_story(story, _NO)
+
+    assert [s.section_type for s in lesson.sections] == [SectionType.AFFIX_DRILL]
+    assert _rows(lesson.sections[0])[:3] == [
+        ("Drill", _NARRATOR, "en", "narrator"),
+        ("Change the sentence.", _NARRATOR, "en", "narrator"),
+        ("Jeg skal hjem.", _F1, "no", "model"),
+    ]
+
+
+def test_a_story_with_no_key_phrases_no_scenes_and_no_drills_is_still_refused():
+    with pytest.raises(ValueError, match="story needs at least one of 'key_phrases', 'scenes' or 'drills'"):
+        validate_story({"title": "Empty", "drills": []}, _NO)
+    with pytest.raises(StoryGenerationError):
+        build_lesson_from_story({"title": "Empty"}, _NO)
+
+
+# --- transformation (Wolff's a/b pairs) ----------------------------------------
+
+
+def test_a_transformation_drill_says_its_own_instruction_then_each_pair_in_one_voice():
+    drills = [
+        {
+            "kind": "transformation",
+            "instruction": "Make it plural.",
+            "steps": [{"cue": "Hun skal hjem.", "answer": "De skal hjem."}],
+        }
+    ]
+    _, section = _drill_section(_story(drills))
+
+    assert _rows(section) == [
+        ("Drill", _NARRATOR, "en", "narrator"),
+        ("Make it plural.", _NARRATOR, "en", "narrator"),
+        ("Hun skal hjem.", _F1, "no", "prompt"),
+        ("De skal hjem.", _F1, "no", "answer"),
+    ]
+
+
+def test_any_drill_may_say_its_own_instruction_instead_of_the_kinds_line():
+    drills = [
+        {"kind": "true_false", "instruction": "Is it so?", "steps": [{"cue": "Hun skal hjem.", "answer": "Nei."}]}
+    ]
+    validate_story(_story(drills), _NO)
+    _, section = _drill_section(_story(drills))
+
+    assert section.phrases[1].text == "Is it so?"
+
+
 def test_an_unknown_drill_speaker_is_refused_at_build():
     drills = [{"kind": "true_false", "speaker": "ghost", "steps": [{"cue": "Hun skal hjem.", "answer": "Nei."}]}]
 
@@ -264,7 +324,7 @@ def test_a_story_with_valid_drills_validates():
         (["not an object"], "drills[0] must be an object"),
         (
             [{"kind": "recall", "steps": [{"cue": "a", "answer": "b"}]}],
-            "drills[0].kind must be one of question_answer, substitution, true_false",
+            "drills[0].kind must be one of question_answer, substitution, transformation, true_false",
         ),
         ([{"steps": [{"cue": "a", "answer": "b"}]}], "drills[0] is missing required field 'kind'"),
         ([{"kind": "true_false", "steps": []}], "drills[0].steps must be a non-empty list"),
@@ -280,6 +340,14 @@ def test_a_story_with_valid_drills_validates():
         (
             [{"kind": "substitution", "steps": [{"cue": "a", "answer": "b"}]}],
             "drills[0] is missing required field 'model'",
+        ),
+        (
+            [{"kind": "transformation", "steps": [{"cue": "a", "answer": "b"}]}],
+            "drills[0] is missing required field 'instruction'",
+        ),
+        (
+            [{"kind": "true_false", "instruction": " ", "steps": [{"cue": "a", "answer": "b"}]}],
+            "drills[0].instruction must be a non-empty string",
         ),
         (
             [{"kind": "true_false", "speaker": "ghost", "steps": [{"cue": "a", "answer": "b"}]}],

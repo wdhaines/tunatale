@@ -166,9 +166,14 @@ run play them unchanged — after the dialogue sections:
 ]
 ```
 
-- **`kind`** — `substitution`, `question_answer` or `true_false`. A substitution
-  drill needs its **`model`**, the sentence the learner changes; the other kinds
-  have none.
+- **`kind`** — `substitution`, `question_answer`, `true_false` or
+  `transformation`. A substitution drill needs its **`model`**, the sentence the
+  learner changes; the other kinds have none. A transformation drill is Wolff's
+  a/b pairs: each step's `cue` is a sentence and its `answer` the same sentence
+  changed (active to passive, singular to plural), in one voice.
+- **`instruction`** — the narrator's English line before the drill, instead of
+  the kind's own. Required on a transformation drill, which has no line of its
+  own because what changes differs from step to step (`"Make it passive."`).
 - **`steps`** — non-empty, each with a `cue` (what the learner hears, then
   answers into the pause) and its `answer` (always given, then repeated).
 - **`speaker`** — the role that says the cue and the model; optional. Without it
@@ -179,7 +184,12 @@ run play them unchanged — after the dialogue sections:
   voice map, or the import is refused by name.
 - **What the narrator says** — "Drill" once, then one short English line at the
   start of each drill: "Change the sentence.", "Answer the question.", "True or
-  false?". Nothing between steps.
+  false?", or the drill's own `instruction`. Nothing between steps.
+- **A story of drills alone** — a story may have `drills` and no `key_phrases`
+  and no `scenes` (a Wolff Practice lesson, tunatale-h0q3.58). Its lesson is the
+  drill section alone: no empty key-phrase or dialogue tracks are rendered, the
+  player draws no phase row, and the page offers no Read mode, as for an affix-drill
+  grammar lesson. Its drills speak in female-1 unless they name a `speaker`.
 - Export writes `drills` back verbatim (they are part of the persisted source),
   and their target-language text is normalised like every other L2 field.
 

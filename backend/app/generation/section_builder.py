@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 KeyPhrase = dict  # {"phrase": str, "translation": str}
 DialogueLine = dict  # {"speaker": str, "text": str, "translation": str}
 Scene = dict  # {"label": str, "lines": list[DialogueLine]}
-Drill = dict  # {"kind": str, "speaker": str, "answer_speaker": str, "model": str, "steps": list[dict]}
+Drill = dict  # {"kind", "instruction", "speaker", "answer_speaker", "model": str; "steps": list[dict]}
 
 # Narrator-spoken section titles matching the demo format.
 # The "Slow" pass is enunciated speech — each word of the line said apart, no
@@ -56,11 +56,15 @@ AFFIX_DRILL_TITLE = "Affix Drill"
 STORY_DRILL_TITLE = "Drill"
 
 # The one English line the narrator says at the start of each authored drill.
+# A drill may say its own (``instruction``); a transformation drill must, since
+# what it changes differs from step to step (Wolff: active to passive, singular
+# to plural, statement to negative), so it has no line of its own here.
 STORY_DRILL_INSTRUCTIONS: dict[str, str] = {
     "substitution": "Change the sentence.",
     "question_answer": "Answer the question.",
     "true_false": "True or false?",
 }
+STORY_DRILL_KINDS: tuple[str, ...] = (*STORY_DRILL_INSTRUCTIONS, "transformation")
 
 
 def _resolve_voice(speaker: str, l2_voice_map: dict[str, str]) -> str:
@@ -634,9 +638,8 @@ def build_story_drill_section(
     ]
     for drill in drills:
         kind = drill["kind"]
-        phrases.append(
-            Phrase(text=STORY_DRILL_INSTRUCTIONS[kind], voice_id=narrator_voice, language_code="en", role="narrator")
-        )
+        instruction = drill.get("instruction") or STORY_DRILL_INSTRUCTIONS[kind]
+        phrases.append(Phrase(text=instruction, voice_id=narrator_voice, language_code="en", role="narrator"))
         # Lower-cased, as validation and the dialogue's own lines read a role.
         cue_speaker = (drill.get("speaker") or default_speaker).lower()
         cue_voice = _resolve_voice(cue_speaker, l2_voice_map)
