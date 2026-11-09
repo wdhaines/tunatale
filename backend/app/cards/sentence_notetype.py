@@ -112,12 +112,11 @@ CSS = (
 .tt-card .replay-button { flex: none; }
 .tt-card .cloze { font-weight: 700; color: var(--warm); border-bottom: 3px solid var(--warm); }
 .tt-card .cloze-inactive { color: inherit; font-weight: inherit; }
-.tt-front .cloze { display: inline-block; min-width: 2.6em; text-align: center; font-size: 0; line-height: 1.1; }
-.tt-front .cloze::after { content: "?"; font-size: 22px; }
+.tt-front .cloze { display: inline-block; min-width: 2.6em; text-align: center; line-height: 1.1; }
 .tt-front .tt-line:has(.cloze[data-ordinal="1"]) {
  background: transparent; border: 2px dashed var(--warm); min-width: 200px; min-height: 54px; justify-content: center;
 }
-.tt-front .cloze[data-ordinal="1"] { border: 0; min-width: 0; }
+.tt-front .cloze[data-ordinal="1"] { border: 0; min-width: 0; font-size: 0; }
 .tt-front .cloze[data-ordinal="1"]::after { content: "\\2022  \\2022  \\2022"; font-size: 20px; }
 .tt-back .cloze[data-ordinal="1"] { color: inherit; font-weight: 500; border: 0; }
 .tt-bg { display: none; }

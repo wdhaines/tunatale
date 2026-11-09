@@ -68,6 +68,18 @@ class TestCss:
         for n in range(2, 21):
             assert f'.tt-card:has(.cloze[data-ordinal="{n}"]) .tt-bg[data-c="{n}"]' in CSS
 
+    def test_a_blank_shows_ankis_own_placeholder(self):
+        """Owner 2026-11-09: a blank reads ``[...]`` like any cloze, not a drawn ``?``.
+
+        Anki writes ``[...]`` inside the active blank's span; only the whole-line
+        card (cloze 1) hides it, to draw its dashed bubble.
+        """
+        assert 'content: "?"' not in CSS
+        [blank_rule] = re.findall(r"^\.tt-front \.cloze \{([^}]*)\}", CSS, flags=re.M)
+        assert "font-size: 0" not in blank_rule
+        [whole_rule] = re.findall(r'^\.tt-front \.cloze\[data-ordinal="1"\] \{([^}]*)\}', CSS, flags=re.M)
+        assert "font-size: 0" in whole_rule
+
     def test_whole_line_front_is_a_dashed_bubble(self):
         assert '.tt-front .tt-line:has(.cloze[data-ordinal="1"])' in CSS
 

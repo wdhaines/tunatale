@@ -3673,6 +3673,7 @@ import_seed.py
 migrate_number_clozes.py
 normalize_usns.py
 refresh_dictionary_css.py
+refresh_sentence_css.py
 remint_sentence_notes.py
 replay_fsrs_from_revlog.py
 reposition_production_cards.py
@@ -3684,7 +3685,7 @@ sqlite_reader.py
 
 Six of those arrived with the Cebuano dictionary and short-form work, and they show the shape a change to an existing notetype takes. `add_dictionary_fields` and `add_short_form_field` are schema changes to the TT vocab notetype (new fields and their template blocks), so they follow the full-upload protocol of §10.3; `refresh_dictionary_css` updates its stylesheet; `backfill_dictionary_fields` fills the new fields on notes that already exist; `short_form_cards` is read-only and reports what a live deck needs for first-class short forms; and `convert_pronoun_clozes` turns a language's pronoun clozes into picture cards while keeping their review history, in three steps (retire, add, inherit), each a dry run until `--apply` and each followed by a sync, because the new card has the cloze's guid and so cannot be minted until the cloze's grave has reached AnkiWeb. A learner with no Anki gets the same dictionary layers from `backend/scripts/backfill_dictionary_extras.py` (§11.10).
 
-`add_sentence_notetype` creates the "TT Sentence" notetype (`app/cards/sentence_notetype.py`), a cloze notetype TT owns: one note per lesson line, whose whole line is cloze 1 wrapping the blanks, so Anki buries a line's cards as siblings. Its CSS shows each card only its own blank's gloss by the active cloze's `data-ordinal`, with no template script. It is a schema change (§10.3); `app/srs/sentence_note.py` builds a note's fields from the line's cards.
+`add_sentence_notetype` creates the "TT Sentence" notetype (`app/cards/sentence_notetype.py`), a cloze notetype TT owns: one note per lesson line, whose whole line is cloze 1 wrapping the blanks, so Anki buries a line's cards as siblings. Its CSS shows each card only its own blank's gloss by the active cloze's `data-ordinal`, with no template script. It is a schema change (§10.3); `app/srs/sentence_note.py` builds a note's fields from the line's cards. A later change to its look needs no full upload: `refresh_sentence_css` replaces the live notetype's CSS with the current one, a data-only write that reaches the other devices at their next sync.
 
 `remint_sentence_notes` moves the lines minted before that notetype (each card on its own c1 Cloze note) onto it: per line it graves the old notes in `tt_collection`, unlinks the line's TT rows and groups them, and resets each to a fresh NEW row, dropping its `tt_revlog` history into a capture file; the next sync mints the line as one note. TT is unlinked before any sync can read the graves, because `detect_and_reset_orphans` deletes a TT row whose note it finds graved, and the history leaves TT because a new card's empty Anki revlog would otherwise let the first grade push all of it.
 
