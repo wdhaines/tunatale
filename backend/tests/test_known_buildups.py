@@ -100,9 +100,10 @@ def test_a_well_known_word_in_a_key_phrase_loses_its_syllable_pieces(db):
     trim_well_known_buildups(lesson, db, StubLemmatizer())
 
     after = _texts(lesson, SectionType.KEY_PHRASES)
-    assert after == [t for t in before if t not in ("on", "ka")]
-    assert "kaon" in after  # the word itself, whole
-    assert after.count("Kaon na ta!") == before.count("Kaon na ta!")  # the phrase still built backwards
+    # kaon is not its phrase's last word, so its lone rung goes too: the rung after it says it
+    # (tunatale-lat6). The phrase is still built backwards.
+    assert after == [t for t in before if t not in ("on", "ka", "kaon")]
+    assert after.count("Kaon na ta!") == before.count("Kaon na ta!")
 
 
 def test_a_word_that_is_known_but_not_well_known_keeps_its_buildup(db):
@@ -167,7 +168,7 @@ def test_the_story_itself_is_never_trimmed(db):
 def test_the_count_trimmed_is_reported(db):
     _card(db, "kaon", known=True)
 
-    assert trim_well_known_buildups(_lesson(), db, StubLemmatizer()) == 2
+    assert trim_well_known_buildups(_lesson(), db, StubLemmatizer()) == 3  # on, ka, and kaon's lone rung
 
 
 async def test_publishing_trims_what_it_writes(db):
@@ -177,6 +178,9 @@ async def test_publishing_trims_what_it_writes(db):
     class _Target:
         def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
             return None
+
+        def taught_prefixes(self, srs_db) -> frozenset[str]:
+            return frozenset()
 
         def write(self, lesson) -> str:
             written.append(lesson)
@@ -208,6 +212,9 @@ async def test_publishing_with_no_deck_trims_nothing():
         def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
             return None
 
+        def taught_prefixes(self, srs_db) -> frozenset[str]:
+            return frozenset()
+
         def write(self, lesson) -> str:
             written.append(lesson)
             return "written"
@@ -233,6 +240,9 @@ async def test_a_trim_that_fails_never_sinks_the_publish(db, caplog):
     class _Target:
         def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
             return None
+
+        def taught_prefixes(self, srs_db) -> frozenset[str]:
+            return frozenset()
 
         def write(self, lesson) -> str:
             written.append(lesson)

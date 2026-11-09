@@ -311,6 +311,11 @@ class LanguageConfig:
     # the word and the English it came with, or None when the dictionary does not read
     # it as one verb (tunatale-h0q3.26). ``None`` (the default): the language has none.
     parts_fn: Callable[[str, str], str | None] | None = None
+    # A word's prefix when it comes off cleanly, leaving the root as the rest of
+    # the word (Cebuano mag + lisod), or None. A key phrase's long word is then
+    # built root first (``app.generation.buildup_rules``). ``None`` for a
+    # language with no affix decoder: its long words are built in pairs.
+    prefix_fn: Callable[[str], str | None] | None = None
     # Infinitive-marker word prepended to a VERB headword when minting a TT vocab
     # card ("å" + lemma → "å lyve", matching the convention already used across
     # the user's Anki collection). None (the default) means the language has no
@@ -858,6 +863,11 @@ def get_l2_scorer(code: str) -> Callable[[str], float] | None:
     # Through _facet like its siblings: this getter alone skipped discover(), so
     # a first call before any other getter saw no plugins and returned None.
     return _facet(code, "l2_scorer", None)
+
+
+def get_prefix_fn(code: str) -> Callable[[str], str | None] | None:
+    """Return *code*'s clean-prefix function, or ``None`` (see ``LanguageConfig.prefix_fn``)."""
+    return _facet(code, "prefix_fn", None)
 
 
 def get_breakdown_spans(code: str) -> Callable[[str], list[BreakdownChunk]] | None:

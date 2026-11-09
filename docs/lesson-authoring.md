@@ -84,6 +84,31 @@ Field notes (all load-bearing):
 - **`dialogue_glosses[].word`** — an L2 surface (conjugated form ok); `.translation` its
   gloss. Surface + lemma both keyed (lemma via the sentence-aware lemmatizer).
 - **`morphology_focus`** — optional list, passed through to metadata.
+- **`dialogue_glosses[].kind`** — optional: `"name"` or `"loan"`. Such a word is never
+  broken into syllables in the key phrases' build-up (tunatale-lat6). Names a story does
+  not mark are found by their capitals (any capital that does not start a sentence).
+- **`buildup`** — optional: `{"min_syllables": 3}` breaks only words of 3+ syllables in
+  the key phrases' build-up (a Wolff lesson). Without it, 2-syllable words break too.
+
+#### What the key phrases' build-up keeps (tunatale-lat6)
+
+The owner tuned these rules on 2026-11-09 (Wolff 2b's key phrases ran 10:14 under the
+full build). Every story-built lesson, generated or imported, gets them
+(`app/generation/buildup_rules.py`):
+
+- the backward build always stays (`baay`, `ilang baay?`, `niy ilang baay?` … the phrase);
+- a word is broken only from `min_syllables`, never if it is a name or a loan, and at
+  most once per lesson; an unbroken word is said only in the backward rungs, except the
+  phrase's last word, where the build starts;
+- a broken word of 3+ syllables is built root first when the language's `prefix_fn`
+  splits it cleanly (`lisod`, `maglisod`), else two syllables at a time from the end
+  (`ila`, `ilaila`, `ipailaila`).
+
+Words the learner knows well are trimmed later, at publish (`known_buildups.py`), and so is
+a word made of a prefix the learner has (`pattern_gate.taught_prefixes`: a passed pattern, or
+on the owner's deck one brought from Tagalog, ma-/na- and mag-/nag-) and a well-known root.
+Export does not write `buildup` or `kind` back, so a re-imported export is built with
+the defaults.
 
 ### `cards`: the lesson's own card list (optional, tunatale-h0q3.43)
 

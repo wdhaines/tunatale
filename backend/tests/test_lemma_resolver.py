@@ -187,6 +187,9 @@ class _RecordingTarget:
     def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
         return None
 
+    def taught_prefixes(self, srs_db) -> frozenset[str]:
+        return frozenset()
+
     def write(self, lesson) -> str:
         self.cached_at_write = cached(self._srs_db, self._lem, "Og så stoppet vi.")
         return "lesson-1"

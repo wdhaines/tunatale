@@ -491,16 +491,17 @@ print(textwrap.fill(', '.join(names), 100))
 ```
 
 ```output
-48 LanguageConfig fields:
+49 LanguageConfig fields:
 language, preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, l2_scorer,
 lemmatizer_type, syllabifier_fn, morphology_profile, slow_word_fn, story_text_normalizer,
 definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, variant_pairs_fn,
-dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, infinitive_marker,
-verb_headword_fn, gender_articles, noun_gender_fn, style_notes, function_words_path, numbers_path,
-spatial_path, pronouns_path, calendar_path, breakdown_spans_fn, alignment, take_check,
-planner_example, wordfreq_lang, frequency_table_path, a1_morphology, lexicon_factory,
-phoneme_planner_factory, ipa_read_in_voice_locale, ipa_for_drill_phrases, ipa_for_enunciated_lines,
-ipa_for_natural_lines, ipa_for_card_words, phrase_match_exact_form, lemma_table_path, built_data
+dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, prefix_fn,
+infinitive_marker, verb_headword_fn, gender_articles, noun_gender_fn, style_notes,
+function_words_path, numbers_path, spatial_path, pronouns_path, calendar_path, breakdown_spans_fn,
+alignment, take_check, planner_example, wordfreq_lang, frequency_table_path, a1_morphology,
+lexicon_factory, phoneme_planner_factory, ipa_read_in_voice_locale, ipa_for_drill_phrases,
+ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words, phrase_match_exact_form,
+lemma_table_path, built_data
 ```
 
 The nine fields added since the 2026-10-01 edition are all Cebuano's, and all are about a dictionary or a voice: `variant_pairs_fn` and `short_form_pairs_fn` (which spellings are one word, §3.9), `dictionary_fields_fn`, `dictionary_gloss_fn` and `parts_fn` (Wolff's dictionary on cards and in the reader, §3.9, §11.10), `take_check` (re-drawing a Gemini take that says a `t` as `p`, §7.3), and three IPA flags, `ipa_for_enunciated_lines`, `ipa_for_natural_lines` and `ipa_for_card_words`, that send a whole line or card word to the voice with its reading.
@@ -535,10 +536,10 @@ for code in sorted(L._CONFIGS):
 ceb Cebuano    locale=ceb-PH  lemmatizer=table  style=True
       preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, syllabifier_fn,
       variant_separator, variant_pairs_fn, dictionary_fields_fn, short_form_pairs_fn,
-      dictionary_gloss_fn, parts_fn, function_words_path, numbers_path, spatial_path, pronouns_path,
-      calendar_path, take_check, frequency_table_path, a1_morphology, phoneme_planner_factory,
-      ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words,
-      lemma_table_path
+      dictionary_gloss_fn, parts_fn, prefix_fn, function_words_path, numbers_path, spatial_path,
+      pronouns_path, calendar_path, take_check, frequency_table_path, a1_morphology,
+      phoneme_planner_factory, ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines,
+      ipa_for_card_words, lemma_table_path
 en  English    locale=en-US  lemmatizer=lowercase  style=False
       (none: gloss language only)
 no  Norwegian  locale=nb-NO  lemmatizer=stanza  style=True
@@ -1906,7 +1907,7 @@ E
 ```output
 mo-mi                  molakaw / milakaw
                        will walk / walked
-mag-nag                maglakaw / naglakaw
+mag-nag    review_only maglakaw / naglakaw
                        will be walking / is walking
 ma-na      review_only matulog / natulog
                        will sleep / is asleep
@@ -1978,7 +1979,7 @@ answer ceb mokaon
 - its drill heard on `DRILL_DAYS` (2) different study days, counted from lessons marked listened whose drill is that pattern (two listens on one day are one drill); and
 - `FIRST_PASSES` (4) of its cards passing their first review, with at least `PASS_RATE` (80%) of all its card reviews passing. Learning steps are not reviews: passing them shows the card was read the day it was added.
 
-A `review_only` pattern (`ma-`/`na-`, which the owner knows from Tagalog) needs one drill and no cards, but only on the owner's deck; a second learner is taught it like any other, so every caller says whose deck it is reading (`692f73b`). With every pattern passed, the one heard longest ago comes round. A pattern still unpassed after `STUCK_AFTER` (5) drill days logs `PATTERN_STUCK` and stays, because something other than another drill has to change. The evidence for two drills was the owner's transfer probe: 5 of 10 after one `mo-`/`mi-` drill, 10 of 10 after two, with an undrilled root among the ten.
+A `review_only` pattern (`ma-`/`na-` and, since 2026-11-09, `mag-`/`nag-`, which the owner knows from Tagalog) needs one drill and no cards, but only on the owner's deck; a second learner is taught it like any other, so every caller says whose deck it is reading (`692f73b`). With every pattern passed, the one heard longest ago comes round. A pattern still unpassed after `STUCK_AFTER` (5) drill days logs `PATTERN_STUCK` and stays, because something other than another drill has to change. The evidence for two drills was the owner's transfer probe: 5 of 10 after one `mo-`/`mi-` drill, 10 of 10 after two, with an undrilled root among the ten.
 
 **Object focus** (stage 6, the `on-gi` pattern) adds a second choice to the first: which noun is the `ang` noun. "Ate" is both `mikaon` and `gikaon`, and English shows the difference only in the object's article (He ate bread / He ate THE bread), so this pattern is taught as whole sentences, built by rule from one hand-checked row per root (`ceb/focus_sentences.py`, `data/focus_rows.tsv`): the affix, the doer (`siya` becomes `niya`) and `og` becoming `ang` move together. Three things follow from that. The narrator stresses the focus in each English prompt: `Phrase.stressed` (§4.3) rides through the renderer to the Azure adapter, which wraps the stressed words in `<prosody pitch="+15%" volume="+30%" rate="-20%">` inside the line's own rate wrapper (`azure_tts.py::_STRESS_PROSODY`; `<emphasis>` was measured with Praat and raised no pitch at all). Each sentence builds up only its new verb, since the rest are words the learner has. And the drill comes in two halves, by tense, one per story lesson (`AffixPattern.halves`), because whole it ran about nine minutes, too long for the end of a lesson. Its cards are *focus cards* (`app/srs/focus_card.py`, `morph:focus-<feature>`): one whole sentence per cell, English with the focus in bold on the front, so no card can be passed on tense alone.
 

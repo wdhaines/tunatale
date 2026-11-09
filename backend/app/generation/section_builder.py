@@ -9,8 +9,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from app.generation.buildup_rules import BuildupRules, reshape_breakdown
 from app.generation.syllabify import syllabify_word
-from app.languages import get_breakdown_spans
+from app.languages import get_breakdown_spans, get_prefix_fn
 from app.models.breakdown import BreakdownChunk
 from app.models.lesson import DRILL_PROMPT_ROLE, Phrase, Section, SectionType
 
@@ -195,6 +196,7 @@ def build_key_phrases_section(
     l2_voice_map: dict[str, str],
     narrator_voice: str,
     l2_code: str,
+    rules: BuildupRules | None = None,
 ) -> Section:
     """Build the KEY_PHRASES section.
 
@@ -209,7 +211,13 @@ def build_key_phrases_section(
 
     Key phrases with a missing phrase or translation are skipped with a warning,
     so the group count can be lower than ``len(key_phrases)``.
+
+    *rules* keeps each build-up to the words it breaks
+    (:mod:`app.generation.buildup_rules`); ``None`` keeps the full build, which
+    is what a stored lesson's resync compares against.
     """
+    built: set[str] = set()
+    prefix_fn = get_prefix_fn(l2_code) if rules is not None else None
     female_1_voice = l2_voice_map.get("key-phrases") or l2_voice_map.get("female-1", narrator_voice)
     phrases: list[Phrase] = [
         Phrase(
@@ -229,7 +237,10 @@ def build_key_phrases_section(
 
         phrases.append(Phrase(text=phrase_text, voice_id=female_1_voice, language_code=l2_code))
         phrases.append(Phrase(text=translation, voice_id=narrator_voice, language_code="en", role="narrator"))
-        for chunk in build_word_breakdown_spans(phrase_text, l2_code):
+        chunks = build_word_breakdown_spans(phrase_text, l2_code)
+        if rules is not None:
+            chunks = reshape_breakdown(phrase_text, chunks, rules=rules, built=built, prefix_fn=prefix_fn)
+        for chunk in chunks:
             phrases.append(
                 Phrase(
                     text=chunk.text,

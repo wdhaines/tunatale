@@ -65,6 +65,9 @@ PATTERNS: tuple[AffixPattern, ...] = (
             "The first is for something that has not begun yet, and will go on for a while.",
             "The second is for something going on, now or before.",
         ),
+        # The owner's from Tagalog too, like ma-/na-: "we can consider mag/nag
+        # learned at this point" (2026-11-09, tunatale-lat6).
+        review_only=True,
     ),
     AffixPattern(
         "ma-na",

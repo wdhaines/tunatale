@@ -49,6 +49,13 @@ def _wolff_parts(word: str, english: str) -> str | None:
     return load_lexicon().parts_line(word, english)
 
 
+def _wolff_prefix(word: str) -> str | None:
+    """*word*'s prefix when it comes off leaving the root (tunatale-lat6), or None."""
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon
+
+    return load_lexicon().prefix(word)
+
+
 def _wolff_gloss(word: str) -> str:
     """Wolff's short gloss for a word, or "" when its letters do not settle the entry."""
     from app.plugins.languages.ceb.wolff_cards import load_lexicon
@@ -178,6 +185,7 @@ register(
         dictionary_gloss_fn=_wolff_gloss,
         # A lesson word glossed by its parts, for the reader's popup (tunatale-h0q3.26).
         parts_fn=_wolff_parts,
+        prefix_fn=_wolff_prefix,
         # The style guide's first job is keeping Tagalog OUT: close kin, and
         # dominant in training data (tunatale-u8nz.4). All three data files are
         # orchestrator-drafted and not yet native-checked (tunatale-u8nz.9).

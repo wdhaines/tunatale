@@ -873,6 +873,30 @@ class WolffLexicon:
         form = next(c.surface for c in affixes.generate(root, affix) if affixes.strip_marks(c.surface) == letters)
         return onto_card(word, handbook_spelling(shifted(form, "←"), _NO_CORPUS).text)
 
+    def prefix(self, word: str) -> str | None:
+        """*word*'s prefix as written, when the decoder's best analysis is a prefix alone and the
+        root is the rest of the word letter for letter (mag + lisod), else None (tunatale-lat6).
+
+        A key phrase's long word is built root first from it. A prefix that changes the root
+        (maN- + sakay = manakay) or any suffix or infix gives None, and the word is built in
+        pairs instead. Handbook o and Wolff's u are one letter here, as in the Handbook.
+        """
+        found = affixes.analyse(word, self._decoder, "")
+        if not found or not found[0].affix:
+            return None
+        pre, inf, suf, _ = affixes._split_affix(found[0].affix)
+        if not pre or inf or suf:
+            return None
+        flat = word.lower().replace("-", "")
+
+        def letters(text: str) -> str:
+            return affixes.strip_marks(text).replace("-", "").lower().replace("u", "o")
+
+        root = letters(found[0].root)
+        if not root or len(root) >= len(flat) or not letters(flat).endswith(root):
+            return None
+        return flat[: len(flat) - len(root)]
+
     def parts(self, word: str, english: str = "") -> list[Part] | None:
         """*word* as its affixes and root, each glossed, in the word's order; None when the
         decoder finds no affix, a piece has no approved label, or the readings differ."""
