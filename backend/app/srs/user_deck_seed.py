@@ -99,6 +99,8 @@ COLLOCATION_KEEP = frozenset(
         "image_unavailable_at",
         # A sentence card's content (h0q3.42): the card itself, as the note shows it.
         "card_data",
+        # The cards of one Anki note (h0q3.55): a re-seeded line mints one shared note again.
+        "sibling_group",
     }
 )
 #: collocations: the Anki pairing and pointers into the source's lessons.

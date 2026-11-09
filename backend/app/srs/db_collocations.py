@@ -16,6 +16,7 @@ from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import BackField, SyntacticUnit, deserialize_extras, serialize_extras
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+from app.srs.sentence_card import sibling_group
 
 
 def _derived_lemma(language_code: str, text: str, word_count: int) -> str | None:
@@ -99,8 +100,8 @@ class DbCollocationsMixin:
                         (text, translation, language_code, word_count, unit_difficulty,
                          source, corpus_frequency, lemma, guid, disambig_key, article, extras, grammar, note,
                          source_sentence, sentence_translation, source_lesson_id, source_line_index, card_type,
-                         card_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         card_data, sibling_group)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -123,6 +124,7 @@ class DbCollocationsMixin:
                         unit.source_line_index,
                         unit.card_type,
                         unit.card_data,
+                        sibling_group(unit),
                     ),
                 )
                 coll_id = conn.execute(
@@ -565,8 +567,8 @@ class DbCollocationsMixin:
                         (text, translation, language_code, word_count, unit_difficulty,
                          source, corpus_frequency, lemma, guid, anki_note_id, disambig_key,
                          article, extras, grammar, note, source_sentence, sentence_translation,
-                         source_lesson_id, source_line_index, card_type, card_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source_lesson_id, source_line_index, card_type, card_data, sibling_group)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         unit.text,
@@ -590,6 +592,7 @@ class DbCollocationsMixin:
                         unit.source_line_index,
                         unit.card_type,
                         unit.card_data,
+                        sibling_group(unit),
                     ),
                 )
                 coll_id = cursor.lastrowid

@@ -90,7 +90,7 @@ class TestRegistryStructure:
     def test_logic_version_only_on_session_main_queue(self):
         """Only session_main_queue has logic_version (=1)."""
         versioned = {k: spec.logic_version for k, spec in REGISTRY.items() if spec.logic_version is not None}
-        assert versioned == {"session_main_queue": 2}
+        assert versioned == {"session_main_queue": 3}
 
     def test_all_specs_have_matching_names(self):
         """Each spec's name field matches its key."""

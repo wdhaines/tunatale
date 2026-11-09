@@ -125,4 +125,6 @@ def test_public_method_count_pinned() -> None:
     #  for the one-off repair that re-pictures the less common word — tunatale-jlwy)
     # +get_media_filename / +update_sentence_card (the sentence card: its cue take is
     #  a second audio kind, and a card edit re-pushes both note fields — h0q3.42)
-    assert count == 148
+    # +sibling_groups (a lesson line's cards share one Anki note, so the queue
+    #  buries them as siblings — h0q3.55)
+    assert count == 149

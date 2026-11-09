@@ -74,7 +74,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 49
+        assert CURRENT_VERSION == 50
 
     def test_migrates_v42_to_v43_adds_base_collocation_id(self, tmp_path):
         """The link that stops a cloze-covered word reading as two words.
@@ -2370,7 +2370,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 49
+        assert CURRENT_VERSION == 50
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2413,7 +2413,7 @@ class TestMigrateV37ToV38:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_listens" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 49
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
         finally:
             db.close()
 
@@ -2440,7 +2440,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 49
+        assert CURRENT_VERSION == 50
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -2483,7 +2483,7 @@ class TestMigrateV38ToV39:
         try:
             tables = {r[0] for r in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "lesson_reviews" in tables
-            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == 49
+            assert db._conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
         finally:
             db.close()
 
@@ -2500,7 +2500,7 @@ class TestMigrateV38ToV39:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert "lesson_listens" in tables
         assert "lesson_reviews" in tables
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 49
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CURRENT_VERSION
 
 
 class TestMigrationDriverAtomicity:
@@ -3010,3 +3010,65 @@ class TestMigrateV48ToV49AddsCardData:
         conn.execute("PRAGMA user_version = 48")
         migrate_v48_to_v49(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 49
+
+
+class TestMigrateV49ToV50AddsSiblingGroup:
+    """v49 → v50: ``collocations.sibling_group``, the cards of one Anki note (tunatale-h0q3.55)."""
+
+    def _v49(self):
+        import json
+
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("DROP INDEX idx_collocations_sibling_group")
+        conn.execute("ALTER TABLE collocations DROP COLUMN sibling_group")
+        conn.execute("PRAGMA user_version = 49")
+        card = json.dumps({"lesson_id": "wolff-1", "line_index": 4})
+        for i, (key, note_id) in enumerate(
+            [("sent:wolff-1:4:0-3", None), ("sent:wolff-1:4", None), ("sent:wolff-1:5", 1234)]
+        ):
+            conn.execute(
+                "INSERT INTO collocations (text, translation, language_code, guid, disambig_key, card_type, "
+                "card_data, anki_note_id) VALUES (?, '', 'ceb', ?, ?, 'cloze', ?, ?)",
+                (f"line {i}", f"g-{i}", key, card, note_id),
+            )
+        conn.commit()
+        return conn
+
+    def _groups(self, conn) -> dict[str, str | None]:
+        return dict(conn.execute("SELECT text, sibling_group FROM collocations").fetchall())
+
+    def test_backfills_unlinked_sentence_rows_only(self):
+        """A linked row's note is a separate Cloze note (h0q3.42), so it is not a sibling of
+        anything in Anki; grouping it would bury what Anki serves. Phase 3 groups those as it
+        re-mints them."""
+        from app.srs.migrations import migrate_v49_to_v50
+
+        conn = self._v49()
+        migrate_v49_to_v50(conn)
+        assert self._groups(conn) == {
+            "banka": None,
+            "line 0": "sent:wolff-1:4",
+            "line 1": "sent:wolff-1:4",
+            "line 2": None,
+        }
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 50
+
+    def test_skips_a_row_whose_card_data_is_not_a_card(self):
+        from app.srs.migrations import migrate_v49_to_v50
+
+        conn = self._v49()
+        conn.execute("UPDATE collocations SET card_data = 'not json' WHERE text = 'line 0'")
+        migrate_v49_to_v50(conn)
+        assert self._groups(conn)["line 0"] is None
+
+    def test_is_idempotent(self):
+        from app.srs.migrations import migrate_v49_to_v50
+
+        conn = self._v49()
+        migrate_v49_to_v50(conn)
+        conn.execute("PRAGMA user_version = 49")
+        migrate_v49_to_v50(conn)
+        assert self._groups(conn)["line 1"] == "sent:wolff-1:4"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 50

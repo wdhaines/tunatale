@@ -108,9 +108,13 @@ class SentenceCard:
     picture: str = ""  # an opener's picture (a media filename), shown where a cue would be
 
     @property
+    def line_key(self) -> str:
+        """The line's key: the whole-line card's key, and the sibling group of all the line's cards."""
+        return f"{SENTENCE_KEY_PREFIX}{self.lesson_id}:{self.line_index}"
+
+    @property
     def key(self) -> str:
-        base = f"{SENTENCE_KEY_PREFIX}{self.lesson_id}:{self.line_index}"
-        return f"{base}:{self.blank[0]}-{self.blank[1]}" if self.blank else base
+        return f"{self.line_key}:{self.blank[0]}-{self.blank[1]}" if self.blank else self.line_key
 
     def with_blank(self, span: tuple[int, int], gloss: str) -> SentenceCard:
         return replace(self, blank=span, blank_gloss=gloss)
@@ -200,6 +204,16 @@ class SentenceCard:
             source_line_index=self.line_index,
             card_data=self.to_json(),
         )
+
+
+def sibling_group(unit: SyntacticUnit) -> str | None:
+    """The sibling group a new row for *unit* joins: its line, for a sentence card; else none.
+
+    The rows of one group become the cards of one "TT Sentence" note
+    (``collocations.sibling_group``, tunatale-h0q3.55).
+    """
+    card = sentence_card(unit)
+    return card.line_key if card is not None else None
 
 
 def sentence_card(unit: SyntacticUnit) -> SentenceCard | None:
