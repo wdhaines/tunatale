@@ -491,16 +491,17 @@ print(textwrap.fill(', '.join(names), 100))
 ```
 
 ```output
-48 LanguageConfig fields:
+49 LanguageConfig fields:
 language, preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, l2_scorer,
 lemmatizer_type, syllabifier_fn, morphology_profile, slow_word_fn, story_text_normalizer,
 definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, variant_pairs_fn,
-dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, infinitive_marker,
-verb_headword_fn, gender_articles, noun_gender_fn, style_notes, function_words_path, numbers_path,
-spatial_path, pronouns_path, calendar_path, breakdown_spans_fn, alignment, take_check,
-planner_example, wordfreq_lang, frequency_table_path, a1_morphology, lexicon_factory,
-phoneme_planner_factory, ipa_read_in_voice_locale, ipa_for_drill_phrases, ipa_for_enunciated_lines,
-ipa_for_natural_lines, ipa_for_card_words, phrase_match_exact_form, lemma_table_path, built_data
+dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, prefix_fn,
+infinitive_marker, verb_headword_fn, gender_articles, noun_gender_fn, style_notes,
+function_words_path, numbers_path, spatial_path, pronouns_path, calendar_path, breakdown_spans_fn,
+alignment, take_check, planner_example, wordfreq_lang, frequency_table_path, a1_morphology,
+lexicon_factory, phoneme_planner_factory, ipa_read_in_voice_locale, ipa_for_drill_phrases,
+ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words, phrase_match_exact_form,
+lemma_table_path, built_data
 ```
 
 The nine fields added since the 2026-10-01 edition are all Cebuano's, and all are about a dictionary or a voice: `variant_pairs_fn` and `short_form_pairs_fn` (which spellings are one word, §3.9), `dictionary_fields_fn`, `dictionary_gloss_fn` and `parts_fn` (Wolff's dictionary on cards and in the reader, §3.9, §11.10), `take_check` (re-drawing a Gemini take that says a `t` as `p`, §7.3), and three IPA flags, `ipa_for_enunciated_lines`, `ipa_for_natural_lines` and `ipa_for_card_words`, that send a whole line or card word to the voice with its reading.
@@ -535,10 +536,10 @@ for code in sorted(L._CONFIGS):
 ceb Cebuano    locale=ceb-PH  lemmatizer=table  style=True
       preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, syllabifier_fn,
       variant_separator, variant_pairs_fn, dictionary_fields_fn, short_form_pairs_fn,
-      dictionary_gloss_fn, parts_fn, function_words_path, numbers_path, spatial_path, pronouns_path,
-      calendar_path, take_check, frequency_table_path, a1_morphology, phoneme_planner_factory,
-      ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words,
-      lemma_table_path
+      dictionary_gloss_fn, parts_fn, prefix_fn, function_words_path, numbers_path, spatial_path,
+      pronouns_path, calendar_path, take_check, frequency_table_path, a1_morphology,
+      phoneme_planner_factory, ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines,
+      ipa_for_card_words, lemma_table_path
 en  English    locale=en-US  lemmatizer=lowercase  style=False
       (none: gloss language only)
 no  Norwegian  locale=nb-NO  lemmatizer=stanza  style=True

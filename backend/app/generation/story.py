@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from typing import NamedTuple
 
 from app.cards.pronoun_picture import has_second_sense, pronoun_gloss
+from app.generation.buildup_rules import BuildupRules
+from app.generation.drill_lines import fold
 from app.generation.glossing import dialogue_surface_lemmas, ensure_dialogue_glosses, uncovered_surfaces
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
@@ -493,6 +495,27 @@ def with_glosses_from(stored: Lesson, rebuilt: Lesson) -> Lesson:
     )
 
 
+# A dialogue gloss's ``kind`` that keeps the word from ever being broken up.
+_NEVER_BROKEN = frozenset({"name", "loan"})
+
+
+def story_buildup_rules(data: dict) -> BuildupRules:
+    """The build-up rules a Story JSON asks for (tunatale-lat6).
+
+    ``buildup.min_syllables`` raises the shortest word broken up (a Wolff lesson
+    says 3); a gloss whose ``kind`` is ``name`` or ``loan`` is never broken.
+    Both are optional: a generated story gets the defaults, and its names are
+    found by their capitals.
+    """
+    buildup = data.get("buildup") or {}
+    skip = frozenset(
+        fold(str(g.get("word") or g.get("lemma") or "")).strip(".,!?;:")
+        for g in data.get("dialogue_glosses", [])
+        if isinstance(g, dict) and g.get("kind") in _NEVER_BROKEN
+    )
+    return BuildupRules(min_syllables=int(buildup.get("min_syllables", 2)), skip_words=skip - {""})
+
+
 def build_lesson_from_story(data: dict, language: Language, *, review_words: Sequence[str] = ()) -> Lesson:
     """Build a Lesson from Story JSON — the ONE Story-JSON → Lesson build step.
 
@@ -541,7 +564,9 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
     narrator_voice = language.tts_voice_map.get("narrator", NARRATOR_VOICE)
 
     sections = [
-        build_key_phrases_section(key_phrases, language.tts_voice_map, narrator_voice, language.code),
+        build_key_phrases_section(
+            key_phrases, language.tts_voice_map, narrator_voice, language.code, rules=story_buildup_rules(data)
+        ),
         build_natural_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_slow_speed_section(scenes, language.tts_voice_map, narrator_voice, language.code),
         build_translated_section(
