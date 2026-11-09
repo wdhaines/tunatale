@@ -912,7 +912,7 @@ A `Phrase` is one thing to synthesize: `text`, `voice_id`, `language_code` (the 
 
 A drill step also uses two more fields. `role` names what the step is (`narrator`, `model`, `answer`, or `DRILL_PROMPT_ROLE`, `"prompt"`, which tells the pause calculator to wait for the learner's answer rather than for the next line), and `stressed` is a `(start, stop)` span of the English the narrator says with weight on it: the object-focus drill is cued only by which noun is meant, "HE ate fish" against "he ate THE FISH" (§6.12). `stressed` is `None` on every target-language line. A `Lesson` carries a `kind`, `thematic` (a story) or `grammar` (an affix drill and nothing else), the same two values as `CurriculumDay.kind`, so whatever holds a lesson knows which it is without finding its day.
 
-`SectionType` has eight members, and the Pimsleur design is visible in their names: one drill section, then the dialogue at natural speed, then slow ("enunciated") and bilingual variants in both orders, and last the affix drill, the one section not made from the story. The narrator announces each section by its display title, which lives in `app/generation/section_builder.py::SECTION_TITLES` rather than on the enum, because it is spoken content and changes with listening tests (the slow pass is now "Enunciated" because it is the same line with a pause after each word, not a rate change).
+`SectionType` has eight members, and the Pimsleur design is visible in their names: one drill section, then the dialogue at natural speed, then slow ("enunciated") and bilingual variants in both orders, and last the drill section (`affix_drill`), which holds a story's own authored `drills` and the affix drill, neither of them a retelling of the story. The narrator announces each section by its display title, which lives in `app/generation/section_builder.py::SECTION_TITLES` rather than on the enum, because it is spoken content and changes with listening tests (the slow pass is now "Enunciated" because it is the same line with a pause after each word, not a rate change). The drill section is the exception: its display title is "Drill", and the affix drill opens with its own spoken `AFFIX_DRILL_TITLE` ("Affix Drill"), an authored drill block with `STORY_DRILL_TITLE` ("Drill").
 
 ```bash
 cd backend && uv run python -c "
@@ -931,7 +931,7 @@ TRANSLATED           translated           'English After'
 SLOW_TRANSLATED      slow_translated      'Enunciated, English After'
 EN_TRANSLATED        en_translated        'English Before'
 SLOW_EN_TRANSLATED   slow_en_translated   'Enunciated, English Before'
-AFFIX_DRILL          affix_drill          'Affix Drill'
+AFFIX_DRILL          affix_drill          'Drill'
 ```
 
 Persistence is JSON: `Lesson.to_json()` / `from_json()` round-trip through a string stored in the lesson row (§6). The one wrinkle is that JSON has no tuples, so `syllable_span` goes out as a list and `_phrase_from_dict` restores the tuple on the way back, which is what keeps `Phrase` equality exact after a reload. `from_json` defaults `narrator_voice` for blobs that predate the field, and a stored lesson pins a *resolved* `voice_id` per phrase, so changing a language's voice map affects only lessons generated afterwards. Titles are normalised on construction (§4.4).
@@ -1652,7 +1652,7 @@ Two repair paths exist for lessons stored without glosses: `POST /api/story/{les
 
 ### 6.7 Sections, key phrases and morphology focus
 
-`generation/section_builder.py` expands the story into seven `Section`s, always in this order, and a lesson with an affix pattern ends on an eighth, built from tables rather than from the story (`build_affix_drill_section`, §6.12). Titles are spoken by the narrator as each section's first phrase and are the learner-visible names; the enum values are persisted (in stored JSON and `audio_files.section_type`), so renaming titles needed no migration and the display titles moved independently (`ea162179`, `backend/scripts/rename_section_titles.py` retitles stored lessons).
+`generation/section_builder.py` expands the story into seven `Section`s, always in this order, and a lesson whose story authors `drills`, or that has an affix pattern, ends on an eighth: the story's drills (`build_story_drill_section`, docs/lesson-authoring.md) and the affix drill built from tables (`build_affix_drill_section`, §6.12) share that one section, authored steps first. Titles are spoken by the narrator as each section's first phrase and are the learner-visible names; the enum values are persisted (in stored JSON and `audio_files.section_type`), so renaming titles needed no migration and the display titles moved independently (`ea162179`, `backend/scripts/rename_section_titles.py` retitles stored lessons).
 
 | `SectionType` value | Spoken title | Contents |
 |---|---|---|
@@ -1663,7 +1663,7 @@ Two repair paths exist for lessons stored without glosses: `POST /api/story/{les
 | `slow_translated` | Enunciated, English After | enunciated L2, then English |
 | `en_translated` | English Before | English, then the L2 line |
 | `slow_en_translated` | Enunciated, English Before | English, then enunciated L2 |
-| `affix_drill` | Affix Drill | Cebuano only, last: one affix pattern modelled, then asked for from its English with a pause to answer (§6.12) |
+| `affix_drill` | Drill | last: a story's authored drills (substitution, question and answer, true or false), then, for Cebuano, one affix pattern modelled and asked for from its English with a pause to answer (§6.12) |
 
 "Slow" is a legacy name. The pass is *enunciated* speech, not slower speech: each target-language line is said with a pause after every word and no rate change. The three Enunciated sections **store the natural line**, the same text as their natural-speed twins; what makes them enunciated is their `section_type`. At render time `app/audio/enunciation.py::plan_line` cuts the line into words, and `get_slow_word(code)` cuts a long word into parts (Norwegian compounds at the morpheme boundary; Tagalog words of five syllables or more after a long prefix or in front of the lemma table's root). Each provider then pauses in the only way that works for it, chosen by the user's ear on 2026-10-06:
 
@@ -1698,7 +1698,7 @@ natural_speed ['Natural Speed', 'At a cafe', 'Jeg venter på flyplassen']
 slow_speed ['Enunciated', 'At a cafe', 'Jeg venter på flyplassen']
 (('jeg',), ('venter',), ('på',), ('fly', 'plassen'))
 <prosody rate="+0%">jeg<break time="450ms"/> venter<break time="450ms"/> på<break time="450ms"/> fly<break time="150ms"/>plassen</prosody>
-{'key_phrases': 'Key Phrases', 'natural_speed': 'Natural Speed', 'slow_speed': 'Enunciated', 'translated': 'English After', 'slow_translated': 'Enunciated, English After', 'en_translated': 'English Before', 'slow_en_translated': 'Enunciated, English Before', 'affix_drill': 'Affix Drill'}
+{'key_phrases': 'Key Phrases', 'natural_speed': 'Natural Speed', 'slow_speed': 'Enunciated', 'translated': 'English After', 'slow_translated': 'Enunciated, English After', 'en_translated': 'English Before', 'slow_en_translated': 'Enunciated, English Before', 'affix_drill': 'Drill'}
 ```
 
 **Key phrases and breakdown.** The Pimsleur backward buildup is built by `build_key_phrases_section`: L2 phrase, English, then a sequence of progressively longer fragments from the end of the phrase back to the whole. `build_word_breakdown_spans` returns `BreakdownChunk(text, source_word, span)` records. A language that registers a `breakdown_spans_fn` (Norwegian, with its compound handling, §3) supplies its own; everyone else gets `_generic_breakdown_spans`, which syllabifies through the registry and guards each word with a **losslessness check**: provenance (`source_word`, `syllable_span`) is attached only when the syllables rejoin the word exactly, so a slicer (§7) can cut chunks from one whole-word render instead of asking the voice for a fragment it would misread. A `None` span always means "synthesize `text`". The plain-text sequence of `build_word_breakdown` is, by invariant, identical to the spans version, since the audio cue manifest is built from the plain one and any divergence would desynchronise every cue.
