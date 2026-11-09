@@ -27,7 +27,7 @@ import pytest
 from app.generation import publishing
 from app.generation.grammar_lesson import contrast_cards
 from app.generation.publishing import CurriculumDayTarget, publish_lesson
-from app.generation.section_builder import SECTION_TITLES
+from app.generation.section_builder import AFFIX_DRILL_TITLE
 from app.generation.story import PROMPT_TOKEN_BUDGET, build_story_prompts
 from app.generation.story_pattern import add_closing_drill, add_day_drill, named_pattern, pattern_block, pattern_for_day
 from app.languages import get_a1_morphology, get_language
@@ -733,7 +733,7 @@ def test_authored_drills_gain_the_affix_drill_in_the_same_section():
     assert len(drills) == 1
     # The authored steps stay first, then the affix drill's own title and steps.
     assert [p.text for p in drills[0].phrases[:4]] == ["Drill", "Change the sentence.", "Miuban ko.", "Miuban ko."]
-    assert drills[0].phrases[4].text == SECTION_TITLES[SectionType.AFFIX_DRILL]
+    assert drills[0].phrases[4].text == AFFIX_DRILL_TITLE
     assert drills[0].phrases[5].language_code == "en"
 
 

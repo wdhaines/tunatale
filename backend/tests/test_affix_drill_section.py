@@ -27,7 +27,7 @@ from app.audio.pause_calculator import NaturalPauseCalculator
 from app.audio.preprocessing.base import TextPreprocessor
 from app.audio.renderer import LessonRenderer
 from app.generation.affix_drill import AffixDrill, DrillStep, build_affix_drill
-from app.generation.section_builder import SECTION_TITLES, build_affix_drill_section
+from app.generation.section_builder import AFFIX_DRILL_TITLE, build_affix_drill_section
 from app.languages import get_a1_morphology
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from tests.test_renderer import _make_wav_bytes
@@ -60,7 +60,7 @@ def test_the_section_opens_with_its_spoken_title_then_one_phrase_per_step():
 
     assert section.section_type is SectionType.AFFIX_DRILL
     assert [(p.text, p.voice_id, p.language_code, p.role) for p in section.phrases] == [
-        (SECTION_TITLES[SectionType.AFFIX_DRILL], _NARRATOR, "en", "narrator"),
+        (AFFIX_DRILL_TITLE, _NARRATOR, "en", "narrator"),
         ("walk", _NARRATOR, "en", "narrator"),
         ("lakaw", _KORE, "ceb", "model"),
         ('How do you say "walked"?', _NARRATOR, "en", "prompt"),

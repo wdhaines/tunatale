@@ -317,3 +317,17 @@ def test_a_drill_speaker_is_read_case_blind_as_a_dialogue_speaker_is():
     _, section = _drill_section(story)
 
     assert [p.voice_id for p in section.phrases[2:]] == [_M1, _F2]
+
+
+def test_the_drill_track_is_titled_drill_but_the_affix_drill_still_says_its_name():
+    """The track the player shows holds authored drills as well as affix drills,
+    so its title is "Drill"; the affix drill's own spoken opening is unchanged
+    ("Affix Drill"), so no rendered audio moves."""
+    from app.generation.affix_drill import AffixDrill, DrillStep
+    from app.generation.section_builder import SECTION_TITLES, build_affix_drill_section
+
+    assert SECTION_TITLES[SectionType.AFFIX_DRILL] == "Drill"
+    section = build_affix_drill_section(
+        AffixDrill(steps=[DrillStep("model", "gå", "no")]), narrator_voice=_NARRATOR, l2_voice=_F1
+    )
+    assert section.phrases[0].text == "Affix Drill"

@@ -41,8 +41,14 @@ SECTION_TITLES: dict[SectionType, str] = {
     SectionType.SLOW_TRANSLATED: "Enunciated, English After",
     SectionType.EN_TRANSLATED: "English Before",
     SectionType.SLOW_EN_TRANSLATED: "Enunciated, English Before",
-    SectionType.AFFIX_DRILL: "Affix Drill",
+    # The player's Drill track: it holds a story's authored drills as well as
+    # an affix drill, so it is titled for both (tunatale-h0q3.3).
+    SectionType.AFFIX_DRILL: "Drill",
 }
+
+# What the narrator says to open an affix drill. Kept apart from the track's
+# title above so that renaming the track moved no rendered audio.
+AFFIX_DRILL_TITLE = "Affix Drill"
 
 # What the narrator says once before a story's own drills (tunatale-h0q3.3). Not
 # in SECTION_TITLES: the section type is still AFFIX_DRILL, which the player's
@@ -529,9 +535,7 @@ def build_affix_drill_section(drill: AffixDrill, *, narrator_voice: str, l2_voic
     the script's own names for them, ``model`` and ``answer``.
     """
     phrases: list[Phrase] = [
-        Phrase(
-            text=SECTION_TITLES[SectionType.AFFIX_DRILL], voice_id=narrator_voice, language_code="en", role="narrator"
-        )
+        Phrase(text=AFFIX_DRILL_TITLE, voice_id=narrator_voice, language_code="en", role="narrator")
     ]
     for step in drill.steps:
         if step.language_code == "en":
