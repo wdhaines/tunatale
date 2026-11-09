@@ -3664,6 +3664,7 @@ cd backend && ls app/plugins/anki_sync/*.py | xargs -n1 basename | grep -v "^__i
 add_dictionary_fields.py
 add_image_field.py
 add_production_template.py
+add_sentence_notetype.py
 add_short_form_field.py
 add_vocab_notetype.py
 backfill_dictionary_fields.py
@@ -3681,6 +3682,8 @@ sqlite_reader.py
 ```
 
 Six of those arrived with the Cebuano dictionary and short-form work, and they show the shape a change to an existing notetype takes. `add_dictionary_fields` and `add_short_form_field` are schema changes to the TT vocab notetype (new fields and their template blocks), so they follow the full-upload protocol of §10.3; `refresh_dictionary_css` updates its stylesheet; `backfill_dictionary_fields` fills the new fields on notes that already exist; `short_form_cards` is read-only and reports what a live deck needs for first-class short forms; and `convert_pronoun_clozes` turns a language's pronoun clozes into picture cards while keeping their review history, in three steps (retire, add, inherit), each a dry run until `--apply` and each followed by a sync, because the new card has the cloze's guid and so cannot be minted until the cloze's grave has reached AnkiWeb. A learner with no Anki gets the same dictionary layers from `backend/scripts/backfill_dictionary_extras.py` (§11.10).
+
+`add_sentence_notetype` creates the "TT Sentence" notetype (`app/cards/sentence_notetype.py`), a cloze notetype TT owns: one note per lesson line, whose whole line is cloze 1 wrapping the blanks, so Anki buries a line's cards as siblings. Its CSS shows each card only its own blank's gloss by the active cloze's `data-ordinal`, with no template script. It is a schema change (§10.3); `app/srs/sentence_note.py` builds a note's fields from the line's cards.
 
 Finished one-shots live under `backend/scripts/anki_archive/`; they are kept as worked examples of the `graves` and USN recipes (the canonical delete pattern mirrors `delete_phonology_demos.py`) rather than as tools to run again.
 
