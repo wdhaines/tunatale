@@ -159,6 +159,24 @@ def progress(pattern: AffixPattern, *, srs_db, store: ContentStore, owner: bool)
     return _progress(pattern, _drill_days(store, srs_db).get(pattern.key, []), srs_db, owner=owner)
 
 
+def taught_prefixes(language_code: str, *, srs_db, store: ContentStore, owner: bool) -> frozenset[str]:
+    """The prefixes the learner has (tunatale-lat6): every affix of a pattern that passed the
+    gate, and on the owner's deck of a ``review_only`` pattern, heard yet or not, since the
+    owner brought it with them. A key phrase's word made of one of these and a well-known
+    root is said whole (``known_buildups``). Suffixes come along (``on`` of -on) and match
+    no prefix."""
+    bundle = get_a1_morphology(language_code)
+    if bundle is None:
+        return frozenset()
+    days = _drill_days(store, srs_db)
+    found: set[str] = set()
+    for pattern in bundle.patterns:
+        each = _progress(pattern, days.get(pattern.key, []), srs_db, owner=owner)
+        if each.review_only or each.met:
+            found |= {feature.split(":", 1)[-1] for feature in pattern.features}
+    return frozenset(found)
+
+
 def next_pattern(language_code: str, *, srs_db, store: ContentStore, owner: bool) -> AffixPattern | None:
     """The pattern the learner's next lesson drills, or ``None`` for a language with none."""
     bundle = get_a1_morphology(language_code)

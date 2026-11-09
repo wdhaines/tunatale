@@ -104,7 +104,9 @@ full build). Every story-built lesson, generated or imported, gets them
   splits it cleanly (`lisod`, `maglisod`), else two syllables at a time from the end
   (`ila`, `ilaila`, `ipailaila`).
 
-Words the learner knows well are trimmed later, at publish (`known_buildups.py`).
+Words the learner knows well are trimmed later, at publish (`known_buildups.py`), and so is
+a word made of a prefix the learner has (`pattern_gate.taught_prefixes`: a passed pattern, or
+on the owner's deck one brought from Tagalog, ma-/na- and mag-/nag-) and a well-known root.
 Export does not write `buildup` or `kind` back, so a re-imported export is built with
 the defaults.
 

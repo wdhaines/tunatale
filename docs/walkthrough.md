@@ -1907,7 +1907,7 @@ E
 ```output
 mo-mi                  molakaw / milakaw
                        will walk / walked
-mag-nag                maglakaw / naglakaw
+mag-nag    review_only maglakaw / naglakaw
                        will be walking / is walking
 ma-na      review_only matulog / natulog
                        will sleep / is asleep
@@ -1979,7 +1979,7 @@ answer ceb mokaon
 - its drill heard on `DRILL_DAYS` (2) different study days, counted from lessons marked listened whose drill is that pattern (two listens on one day are one drill); and
 - `FIRST_PASSES` (4) of its cards passing their first review, with at least `PASS_RATE` (80%) of all its card reviews passing. Learning steps are not reviews: passing them shows the card was read the day it was added.
 
-A `review_only` pattern (`ma-`/`na-`, which the owner knows from Tagalog) needs one drill and no cards, but only on the owner's deck; a second learner is taught it like any other, so every caller says whose deck it is reading (`692f73b`). With every pattern passed, the one heard longest ago comes round. A pattern still unpassed after `STUCK_AFTER` (5) drill days logs `PATTERN_STUCK` and stays, because something other than another drill has to change. The evidence for two drills was the owner's transfer probe: 5 of 10 after one `mo-`/`mi-` drill, 10 of 10 after two, with an undrilled root among the ten.
+A `review_only` pattern (`ma-`/`na-` and, since 2026-11-09, `mag-`/`nag-`, which the owner knows from Tagalog) needs one drill and no cards, but only on the owner's deck; a second learner is taught it like any other, so every caller says whose deck it is reading (`692f73b`). With every pattern passed, the one heard longest ago comes round. A pattern still unpassed after `STUCK_AFTER` (5) drill days logs `PATTERN_STUCK` and stays, because something other than another drill has to change. The evidence for two drills was the owner's transfer probe: 5 of 10 after one `mo-`/`mi-` drill, 10 of 10 after two, with an undrilled root among the ten.
 
 **Object focus** (stage 6, the `on-gi` pattern) adds a second choice to the first: which noun is the `ang` noun. "Ate" is both `mikaon` and `gikaon`, and English shows the difference only in the object's article (He ate bread / He ate THE bread), so this pattern is taught as whole sentences, built by rule from one hand-checked row per root (`ceb/focus_sentences.py`, `data/focus_rows.tsv`): the affix, the doer (`siya` becomes `niya`) and `og` becoming `ang` move together. Three things follow from that. The narrator stresses the focus in each English prompt: `Phrase.stressed` (§4.3) rides through the renderer to the Azure adapter, which wraps the stressed words in `<prosody pitch="+15%" volume="+30%" rate="-20%">` inside the line's own rate wrapper (`azure_tts.py::_STRESS_PROSODY`; `<emphasis>` was measured with Praat and raised no pitch at all). Each sentence builds up only its new verb, since the rest are words the learner has. And the drill comes in two halves, by tense, one per story lesson (`AffixPattern.halves`), because whole it ran about nine minutes, too long for the end of a lesson. Its cards are *focus cards* (`app/srs/focus_card.py`, `morph:focus-<feature>`): one whole sentence per cell, English with the focus in bold on the front, so no card can be passed on tense alone.
 

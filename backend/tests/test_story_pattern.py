@@ -626,6 +626,9 @@ async def test_publishing_hands_the_target_the_publishs_own_deck_and_lemmatizer(
         def prepare(self, lesson, *, srs_db, lemmatizer) -> None:
             seen.update(srs_db=srs_db, lemmatizer=lemmatizer)
 
+        def taught_prefixes(self, srs_db) -> frozenset[str]:
+            return frozenset()
+
         def write(self, lesson) -> str:
             return "written"
 

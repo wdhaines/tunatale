@@ -51,6 +51,7 @@ from app.audio.render_service import render_lesson_audio
 from app.generation.ids import mint_id
 from app.generation.known_buildups import trim_well_known_buildups
 from app.generation.lemma_annotation import _prewarm_lesson, annotate_chunk_upos_for_lesson
+from app.generation.pattern_gate import taught_prefixes
 from app.generation.story_pattern import add_day_drill
 from app.languages import get_language
 from app.models.lesson import Lesson
@@ -75,6 +76,9 @@ class ContentTarget(Protocol):
         *srs_db* and *lemmatizer* are the publish's own (either may be ``None``):
         what a placement adds may depend on what the learner already has.
         """
+
+    def taught_prefixes(self, srs_db) -> frozenset[str]:
+        """The prefixes the learner has (``pattern_gate.taught_prefixes``), for the build-up trim."""
 
     def write(self, lesson: Lesson) -> str:
         """Persist the lesson and any placement bookkeeping. Returns content id."""
@@ -112,7 +116,9 @@ async def publish_lesson(
         # An enrichment, so it never sinks a publish: on a failure the lesson
         # keeps every buildup, and the warning says so.
         try:
-            trim_well_known_buildups(lesson, srs_db, lemmatizer_kwargs.get("lemmatizer"))
+            trim_well_known_buildups(
+                lesson, srs_db, lemmatizer_kwargs.get("lemmatizer"), taught_prefixes=target.taught_prefixes(srs_db)
+            )
         except Exception as e:  # noqa: BLE001
             _logger.warning("Known-word trim failed; the lesson keeps every buildup: %s", e)
 
@@ -164,6 +170,9 @@ class CurriculumDayTarget:
             owner=self._user_id is None,
         )
 
+    def taught_prefixes(self, srs_db) -> frozenset[str]:
+        return taught_prefixes(self._language_code, srs_db=srs_db, store=self._store, owner=self._user_id is None)
+
     def write(self, lesson: Lesson) -> str:
         # A regenerate mints a FRESH id (mint_id is {slug}-{uuid4hex8}), so it
         # INSERTS a second row rather than overwriting. Capture the day's current
@@ -210,8 +219,11 @@ class ReviewSessionTarget:
         audio_dir,
         renders_in_flight: set[str],
         render_failures: dict[str, str],
+        *,
+        owner: bool,
     ) -> None:
         self._store = store
+        self._owner = owner
         self._language_code = language_code
         self._session_id = session_id
         self._session_date = session_date
@@ -222,6 +234,9 @@ class ReviewSessionTarget:
 
     def prepare(self, lesson: Lesson, *, srs_db, lemmatizer) -> None:
         """Nothing: a review session belongs to no curriculum day and has no pattern."""
+
+    def taught_prefixes(self, srs_db) -> frozenset[str]:
+        return taught_prefixes(self._language_code, srs_db=srs_db, store=self._store, owner=self._owner)
 
     def write(self, lesson: Lesson) -> str:
         metadata = lesson.generation_metadata

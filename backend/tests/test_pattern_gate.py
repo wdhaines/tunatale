@@ -271,7 +271,7 @@ def test_a_passed_pattern_whose_cards_start_failing_comes_back(srs_db, store):
     _heard(srs_db, store, "mo-mi", _at(9), _at(13))
     _passed_first_review(srs_db, "mo-mi", _MO_MI_FOUR)
     _heard(srs_db, store, "mag-nag", _at(15))
-    assert _key(srs_db, store) == "mag-nag"
+    assert _key(srs_db, store) == "ma-na"  # mag-nag is review-only on the owner's deck: one drill passes it
 
     _graded(srs_db, "mo-mi", "lakaw", 1, (_LEARN, _GOOD), (_REVIEW, _AGAIN), (_REVIEW, _AGAIN))
     assert _key(srs_db, store) == "mo-mi"

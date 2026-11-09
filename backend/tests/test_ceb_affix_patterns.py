@@ -47,7 +47,8 @@ def test_the_patterns_are_the_teaching_order():
         ("on-gi", ("verb:on", "verb:gi")),
     ]
     assert PATTERN_AFFIXES == ("mo", "mi", "mag", "nag", "ma", "na", "maka", "naka")
-    assert [p.key for p in PATTERNS if p.review_only] == ["ma-na"]
+    # Both the owner's from Tagalog: ma-/na- (tunatale-ve4p.26), mag-/nag- (2026-11-09, tunatale-lat6)
+    assert [p.key for p in PATTERNS if p.review_only] == ["mag-nag", "ma-na"]
 
 
 # ── spell: how an affix attaches ─────────────────────────────────────────────
