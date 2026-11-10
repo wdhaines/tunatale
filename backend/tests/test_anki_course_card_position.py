@@ -22,7 +22,7 @@ from dataclasses import replace
 
 from app.plugins.anki_sync.add_sentence_notetype import add_sentence_notetype
 from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
-from app.plugins.anki_sync.sync_writer import COURSE_REGION_GAP, COURSE_TAG
+from app.plugins.anki_sync.sync_writer import COURSE_REGION_GAP, COURSE_TAG, MINED_TAG_PREFIX
 from app.srs.database import SRSDatabase
 from app.srs.sentence_card import SentenceCard
 from tests._helpers.anki_sync_create_new import FakeReader, _make_dual_collection_conn
@@ -147,6 +147,79 @@ class TestWriterCoursePosition:
         b = _cloze(writer, "{{c1::To}}", course=True)
         assert _dues(conn, a) == [5 + COURSE_REGION_GAP]
         assert _dues(conn, b) == [5 + COURSE_REGION_GAP - 1]
+
+    def _sentence_note(self, writer, conn, *, front_ords):
+        add_sentence_notetype(conn)
+        return writer.create_sentence_note(
+            "0. Slovene", ["x"] * 5, [1, 2, 0], guid="g", tags=[], course=True, front_ords=front_ords
+        )
+
+    def test_a_front_ord_on_a_course_note_goes_ahead_of_everything(self):
+        """A blank mined on a course line (tunatale-h0q3.52): its card is a TT addition, at the front."""
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        nid = self._sentence_note(OfflineWriter(conn), conn, front_ords=[2])
+        course_base = 5 - COURSE_REGION_GAP
+        assert _dues(conn, nid) == [course_base + 1, course_base, course_base - 1]  # ords 0, 1, 2
+        assert f" {COURSE_TAG} " in _tags(conn, nid)
+
+    def test_a_front_ord_under_highest_position_gather_goes_above_everything(self):
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        nid = self._sentence_note(OfflineWriter(conn, gather_descending=True), conn, front_ords=[2])
+        course_base = 5 + COURSE_REGION_GAP  # the region opens above every new card
+        assert _dues(conn, nid) == [course_base + 1, course_base, course_base + 2]  # ord 2 highest: served first
+
+    # A front-placed card on a course note is tagged ``tt-mined-c<N>`` (owner, 2026-11-10), so it
+    # never anchors the course: the course would otherwise follow it through ordinary new-card
+    # positions once it is the only course-note card still new (Fable's audit of PR #415).
+
+    def test_a_front_ord_tags_the_note_with_its_cloze_number(self):
+        conn = _make_dual_collection_conn()
+        nid = self._sentence_note(OfflineWriter(conn), conn, front_ords=[2])
+        assert MINED_TAG_PREFIX == "tt-mined-c"
+        assert _tags(conn, nid).split() == [COURSE_TAG, "tt-mined-c3"]
+
+    def test_no_front_ord_no_mined_tag(self):
+        conn = _make_dual_collection_conn()
+        nid = self._sentence_note(OfflineWriter(conn), conn, front_ords=[])
+        assert _tags(conn, nid).split() == [COURSE_TAG]
+
+    def _learn(self, conn, nid, ords):
+        conn.execute(
+            f"UPDATE cards SET type = 2, queue = 2 WHERE nid = ? AND ord IN ({','.join('?' * len(ords))})",
+            (nid, *ords),
+        )
+
+    def test_a_mined_card_left_new_does_not_anchor_the_course(self):
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        writer = OfflineWriter(conn)
+        nid = self._sentence_note(writer, conn, front_ords=[2])
+        mined_due = _dues(conn, nid)[2]
+        assert mined_due == 5 - COURSE_REGION_GAP - 1
+        self._learn(conn, nid, [0, 1])
+        nxt = _cloze(writer, "{{c1::Neste}}", course=True)
+        assert _dues(conn, nxt) == [mined_due - COURSE_REGION_GAP]
+
+    def test_a_mined_card_left_new_does_not_anchor_the_course_under_highest_position(self):
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        writer = OfflineWriter(conn, gather_descending=True)
+        nid = self._sentence_note(writer, conn, front_ords=[2])
+        mined_due = _dues(conn, nid)[2]
+        assert mined_due == 5 + COURSE_REGION_GAP + 2
+        self._learn(conn, nid, [0, 1])
+        nxt = _cloze(writer, "{{c1::Neste}}", course=True)
+        assert _dues(conn, nxt) == [mined_due + COURSE_REGION_GAP]
+
+    def test_the_lines_new_course_cards_still_anchor_the_next_course_card(self):
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        writer = OfflineWriter(conn)
+        nid = self._sentence_note(writer, conn, front_ords=[2])
+        nxt = _cloze(writer, "{{c1::Neste}}", course=True)
+        assert _dues(conn, nxt) == [max(_dues(conn, nid)) + 1]
 
     def test_an_empty_collection_opens_the_region_from_position_one(self):
         conn = _make_dual_collection_conn()

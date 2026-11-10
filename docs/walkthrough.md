@@ -3623,7 +3623,7 @@ def _next_production_position
 ```
 
 - **`_next_front_position(slots)`** is for TT's own additions (listen adds, clozes), which should surface immediately: `MAX(due)+1` under HighestPosition gather, `MIN(due)-slots` under DECK gather, written at `base + ord` so a note's templates stay contiguous.
-- **`_next_course_position(slots)`** is for a course's card list (Layer 92, notes tagged `tt-course`), whose order is the point: first-in-first-out after the highest course card still new, or a fresh region `COURSE_REGION_GAP` ahead of every new card; later front adds still land ahead of it.
+- **`_next_course_position(slots)`** is for a course's card list (Layer 92, notes tagged `tt-course`), whose order is the point: first-in-first-out after the highest course card still new, or a fresh region `COURSE_REGION_GAP` ahead of every new card; later front adds still land ahead of it. On a course line's "TT Sentence" note, a row that is not the course's (a blank the learner mined, `app/srs/sentence_mining.py`) goes to the front anyway (`front_ords`, `sync_engine._line_placement`). The writer tags such a note `tt-mined-c<N>` for that card (N = its cloze number), and the course anchor skips it, so a mined card the learner has not studied yet never becomes the position the next course card follows.
 - **`_next_production_position()`** is for production cards minted by `promote`. Under DECK gather they fill the reserved band `[-1_000_000, 0)` upward, so the first card minted is the first served and mint order survives across syncs. Under HighestPosition there is no band (`MAX(due)+1` is already the front), which is documented residual behaviour.
 
 Negative positions are load-bearing, not a hack. `cards.due` is an i32 and no Anki UI offers a negative start, so `tests/test_parity_front_positions.py` pins against the Anki binary that the scheduler gathers `[-1_000_000, -999_999, -5, 0, 7, 1518]` in that order. The assumption that `MAX(due)+1` was "the front" had been true for Slovene and was wrong for Norwegian, where it placed every fresh add behind 1,400 imported words; the diagnosis and the one-shot repair (`reposition_production_cards`, which refuses a second run keyed on the band) are recorded as Layers 83 and 84 in `docs/anki-parity-layers.md`.
@@ -4074,7 +4074,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-107 operations
+109 operations
   9  (untagged)
   3  admin
   3  anki
@@ -4085,7 +4085,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
   4  llm
   3  pipeline
  15  review-sessions
- 36  srs
+ 38  srs
   5  srs-images
 ```
 
@@ -4135,6 +4135,7 @@ for (t, p), ms in sorted(rows.items()): print(f\"{'/'.join(ms):<12}{p.replace('/
  GET         /new
  GET         /queue-stats
  GET         /review-queue
+ POST/DELETE /sentence-blanks
  GET         /stats
  POST        /translate
  POST        /translate-missing

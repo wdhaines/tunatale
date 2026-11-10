@@ -145,6 +145,19 @@ class DbMediaMixin:
             self._commit(conn)
             return cursor.lastrowid
 
+    def copy_media_row(self, from_collocation_id: int, to_collocation_id: int, kind: str) -> None:
+        """Give *to_collocation_id* the first *kind* media row of *from_collocation_id*: same file, no copy on disk."""
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO media (collocation_id, kind, filename, path, anki_filename, sha256, bytes, mtime_ns)
+                SELECT ?, kind, filename, path, anki_filename, sha256, bytes, mtime_ns FROM media
+                WHERE collocation_id = ? AND kind = ? ORDER BY id LIMIT 1
+                """,
+                (to_collocation_id, from_collocation_id, kind),
+            )
+            self._commit(conn)
+
     def find_media_by_anki_filename(self, anki_filename: str, *, collocation_id: int) -> dict[str, Any] | None:
         """Return the media row for the given Anki filename on a specific collocation, or None.
 

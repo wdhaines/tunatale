@@ -492,6 +492,27 @@ class StatusResponse(BaseModel):
     status: str
 
 
+class AddSentenceBlankRequest(BaseModel):
+    """POST /api/srs/sentence-blanks: blank the words ``[start, end)`` of a line's text (tunatale-h0q3.52).
+
+    ``line_key`` is the line's ``sent:<lesson>:<line>``. ``gloss`` is optional:
+    without it the line's own word gloss is used, else the model's."""
+
+    line_key: str
+    start: int
+    end: int
+    gloss: str | None = None
+
+
+class AddSentenceBlankResponse(BaseModel):
+    """The blank's row; ``created`` is False when the line already had this blank."""
+
+    collocation_id: int
+    key: str
+    gloss: str
+    created: bool
+
+
 class ClozeSentenceVerdict(BaseModel):
     """One cloze sentence and the blind judge's verdict on it (tunatale-keb0).
 

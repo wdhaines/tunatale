@@ -1,6 +1,70 @@
 {
   "components": {
     "schemas": {
+      "AddSentenceBlankRequest": {
+        "description": "POST /api/srs/sentence-blanks: blank the words ``[start, end)`` of a line's text (tunatale-h0q3.52).\n\n``line_key`` is the line's ``sent:<lesson>:<line>``. ``gloss`` is optional:\nwithout it the line's own word gloss is used, else the model's.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "gloss": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gloss"
+          },
+          "line_key": {
+            "title": "Line Key",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line_key",
+          "start",
+          "end"
+        ],
+        "title": "AddSentenceBlankRequest",
+        "type": "object"
+      },
+      "AddSentenceBlankResponse": {
+        "description": "The blank's row; ``created`` is False when the line already had this blank.",
+        "properties": {
+          "collocation_id": {
+            "title": "Collocation Id",
+            "type": "integer"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "gloss": {
+            "title": "Gloss",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collocation_id",
+          "key",
+          "gloss",
+          "created"
+        ],
+        "title": "AddSentenceBlankResponse",
+        "type": "object"
+      },
       "AffixCardPreview": {
         "description": "One card a listen would add for its affix drill.\n\nA contrast card (one root, one form of an affix pair left to say) or, for a\npattern taught as sentences, a focus card (one whole sentence to say).",
         "properties": {
@@ -10508,6 +10572,117 @@
           }
         },
         "summary": "Get Review Queue",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/sentence-blanks": {
+      "delete": {
+        "description": "Un-mark a blank: delete its row; the next push drops its cloze and graves its card.\n\nFree while the card is new; a reviewed card answers 409 unless ``confirm``,\nbecause its review history goes with it (owner, 2026-11-10).",
+        "operationId": "remove_sentence_blank_api_srs_sentence_blanks_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "line_key",
+            "required": true,
+            "schema": {
+              "title": "Line Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": true,
+            "schema": {
+              "title": "Start",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": true,
+            "schema": {
+              "title": "End",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Confirm",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Sentence Blank",
+        "tags": [
+          "srs"
+        ]
+      },
+      "post": {
+        "description": "Mine a word: blank ``[start, end)`` on a line that has cards, as one more card of its note (tunatale-h0q3.52).\n\nThe row is NEW with no Anki ids (the card-adding contract); the next sync adds\nits card to the line's note, at the front of the new queue. A blank the line\nalready has answers 200 with its row and calls no model.",
+        "operationId": "add_sentence_blank_api_srs_sentence_blanks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddSentenceBlankRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddSentenceBlankResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Sentence Blank",
         "tags": [
           "srs"
         ]
