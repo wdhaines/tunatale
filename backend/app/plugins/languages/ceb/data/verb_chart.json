@@ -1,0 +1,1769 @@
+{
+ "id": "verb-chart",
+ "title": "The verb chart",
+ "intro": "To find a verb form, ask three questions. What is the sentence about, the phrase marked *ang*: the doer, the thing done to, a place or person, or the thing used? That picks the band. Is it one act, something going on, or many? That picks the row. Has it happened yet, and did someone mean to do it? That picks the column. Each cell gives the affix, what it means in English, and an example; most use *palít* 'buy'. A verb of state, like 'sleep' or 'be red', has no doer and gets its own band at the bottom.",
+ "modes": [
+  {
+   "id": "volitional",
+   "label": "Volitional",
+   "hint": "done on purpose",
+   "footnote": 3,
+   "columns": [
+    {
+     "id": "realis",
+     "label": "Realis",
+     "hint": "begun: happened, or happening now",
+     "footnote": null
+    },
+    {
+     "id": "irrealis",
+     "label": "Irrealis",
+     "hint": "not begun: future, habit, wish",
+     "footnote": null
+    },
+    {
+     "id": "dependent",
+     "label": "Dependent",
+     "hint": "after *walâ* or a time word",
+     "footnote": 1
+    },
+    {
+     "id": "imperative",
+     "label": "Imperative",
+     "hint": "a command; none in the potential",
+     "footnote": 2
+    }
+   ]
+  },
+  {
+   "id": "potential",
+   "label": "Potential",
+   "hint": "can, managed to, by chance; on a verb of state, the state itself",
+   "footnote": 3,
+   "columns": [
+    {
+     "id": "realis",
+     "label": "Realis",
+     "hint": "begun: managed to, or happened by chance",
+     "footnote": null
+    },
+    {
+     "id": "irrealis",
+     "label": "Irrealis",
+     "hint": "can, at any time",
+     "footnote": null
+    },
+    {
+     "id": "dependent",
+     "label": "Dependent",
+     "hint": "after *walâ* or a time word",
+     "footnote": null
+    }
+   ]
+  }
+ ],
+ "verb_types": [
+  {
+   "id": "dynamic",
+   "label": "Dynamic",
+   "hint": "someone does it"
+  },
+  {
+   "id": "stative",
+   "label": "Stative",
+   "hint": "no doer"
+  }
+ ],
+ "legend": [
+  {
+   "kind": "standard",
+   "example": "mo-",
+   "label": "standard",
+   "footnote": null
+  },
+  {
+   "kind": "variant",
+   "example": "maga-",
+   "label": "variant",
+   "footnote": 7
+  },
+  {
+   "kind": "literary",
+   "example": "naga-",
+   "label": "literary or archaic, behind the toggle",
+   "footnote": 6
+  },
+  {
+   "kind": "inferred",
+   "example": "mapaN-",
+   "label": "inferred, printed by no source",
+   "footnote": 4
+  }
+ ],
+ "sources": {
+  "W": "Wolff, A Dictionary of Cebuano Visayan (1972), public domain",
+  "B": "Bunye & Yap, Cebuano for Beginners (1971), CC BY-NC-SA 4.0",
+  "P": "Wikipedia, Cebuano grammar, CC BY-SA 4.0"
+ },
+ "groups": [
+  {
+   "id": "agent",
+   "label": "Agent",
+   "hint": "*ang* = the doer",
+   "verb_type": "dynamic",
+   "footnote": null,
+   "rows": [
+    {
+     "id": "agent-mo",
+     "aspect": "Perfective",
+     "hint": "one whole event",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "did it, or has done it",
+      "will do it, or does it as a habit",
+      "(didn't) do it",
+      "do it!",
+      "managed to, or did by chance",
+      "can, or will get to",
+      "(didn't get to)"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "mi-, ni-",
+         "kind": "standard"
+        },
+        {
+         "label": "ming-, ning-",
+         "kind": "variant"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mìádto (nìádto, ning-ádto, ming-ádto) ko dídto gahápon",
+         "en": "I went there yesterday.",
+         "source": "W",
+         "source_spelling": "Miadtu (niadtu, ning-adtu, ming-adtu) ku didtu gahápun"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "mo-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Akóy mopalít ug ísdà",
+         "en": "I will buy some fish.",
+         "source": "W",
+         "source_spelling": "Akuy mupalit ug isdà"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Walâ ko mòádto dídto",
+         "en": "I did not go there.",
+         "source": "W",
+         "source_spelling": "Walà ku muadtu didtu"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "∅, pag-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Palít ug ísdà.",
+         "en": "Buy fish.",
+         "source": "B",
+         "source_spelling": "Palit ug isda."
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "naka-, ka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Nakapalít mig barátong kótse",
+         "en": "We managed to buy a car cheap.",
+         "source": "W",
+         "source_spelling": "Nakapalit mig barátung kutsi"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "maka-, ka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Magtígom ko kay arón makapalít kog áwto",
+         "en": "I will save so that I can buy a car.",
+         "source": "W",
+         "source_spelling": "Magtígum ku kay arun makapalit kug awtu"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Wà ko makalakáw kay síging abót ang mga bisíta",
+         "en": "I didn't have a chance to go out because we kept having visitors.",
+         "source": "W",
+         "source_spelling": "Wà ku makalakaw kay síging abut ang mga bisíta"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "agent-mag",
+     "aspect": "Progressive",
+     "hint": "going on",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "is doing it, or was",
+      "will be doing it, or usually is",
+      "(isn't, or wasn't) doing it",
+      "do it!",
+      "",
+      "",
+      ""
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "nag-, ga-",
+         "kind": "standard"
+        },
+        {
+         "label": "naga-",
+         "kind": "literary"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Sa nagpalít kog ísdà",
+         "en": "As I was buying fish.",
+         "source": "W",
+         "source_spelling": "Sa nagpalit kug isdà"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "mag-",
+         "kind": "standard"
+        },
+        {
+         "label": "maga-",
+         "kind": "variant"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Magpalít kog ítir kay támbal nà sa kuyáp",
+         "en": "I'll buy a bottle of ether, as a medicine for dizzy spells.",
+         "source": "W",
+         "source_spelling": "Magpalit kug ítir kay tambal nà sa kuyap"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Walâ siyá magsúlti",
+         "en": "He didn't say.",
+         "source": "W",
+         "source_spelling": "Walà siya magsulti"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "pag-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Pagpalít ug ísdà.",
+         "en": "Buy fish.",
+         "source": "B",
+         "source_spelling": "Pagpalit ug isda."
+        }
+       ]
+      }
+     ],
+     "potential": "above"
+    },
+    {
+     "id": "agent-pan",
+     "aspect": "Distributive",
+     "hint": "many, or again and again",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": 4,
+     "glosses": [
+      "did it, to many or again",
+      "will do it, or does it, to many or again",
+      "(didn't) do it",
+      "do it, all of you!",
+      "managed to, to many",
+      "can, to many",
+      "(didn't get to)"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "naN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Nangutána ko peró way tubág",
+         "en": "I asked but there was no answer.",
+         "source": "W",
+         "source_spelling": "Nangutána ku piru way tubag"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "maN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mangutána ta kun hâin siyá",
+         "en": "Let us ask where he is.",
+         "source": "W",
+         "source_spelling": "Mangutána ta kun háin siya"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Wà siyá mangutána",
+         "en": "He didn’t ask.",
+         "source": "W",
+         "source_spelling": "Wà siya mangutána"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "paN-, pagpaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Pangâon na, mga bátà",
+         "en": "Come eat, children.",
+         "source": "W",
+         "source_spelling": "Pangáun na, mga bátà"
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "nakapaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Nakàátob (nakapangátob) mig báboy ihálas",
+         "en": "We trapped a wild pig in a pitfall.",
+         "source": "W",
+         "source_spelling": "Nakaátub (nakapangátub) mig bábuy ihálas"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "makapaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Makapangasáwa ka na",
+         "en": "You can get married now.",
+         "source": "W",
+         "source_spelling": "Makapangasáwa ka na"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Walâ ko makapangutána",
+         "en": "I didn’t get a chance to ask.",
+         "source": "W",
+         "source_spelling": "Walà ku makapangutána"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "patient",
+   "label": "Patient",
+   "hint": "*ang* = the thing done to",
+   "verb_type": "dynamic",
+   "footnote": null,
+   "rows": [
+    {
+     "id": "patient-on",
+     "aspect": "Perfective",
+     "hint": "one whole event",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "did *it*, or is doing *it*",
+      "will do *it*, or does *it* as a habit",
+      "(didn't) do *it*",
+      "do *it*!",
+      "got *it* done, or did *it* by chance",
+      "can do *it*",
+      "(couldn't) do *it*"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gi-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Gipalít ko ang ísdà",
+         "en": "I bought the fish.",
+         "source": "W",
+         "source_spelling": "Gipalit ku ang isdà"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "-on",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Palitón ko ang ísdà",
+         "en": "I will buy the fish.",
+         "source": "W",
+         "source_spelling": "Palitun ku ang isdà"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "-a",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Walâ níya palitá",
+         "en": "He did not buy it.",
+         "source": "W",
+         "source_spelling": "Walà níya palita"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Palitá ang ísdà!",
+         "en": "Buy the fish!",
+         "source": "W",
+         "source_spelling": "Palita ang isdà!"
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "na-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Napalít ko ang báboy",
+         "en": "I managed to buy the pig.",
+         "source": "W",
+         "source_spelling": "Napalit ku ang bábuy"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "ma-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Dì ko mapalít ang báboy",
+         "en": "I cannot buy the pig.",
+         "source": "W",
+         "source_spelling": "Dì ku mapalit ang bábuy"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Wà ko mapalít ang báboy",
+         "en": "I didn't get to buy the pig.",
+         "source": "W",
+         "source_spelling": "Wà ku mapalit ang bábuy"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "patient-paga",
+     "aspect": "Progressive",
+     "hint": "going on; literary",
+     "same_aspect_as_above": false,
+     "literary": true,
+     "footnote": null,
+     "glosses": [
+      "is doing *it*, or was",
+      "will be doing *it*",
+      "(isn't) doing *it*",
+      "do *it*!",
+      "",
+      "",
+      ""
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gina-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "paga-…-on",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "paga-…-a",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      }
+     ],
+     "potential": "above"
+    },
+    {
+     "id": "patient-pan",
+     "aspect": "Distributive",
+     "hint": "many, or again and again",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "did *them*, many or again",
+      "will do *them*, many or again",
+      "(didn't) do *them*",
+      "do *them*!",
+      "got *them* done",
+      "can do *them*",
+      "(couldn't) do *them*"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gipaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Gìanúgnan ko sa mga patátas nga gipanglábay",
+         "en": "I considered it a waste that the potatoes should be thrown away.",
+         "source": "W",
+         "source_spelling": "Gianugnan ku sa mga patátas nga gipanglábay"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "paN-…-on",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Abagáhon (pangabagáhon, pangabagáhan) ni Mánuy níya ang galastúhan sa pag-iskúyla",
+         "en": "His brother will shoulder his school expenses.",
+         "source": "W",
+         "source_spelling": "Abagáhun (pangabagáhun, pangabagáhan) ni Mánuy níya ang galastúhan sa pag-iskuyla"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "paN-…-a",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "napaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Napanágat na giyód sa pulís ang ibidinsiyá",
+         "en": "The police finally fished the evidence out.",
+         "source": "W",
+         "source_spelling": "Napanágat na giyud sa pulis ang ibidinsiya"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "mapaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mapanghimakák (kapanghimakakán) nákò ang ímong tabî",
+         "en": "I can prove your gossip false.",
+         "source": "W",
+         "source_spelling": "Mapanghimakak (kapanghimakakan) nákù ang ímung tabì"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "mapaN-",
+         "kind": "inferred"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "circumstance",
+   "label": "Circumstance",
+   "hint": "*ang* = the place, or who it is for, from or to; with some verbs, the thing done to",
+   "verb_type": "dynamic",
+   "footnote": null,
+   "rows": [
+    {
+     "id": "circumstance-an",
+     "aspect": "Perfective",
+     "hint": "one whole event",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "did it *for someone*, or is doing it",
+      "will do it *for someone*, or does as a habit",
+      "(didn't) do it *for someone*",
+      "do it *for someone*!",
+      "got it done *for someone*",
+      "can do it *for someone*",
+      "(couldn't) do it *for someone*"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gi-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Gipalitán ko siyá",
+         "en": "I bought some for (from) him.",
+         "source": "W",
+         "source_spelling": "Gipalitan ku siya"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Palitán ko siyág kik",
+         "en": "I will buy him cake (or buy cake from him).",
+         "source": "W",
+         "source_spelling": "Palitan ku siyag kík"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "-i",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Wà ko siyá palití",
+         "en": "I didn't buy any for (from) him.",
+         "source": "W",
+         "source_spelling": "Wà ku siya paliti"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Limpiyóhi nínyo!",
+         "en": "You (plural) clean it.",
+         "source": "W",
+         "source_spelling": "Limpiyúhi ninyu!"
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "na-…-an, gika-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Napalitán ko siyá",
+         "en": "I managed to buy some for (from) him.",
+         "source": "W",
+         "source_spelling": "Napalitan ku siya"
+        },
+        {
+         "ceb": "Ang táwo nga gikahadlókan",
+         "en": "A man who is feared.",
+         "source": "W",
+         "source_spelling": "Ang táwu nga gikahadlúkan"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "ma-…-an, ka-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mapalitán (kapalitán) ko siyá",
+         "en": "I can buy some for (from) him.",
+         "source": "W",
+         "source_spelling": "Mapalitan (kapalitan) ku siya"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "ma-…-i, ka-…-i",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Wà ko siyá mapalití (kapalití)",
+         "en": "I couldn't buy any for (from) him.",
+         "source": "W",
+         "source_spelling": "Wà ku siya mapaliti (kapaliti)"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "circumstance-paga",
+     "aspect": "Progressive",
+     "hint": "going on; literary",
+     "same_aspect_as_above": false,
+     "literary": true,
+     "footnote": null,
+     "glosses": [
+      "is doing it *for someone*, or was",
+      "will be doing it *for someone*",
+      "(isn't) doing it *for someone*",
+      "do it *for someone*!",
+      "",
+      "",
+      ""
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gina-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "paga-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "paga-…-i",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      }
+     ],
+     "potential": "above"
+    },
+    {
+     "id": "circumstance-pan",
+     "aspect": "Distributive",
+     "hint": "many, or again and again",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "did it *for many*, or again",
+      "will do it *for many*, or again",
+      "(didn't) do it *for them*",
+      "do it *for them*!",
+      "got it done *for many*",
+      "can do it *for many*",
+      "(couldn't) do it *for them*"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gipaN-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Ang baníg nga gìanakán (gìángkan, gipanganakán)",
+         "en": "The mat she gave birth on.",
+         "source": "W",
+         "source_spelling": "Ang banig nga gianakan (giangkan, gipanganakan)"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "paN-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "paN-…-i",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "napaN-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "mapaN-…-an",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "mapaN-…-i",
+         "kind": "inferred"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "instrument",
+   "label": "Instrument",
+   "hint": "*ang* = what is moved, given or used",
+   "verb_type": "dynamic",
+   "footnote": null,
+   "rows": [
+    {
+     "id": "instrument-i",
+     "aspect": "Perfective",
+     "hint": "one whole event",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "put *it*, or is putting *it*",
+      "will put *it*, or does as a habit",
+      "(didn't) put *it*",
+      "put *it*!",
+      "got *it* put, or put *it* by chance",
+      "can put *it*",
+      "(couldn't) put *it*"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gi-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Gibutáng níya ang kwárta",
+         "en": "He put the money down.",
+         "source": "W",
+         "source_spelling": "Gibutang níya ang kwarta"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "i-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Ibutáng níya ang kwárta",
+         "en": "He will put the money down.",
+         "source": "W",
+         "source_spelling": "Ibutang níya ang kwarta"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Walâ níya ibutáng ang kwárta",
+         "en": "He didn't put the money down.",
+         "source": "W",
+         "source_spelling": "Walà níya ibutang ang kwarta"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Isaká ang malíta sa tâas",
+         "en": "Bring the suitcase upstairs.",
+         "source": "W",
+         "source_spelling": "Isaka ang malíta sa táas"
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "na-, gika-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Ang kwártang nabutáng (gikabutáng) sa lamísa",
+         "en": "The money that was put on the table.",
+         "source": "W",
+         "source_spelling": "Ang kwartang nabutang (gikabutang) sa lamísa"
+        },
+        {
+         "ceb": "Gikalípay kog dakô ang nahitabô",
+         "en": "I am very happy about what happened.",
+         "source": "W",
+         "source_spelling": "Gikalípay kug dakù ang nahitabù"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "ma-, ika-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Dìín kahâ nákò mabutáng (ikabutáng) ang kwárta?",
+         "en": "Where could I have put the money?",
+         "source": "W",
+         "source_spelling": "Diin kahà nákù mabutang (ikabutang) ang kwarta?"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Wà pa nákò mahátag níya kay wà pa siyá mòabót",
+         "en": "I haven't had a chance to give it to him because he hasn't arrived.",
+         "source": "W",
+         "source_spelling": "Wà pa nákù mahátag níya kay wà pa siya muabut"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "instrument-paga",
+     "aspect": "Progressive",
+     "hint": "going on; literary",
+     "same_aspect_as_above": false,
+     "literary": true,
+     "footnote": null,
+     "glosses": [
+      "is putting *it*, or was",
+      "will be putting *it*",
+      "(isn't) putting *it*",
+      "put *it*!",
+      "",
+      "",
+      ""
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gina-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "iga-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      }
+     ],
+     "potential": "above"
+    },
+    {
+     "id": "instrument-pan",
+     "aspect": "Distributive",
+     "hint": "many, or again and again",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "put *them*, many or again",
+      "will put *them*, many or again",
+      "(didn't) put *them*",
+      "put *them*!",
+      "got *them* put",
+      "can put *them*",
+      "(couldn't) put *them*"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "gipaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "ipaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Ihádlok (ipanghádlok) ning bitín ni Manang",
+         "en": "Scare Big Sister with this snake.",
+         "source": "W",
+         "source_spelling": "Ihadluk (ipanghadluk) ning bitin ni Manang"
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "napaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "mapaN-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "mapaN-",
+         "kind": "inferred"
+        }
+       ],
+       "same_as_left": false,
+       "examples": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "stative",
+   "label": "Stative",
+   "hint": "*ang* = what is in the state",
+   "verb_type": "stative",
+   "footnote": 5,
+   "rows": [
+    {
+     "id": "stative-mo",
+     "aspect": "Perfective",
+     "hint": "one whole event",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "came into the state",
+      "will come into it, or does as a habit",
+      "(didn't) come into it",
+      "be! (the command of ma-)",
+      "is, or was; or happened by chance",
+      "will be, or may happen",
+      "(isn't, wasn't, or didn't happen)"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "mi-, ni-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mipulá siyá kay gisugsóg",
+         "en": "She turned red because they teased her.",
+         "source": "W",
+         "source_spelling": "Mipula siya kay gisugsū́g"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "mo-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mopulá ímong ngábil ug ímong lipistíkan",
+         "en": "Your lips will become red if you put lipstick on them.",
+         "source": "W",
+         "source_spelling": "Mupula ímung ngábil ug ímung lipistíkan"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      },
+      {
+       "affixes": [
+        {
+         "label": "ka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Katúlog ug sayó károng gabîi.",
+         "en": "Go to bed early tonight.",
+         "source": "B",
+         "source_spelling": "Katulog ug sayo karong gabii."
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "na-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Namúga ang mga príso kay natúlog ang bántay",
+         "en": "The prisoners escaped because the guard fell asleep.",
+         "source": "W",
+         "source_spelling": "Namúga ang mga prísu kay natúlug ang bantay"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "ma-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Mobúklad na ko ug baníg kay matúlog na ko",
+         "en": "I will spread the mat because I am going to sleep.",
+         "source": "W",
+         "source_spelling": "Mubuklad na ku ug banig kay matúlug na ku"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Namatíkdan akó níya kay dìáy wà matúlog",
+         "en": "He noticed me as he wasn't asleep after all.",
+         "source": "W",
+         "source_spelling": "Namatikdan aku níya kay diay wà matúlug"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "stative-mag",
+     "aspect": "Progressive",
+     "hint": "going on",
+     "same_aspect_as_above": false,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "is in the state, or was",
+      "will be in it, or usually is",
+      "(isn't, or wasn't) in it",
+      "",
+      "came to be (found out)",
+      "will come to be",
+      "(didn't) come to be"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "nag-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Nagpulá ang langít pagsawóp sa ádlaw",
+         "en": "The sky was all red at sunset.",
+         "source": "W",
+         "source_spelling": "Nagpula ang langit pagsawup sa adlaw"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "mag-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Ug mag-ábri ang pultahán, mosulód giyód ang lángaw",
+         "en": "If the door is open, the flies are sure to come in.",
+         "source": "W",
+         "source_spelling": "Ug mag-abri ang pultahan, musulud giyud ang lángaw"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Walâ na magtuyók ang ligíd",
+         "en": "The wheel is no longer turning.",
+         "source": "W",
+         "source_spelling": "Walà na magtuyuk ang ligid"
+        }
+       ]
+      },
+      null
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "naka-, ka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Nakahibáwo ko nga nagdàót ka",
+         "en": "I found out you were sick.",
+         "source": "W",
+         "source_spelling": "Nakahibáwu ku nga nagdaut ka"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "maka-, ka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Kahibaló ka bang molangóy?",
+         "en": "Do you know how to swim?",
+         "source": "W",
+         "source_spelling": "Kahibalu ka bang mulanguy?"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Ayáw kog sigurôa, kay wà ka kahibáwo sa ákong abilidád",
+         "en": "Don't be too sure of me because you don't know my ability.",
+         "source": "W",
+         "source_spelling": "Ayaw kug sigurúa, kay wà ka kahibáwu sa ákung abilidad"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "stative-magka",
+     "aspect": "Progressive",
+     "hint": null,
+     "same_aspect_as_above": true,
+     "literary": false,
+     "footnote": null,
+     "glosses": [
+      "is getting more and more so, or was",
+      "will get more and more so",
+      "(isn't getting) more so",
+      "become so!",
+      "caused to become",
+      "will cause to become",
+      "(didn't) cause to become"
+     ],
+     "volitional": [
+      {
+       "affixes": [
+        {
+         "label": "nagka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Nagkapulá ang binágang púthaw",
+         "en": "The iron that was heated is turning redder and redder.",
+         "source": "W",
+         "source_spelling": "Nagkapula ang binágang puthaw"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "magka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Ímbis nga magkakusóg, nagkahináy hinûon",
+         "en": "Instead of getting faster and faster, it was getting slower and slower.",
+         "source": "W",
+         "source_spelling": "Imbis nga magkakusug, nagkahinay hinúun"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": [
+        {
+         "ceb": "Wà lagí magkadùól ang bapór ngánhi, nagkalayô hinûon",
+         "en": "The boat is not coming nearer. It's actually getting further and further away.",
+         "source": "W",
+         "source_spelling": "Wà lagi magkaduul ang bapur nganhi, nagkalayù hinúun"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "pagka-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Pagkahigugma (kamó)!",
+         "en": "(You all,) Fall in love!",
+         "source": "P",
+         "source_spelling": "Pagkahigugma (kamo)!"
+        }
+       ]
+      }
+     ],
+     "potential": [
+      {
+       "affixes": [
+        {
+         "label": "naka-, nakapa-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Ang húgaw nga túbig màóy nakàánsoy (nakapàánsoy) sa íyang samád",
+         "en": "The dirty water caused his wound to get infected.",
+         "source": "W",
+         "source_spelling": "Ang húgaw nga túbig mauy nakaansuy (nakapaansuy) sa íyang samad"
+        }
+       ]
+      },
+      {
+       "affixes": [
+        {
+         "label": "maka-, makapa-",
+         "kind": "standard"
+        }
+       ],
+       "same_as_left": false,
+       "examples": [
+        {
+         "ceb": "Panahón ray makàálim (makapàálim) sa ímong kagùól",
+         "en": "Only time will assuage your sorrow.",
+         "source": "W",
+         "source_spelling": "Panahun ray makaálim (makapaálim) sa ímung kaguul"
+        }
+       ]
+      },
+      {
+       "affixes": [],
+       "same_as_left": true,
+       "examples": []
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "footnotes": [
+  {
+   "n": 1,
+   "title": "Dependent",
+   "text": "After a word that already sets the time: *walâ* 'did not' above all, or a time word (*Úgmà níya palitá* 'He will buy it tomorrow'). *Dílì* takes the irrealis instead."
+  },
+  {
+   "n": 2,
+   "title": "Imperative",
+   "text": "Patient and circumstance borrow the dependent (`-a`, `-i`; Wolff); the instrument keeps `i-`. In the agent, `pag-` is optional in the perfective, where the bare base sounds more forceful (Wolff, course 11C1), and required in the progressive (Raisanen & Raisanen, *A Handbook of Cebuano Visayan*, 2016; Bunye & Yap). After *ayáw* 'don't', `pag-` is usual; a plain irrealis makes a softer suggestion (Tanangkingsing, ch. 9)."
+  },
+  {
+   "n": 3,
+   "title": "Volitional, potential",
+   "text": "Wikipedia's moods, indicative and potential. \"Volitional\" follows Tanangkingsing (Wolff: nonpotential), since commands sit on that side. The potential has no imperative and one set for both aspects. Wikipedia's third mood, the mirative (`nahi-`, `mahi-`), is Wolff's `hi-` 'accidental', under All affixes."
+  },
+  {
+   "n": 4,
+   "title": "Distributive",
+   "text": "Many doers, many things, or again and again. Wolff's derived base `paN-` (§6.2) under the ordinary affixes (`mo-` + `paN-` = `maN-`); he also has a progressive, `magpaN-`, `nagpaN-`. The command is `paN-` or `pagpaN-` (Wolff, course 11C3a). The dashed dependents of the distributive potential (`mapaN-`, `mapaN-…-i`) are built by Wolff's rule that a `paN-` base takes the ordinary affixes; no source prints them."
+  },
+  {
+   "n": 5,
+   "title": "Stative",
+   "text": "No doer, so no trigger. The state itself (`ma-` on *túlog* 'sleep') is the potential's affix: Wolff has one `ma-` entry for both. The volitional side holds the agent's affixes as they read on a verb of state (Wolff §7.11-7.12). The two sides pair by shape only, so read each side's gloss. Wikipedia's passive statives (`gika-`, `ka-…-an`, `ika-`) are Wolff's alternates of the potential and stand there, mostly with verbs of feeling (*hádlok* 'fear'). *Palít* has no stative: *mapalít* is 'can be bought'."
+  },
+  {
+   "n": 6,
+   "title": "Literary or archaic",
+   "text": "The progressive passives (`gina-`, `paga-…-on`, `iga-`) are literary outside Southern Leyte and Bohol (Wolff); in speech the perfective passives cover both meanings. `naga-` is archaic (Raisanen & Raisanen)."
+  },
+  {
+   "n": 7,
+   "title": "Variants",
+   "text": "`mi-` and `ni-` are always interchangeable (Raisanen & Raisanen; Wolff); Tanangkingsing and Bunye & Yap treat `ni-` as the everyday form, Wikipedia `mi-` as more formal. `ming-`, `ning-` are taken by some verbs and preferred by some speakers (Wolff, course 9c2; Tanangkingsing, ch. 2); `maga-` is in Wolff and Tanangkingsing. Raisanen & Raisanen list none of the three."
+  },
+  {
+   "n": 8,
+   "title": "Sources",
+   "text": "The layout follows Wikipedia's table of basic verbal affixes, and the verb *palít* comes from Wolff's chart (Intro §6.1), with *butáng* 'put' for the instrument, whose full paradigm Wolff gives under `i-`; another verb where *palít* has no example. Every example is attested; an empty cell is a form the sources give without one."
+  }
+ ]
+}

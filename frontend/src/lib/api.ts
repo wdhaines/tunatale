@@ -25,6 +25,14 @@ export type SetClozeSentenceResponse = components["schemas"]["SetClozeSentenceRe
 export type CreateReviewSessionResponse = components["schemas"]["CreateReviewSessionResponse"];
 export type RenderEstimate = components["schemas"]["RenderEstimateResponse"];
 export type DeleteReviewSessionResponse = components["schemas"]["DeleteReviewSessionResponse"];
+// The Reference tab (tunatale-h0q3.47): its page list and the verb chart.
+export type ReferencePage = components["schemas"]["ReferencePage"];
+export type ReferencePagesResponse = components["schemas"]["ReferencePagesResponse"];
+export type VerbChart = components["schemas"]["VerbChartResponse"];
+export type VerbChartRow = components["schemas"]["VerbChartRow"];
+export type VerbChartCell = components["schemas"]["VerbChartCell"];
+export type VerbChartAffix = components["schemas"]["VerbChartAffix"];
+export type VerbChartExample = components["schemas"]["VerbChartExample"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
@@ -1318,6 +1326,16 @@ export class TunaTaleAPI {
 
   async getListens(): Promise<ListensResponse> {
     return this.request("/api/srs/listens");
+  }
+
+  /** The active language's Reference pages; empty when it has none (the tab hides). */
+  async getReferencePages(): Promise<ReferencePagesResponse> {
+    return this.request("/api/reference");
+  }
+
+  /** The active language's verb chart; a 404 (rejects) when it has none. */
+  async getVerbChart(): Promise<VerbChart> {
+    return this.request("/api/reference/verb-chart");
   }
 
   async importListens(lessonIds: string[], languageCode?: string): Promise<ImportListensResponse> {

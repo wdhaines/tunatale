@@ -461,7 +461,7 @@ async def _refuse_while_parked(request, call_next):
     return await call_next(request)
 
 
-from app.api import admin, anki, audio, curriculum, generation, srs  # noqa: E402
+from app.api import admin, anki, audio, curriculum, generation, reference, srs  # noqa: E402
 from app.api import auth as auth_api  # noqa: E402
 from app.api import client_log as client_log_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
@@ -498,6 +498,7 @@ app.include_router(generation.router, dependencies=USER)
 app.include_router(srs.router, dependencies=[Depends(require_user)])
 app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
 app.include_router(audio.router, dependencies=USER)
+app.include_router(reference.router, dependencies=USER)
 app.include_router(review_sessions_api.router, dependencies=USER)
 if settings.sync_enabled and _anki_sync_importable():
     app.include_router(anki.router, dependencies=OWNER)

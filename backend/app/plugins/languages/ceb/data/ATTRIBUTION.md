@@ -112,3 +112,26 @@ match a card's English to a close meaning in Wolff (tunatale-h0q3.2). Built by
   "WordNet 3.0 Copyright 2006 by Princeton University. All rights reserved."
 - The English word list it is restricted to is wordfreq's top 50,000 English
   words (wordfreq is already a dependency; its data is CC BY-SA 4.0).
+
+# Attribution: `verb_chart.json`
+
+The Reference tab's verb chart (tunatale-h0q3.47). The layout, glosses, notes and
+footnotes are TunaTale's own; every example sentence is quoted from one of three
+sources, named by the `source` tag on the example, with the source's own spelling
+kept in `source_spelling` (the displayed text is respelled to the Handbook system):
+
+- **`W`: John U. Wolff, *A Dictionary of Cebuano Visayan* (1972)**, Project Gutenberg
+  eBook #40074. **Public domain.**
+- **`B`: Maria Victoria R. Bunye and Elsa Paula Yap, *Cebuano for Beginners*
+  (University of Hawaii Press, 1971; PALI Language Texts: Philippines)**, open access
+  edition (Humanities Open Book, 30 May 2019; OA ISBN 9780824879778). Licensed
+  under **CC BY-NC-SA 4.0**: <https://creativecommons.org/licenses/by-nc-sa/4.0/>.
+- **`P`: Wikipedia, "Cebuano grammar"** (revision 1377849911, fetched 2026-10-24).
+  Licensed under **CC BY-SA 4.0**: <https://creativecommons.org/licenses/by-sa/4.0/>.
+  The chart's row-and-column layout also follows that article's table of basic
+  verbal affixes.
+
+Wolff's *Beginning Cebuano* course (all rights reserved) is cited in footnotes but
+never quoted: its examples were replaced with dictionary ones before this file was
+committed. As with the Wiktionary data above, share-alike and non-commercial terms
+cover this data file, not the code that reads it.

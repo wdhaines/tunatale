@@ -2431,6 +2431,30 @@ describe("TunaTaleAPI", () => {
     });
   });
 
+  describe("reference pages", () => {
+    it("GETs /api/reference for the page list", async () => {
+      const pages = [{ id: "verb-chart", title: "The verb chart" }];
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ pages })));
+
+      const result = await api.getReferencePages();
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/reference`);
+      expect(result.pages).toEqual(pages);
+    });
+
+    it("GETs /api/reference/verb-chart for the chart, and rejects when there is none", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(mockOk({ id: "verb-chart", title: "The verb chart" })),
+      );
+      expect((await api.getVerbChart()).title).toBe("The verb chart");
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/reference/verb-chart`);
+
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFail()));
+      await expect(api.getVerbChart()).rejects.toThrow();
+    });
+  });
+
   describe("getListens", () => {
     it("GETs /api/srs/listens and returns the lessons payload", async () => {
       const lessons = [

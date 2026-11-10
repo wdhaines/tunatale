@@ -504,6 +504,7 @@ export const en = {
   "layout.navReview": "Review",
   "layout.navLessons": "Lessons",
   "layout.navCards": "Cards",
+  "layout.navReference": "Reference",
   "layout.navSettings": "Settings",
 
   // login/+page.svelte
@@ -654,6 +655,19 @@ export const en = {
   "drillForms.noReviews": "none yet",
   "drillForms.stuck": "Stuck",
   "drillForms.passed": "Passed",
+
+  // reference/ — the Reference tab and the verb chart (tunatale-h0q3.47)
+  "reference.title": "Reference",
+  "reference.none": "No reference pages for this language yet.",
+  "reference.noChart": "No verb chart for this language.",
+  "reference.loading": "Loading…",
+  "reference.jumpTo": "Jump to a trigger",
+  "reference.showLiterary": "Show literary and archaic forms",
+  "reference.verbType": "Verb type",
+  "reference.trigger": "Trigger",
+  "reference.aspect": "Aspect",
+  "reference.sameAsAbove": "same as the perfective",
+  "reference.noForm": "no form",
 
   // +error.svelte
   "error.genericFallback": "Something went wrong",
