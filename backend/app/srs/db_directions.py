@@ -43,6 +43,7 @@ class DbDirectionsMixin:
                     anki_card_id = ?,
                     anki_card_mod = ?,
                     anki_due = ?,
+                    anki_ord = ?,
                     dirty_fsrs = ?,
                     last_synced_at = ?,
                     last_rating = ?,
@@ -67,6 +68,7 @@ class DbDirectionsMixin:
                     state.anki_card_id,
                     state.anki_card_mod,
                     state.anki_due,
+                    state.anki_ord,
                     1 if state.dirty_fsrs else 0,
                     state.last_synced_at,
                     state.last_rating,
@@ -103,6 +105,19 @@ class DbDirectionsMixin:
             guid = item.guid
         direction = Direction.RECOGNITION if Direction.RECOGNITION in item.directions else Direction.PRODUCTION
         self.update_direction(guid, direction, item.directions[direction])
+
+    def set_anki_ord(self, row_id: int, direction: Direction, anki_ord: int) -> None:
+        """Record the Anki card's ``ord`` for one direction, touching nothing else (tunatale-h0q3.60).
+
+        ``sync_pull``'s heal: the ord is not part of the sync diff, so a card whose
+        schedule did not change still learns it here.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET anki_ord = ? WHERE collocation_id = ? AND direction = ?",
+                (anki_ord, row_id, direction.value),
+            )
+            self._commit(conn)
 
     def update_direction_by_id(self, row_id: int, direction: Direction, state: DirectionState) -> None:
         """Persist direction state for a collocation identified by row id."""

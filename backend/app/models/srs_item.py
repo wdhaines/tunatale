@@ -71,6 +71,11 @@ class DirectionState:
     # Anki's `cards.mod` (modification timestamp). Used as the secondary sort
     # key under RetrievabilityAscending — Anki tiebreaks via `fnvhash(id, mod)`.
     anki_card_mod: int | None = None
+    # Anki's `cards.ord`, as the last pull read it; None until then. The TEMPLATE
+    # new-card sort ranks by it, and a direction only implies it: a lesson line's
+    # cards are all PRODUCTION directions of one note whose ords run 0..N
+    # (tunatale-h0q3.60, Layer 94).
+    anki_ord: int | None = None
     # Source of a buried state: 'user' (manual bury, persists across rollover)
     # or 'sched' (sibling/auto bury, released at next rollover via Layer 27's
     # unbury_if_needed sweep). NULL on non-buried rows.

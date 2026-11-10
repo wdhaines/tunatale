@@ -110,6 +110,13 @@ DIRECTION_FIELDS: tuple[DirectionField, ...] = (
         "Layer 37: FNV tiebreaker input (Anki's fnvhash(id, mod)) — an un-synced mod bump drifts the R-tied sort order",
     ),
     DirectionField("anki_due", "anki_due", True, "Anki-side due; new-card gather order input (Layer 25/28)"),
+    DirectionField(
+        "anki_ord",
+        "anki_ord",
+        False,
+        "Layer 94: Anki's cards.ord, fixed for a card's life; sync_pull heals it with its own targeted write "
+        "(set_anki_ord), so the first pull after v51 does not count every card as a schedule update",
+    ),
     DirectionField("dirty_fsrs", "dirty_fsrs", True, "push bookkeeping; a cleared/raised flag must persist"),
     DirectionField(
         "last_synced_at",

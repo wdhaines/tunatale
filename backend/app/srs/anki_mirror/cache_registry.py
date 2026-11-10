@@ -104,7 +104,8 @@ REGISTRY: Final[dict[str, CacheKeySpec]] = {
         source=CacheSource.TT_SESSION,
         day_scoped=True,
         # 3: siblings keyed on the note (sibling_group), not the row (tunatale-h0q3.55).
-        logic_version=3,
+        # 4: new cards ranked by the card's own Anki ord, not its direction (tunatale-h0q3.60).
+        logic_version=4,
     ),
     # ANKI_CONFIG keys (18 total)
     "daily_new_cap": CacheKeySpec(

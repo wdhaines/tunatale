@@ -19,7 +19,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 50
+CURRENT_VERSION = 51
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1521,6 +1521,23 @@ def migrate_v49_to_v50(conn: sqlite3.Connection) -> None:
     _set_version(conn, 50)
 
 
+def migrate_v50_to_v51(conn: sqlite3.Connection) -> None:
+    """Add ``collocation_directions.anki_ord``: the Anki card's ``ord`` (tunatale-h0q3.60, Layer 94).
+
+    Anki's TEMPLATE sort ranks the day's new cards by ``cards.ord``. TT ranked by
+    direction (recognition 0, production 1), which is wrong for every card whose
+    ord its direction does not imply: a lesson line's cards (all PRODUCTION, ords
+    0..N on one note) and an ordinary Cloze card (PRODUCTION, ord 0).
+
+    NULL for every existing row: only the collection knows a card's ord, and the
+    next ``sync_pull`` writes it for every linked direction. Until then the queue
+    ranks a NULL by direction, as before.
+    """
+    if not _column_exists(conn, "collocation_directions", "anki_ord"):
+        conn.execute("ALTER TABLE collocation_directions ADD COLUMN anki_ord INTEGER")
+    _set_version(conn, 51)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1601,6 +1618,7 @@ _MIGRATIONS = {
     47: migrate_v47_to_v48,
     48: migrate_v48_to_v49,
     49: migrate_v49_to_v50,
+    50: migrate_v50_to_v51,
 }
 
 

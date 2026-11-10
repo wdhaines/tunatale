@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 
-from app.models.srs_item import Direction, SRSItem, SRSState
+from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.srs.anki_mirror.queue_stats import (
     advance_learning_cutoff,
     clear_session_main_queue,
@@ -91,6 +91,20 @@ def _merge_by_retrievability_ascending(
     return combined
 
 
+def _template_ord(ds: DirectionState, direction: Direction) -> int:
+    """The Anki ``cards.ord`` of the card behind *ds*: what TEMPLATE sorts new cards by.
+
+    The pull stores it (``anki_ord``). A direction only implies it: recognition is
+    ord 0 and production ord 1 on a two-template vocab note, but a lesson line's
+    cards are all PRODUCTION directions of one "TT Sentence" note whose ords run
+    0..N, and an ordinary Cloze card is ord 0 (tunatale-h0q3.60, Layer 94). A card
+    not in Anki yet has no ord to mirror, so the direction's usual one stands.
+    """
+    if ds.anki_ord is not None:
+        return ds.anki_ord
+    return 0 if direction == Direction.RECOGNITION else 1
+
+
 def _merge_directions(
     rec: list[tuple[int, SRSItem, str]],
     prod: list[tuple[int, SRSItem, str]],
@@ -134,7 +148,7 @@ def _merge_directions(
     ) -> tuple[int, int, int, int, int]:
         row_id, item, _lang, direction = t
         ds = item.directions[direction]
-        ord_value = 0 if direction == Direction.RECOGNITION else 1
+        ord_value = _template_ord(ds, direction)
         # Layer 33: distinguish fresh /listen-added rows from stale/phantom
         # directions when anki_due is NULL. A fresh add has no anki_note_id at
         # the COLLOCATION level (never pushed to Anki); it should sit at the top
@@ -342,7 +356,7 @@ def _compute_live_main(db) -> list[tuple[int, SRSItem, str, Direction]]:
     # them in position order. Mirrored rather than hardcoded since 2026-08-22. The
     # sort is stable, so the gather order survives within a template rank.
     if new_cards_ranked_by_template(db):
-        nonlearning_new.sort(key=lambda t: 0 if t[3] == Direction.RECOGNITION else 1)
+        nonlearning_new.sort(key=lambda t: _template_ord(t[1].directions[t[3]], t[3]))
 
     if spread == 1:
         return nonlearning_due + nonlearning_new

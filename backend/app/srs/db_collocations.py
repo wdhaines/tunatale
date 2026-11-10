@@ -16,6 +16,7 @@ from app.languages import card_surface_variants
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import BackField, SyntacticUnit, deserialize_extras, serialize_extras
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+from app.srs.db_base import FLAG_CARD_DATA_SQL
 from app.srs.sentence_card import sibling_group
 
 
@@ -745,10 +746,7 @@ def _flag_line_of_deleted(conn: sqlite3.Connection, row_ids: list[int]) -> None:
     placeholders = ",".join("?" * len(row_ids))
     conn.execute(
         f"""
-        UPDATE collocations SET dirty_fields = CASE
-            WHEN dirty_fields IS NULL OR dirty_fields = '' THEN 'card_data'
-            WHEN (',' || dirty_fields || ',') LIKE '%,card_data,%' THEN dirty_fields
-            ELSE dirty_fields || ',card_data' END
+        UPDATE collocations SET dirty_fields = {FLAG_CARD_DATA_SQL}
         WHERE anki_note_id IS NOT NULL
           AND id NOT IN ({placeholders})
           AND sibling_group IN (

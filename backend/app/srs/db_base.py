@@ -127,6 +127,13 @@ CREATE TABLE IF NOT EXISTS lesson_listens (
 # columns there, never append here.
 _DIR_COLUMNS = tuple(f.column for f in DIRECTION_FIELDS)
 
+#: SQL for ``collocations.dirty_fields`` with ``card_data`` added (once): the flag
+#: that makes the next push rebuild a "TT Sentence" note from its line's rows.
+FLAG_CARD_DATA_SQL = """CASE
+    WHEN dirty_fields IS NULL OR dirty_fields = '' THEN 'card_data'
+    WHEN (',' || dirty_fields || ',') LIKE '%,card_data,%' THEN dirty_fields
+    ELSE dirty_fields || ',card_data' END"""
+
 # States that should never surface in the due queue regardless of due_date.
 _NON_REVIEWABLE_STATES = ("new", "suspended", "known", "buried")
 
@@ -342,6 +349,7 @@ class SRSDatabaseBase:
                 anki_card_id=row["anki_card_id"],
                 anki_card_mod=row["anki_card_mod"],
                 anki_due=row["anki_due"],
+                anki_ord=row["anki_ord"],
                 dirty_fsrs=bool(row["dirty_fsrs"]),
                 last_synced_at=row["last_synced_at"],
                 last_rating=row["last_rating"],

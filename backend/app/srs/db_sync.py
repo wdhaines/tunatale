@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
-from app.srs.db_base import _DIR_COLUMNS, _parse_last_review
+from app.srs.db_base import _DIR_COLUMNS, FLAG_CARD_DATA_SQL, _parse_last_review
 
 if TYPE_CHECKING:
     from app.srs.sentence_card import SentenceCard
@@ -329,7 +329,9 @@ class DbSyncMixin:
 
         Behaviour:
         - For each direction with `anki_card_id NOT IN live_card_ids`: set
-          `anki_card_id`, `anki_card_mod`, `anki_due`, `last_synced_at` to NULL.
+          `anki_card_id`, `anki_card_mod`, `anki_ord`, `anki_due`, `last_synced_at` to NULL.
+          A row that is one card of a shared note still in Anki (`sibling_group`)
+          is also flagged `card_data`, so the next push puts its card back.
           If the row has `reps > 0`, also set `dirty_fsrs = 1` so the next
           `sync_push` rewrites the FSRS state (force_fsrs) and a revlog entry
           onto the freshly-created Anki card.
@@ -345,7 +347,8 @@ class DbSyncMixin:
         with self._get_conn() as conn:
             dir_rows = conn.execute(
                 """
-                SELECT c.guid, d.direction, d.anki_card_id, d.collocation_id, d.reps
+                SELECT c.guid, d.direction, d.anki_card_id, d.collocation_id, d.reps,
+                       c.sibling_group, c.anki_note_id
                 FROM collocation_directions d
                 JOIN collocations c ON c.id = d.collocation_id
                 WHERE d.anki_card_id IS NOT NULL
@@ -360,6 +363,7 @@ class DbSyncMixin:
                     UPDATE collocation_directions SET
                       anki_card_id = NULL,
                       anki_card_mod = NULL,
+                      anki_ord = NULL,
                       anki_due = NULL,
                       last_synced_at = NULL,
                       dirty_fsrs = CASE WHEN ? THEN 1 ELSE dirty_fsrs END
@@ -368,6 +372,15 @@ class DbSyncMixin:
                     (1 if make_dirty else 0, row["collocation_id"], row["direction"]),
                 )
                 direction_resets.append((row["guid"], row["direction"]))
+                if row["sibling_group"] is not None and row["anki_note_id"] in live_note_ids:
+                    # One card of a shared "TT Sentence" note is gone and the note
+                    # is not, so the row is not unlinked and no mint will reach it.
+                    # Flag its line: the push rebuilds the note and puts the card
+                    # back at the number its blank still has (tunatale-h0q3.60).
+                    conn.execute(
+                        f"UPDATE collocations SET dirty_fields = {FLAG_CARD_DATA_SQL} WHERE id = ?",
+                        (row["collocation_id"],),
+                    )
 
             note_rows = conn.execute(
                 "SELECT id, guid, anki_note_id FROM collocations WHERE anki_note_id IS NOT NULL"

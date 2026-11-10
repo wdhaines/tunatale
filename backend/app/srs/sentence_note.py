@@ -12,6 +12,7 @@ Nothing here writes anything. The field order is ``sentence_notetype.FIELD_NAMES
 from __future__ import annotations
 
 import html
+import re
 
 from app.srs.sentence_card import Gloss, SentenceCard, rich
 
@@ -23,7 +24,7 @@ def _esc(s: str) -> str:
     return html.escape(s, quote=False)
 
 
-def cloze_ords(cards: list[SentenceCard], taken: dict[str, int] | None = None) -> dict[str, int]:
+def cloze_ords(cards: list[SentenceCard], taken: dict[str, int] | None = None, above: int = 0) -> dict[str, int]:
     """Each card's cloze number, by card key: the whole line 1, the blanks 2.. in list order.
 
     *taken* holds the numbers of cards already minted (an Anki card's ord is its
@@ -31,13 +32,18 @@ def cloze_ords(cards: list[SentenceCard], taken: dict[str, int] | None = None) -
     and its review history, to another blank. A blank without one takes the
     next number above every number in use, so a number freed by a deleted card
     is never handed to a different blank.
+
+    *above* is the highest cloze number any card of the note still carries. A
+    row deleted in TT keeps its card in Anki until the next push, and no row
+    claims that card's number; without this floor the next new blank would be
+    given it, and the card and its history with it (tunatale-h0q3.60).
     """
     lines = {(c.lesson_id, c.line_index) for c in cards}
     if len(lines) != 1:
         raise ValueError(f"a TT Sentence note holds one line's cards, got {sorted(lines)}")
     taken = {k: n for k, n in (taken or {}).items() if k in {c.key for c in cards}}
     ords: dict[str, int] = {}
-    next_blank = max([WHOLE_ORD, *taken.values()]) + 1
+    next_blank = max([WHOLE_ORD, above, *taken.values()]) + 1
     for card in cards:
         if card.key in ords:
             raise ValueError(f"card {card.key} listed twice")
@@ -53,6 +59,44 @@ def cloze_ords(cards: list[SentenceCard], taken: dict[str, int] | None = None) -
         if a == b:
             raise ValueError(f"cloze {a} given to two cards of {cards[0].line_key}")
     return ords
+
+
+_CLOZE = re.compile(r"\{\{c(\d+)::(.*?)\}\}", re.DOTALL)
+_WHOLE = re.compile(rf"\{{\{{c{WHOLE_ORD}::(.*)\}}\}}", re.DOTALL)
+
+
+def cloze_numbers_in(text_field: str, line_text: str) -> dict[tuple[int, int] | None, int] | None:
+    """The cloze number each blank of *line_text* carries in a note's ``Text`` field, by span.
+
+    The inverse of the ``Text`` this module writes: ``None`` keys the whole-line
+    cloze, a ``(start, end)`` span keys a blank. It is how a row with no card of
+    its own finds the number, and so the card, its blank already has in the note
+    (tunatale-h0q3.60): numbering such a line from scratch hands cards to other
+    blanks and graves the rest.
+
+    Returns ``None`` when the field is not this line (edited in Anki, or the
+    line's text has changed since it was written) or carries a number twice: the
+    spans then say nothing about which card is whose.
+    """
+    numbers: dict[tuple[int, int] | None, int] = {}
+    inner = text_field
+    whole = _WHOLE.fullmatch(text_field)
+    if whole is not None:
+        numbers[None] = WHOLE_ORD
+        inner = whole.group(1)
+    rebuilt: list[str] = []
+    pos = last = 0
+    for m in _CLOZE.finditer(inner):
+        before, word = html.unescape(inner[last : m.start()]), html.unescape(m.group(2))
+        start = pos + len(before)
+        number = int(m.group(1))
+        if number in numbers.values():
+            return None
+        numbers[(start, start + len(word))] = number
+        rebuilt += [before, word]
+        pos, last = start + len(word), m.end()
+    rebuilt.append(html.unescape(inner[last:]))
+    return numbers if "".join(rebuilt) == line_text else None
 
 
 def source_label(card: SentenceCard) -> str:

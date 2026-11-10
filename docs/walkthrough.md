@@ -2970,6 +2970,7 @@ last_review_time_ms   False         free
 anki_card_id          True          free          
 anki_card_mod         True          free          
 anki_due              True          free          
+anki_ord              False         free          
 dirty_fsrs            True          free          
 last_synced_at        False         free          
 last_rating           False         free          
@@ -3083,11 +3084,11 @@ last_unbury_day       TT_STATE    day_scoped=True  logic_version=None
 last_grade_undo       TT_STATE    day_scoped=False logic_version=None
 last_preset_change    TT_STATE    day_scoped=False logic_version=None
 learning_cutoff       TT_SESSION  day_scoped=True  logic_version=None
-session_main_queue    TT_SESSION  day_scoped=True  logic_version=3
+session_main_queue    TT_SESSION  day_scoped=True  logic_version=4
 ANKI_CONFIG: daily_new_cap, daily_review_cap, desired_retention, new_spread, new_card_sort_order, new_card_gather_priority, bury_new, bury_review, col_crt, fsrs_params, fsrs_preset_snapshot, learn_steps, relearn_steps, easy_days_percentages, load_balancer_enabled, new_cards_ignore_review_limit, fsrs_short_term_with_steps_enabled, maximum_review_interval
 ```
 
-`TT_SESSION` and `TT_STATE` keys are not Anki config: the frozen queue, the learning cutoff, the unbury day, the single-level grade-undo snapshot, and the preset-change alert. `logic_version` is how a deploy invalidates a cached queue: `session_main_queue` is at version 3 (2 for the Layer 83 order change, 3 when siblings came to be keyed on the note rather than the row, h0q3.55), and a cached payload with a different version is discarded exactly like one from yesterday. Every `ANKI_CONFIG` key must be rewritten by every non-dry-run `sync_pull`; `tests/test_sync_cache_conservation.py` derives that check from the registry, so a missing `refresh_*` fails a test rather than a user.
+`TT_SESSION` and `TT_STATE` keys are not Anki config: the frozen queue, the learning cutoff, the unbury day, the single-level grade-undo snapshot, and the preset-change alert. `logic_version` is how a deploy invalidates a cached queue: `session_main_queue` is at version 4 (2 for the Layer 83 order change, 3 when siblings came to be keyed on the note rather than the row, h0q3.55, 4 when new cards came to be ranked by the card's own Anki ord, h0q3.60), and a cached payload with a different version is discarded exactly like one from yesterday. Every `ANKI_CONFIG` key must be rewritten by every non-dry-run `sync_pull`; `tests/test_sync_cache_conservation.py` derives that check from the registry, so a missing `refresh_*` fails a test rather than a user.
 
 ### 9.5 Three day rules
 
@@ -3331,10 +3332,10 @@ grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; 
 ```
 
 ```output
-## Layer 90 — a reset pushed to Anki forgot the card but logged nothing, so its old reviews still counted
 ## Layer 91 — a card with no `lrt` counted its elapsed days from a "today" that runs a day ahead after midnigh
 ## Layer 92 — a course's card list would have reached the deck backwards
 ## Layer 93 — a lesson line's cards are one note's siblings, so TT's sibling identity became the note
+## Layer 94 — a card's Anki ord is not its direction: TT stores it, ranks by it, and numbers a line's cards by
 ```
 
 Layer 93 (2026-11-09) made a lesson line's cards one note's siblings, so TT's sibling identity is now the note (`sibling_group`), not the row. Layers 88 to 91, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
@@ -3368,7 +3369,7 @@ for n in range(43, 50):
 ```
 
 ```output
-22:CURRENT_VERSION = 50
+22:CURRENT_VERSION = 51
 migrate_v43_to_v44: Record that a word's image search came back empty (``image_unavailable_at``).
 migrate_v44_to_v45: LLM-written cloze sentences, cached per word (``cloze_sentence_cache``).
 migrate_v45_to_v46: Delete media rows whose collocation no longer exists.

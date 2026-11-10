@@ -477,8 +477,11 @@ it; verify it is still firing, then look for new edge cases.
   the bottom. Symptom: "the card disappears from TT's new head though Anki shows it
   next."
 - Diagnostic: `SELECT anki_note_id, COUNT(*) FROM collocations WHERE anki_note_id
-  IS NOT NULL GROUP BY anki_note_id HAVING COUNT(*) > 1` should return 0 rows. If
-  any appear, follow the `scripts/anki_archive/dedupe_tt_collocations.py` pattern.
+  IS NOT NULL AND sibling_group IS NULL GROUP BY anki_note_id HAVING COUNT(*) > 1`
+  should return 0 rows. If any appear, follow the
+  `scripts/anki_archive/dedupe_tt_collocations.py` pattern. (`sibling_group IS NULL`
+  because a lesson line's rows share one "TT Sentence" note on purpose, Layer 93;
+  sync resolves those card by card.)
 - Any new code path that could create a second collocation for an existing Anki
   note must also handle dedupe.
 
@@ -521,6 +524,11 @@ it; verify it is still firing, then look for new edge cases.
   matches the user's Anki, which orders by deck position with recognition at the
   lower position; don't change TT to surface production first. The badge
   (`count_new_available_collocations`) already matches.
+- **A sentence or cloze card out of place among the day's new cards (Layer 94).**
+  TEMPLATE ranks by the card's real `cards.ord`, which TT stores as
+  `collocation_directions.anki_ord` (written by every pull; NULL = not pulled
+  since v51, ranked by direction). A line's cards are ords 0..N, not "production
+  = 1". Don't put a direction-derived ord back into `queue_engine._template_ord`.
 - Verify the intersperser ratio `(R_remaining + 1) / (N_quota + 1)`, with no
   session-start override (Layer 14).
 - Sibling-bury: `_compute_live_main` gathers
