@@ -45,6 +45,7 @@ _ALTERNATES: dict[str, object] = {
     "anki_card_id": 123,
     "anki_card_mod": 456,
     "anki_due": 789,
+    "anki_ord": 2,
     "dirty_fsrs": True,
     "last_synced_at": "2026-01-01T00:00:00",
     "last_rating": 3,

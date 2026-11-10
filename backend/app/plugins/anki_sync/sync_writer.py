@@ -1003,6 +1003,11 @@ class OfflineWriter:
         """Whether the "TT Sentence" notetype exists (``add_sentence_notetype`` creates it)."""
         return self._conn.execute("SELECT 1 FROM notetypes WHERE name = ?", (SENTENCE_NOTETYPE,)).fetchone() is not None
 
+    def sentence_note_text(self, note_id: int) -> str | None:
+        """The ``Text`` field (field 0) of note *note_id* as the collection holds it, or None if it has no such note."""
+        row = self._conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        return None if row is None else row[0].split(_FIELD_SEP)[0]
+
     def _add_sentence_cards(self, note_id: int, did: int, ords: list[int], *, course: bool, ts: int) -> None:
         """Insert a card for each of *ords* (in that order) the note lacks, at consecutive new positions."""
         have = {r[0] for r in self._conn.execute("SELECT ord FROM cards WHERE nid = ?", (note_id,))}

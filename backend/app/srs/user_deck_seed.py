@@ -125,6 +125,7 @@ DIRECTION_RESET = {
     "last_review_time_ms": 0,
     "anki_card_id": None,
     "anki_card_mod": None,
+    "anki_ord": None,
     "dirty_fsrs": 0,
     "last_synced_at": None,
     "last_rating": None,

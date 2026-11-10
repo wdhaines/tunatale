@@ -176,3 +176,58 @@ class TestGatherPriority:
 
 
 assert SRSItem  # imported for the tuple shape documented above
+
+
+class TestTemplateRankIsTheCardsOwnOrd:
+    """TEMPLATE ranks by the Anki card's ord, which a direction only implies (tunatale-h0q3.60).
+
+    A lesson line's cards are all PRODUCTION directions of a note whose ords run
+    0..N, so "recognition 0, production 1" misranked every one not at ord 1. The
+    pull stores the real ord (``anki_ord``); the same decks against the Anki engine:
+    ``test_parity_sentence_card_ord.py``.
+    """
+
+    def _new_production(self, db: SRSDatabase, text: str, *, anki_due: int, anki_ord: int | None) -> int:
+        row_id = _add(db, text)
+        _set_direction(db, row_id, Direction.RECOGNITION, SRSState.REVIEW, anki_due=anki_due, due_at=_future(30))
+        db.update_direction_by_id(
+            row_id,
+            Direction.PRODUCTION,
+            DirectionState(
+                direction=Direction.PRODUCTION,
+                state=SRSState.NEW,
+                due_at=_future(0),
+                anki_card_id=anki_due * 10 + 1,
+                anki_due=anki_due,
+                anki_ord=anki_ord,
+            ),
+        )
+        return row_id
+
+    def test_a_card_at_ord_two_ranks_after_a_production_card_gathered_later(self, db):
+        db.set_anki_state_cache("daily_new_cap", "2")
+        blank = self._new_production(db, "blank", anki_due=5, anki_ord=2)
+        prod = self._new_production(db, "word", anki_due=10, anki_ord=1)
+
+        assert _new_slice(db) == [(prod, Direction.PRODUCTION), (blank, Direction.PRODUCTION)]
+
+    def test_a_production_direction_at_ord_zero_ranks_with_recognition_in_gather_order(self, db):
+        db.set_anki_state_cache("daily_new_cap", "3")
+        whole = self._new_production(db, "line", anki_due=5, anki_ord=0)
+        prod = self._new_production(db, "word", anki_due=10, anki_ord=1)
+        [rec] = _seed_new_vocabulary(db, 1)
+
+        assert _new_slice(db) == [
+            (whole, Direction.PRODUCTION),
+            (rec, Direction.RECOGNITION),
+            (prod, Direction.PRODUCTION),
+        ]
+
+    def test_a_card_whose_ord_is_not_known_yet_ranks_by_its_direction(self, db):
+        """Not in Anki yet (or not pulled since the column arrived): nothing to mirror, the
+        direction's usual ord stands."""
+        db.set_anki_state_cache("daily_new_cap", "2")
+        unsynced = self._new_production(db, "unsynced", anki_due=5, anki_ord=None)
+        [rec] = _seed_new_vocabulary(db, 1)
+
+        assert _new_slice(db) == [(rec, Direction.RECOGNITION), (unsynced, Direction.PRODUCTION)]

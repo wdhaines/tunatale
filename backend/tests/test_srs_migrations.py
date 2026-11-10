@@ -74,7 +74,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 50
+        assert CURRENT_VERSION == 51
 
     def test_migrates_v42_to_v43_adds_base_collocation_id(self, tmp_path):
         """The link that stops a cloze-covered word reading as two words.
@@ -2370,7 +2370,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 50
+        assert CURRENT_VERSION == 51
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2440,7 +2440,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 50
+        assert CURRENT_VERSION == 51
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39
@@ -3072,3 +3072,35 @@ class TestMigrateV49ToV50AddsSiblingGroup:
         migrate_v49_to_v50(conn)
         assert self._groups(conn)["line 1"] == "sent:wolff-1:4"
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 50
+
+
+class TestMigrateV50ToV51AddsAnkiOrd:
+    """v50 → v51: ``collocation_directions.anki_ord``, the Anki card's ord (tunatale-h0q3.60)."""
+
+    def _v50(self):
+        conn = _make_v1_conn()
+        _insert(conn, "banka")
+        migrate(conn)
+        conn.execute("ALTER TABLE collocation_directions DROP COLUMN anki_ord")
+        conn.execute("PRAGMA user_version = 50")
+        conn.commit()
+        return conn
+
+    def test_adds_the_column_and_leaves_it_null(self):
+        """Only the collection knows a card's ord; the next pull fills it in."""
+        from app.srs.migrations import migrate_v50_to_v51
+
+        conn = self._v50()
+        migrate_v50_to_v51(conn)
+        ords = [r[0] for r in conn.execute("SELECT anki_ord FROM collocation_directions")]
+        assert ords and set(ords) == {None}
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 51
+
+    def test_is_idempotent(self):
+        from app.srs.migrations import migrate_v50_to_v51
+
+        conn = self._v50()
+        migrate_v50_to_v51(conn)
+        conn.execute("PRAGMA user_version = 50")
+        migrate_v50_to_v51(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 51

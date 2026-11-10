@@ -48,6 +48,7 @@ _BASE = SentenceCard(
 )
 NAA = _BASE.with_blank(blank_span(_BASE.text, "nâa"), "there (near you)")
 BA = _BASE.with_blank(blank_span(_BASE.text, "ba"), "yes/no question particle")
+SI = _BASE.with_blank(blank_span(_BASE.text, "si"), "particle preceding names")
 WHOLE = _BASE
 NEXT_LINE = SentenceCard(
     lesson_id="wolff-1",
@@ -283,7 +284,9 @@ class TestCreate:
         naa = _add(db, NAA)
         anki_conn = _conn()
         guid = compute_guid(NAA.line_key, LANG, NAME)
-        note_id = OfflineWriter(anki_conn).create_sentence_note(DECK, ["x"] * 12, [1], guid=guid, tags=[])
+        note_id = OfflineWriter(anki_conn).create_sentence_note(
+            DECK, _fields([NAA]).split("\x1f"), [1], guid=guid, tags=[]
+        )
 
         await _mint(db, anki_conn)
 
@@ -549,3 +552,223 @@ class TestWriter:
             writer.rewrite_sentence_note(nid, ["x"] * 12, [0])
         assert writer.rewrite_sentence_note(nid, ["x"] * 12, [0], deck_name=DECK)
         assert set(writer.get_cards_for_note(nid)) == {0}
+
+
+def _graves(anki_conn) -> list[tuple[int, int]]:
+    return [tuple(r) for r in anki_conn.execute("SELECT oid, type FROM graves ORDER BY oid")]
+
+
+def _unlink_all(db: SRSDatabase) -> None:
+    """Every row loses its Anki pointers: rows deleted and made again, a restored TT database."""
+    with db._get_conn() as conn:
+        conn.execute("UPDATE collocations SET anki_note_id = NULL")
+        conn.execute("UPDATE collocation_directions SET anki_card_id = NULL")
+        conn.commit()
+
+
+class TestACardStaysWithItsBlank:
+    """A cloze number names a card, and the card holds the review history (tunatale-h0q3.60).
+
+    Found by review of h0q3.55: a line was numbered from its rows alone, so
+    whenever the rows and the note disagreed (a freed number, a row with no link)
+    a blank was given another blank's card and the rest were graved.
+    """
+
+    async def test_a_relinked_line_with_a_freed_number_keeps_each_card(self, no_tts):
+        """Numbers 1 and 3 in use (2 was deleted). Numbered from scratch the surviving blank
+        became 2: its card at ord 2 was graved and a new one made, its history gone."""
+        db = SRSDatabase(":memory:")
+        naa, ba, whole = (_add(db, c) for c in (NAA, BA, WHOLE))
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        ba_card, whole_card = _card_of(db, ba), _card_of(db, whole)
+        db.delete_collocation(_row_id(db, naa))
+        _push(db, anki_conn)
+        graves = _graves(anki_conn)
+
+        _unlink_all(db)
+        await _mint(db, anki_conn)
+
+        assert (_card_of(db, ba), _card_of(db, whole)) == (ba_card, whole_card)
+        assert _graves(anki_conn) == graves, "no card graved by the relink"
+        assert set(_cards(anki_conn)) == {0, 2}
+
+    async def test_a_relinked_line_without_a_gap_keeps_each_card(self, no_tts):
+        """The control: this held before the fix, by the coincidence of fresh numbers matching."""
+        db = SRSDatabase(":memory:")
+        guids = [_add(db, c) for c in (NAA, BA, WHOLE)]
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        before = [_card_of(db, g) for g in guids]
+
+        _unlink_all(db)
+        await _mint(db, anki_conn)
+
+        assert [_card_of(db, g) for g in guids] == before and _graves(anki_conn) == []
+
+    async def test_a_new_blank_never_takes_the_card_of_one_deleted_and_not_yet_pushed(self, no_tts):
+        """Delete a blank and add another before one sync. The mint runs before the push, so
+        the deleted blank's card is still on the note; the next number above the ROWS' own
+        was that card's, and the new blank inherited its history."""
+        db = SRSDatabase(":memory:")
+        _naa, ba, _whole = (_add(db, c) for c in (NAA, BA, WHOLE))
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        ba_card = _card_of(db, ba)
+
+        db.delete_collocation(_row_id(db, ba))
+        si = _add(db, SI)
+        await _mint(db, anki_conn)
+
+        assert _card_of(db, si) != ba_card
+        assert set(_cards(anki_conn)) == {0, 1, 3}, "BA's card (ord 2) is gone and its number stays unused"
+        assert (ba_card, 0) in _graves(anki_conn)
+
+    async def test_a_blank_removed_and_put_back_before_a_sync_keeps_its_card(self, no_tts):
+        db = SRSDatabase(":memory:")
+        _naa, ba, _whole = (_add(db, c) for c in (NAA, BA, WHOLE))
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        ba_card = _card_of(db, ba)
+
+        db.delete_collocation(_row_id(db, ba))
+        ba = _add(db, BA)
+        await _mint(db, anki_conn)
+
+        assert _card_of(db, ba) == ba_card and _graves(anki_conn) == []
+
+    async def test_a_card_deleted_in_anki_is_put_back_at_its_number(self, no_tts):
+        """One card gone, its note alive: the row is not unlinked, so no mint reaches it, and
+        nothing was flagged, so no push did. It sat cardless, still served by TT."""
+        from dataclasses import replace
+
+        db = SRSDatabase(":memory:")
+        naa, ba, whole = (_add(db, c) for c in (NAA, BA, WHOLE))
+        for k in range(10, 18):  # other lines: one lost card stays under the 25% orphan threshold
+            _add(db, replace(WHOLE, line_index=k, text=f"Linya {k}.", spoken=f"Linya {k}.", cue=None))
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        ba_card, others = _card_of(db, ba), (_card_of(db, naa), _card_of(db, whole))
+        note_id = db.get_collocation_by_guid(ba).anki_note_id
+        anki_conn.execute("INSERT INTO graves (oid, type, usn) VALUES (?, 0, -1)", (ba_card,))
+        anki_conn.execute("DELETE FROM cards WHERE id = ?", (ba_card,))
+        anki_conn.commit()
+
+        sync = AnkiSync(db=db, _reader=_reader(anki_conn), _writer=OfflineWriter(anki_conn), language_code=LANG)
+        sync.detect_and_reset_orphans()
+        assert db.get_dirty_fields(ba) == "card_data"
+        sync.sync_push()
+
+        ords = {r[0]: r[1] for r in anki_conn.execute("SELECT ord, id FROM cards WHERE nid = ?", (note_id,))}
+        assert set(ords) == {0, 1, 2}
+        assert _card_of(db, ba) == ords[2] and (_card_of(db, naa), _card_of(db, whole)) == others
+        assert db.get_dirty_fields(ba) == ""
+
+
+class TestHeld:
+    """A line that cannot be written safely is held, loudly, and the sync goes on (tunatale-h0q3.60)."""
+
+    async def test_a_row_joining_a_note_whose_text_is_not_the_lines_is_held(self, no_tts, caplog):
+        db = SRSDatabase(":memory:")
+        naa = _add(db, NAA)
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        anki_conn.execute("UPDATE notes SET flds = 'edited by hand' || substr(flds, instr(flds, char(31)))")
+        anki_conn.commit()
+        before = (_notes(anki_conn), _cards(anki_conn))
+
+        ba = _add(db, BA)
+        with caplog.at_level(logging.WARNING):
+            await _mint(db, anki_conn)
+
+        assert (_notes(anki_conn), _cards(anki_conn)) == before
+        assert db.get_collocation_by_guid(ba).anki_note_id is None
+        assert db.get_collocation_by_guid(naa).anki_note_id is not None
+        assert "SENTENCE_NOTE_HELD line=sent:wolff-1:4" in caplog.text
+
+    async def test_a_note_with_another_text_is_not_adopted(self, no_tts, caplog):
+        db = SRSDatabase(":memory:")
+        naa = _add(db, NAA)
+        anki_conn = _conn()
+        guid = compute_guid(NAA.line_key, LANG, NAME)
+        OfflineWriter(anki_conn).create_sentence_note(DECK, ["x"] * 12, [1], guid=guid, tags=[])
+        before = (_notes(anki_conn), _cards(anki_conn))
+
+        with caplog.at_level(logging.WARNING):
+            await _mint(db, anki_conn)
+
+        assert (_notes(anki_conn), _cards(anki_conn)) == before and _graves(anki_conn) == []
+        assert db.get_collocation_by_guid(naa).anki_note_id is None
+        assert "SENTENCE_NOTE_HELD" in caplog.text
+
+    async def test_overlapping_blanks_hold_their_line_and_the_next_line_still_mints(self, no_tts, caplog):
+        """This raised out of sync_create_new, after the lines ahead of it had been written."""
+        db = SRSDatabase(":memory:")
+        naa = _add(db, NAA)
+        _add(db, _BASE.with_blank((0, 6), "overlaps nâa"))
+        nxt = _add(db, NEXT_LINE)
+        anki_conn = _conn()
+
+        with caplog.at_level(logging.WARNING):
+            await _mint(db, anki_conn)
+
+        assert db.get_collocation_by_guid(naa).anki_note_id is None
+        assert db.get_collocation_by_guid(nxt).anki_note_id is not None
+        assert len(_notes(anki_conn)) == 1
+        assert "SENTENCE_NOTE_HELD line=sent:wolff-1:4" in caplog.text and "overlap" in caplog.text
+
+    async def test_a_push_that_cannot_build_the_note_keeps_the_flags(self, no_tts, caplog):
+        db = SRSDatabase(":memory:")
+        naa = _add(db, NAA)
+        anki_conn = _conn()
+        await _mint(db, anki_conn)
+        before = _notes(anki_conn)
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET card_data = replace(card_data, 'Abáya?', 'Abáya::?')")
+            conn.commit()
+        db.set_dirty_fields(naa, "card_data")
+
+        with caplog.at_level(logging.WARNING):
+            report = _push(db, anki_conn)
+
+        assert _notes(anki_conn) == before
+        assert db.get_dirty_fields(naa) == "card_data"
+        assert report.write_noop == 1 and report.notes_pushed == 0
+        assert "SENTENCE_NOTE_HELD" in caplog.text
+
+
+class TestPullStoresTheCardsOrd:
+    """Anki sorts new cards by ``cards.ord``; the pull is where TT learns it (tunatale-h0q3.60)."""
+
+    async def test_each_row_learns_its_cards_ord_with_nothing_else_to_write(self, no_tts):
+        db = SRSDatabase(":memory:")
+        naa, ba, whole = (_add(db, c) for c in (NAA, BA, WHOLE))
+        anki_conn = _conn()
+        writer = await _mint(db, anki_conn)
+
+        def _pull(*, dry_run=False):
+            return AnkiSync(
+                db=db, _reader=RecordsReader(_reader(anki_conn).get_note_records()), _writer=writer, language_code=LANG
+            ).sync_pull(dry_run=dry_run)
+
+        def _ords():
+            return [db.get_collocation_by_guid(g).directions[Direction.PRODUCTION].anki_ord for g in (naa, ba, whole)]
+
+        _pull(dry_run=True)
+        assert _ords() == [None, None, None], "a dry run writes nothing"
+        _pull()
+        assert _ords() == [1, 2, 0]
+
+    async def test_a_card_graded_in_anki_keeps_its_ord_through_the_merge_write(self, no_tts):
+        db = SRSDatabase(":memory:")
+        _naa, ba, _whole = (_add(db, c) for c in (NAA, BA, WHOLE))
+        anki_conn = _conn()
+        writer = await _mint(db, anki_conn)
+        _review_in_anki(anki_conn, _card_of(db, ba))
+
+        AnkiSync(
+            db=db, _reader=RecordsReader(_reader(anki_conn).get_note_records()), _writer=writer, language_code=LANG
+        ).sync_pull()
+
+        state = db.get_collocation_by_guid(ba).directions[Direction.PRODUCTION]
+        assert (state.state, state.anki_ord) == (SRSState.REVIEW, 2)

@@ -67,7 +67,7 @@ from app.srs.function_words import is_function_word, make_cloze_text, uncloze_te
 from app.srs.lemmatizer import headword_lemma
 from app.srs.lesson_cards import COURSE_SOURCE
 from app.srs.sentence_card import is_sentence_key, sentence_card
-from app.srs.sentence_note import cloze_ords, sentence_note_fields, source_label
+from app.srs.sentence_note import cloze_numbers_in, cloze_ords, sentence_note_fields, source_label
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
 # tests/test_anki_sync_pull.py (caplog.at_level(..., logger="app.anki.sync"))
@@ -1070,12 +1070,18 @@ class AnkiSync:
                         local_dir.state.value,
                     )
 
-                new_dir_state = self._pull_merge_direction(
-                    card_rec,
-                    local_dir,
-                    direction,
-                    card_rec.last_review,
-                    today_start_ms,
+                # The card's ord rides on every candidate (Layer 94): a merge write
+                # must not drop it, and a card with nothing else to write learns it
+                # through the targeted heal below.
+                new_dir_state = replace(
+                    self._pull_merge_direction(
+                        card_rec,
+                        local_dir,
+                        direction,
+                        card_rec.last_review,
+                        today_start_ms,
+                    ),
+                    anki_ord=card_rec.ord,
                 )
 
                 # Recompute DETECTOR (take-Anki-verbatim, fork resolved 2026-06-02):
@@ -1181,6 +1187,8 @@ class AnkiSync:
                         if _is_anki_grade(local_dir, new_dir_state):
                             self._db.clear_pending_grade_by_guid(guid, direction.value)
                     report.directions_updated += 1
+                elif local_dir.anki_ord != card_rec.ord and not dry_run:
+                    self._db.set_anki_ord(coll_id, direction, card_rec.ord)
 
         self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
         self._pull_rebuild_session_main_queue(dry_run)
@@ -1371,10 +1379,11 @@ class AnkiSync:
         from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
 
         rows = [r for r in self._db.list_sibling_rows(line) if r[1].anki_note_id == note_id]
-        ords = self._sentence_line_ords(rows, note_id)
-        cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
-        fields, media = self._sentence_line_fields(rows, cards, ords)
-        anki_ords = [ords[c.key] - 1 for c in cards]
+        plan = self._plan_sentence_line(line, rows, note_id)
+        if plan is None:
+            report.write_noop += 1  # held: the flags stay, and every sync says so until it is resolved
+            return
+        fields, media, anki_ords = plan
         if dry_run:
             report.notes_pushed += 1
             return
@@ -1829,17 +1838,64 @@ class AnkiSync:
         )
         return fields, [m for m in (cue_audio, answer_audio, cards[0].picture) if m]
 
-    def _sentence_line_ords(self, rows: list[tuple[str, SRSItem, int]], note_id: int | None) -> dict[str, int]:
-        """Cloze numbers for a line's rows: a linked row keeps its card's (ord + 1)."""
+    def _sentence_line_ords(self, rows: list[tuple[str, SRSItem, int]], note_id: int | None) -> dict[str, int] | None:
+        """Cloze numbers for a line's rows, or None when a row's card cannot be known (the line is held).
+
+        A number names a card, and the card holds the review history, so a row is
+        never numbered in a way that could hand it another blank's card (Layer 94):
+
+        - a row linked to a card of the note keeps that card's number (ord + 1);
+        - a row with no card of its own takes the number its blank already has in
+          the note's ``Text``: a line whose rows lost their links, a blank removed
+          and put back before a sync, a card deleted in Anki. The ``Text`` is read
+          only for such a row, so an edit to a fully linked line still pushes;
+        - if that ``Text`` is not this line (edited in Anki, or the line changed),
+          nothing says which card is whose: None, and nothing is written;
+        - a blank new to the note takes a number above every card the note still
+          has, including the card of a row deleted in TT and not yet pushed.
+        """
         cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
         taken: dict[str, int] = {}
+        above = 0
         if note_id is not None:
             ord_of = {cid: ord_ for ord_, cid in self._writer.get_cards_for_note(note_id).items()}
+            above = max(ord_of.values(), default=-1) + 1
             for card, (_, item, _) in zip(cards, rows, strict=True):
                 ds = item.directions.get(Direction.PRODUCTION)
                 if ds is not None and ds.anki_card_id in ord_of:
                     taken[card.key] = ord_of[ds.anki_card_id] + 1
-        return cloze_ords(cards, taken)
+            text = self._writer.sentence_note_text(note_id) if len(taken) < len(cards) else None
+            if text is not None:
+                written = cloze_numbers_in(text, cards[0].text)
+                if written is None:
+                    return None
+                for card in cards:
+                    number = written.get(card.blank)
+                    if card.key not in taken and number is not None and number not in taken.values():
+                        taken[card.key] = number
+        return cloze_ords(cards, taken, above)
+
+    def _plan_sentence_line(
+        self, line: str, rows: list[tuple[str, SRSItem, int]], note_id: int | None
+    ) -> tuple[list[str], list[str], list[int]] | None:
+        """What a line's note should hold: (fields, media, each row's Anki ord). None when the line is HELD.
+
+        Held means nothing is written for this line and the rest of the sync goes
+        on: its cards cannot be told apart (``_sentence_line_ords``), or its rows
+        do not make a note (overlapping blanks, cloze syntax in the text). Those
+        used to raise out of the whole sync, after the lines ahead had been written.
+        """
+        cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
+        try:
+            ords = self._sentence_line_ords(rows, note_id)
+            if ords is not None:
+                fields, media = self._sentence_line_fields(rows, cards, ords)
+                return fields, media, [ords[c.key] - 1 for c in cards]
+            reason = "the note's Text is not this line's, so a row with no card of its own cannot be matched to one"
+        except ValueError as exc:
+            reason = str(exc)
+        _log.warning("SENTENCE_NOTE_HELD line=%s note=%s — %s; nothing written for this line", line, note_id, reason)
+        return None
 
     def _mint_sentence_line(self, group: str, new_ids: list[int], deck_name: str) -> tuple[int, int, int]:
         """Mint a line's unlinked rows *new_ids* into the line's ONE "TT Sentence" note. Returns (created, linked, skipped).
@@ -1857,10 +1913,10 @@ class AnkiSync:
             _log.warning("SENTENCE_NOTE_SPLIT line=%s nids=%s — rows on two notes; held", group, sorted(note_ids))
             return 0, 0, len(new_ids)
         note_id = next(iter(note_ids), None)
-        ords = self._sentence_line_ords(rows, note_id)
-        cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
-        fields, media = self._sentence_line_fields(rows, cards, ords)
-        anki_ords = [ords[c.key] - 1 for c in cards]
+        plan = self._plan_sentence_line(group, rows, note_id)
+        if plan is None:
+            return 0, 0, len(new_ids)
+        fields, media, anki_ords = plan
         course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
         created = linked = 0
         if note_id is None:
@@ -1875,8 +1931,14 @@ class AnkiSync:
                 )
                 created = len(new_ids)
             except DuplicateNoteError as exc:
-                # Written but never linked (a crash between the two): adopt it.
+                # The line's note exists and no row is linked to it (a crash between
+                # writing and linking, rows deleted and made again): adopt it, numbered
+                # as the NOTE numbers its blanks, never from scratch.
                 note_id = exc.note_id
+                plan = self._plan_sentence_line(group, rows, note_id)
+                if plan is None:
+                    return 0, 0, len(new_ids)
+                fields, media, anki_ords = plan
                 self._writer.rewrite_sentence_note(note_id, fields, anki_ords, deck_name=deck_name, course=course)
                 linked = len(new_ids)
         else:
@@ -2318,6 +2380,7 @@ class AnkiSync:
                     anki_card_id=card.anki_card_id,
                     anki_due=card.anki_due or 0,
                     anki_card_mod=card.anki_card_mod,
+                    anki_ord=card.ord,
                     left=card.left,
                     dirty_fsrs=False,
                     last_synced_at=datetime.now(UTC).isoformat(),

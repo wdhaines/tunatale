@@ -16,7 +16,7 @@ import pytest
 
 from app.cards.sentence_notetype import FIELD_NAMES
 from app.srs.sentence_card import Cue, Gloss, SentenceCard, blank_span
-from app.srs.sentence_note import WHOLE_ORD, cloze_ords, sentence_note_fields, source_label
+from app.srs.sentence_note import WHOLE_ORD, cloze_numbers_in, cloze_ords, sentence_note_fields, source_label
 
 _BASE = SentenceCard(
     lesson_id="wolff-1",
@@ -46,6 +46,8 @@ def _blank(form: str, gloss: str) -> SentenceCard:
 
 NAA = _blank("nâa", "there (near you), not nîa")
 BA = _blank("ba", "yes/no question particle")
+SI = _blank("si", "particle preceding names")
+WHOLE = _BASE
 LINE = [NAA, BA, _BASE]  # the lesson's order: blanks first, the whole line last
 
 
@@ -92,6 +94,62 @@ class TestClozeOrds:
     def test_fields_follow_the_given_numbers(self):
         ords = {_BASE.key: 1, BA.key: 2, NAA.key: 3}
         assert _fields(ords=ords)["Text"] == "{{c1::{{c3::Nâa}} {{c2::ba}} si Místir Abáya?}}"
+
+
+class TestClozeOrdsAbove:
+    """A new blank's number clears every card the note still has (tunatale-h0q3.60)."""
+
+    def test_a_new_blank_goes_above_a_card_no_row_claims(self):
+        """A row deleted in TT and not pushed yet: its card is still on the note. The next
+        number above the rows' own would be that card's, handing it to another blank."""
+        assert cloze_ords([NAA, WHOLE, SI], {WHOLE.key: 1, NAA.key: 2}, above=3) == {
+            WHOLE.key: 1,
+            NAA.key: 2,
+            SI.key: 4,
+        }
+
+    def test_above_nothing_changes_nothing(self):
+        assert cloze_ords([NAA, WHOLE], above=0) == cloze_ords([NAA, WHOLE])
+
+
+class TestClozeNumbersIn:
+    """Reading a note's own numbering back out of its Text field (tunatale-h0q3.60).
+
+    The inverse of the Text ``sentence_note_fields`` writes: which cloze number each
+    blank span carries, so a row with no card of its own takes the number, and the
+    card, its blank already has.
+    """
+
+    def _text(self, cards, ords=None):
+        return sentence_note_fields(cards, cue_audio=None, answer_audio=None, source="", ords=ords)[0]
+
+    def test_whole_line_and_blanks(self):
+        assert cloze_numbers_in(self._text([NAA, BA, WHOLE]), _BASE.text) == {None: 1, NAA.blank: 2, BA.blank: 3}
+
+    def test_numbers_with_a_gap_come_back_as_written(self):
+        text = self._text([BA, WHOLE], {WHOLE.key: 1, BA.key: 3})
+        assert cloze_numbers_in(text, _BASE.text) == {None: 1, BA.blank: 3}
+
+    def test_no_whole_card(self):
+        assert cloze_numbers_in(self._text([NAA, BA]), _BASE.text) == {NAA.blank: 2, BA.blank: 3}
+
+    def test_whole_card_alone(self):
+        assert cloze_numbers_in(self._text([WHOLE]), _BASE.text) == {None: 1}
+
+    def test_escaped_text_maps_back_to_the_lines_own_offsets(self):
+        line = SentenceCard(
+            lesson_id="x", line_index=1, speaker="A", text="R&D <b> ba?", spoken="x", english="x", glosses=(), cue=None
+        )
+        ba = line.with_blank(blank_span(line.text, "ba"), "particle")
+        assert cloze_numbers_in(self._text([ba, line]), line.text) == {None: 1, ba.blank: 2}
+
+    def test_a_field_that_is_not_this_line_is_unreadable(self):
+        """Edited in Anki, or the line's text has changed since: the spans mean nothing."""
+        assert cloze_numbers_in(self._text([NAA, WHOLE]), "Nâa ba si Mísis Abáya?") is None
+        assert cloze_numbers_in("x", _BASE.text) is None
+
+    def test_a_number_written_twice_is_unreadable(self):
+        assert cloze_numbers_in("{{c2::Nâa}} {{c2::ba}} si Místir Abáya?", _BASE.text) is None
 
 
 class TestSourceLabel:

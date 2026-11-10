@@ -1551,7 +1551,7 @@ Three classes:
   rebuilds a table. **Not reversible: the pre-migration snapshot IS the
   rollback.**
 
-32 of the 50 are additive, 4 are backfills, and 14 are destructive.
+33 of the 51 are additive, 4 are backfills, and 14 are destructive.
 
 | From → to | Class | What it does |
 |---|---|---|
@@ -1605,6 +1605,7 @@ Three classes:
 | v47 → v48 | Backfill | Blanks the 18 cloze rows whose sentence gloss is a byte-for-byte copy of the word gloss, and marks `sentence_translation` dirty so the next sync rewrites their Anki Back Extra. Empty is the honest repair — a duplicated gloss reads as a translation of the sentence and is not |
 | v48 → v49 | Additive | Adds `collocations.card_data` (TEXT, default `''`): a sentence card's authored content as JSON (tunatale-h0q3.42). Empty for every existing row; an older build ignores the column |
 | v49 → v50 | Additive | Adds `collocations.sibling_group` (TEXT, nullable) and its index: the rows whose cards share one Anki note (tunatale-h0q3.55). Filled only for unlinked sentence rows, from their own `card_data`; every other row stays NULL. An older build ignores the column (it buries those rows one by one, as before) |
+| v50 → v51 | Additive | Adds `collocation_directions.anki_ord` (INTEGER, nullable): the Anki card's `ord`, which the TEMPLATE new-card sort ranks by (tunatale-h0q3.60). NULL for every existing row until the next sync's pull writes it; a NULL is ranked by direction, as before. An older build ignores the column, and its `update_direction` leaves it untouched |
 
 `test_pre_migration_backup.py::TestReversibilityIsDocumented` fails if a new
 migration lands without a row here, so the table cannot silently fall behind

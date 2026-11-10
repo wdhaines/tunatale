@@ -127,4 +127,5 @@ def test_public_method_count_pinned() -> None:
     #  a second audio kind, and a card edit re-pushes both note fields — h0q3.42)
     # +sibling_groups, +list_sibling_rows, +get_collocation_by_anki_card_id (a lesson line's cards share one Anki note, so the queue
     #  buries them as siblings — h0q3.55)
-    assert count == 151
+    # +set_anki_ord (sync_pull records a card's Anki ord, the TEMPLATE sort key — h0q3.60)
+    assert count == 152

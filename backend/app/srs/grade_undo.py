@@ -54,6 +54,7 @@ def direction_to_dict(ds: DirectionState) -> dict[str, object]:
         "anki_card_id": ds.anki_card_id,
         "anki_due": ds.anki_due,
         "anki_card_mod": ds.anki_card_mod,
+        "anki_ord": ds.anki_ord,
         "bury_kind": ds.bury_kind,
         "dirty_fsrs": ds.dirty_fsrs,
         "last_synced_at": ds.last_synced_at,
