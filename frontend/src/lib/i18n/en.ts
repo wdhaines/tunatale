@@ -661,6 +661,7 @@ export const en = {
   "reference.none": "No reference pages for this language yet.",
   "reference.noChart": "No verb chart for this language.",
   "reference.loading": "Loading…",
+  "reference.howToRead": "How to read the chart",
   "reference.jumpTo": "Jump to a trigger",
   "reference.showLiterary": "Show literary and archaic forms",
   "reference.verbType": "Verb type",

@@ -16,6 +16,20 @@ function card(container: HTMLElement, rowId: string): HTMLElement {
 }
 
 describe("VerbChart", () => {
+  it("keeps the how-to-read intro behind a closed disclosure", () => {
+    const { container } = render(VerbChart, { props: { chart } });
+    const intro = container.querySelector("details.intro") as HTMLDetailsElement;
+    expect(intro.open).toBe(false);
+    expect(intro.querySelector("summary")?.textContent).toBe("How to read the chart");
+  });
+
+  it("separates a card's aspect from its hint with a space", () => {
+    const { container } = render(VerbChart, { props: { chart } });
+    expect(card(container, "agent-pan").querySelector(".card-head span")?.textContent).toBe(
+      "Distributive many, or again and again",
+    );
+  });
+
   it("draws the column heads and the intro's italics", () => {
     const { container, getAllByRole } = render(VerbChart, { props: { chart } });
     const heads = getAllByRole("columnheader").map((th) => th.childNodes[0].textContent);

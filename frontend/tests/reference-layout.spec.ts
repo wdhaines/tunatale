@@ -79,3 +79,36 @@ test("the verb chart on a 1280px desktop: the whole grid, no sideways scroll", a
   // Scoped to the nav: the page's breadcrumb is a second "Reference" link.
   await expect(page.locator("nav.global-nav").getByRole("link", { name: "Reference" })).toBeVisible();
 });
+
+/** How far a jump target's top sits below the sticky nav's bottom (negative = hidden under it). */
+const belowNav = (page: import("@playwright/test").Page, selector: string) =>
+  page.evaluate((sel) => {
+    const nav = document.querySelector("nav.global-nav")!.getBoundingClientRect();
+    return document.querySelector(sel)!.getBoundingClientRect().top - nav.bottom;
+  }, selector);
+
+for (const [name, width, height, jumps, target] of [
+  ["a 412px phone", 412, 915, ".jump.narrow", "#card-group-patient"],
+  ["a 1280px desktop", 1280, 900, ".jump.wide", "#group-patient"],
+] as const) {
+  test(`on ${name}, a jump lands its trigger below the sticky nav, not under it`, async ({ page, request }) => {
+    test.skip(!(await backendAvailable(request)), "Backend not available");
+    await page.setViewportSize({ width, height });
+    await stubReference(page);
+    await page.goto("/reference/verb-chart");
+    await expect(page.locator(jumps)).toBeVisible({ timeout: 15000 });
+    // Tap once the nav has its final height, as a person would: the review badge and
+    // the Reference tab arrive after the page, and on a phone they add to the nav's
+    // height (the gate's shared backend has queue stats, so its badge loads late).
+    await expect(page.locator("nav.global-nav").getByRole("link", { name: "Reference" })).toBeVisible();
+    await page.waitForLoadState("networkidle");
+
+    await page.locator(jumps).getByRole("link", { name: "Patient" }).click();
+    await expect(page).toHaveURL(new RegExp(`${target}$`));
+    // One frame for the scroll to settle before reading rects.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+    const gap = await belowNav(page, target);
+    expect(gap).toBeGreaterThanOrEqual(0);
+    expect(gap).toBeLessThan(40);
+  });
+}

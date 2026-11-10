@@ -47,7 +47,10 @@
 {#snippet fn(n: number | null)}{#if n !== null}<sup class="fn"><a href="#fn-{n}">{n}</a></sup>{/if}{/snippet}
 
 <div class="verb-chart">
-	<p class="intro"><Marks text={chart.intro} /></p>
+	<details class="intro">
+		<summary>{t('reference.howToRead')}</summary>
+		<p><Marks text={chart.intro} /></p>
+	</details>
 
 	<div class="tools">
 		<!-- Twice, because the target differs: the grid's trigger cell on a desktop, the
@@ -148,7 +151,7 @@
 			{#each visibleRows(group.rows, showLiterary) as row (row.id)}
 				<section class="card g-{group.id}" class:target={row.id === targetRow} data-row={row.id}>
 					<button type="button" class="card-head" aria-expanded={isOpen(row.id)} onclick={() => toggle(row.id)}>
-						<span><b>{row.aspect}</b>{#if row.hint}<small> {row.hint}</small>{/if}</span>
+						<span><b>{row.aspect}</b>{#if row.hint}<small>{` ${row.hint}`}</small>{/if}</span>
 						<span aria-hidden="true">{isOpen(row.id) ? '▾' : '▸'}</span>
 					</button>
 					<div class="summary">
@@ -220,9 +223,24 @@
 		--trig: #b597de;
 	}
 	.intro {
-		margin: 0;
 		max-width: 48rem;
 		color: var(--color-text);
+	}
+	.intro summary {
+		cursor: pointer;
+		color: var(--color-primary);
+		font-weight: 600;
+		min-height: 44px;
+		display: flex;
+		align-items: center;
+	}
+	.intro p {
+		margin: 0.25rem 0 0;
+	}
+	/* A jump lands its target below the sticky nav, whose height the layout publishes. */
+	.verb-chart :global([id]),
+	.verb-chart [data-row] {
+		scroll-margin-top: calc(var(--tt-safe-top, 0px) + 0.75rem);
 	}
 	.tools {
 		display: flex;
