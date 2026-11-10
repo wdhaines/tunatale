@@ -17,6 +17,7 @@
 	import { listenCountdownPref } from '#lib/stores/listenCountdownPref.svelte.js';
 	import { llmHealthStore } from '#lib/stores/llmHealth.svelte.js';
 	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import { referenceStore } from '#lib/stores/reference.svelte.js';
 	import { authStore } from '#lib/stores/auth.svelte.js';
 	import { setParkedHandler, setUnauthorizedHandler } from '#lib/api.js';
 	import { parkedStore } from '#lib/stores/parked.svelte.js';
@@ -181,6 +182,8 @@
 		if (current && current !== prevLangCode) {
 			prevLangCode = current;
 			listenedStore.refresh();
+			// The Reference tab shows only for a language that has pages.
+			referenceStore.refresh();
 		}
 	});
 
@@ -188,6 +191,7 @@
 	const onLessons = $derived(path === '/' || path.startsWith('/c/'));
 	const onReview = $derived(path === '/review');
 	const onCards = $derived(path.startsWith('/cards'));
+	const onReference = $derived(path.startsWith('/reference'));
 	const onSettings = $derived(path.startsWith('/settings'));
 	// The public routes carry no chrome: every nav destination behind them needs
 	// a session, and the health banner reports on a backend we have not been
@@ -229,6 +233,9 @@
 		</span>
 		<a href="/" class="nav-link" class:active={onLessons}>{t('layout.navLessons')}</a>
 		<a href="/cards" class="nav-link" class:active={onCards}>{t('layout.navCards')}</a>
+		{#if referenceStore.pages.length > 0}
+			<a href="/reference" class="nav-link" class:active={onReference}>{t('layout.navReference')}</a>
+		{/if}
 	</div>
 	<div class="nav-actions">
 		<a

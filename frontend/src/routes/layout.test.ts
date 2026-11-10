@@ -33,6 +33,7 @@ vi.mock("#lib/api.js", () => ({
     login: vi.fn(),
     logout: vi.fn(),
     getLanguages: vi.fn().mockResolvedValue({ languages: [], active: "sl" }),
+    getReferencePages: vi.fn().mockResolvedValue({ pages: [] }),
     getLlmHealth: vi.fn().mockResolvedValue({
       healthy: true,
       consecutive_failures: 0,
@@ -134,6 +135,26 @@ describe("root +layout.svelte", () => {
     expect((getByRole("link", { name: "Cards" }) as HTMLAnchorElement).getAttribute("href")).toBe(
       "/cards",
     );
+  });
+
+  // The Reference tab (tunatale-h0q3.47) exists only for a language with pages:
+  // the layout asks on every language change and hides the tab on an empty list.
+  it("hides the Reference tab for a language with no reference pages", async () => {
+    vi.mocked(api.getReferencePages).mockResolvedValue({ pages: [] });
+    const { queryByRole } = renderLayout();
+    await waitFor(() => expect(api.getReferencePages).toHaveBeenCalled());
+    expect(queryByRole("link", { name: "Reference" })).toBeNull();
+  });
+
+  it("shows the Reference tab for a language with pages, active on a reference page", async () => {
+    nav.pathname = "/reference/verb-chart";
+    vi.mocked(api.getReferencePages).mockResolvedValue({
+      pages: [{ id: "verb-chart", title: "The verb chart" }],
+    });
+    const { findByRole } = renderLayout();
+    const tab = await findByRole("link", { name: "Reference" });
+    expect(tab.getAttribute("href")).toBe("/reference");
+    expect(tab.classList.contains("active")).toBe(true);
   });
 
   it("renders the logo mark inside the brand link", () => {

@@ -1894,3 +1894,200 @@ class ClientLogResponse(BaseModel):
     """
 
     accepted: int
+
+
+class VerbChartAffix(BaseModel):
+    """One spelling of a verb-chart cell's affix, tagged with how well attested it is.
+
+    ``kind`` is what the legend explains: standard / variant / literary /
+    inferred. Mirrors a key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    kind: Literal["standard", "variant", "literary", "inferred"]
+
+
+class VerbChartExample(BaseModel):
+    """One attested example sentence for a verb-chart cell.
+
+    ``ceb`` is the Handbook spelling TunaTale shows, ``source_spelling`` the
+    spelling of the source it was quoted from (Wolff's 1972 one differs), and
+    ``source`` which of the chart's ``sources`` it came from. Mirrors a key of
+    ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ceb: str
+    en: str
+    source: Literal["W", "B", "P"]
+    source_spelling: str
+
+
+class VerbChartCell(BaseModel):
+    """One cell of the verb chart: affix(es), and the examples that attest them.
+
+    ``same_as_left`` means the affix of the cell to the left spans this cell
+    too, so ``affixes`` is empty by contract. Mirrors a key of
+    ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    affixes: list[VerbChartAffix]
+    same_as_left: bool
+    examples: list[VerbChartExample]
+
+
+class VerbChartRow(BaseModel):
+    """One aspect row of a verb-chart group (perfective, progressive, …).
+
+    ``volitional``/``potential`` hold the grid's two sides: a list of cells
+    (``None`` where the side has no cell there), ``"above"`` where the whole
+    side repeats the row above, or ``None`` when the side is absent. Mirrors a
+    key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    aspect: str
+    hint: str | None
+    same_aspect_as_above: bool
+    literary: bool
+    footnote: int | None
+    glosses: list[str]
+    volitional: list[VerbChartCell | None] | None
+    potential: list[VerbChartCell | None] | Literal["above"] | None
+
+
+class VerbChartGroup(BaseModel):
+    """One trigger band of the verb chart (agent, patient, …), holding its rows.
+
+    Mirrors a key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    hint: str
+    verb_type: Literal["dynamic", "stative"]
+    footnote: int | None
+    rows: list[VerbChartRow]
+
+
+class VerbChartColumn(BaseModel):
+    """One column header of a verb-chart mode (realis, irrealis, …).
+
+    Mirrors a key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    hint: str
+    footnote: int | None
+
+
+class VerbChartMode(BaseModel):
+    """One side of the verb chart's grid (volitional / potential) and its columns.
+
+    Mirrors a key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    hint: str
+    footnote: int | None
+    columns: list[VerbChartColumn]
+
+
+class VerbChartVerbType(BaseModel):
+    """A verb type band of the chart: dynamic (someone does it) or stative.
+
+    Mirrors a key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    hint: str
+
+
+class VerbChartLegendItem(BaseModel):
+    """One entry of the affix-kind legend below the chart.
+
+    ``example`` is the affix spelling shown beside the label. Mirrors a key of
+    ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["standard", "variant", "literary", "inferred"]
+    example: str
+    label: str
+    footnote: int | None
+
+
+class VerbChartFootnote(BaseModel):
+    """One numbered footnote the chart's superscripts resolve to.
+
+    Mirrors a key of ``verb_chart.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    n: int
+    title: str
+    text: str
+
+
+class VerbChartResponse(BaseModel):
+    """Response of GET /api/reference/verb-chart — the chart file served whole.
+
+    Mirrors the top level of ``verb_chart.json``; ``model_config`` forbids
+    extras so the file and the response can never drift apart silently.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    intro: str
+    modes: list[VerbChartMode]
+    verb_types: list[VerbChartVerbType]
+    legend: list[VerbChartLegendItem]
+    sources: dict[str, str]
+    groups: list[VerbChartGroup]
+    footnotes: list[VerbChartFootnote]
+
+
+class ReferencePage(BaseModel):
+    """One page the Reference tab lists for the active language.
+
+    ``id`` is the route segment under /api/reference (``verb-chart``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+
+
+class ReferencePagesResponse(BaseModel):
+    """Response of GET /api/reference — the pages the active language offers.
+
+    Empty (not a 404) when the language registers none: the frontend hides the
+    tab on an empty list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pages: list[ReferencePage]

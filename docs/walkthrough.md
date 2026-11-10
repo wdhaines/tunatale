@@ -89,6 +89,8 @@ find frontend/src/routes -name '+page.svelte' | sed 's|frontend/src/routes||; s|
 /cards
 /invite
 /login
+/reference
+/reference/verb-chart
 /review
 /review-sessions
 /review-sessions/[sessionId]
@@ -491,17 +493,17 @@ print(textwrap.fill(', '.join(names), 100))
 ```
 
 ```output
-49 LanguageConfig fields:
+50 LanguageConfig fields:
 language, preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, l2_scorer,
 lemmatizer_type, syllabifier_fn, morphology_profile, slow_word_fn, story_text_normalizer,
 definite_form_fn, lemma_plausible_fn, multiword_traps_fn, variant_separator, variant_pairs_fn,
 dictionary_fields_fn, short_form_pairs_fn, dictionary_gloss_fn, parts_fn, prefix_fn,
 infinitive_marker, verb_headword_fn, gender_articles, noun_gender_fn, style_notes,
-function_words_path, numbers_path, spatial_path, pronouns_path, calendar_path, breakdown_spans_fn,
-alignment, take_check, planner_example, wordfreq_lang, frequency_table_path, a1_morphology,
-lexicon_factory, phoneme_planner_factory, ipa_read_in_voice_locale, ipa_for_drill_phrases,
-ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words, phrase_match_exact_form,
-lemma_table_path, built_data
+function_words_path, numbers_path, spatial_path, pronouns_path, verb_chart_path, calendar_path,
+breakdown_spans_fn, alignment, take_check, planner_example, wordfreq_lang, frequency_table_path,
+a1_morphology, lexicon_factory, phoneme_planner_factory, ipa_read_in_voice_locale,
+ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines, ipa_for_card_words,
+phrase_match_exact_form, lemma_table_path, built_data
 ```
 
 The nine fields added since the 2026-10-01 edition are all Cebuano's, and all are about a dictionary or a voice: `variant_pairs_fn` and `short_form_pairs_fn` (which spellings are one word, §3.9), `dictionary_fields_fn`, `dictionary_gloss_fn` and `parts_fn` (Wolff's dictionary on cards and in the reader, §3.9, §11.10), `take_check` (re-drawing a Gemini take that says a `t` as `p`, §7.3), and three IPA flags, `ipa_for_enunciated_lines`, `ipa_for_natural_lines` and `ipa_for_card_words`, that send a whole line or card word to the voice with its reading.
@@ -537,7 +539,7 @@ ceb Cebuano    locale=ceb-PH  lemmatizer=table  style=True
       preprocessor_factory, deck_id, mint_deck_id, notetype_profiles, vocab_notetype, syllabifier_fn,
       variant_separator, variant_pairs_fn, dictionary_fields_fn, short_form_pairs_fn,
       dictionary_gloss_fn, parts_fn, prefix_fn, function_words_path, numbers_path, spatial_path,
-      pronouns_path, calendar_path, take_check, frequency_table_path, a1_morphology,
+      pronouns_path, verb_chart_path, calendar_path, take_check, frequency_table_path, a1_morphology,
       phoneme_planner_factory, ipa_for_drill_phrases, ipa_for_enunciated_lines, ipa_for_natural_lines,
       ipa_for_card_words, lemma_table_path
 en  English    locale=en-US  lemmatizer=lowercase  style=False
@@ -4030,12 +4032,13 @@ grep -n "^OWNER =\|^USER =\|include_router" backend/app/main.py
 498:app.include_router(srs.router, dependencies=[Depends(require_user)])
 499:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
 500:app.include_router(audio.router, dependencies=USER)
-501:app.include_router(review_sessions_api.router, dependencies=USER)
-503:    app.include_router(anki.router, dependencies=OWNER)
-504:app.include_router(admin.router, dependencies=OWNER)
-509:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
-510:app.include_router(llm_api.router, dependencies=USER)
-511:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
+501:app.include_router(reference.router, dependencies=USER)
+502:app.include_router(review_sessions_api.router, dependencies=USER)
+504:    app.include_router(anki.router, dependencies=OWNER)
+505:app.include_router(admin.router, dependencies=OWNER)
+510:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
+511:app.include_router(llm_api.router, dependencies=USER)
+512:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 ```
 
 Three tiers result:
@@ -4070,8 +4073,8 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-105 operations
-  7  (untagged)
+107 operations
+  9  (untagged)
   3  admin
   3  anki
   6  audio
@@ -4237,6 +4240,8 @@ client POST        /api/client-log
 (untag GET         /api/auth/status
 (untag GET         /api/health
 (untag GET         /api/languages
+(untag GET         /api/reference
+(untag GET         /api/reference/verb-chart
 ```
 
 Reading the families:
@@ -4398,6 +4403,8 @@ cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter("
 ./cards/+page.svelte
 ./invite/+page.svelte
 ./login/+page.svelte
+./reference/+page.svelte
+./reference/verb-chart/+page.svelte
 ./review-sessions/+page.svelte
 ./review-sessions/[sessionId]/+page.svelte
 ./review/+page.svelte
@@ -5068,7 +5075,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;

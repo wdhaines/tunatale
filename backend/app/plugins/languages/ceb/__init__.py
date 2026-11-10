@@ -194,6 +194,7 @@ register(
         numbers_path=_DATA / "numbers.json",
         spatial_path=_DATA / "spatial.json",
         pronouns_path=_DATA / "pronouns.json",
+        verb_chart_path=_DATA / "verb_chart.json",
         calendar_path=_DATA / "calendar.json",
         # The Gemini drill voices are told what to say by an instruction rather
         # than by markup, and that instruction needs the fragment's IPA — which

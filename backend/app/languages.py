@@ -365,6 +365,9 @@ class LanguageConfig:
     # pronoun is ``PRON``, so without the veto every one of them would be a
     # case-marker cloze. See ``app.cards.pronoun_picture``.
     pronouns_path: Path | None = None
+    # Path to the per-language verb chart JSON for the Reference tab, or ``None``
+    # when the language registers none. See ``app.api.reference``.
+    verb_chart_path: Path | None = None
     # Path to the per-language calendar JSON (a month or a weekday word -> a
     # concept id, plus that language's ``week_start``), or ``None`` when the
     # language registers none. A listed word is drawn as a calendar page, and is
@@ -1076,6 +1079,15 @@ def get_pronouns_path(code: str) -> Path | None:
     every one of its words keeps the routing it has today.
     """
     return _facet(code, "pronouns_path", None)
+
+
+def get_verb_chart_path(code: str) -> Path | None:
+    """Return the path to the per-language verb chart JSON for the Reference tab.
+
+    ``None`` when the language registers none: it has no chart, and the
+    reference routes answer an empty page list and a 404.
+    """
+    return _facet(code, "verb_chart_path", None)
 
 
 def get_calendar_path(code: str) -> Path | None:

@@ -4288,6 +4288,44 @@
         "title": "RateLimitStatusResponse",
         "type": "object"
       },
+      "ReferencePage": {
+        "additionalProperties": false,
+        "description": "One page the Reference tab lists for the active language.\n\n``id`` is the route segment under /api/reference (``verb-chart``).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "ReferencePage",
+        "type": "object"
+      },
+      "ReferencePagesResponse": {
+        "additionalProperties": false,
+        "description": "Response of GET /api/reference \u2014 the pages the active language offers.\n\nEmpty (not a 404) when the language registers none: the frontend hides the\ntab on an empty list.",
+        "properties": {
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/ReferencePage"
+            },
+            "title": "Pages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pages"
+        ],
+        "title": "ReferencePagesResponse",
+        "type": "object"
+      },
       "RefreshMediaResponse": {
         "description": "Response of POST /api/admin/refresh-media (counts from ``import_seed``).\n\n``errors`` is fed by ``skipped_guid_collisions`` ALONE \u2014 a skipped\nnon-vocab note is normal, not a failure, and must not inflate this.",
         "properties": {
@@ -5919,6 +5957,510 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerbChartAffix": {
+        "additionalProperties": false,
+        "description": "One spelling of a verb-chart cell's affix, tagged with how well attested it is.\n\n``kind`` is what the legend explains: standard / variant / literary /\ninferred. Mirrors a key of ``verb_chart.json``.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "standard",
+              "variant",
+              "literary",
+              "inferred"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "kind"
+        ],
+        "title": "VerbChartAffix",
+        "type": "object"
+      },
+      "VerbChartCell": {
+        "additionalProperties": false,
+        "description": "One cell of the verb chart: affix(es), and the examples that attest them.\n\n``same_as_left`` means the affix of the cell to the left spans this cell\ntoo, so ``affixes`` is empty by contract. Mirrors a key of\n``verb_chart.json``.",
+        "properties": {
+          "affixes": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartAffix"
+            },
+            "title": "Affixes",
+            "type": "array"
+          },
+          "examples": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartExample"
+            },
+            "title": "Examples",
+            "type": "array"
+          },
+          "same_as_left": {
+            "title": "Same As Left",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "affixes",
+          "same_as_left",
+          "examples"
+        ],
+        "title": "VerbChartCell",
+        "type": "object"
+      },
+      "VerbChartColumn": {
+        "additionalProperties": false,
+        "description": "One column header of a verb-chart mode (realis, irrealis, \u2026).\n\nMirrors a key of ``verb_chart.json``.",
+        "properties": {
+          "footnote": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Footnote"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "hint",
+          "footnote"
+        ],
+        "title": "VerbChartColumn",
+        "type": "object"
+      },
+      "VerbChartExample": {
+        "additionalProperties": false,
+        "description": "One attested example sentence for a verb-chart cell.\n\n``ceb`` is the Handbook spelling TunaTale shows, ``source_spelling`` the\nspelling of the source it was quoted from (Wolff's 1972 one differs), and\n``source`` which of the chart's ``sources`` it came from. Mirrors a key of\n``verb_chart.json``.",
+        "properties": {
+          "ceb": {
+            "title": "Ceb",
+            "type": "string"
+          },
+          "en": {
+            "title": "En",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "W",
+              "B",
+              "P"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "source_spelling": {
+            "title": "Source Spelling",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ceb",
+          "en",
+          "source",
+          "source_spelling"
+        ],
+        "title": "VerbChartExample",
+        "type": "object"
+      },
+      "VerbChartFootnote": {
+        "additionalProperties": false,
+        "description": "One numbered footnote the chart's superscripts resolve to.\n\nMirrors a key of ``verb_chart.json``.",
+        "properties": {
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "title",
+          "text"
+        ],
+        "title": "VerbChartFootnote",
+        "type": "object"
+      },
+      "VerbChartGroup": {
+        "additionalProperties": false,
+        "description": "One trigger band of the verb chart (agent, patient, \u2026), holding its rows.\n\nMirrors a key of ``verb_chart.json``.",
+        "properties": {
+          "footnote": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Footnote"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "verb_type": {
+            "enum": [
+              "dynamic",
+              "stative"
+            ],
+            "title": "Verb Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "hint",
+          "verb_type",
+          "footnote",
+          "rows"
+        ],
+        "title": "VerbChartGroup",
+        "type": "object"
+      },
+      "VerbChartLegendItem": {
+        "additionalProperties": false,
+        "description": "One entry of the affix-kind legend below the chart.\n\n``example`` is the affix spelling shown beside the label. Mirrors a key of\n``verb_chart.json``.",
+        "properties": {
+          "example": {
+            "title": "Example",
+            "type": "string"
+          },
+          "footnote": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Footnote"
+          },
+          "kind": {
+            "enum": [
+              "standard",
+              "variant",
+              "literary",
+              "inferred"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "example",
+          "label",
+          "footnote"
+        ],
+        "title": "VerbChartLegendItem",
+        "type": "object"
+      },
+      "VerbChartMode": {
+        "additionalProperties": false,
+        "description": "One side of the verb chart's grid (volitional / potential) and its columns.\n\nMirrors a key of ``verb_chart.json``.",
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartColumn"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "footnote": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Footnote"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "hint",
+          "footnote",
+          "columns"
+        ],
+        "title": "VerbChartMode",
+        "type": "object"
+      },
+      "VerbChartResponse": {
+        "additionalProperties": false,
+        "description": "Response of GET /api/reference/verb-chart \u2014 the chart file served whole.\n\nMirrors the top level of ``verb_chart.json``; ``model_config`` forbids\nextras so the file and the response can never drift apart silently.",
+        "properties": {
+          "footnotes": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartFootnote"
+            },
+            "title": "Footnotes",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "intro": {
+            "title": "Intro",
+            "type": "string"
+          },
+          "legend": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartLegendItem"
+            },
+            "title": "Legend",
+            "type": "array"
+          },
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartMode"
+            },
+            "title": "Modes",
+            "type": "array"
+          },
+          "sources": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "object"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "verb_types": {
+            "items": {
+              "$ref": "#/components/schemas/VerbChartVerbType"
+            },
+            "title": "Verb Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "intro",
+          "modes",
+          "verb_types",
+          "legend",
+          "sources",
+          "groups",
+          "footnotes"
+        ],
+        "title": "VerbChartResponse",
+        "type": "object"
+      },
+      "VerbChartRow": {
+        "additionalProperties": false,
+        "description": "One aspect row of a verb-chart group (perfective, progressive, \u2026).\n\n``volitional``/``potential`` hold the grid's two sides: a list of cells\n(``None`` where the side has no cell there), ``\"above\"`` where the whole\nside repeats the row above, or ``None`` when the side is absent. Mirrors a\nkey of ``verb_chart.json``.",
+        "properties": {
+          "aspect": {
+            "title": "Aspect",
+            "type": "string"
+          },
+          "footnote": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Footnote"
+          },
+          "glosses": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Glosses",
+            "type": "array"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "literary": {
+            "title": "Literary",
+            "type": "boolean"
+          },
+          "potential": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VerbChartCell"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "const": "above",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Potential"
+          },
+          "same_aspect_as_above": {
+            "title": "Same Aspect As Above",
+            "type": "boolean"
+          },
+          "volitional": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/VerbChartCell"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volitional"
+          }
+        },
+        "required": [
+          "id",
+          "aspect",
+          "hint",
+          "same_aspect_as_above",
+          "literary",
+          "footnote",
+          "glosses",
+          "volitional",
+          "potential"
+        ],
+        "title": "VerbChartRow",
+        "type": "object"
+      },
+      "VerbChartVerbType": {
+        "additionalProperties": false,
+        "description": "A verb type band of the chart: dynamic (someone does it) or stative.\n\nMirrors a key of ``verb_chart.json``.",
+        "properties": {
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "hint"
+        ],
+        "title": "VerbChartVerbType",
+        "type": "object"
+      },
       "_UrlBody": {
         "properties": {
           "url": {
@@ -7536,6 +8078,44 @@
         "tags": [
           "llm"
         ]
+      }
+    },
+    "/api/reference": {
+      "get": {
+        "description": "The Reference tab's page list for the active language.\n\nAn empty list, not a 404, when the language registers no chart: the\nfrontend hides the tab on it. The one page today is the verb chart.",
+        "operationId": "list_reference_pages_api_reference_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferencePagesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Reference Pages"
+      }
+    },
+    "/api/reference/verb-chart": {
+      "get": {
+        "description": "The active language's verb chart, served whole from its data file.\n\nThe response model mirrors the file key for key, and ``extra=\"forbid\"``\nrefuses a file carrying a key the model lacks, so the frontend draws from\nprecisely what the plugin committed.",
+        "operationId": "get_verb_chart_api_reference_verb_chart_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerbChartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Verb Chart"
       }
     },
     "/api/review-sessions": {
