@@ -26,7 +26,7 @@ from httpx import ASGITransport, AsyncClient
 from app.common.guid import compute_guid
 from app.main import app
 from app.models.srs_item import Direction, SRSState
-from app.plugins.anki_sync.sync_writer import COURSE_TAG
+from app.plugins.anki_sync.sync_writer import COURSE_REGION_GAP, COURSE_TAG
 from app.srs import sentence_mining as mining
 from app.srs.database import SRSDatabase
 from app.srs.lesson_cards import COURSE_SOURCE
@@ -307,24 +307,64 @@ class TestMinedCardPlacement:
         assert COURSE_TAG in tags.split()
 
     async def test_a_removed_blank_leaves_the_note_and_its_card_is_graved(self, no_tts):
+        """Mined onto a line already minted (the rewrite path): tagged at the mint, untagged when graved."""
         db = SRSDatabase(":memory:")
         anki_conn = _conn()
         _line(db)
+        await _mint(db, anki_conn)
         row_id = mining.add_blank(db, LANG, LINE, BA, "q")
         await _mint(db, anki_conn)
         assert set(_cards(anki_conn)) == {0, 1, 2}
+        assert "tt-mined-c3" in _note_tags(anki_conn)
         gone = db.get_collocation_by_id(row_id)[1].directions[Direction.PRODUCTION].anki_card_id
 
         mining.remove_blank(db, LINE, BA, confirm=False)
-        from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
-        from tests._helpers.anki_sync_create_new import FakeReader
-
-        AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(anki_conn), language_code=LANG).sync_push()
+        _push(db, anki_conn)
 
         assert set(_cards(anki_conn)) == {0, 1}
         assert anki_conn.execute("SELECT type FROM graves WHERE oid = ?", (gone,)).fetchone()[0] == 0
         [(_nid, _mid, _guid, flds, _sfld, _usn)] = _notes(anki_conn)
         assert "{{c3::" not in flds and "ba" in flds
+        assert _note_tags(anki_conn) == ["tunatale", "sentence", COURSE_TAG]
+
+    async def test_the_next_course_line_does_not_follow_a_mined_card(self, no_tts):
+        """The learner has caught up with the course and not yet studied the mined card: the
+        next lesson's cards still open a course region, not ordinary positions behind it."""
+        db = SRSDatabase(":memory:")
+        anki_conn = _conn()
+        _line(db)
+        await _mint(db, anki_conn)
+        anki_conn.execute("UPDATE cards SET type = 2, queue = 2")
+        row_id = mining.add_blank(db, LANG, LINE, BA, "q")
+        await _mint(db, anki_conn)
+        mined_due = _due(anki_conn, db, row_id)
+
+        nxt = replace(_BASE, line_index=5)
+        db.add_collocation(_course(nxt), LANG)
+        db.add_collocation(_course(nxt.with_blank(SI, "name particle")), LANG)
+        await _mint(db, anki_conn)
+
+        new_line = [
+            r["due"]
+            for r in anki_conn.execute(
+                "SELECT c.due FROM cards c JOIN notes n ON n.id = c.nid WHERE n.guid = ?",
+                (compute_guid(nxt.line_key, LANG, "TT Sentence"),),
+            )
+        ]
+        assert len(new_line) == 2
+        assert all(d <= mined_due - COURSE_REGION_GAP // 2 for d in new_line), (new_line, mined_due)
+
+
+def _note_tags(anki_conn) -> list[str]:
+    [(tags,)] = anki_conn.execute("SELECT tags FROM notes").fetchall()
+    return tags.split()
+
+
+def _push(db, anki_conn) -> None:
+    from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
+    from tests._helpers.anki_sync_create_new import FakeReader
+
+    AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(anki_conn), language_code=LANG).sync_push()
 
 
 @pytest.fixture

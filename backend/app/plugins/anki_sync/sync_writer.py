@@ -73,6 +73,14 @@ _PRODUCTION_BAND_CEILING = 0
 #: sync finds the course's newest position again.
 COURSE_TAG = "tt-course"
 COURSE_REGION_GAP = 100_000
+#: A card placed at the FRONT on a course note (a blank the learner mined,
+#: tunatale-h0q3.52) is not the course's: the note carries ``tt-mined-c<N>`` for
+#: it (N = its cloze number, ord + 1), and ``_next_course_position`` skips it.
+#: Without that, a mined card still new after the line's course cards were
+#: learned became the course's anchor, and every later course card followed it
+#: through ordinary new-card positions (owner chose the tag, 2026-11-10). The
+#: prefix has no ``_`` or ``%``, so it is safe inside LIKE.
+MINED_TAG_PREFIX = "tt-mined-c"
 
 
 def _with_course_tag(tags: list[str] | None, course: bool) -> list[str]:
@@ -171,10 +179,12 @@ class OfflineWriter:
         course card still new, it opens a region ``COURSE_REGION_GAP`` ahead of every
         new card, so a course is never behind the frequency deck it is meant to
         precede. Cards are then written at ``base + ord``, like the front allocator.
+        A card its note tags as mined (``MINED_TAG_PREFIX``) is not a course card here.
         """
         course_sql = (
             "SELECT {agg}(c.due) FROM cards c JOIN notes n ON n.id = c.nid "
-            "WHERE c.type = 0 AND (' ' || n.tags || ' ') LIKE ?"
+            "WHERE c.type = 0 AND (' ' || n.tags || ' ') LIKE ? "
+            f"AND (' ' || n.tags || ' ') NOT LIKE '% {MINED_TAG_PREFIX}' || (c.ord + 1) || ' %'"
         )
         like = f"% {COURSE_TAG} %"
         if self._gather_descending:
@@ -1022,10 +1032,35 @@ class OfflineWriter:
         missing = [o for o in ords if o not in have]
         if course:
             front = [o for o in missing if o in front_ords]
-            self._insert_sentence_cards(note_id, did, [o for o in missing if o not in front_ords], course=True, ts=ts)
-            self._insert_sentence_cards(note_id, did, front, course=False, ts=ts)
+            placed_course = [o for o in missing if o not in front_ords]
+            self._insert_sentence_cards(note_id, did, placed_course, course=True, ts=ts)
         else:
-            self._insert_sentence_cards(note_id, did, missing, course=False, ts=ts)
+            front, placed_course = missing, []
+        self._insert_sentence_cards(note_id, did, front, course=False, ts=ts)
+        self._tag_mined_cards(note_id, front=front, course=placed_course, ts=ts)
+
+    def _tag_mined_cards(self, note_id: int, *, front: list[int], course: list[int], ts: int) -> None:
+        """Keep a course note's ``tt-mined-c<N>`` tags true: one per front-placed card it still has.
+
+        Keyed on the NOTE's tag, not the caller's ``course``: a line whose course
+        rows were all deleted is placed as ``course=False`` and is still a course
+        note. A tag goes when its card goes, and when a course card is placed at
+        its ord, because ords are reused (a new blank numbers above the cards the
+        note still has). Written only on a change; the note row is already
+        ``usn = -1`` in both callers, and is stamped again here.
+        """
+        tags = self._conn.execute("SELECT tags FROM notes WHERE id = ?", (note_id,)).fetchone()[0].split()
+        if COURSE_TAG not in tags:
+            return
+        cards = {r[0] for r in self._conn.execute("SELECT ord FROM cards WHERE nid = ?", (note_id,))}
+        mined = {int(t.removeprefix(MINED_TAG_PREFIX)) - 1 for t in tags if t.startswith(MINED_TAG_PREFIX)}
+        mined = ((mined - set(course)) | set(front)) & cards
+        kept = [t for t in tags if not t.startswith(MINED_TAG_PREFIX)]
+        updated = kept + [f"{MINED_TAG_PREFIX}{o + 1}" for o in sorted(mined)]
+        if updated != tags:
+            self._conn.execute(
+                "UPDATE notes SET tags = ?, mod = ?, usn = -1 WHERE id = ?", (f" {' '.join(updated)} ", ts, note_id)
+            )
 
     def _insert_sentence_cards(self, note_id: int, did: int, missing: list[int], *, course: bool, ts: int) -> None:
         if not missing:
