@@ -106,6 +106,34 @@ and cannot be published as an Artifact without inlining d3), and
 this, look at the rendered result: matching node and edge counts say nothing about
 whether it is readable.
 
+## Keeping the backlog small and true
+
+The count will not fall every week, and it need not. What matters is that an
+open bead is work someone would schedule and that its status can be trusted
+without re-deriving it.
+
+- **File less.** A one-off observation (one slow test reading, a nit seen in
+  passing) is fixed on the spot or goes in a comment on the nearest bead. File a
+  new bead only for work you would put in a queue. Before `bd create`, look for
+  an open bead the finding belongs to.
+- **Record status when it changes, in the same session.** When work ships, close
+  the bead with the PR or commit, or comment what is left and re-title it to the
+  remainder. When the owner decides something, write the decision as a comment
+  and re-scope the bead. A decided or shipped bead that stays open costs every
+  later session a re-derivation.
+- **Reconcile before a handoff.** Every bead touched this session is closed,
+  commented or re-prioritised; an epic with no open children is closed; a
+  handoff mail you superseded is marked read.
+- **Parked work is closed, not open.** Work the owner has set aside is closed
+  with the `parked` label and a dated reason, and comes back with
+  `bd list --status closed --label parked`. `deferred` is for work waiting on a
+  dated external trigger (a release, a quota reset). Both statuses still count
+  as open children, so close or unparent them before closing their epic.
+  `bd list --status open` hides deferred beads; count with `bd list --all`.
+- **Batch the owner's decisions.** Label a bead that waits only on the owner
+  `owner-decision`, and bring the set to them on one page, not one question per
+  session.
+
 ## Claiming work
 
 Claim a bead when you start working on it, with your location as the actor:

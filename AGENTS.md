@@ -163,4 +163,5 @@ The backlog and its dependency ordering live in bd; `bd ready --exclude-type=epi
 - A wrong JSON field name returns a clean negative, not an error (the field is `parent`, not `parent_id`).
 - **Claim a bead when you start it, as your location:** `bd update <id> --claim --actor "$(basename "$PWD")@$(git branch --show-current)"`. Every session shares one git identity, so a bare `--claim` can't tell sessions apart; the `worktree@branch` actor says who holds the bead and where the work lives. A claim held by another actor is refused, and that refusal is the coordination. Check `bd list --status in_progress` before starting work, and close what you claimed when it merges.
 - After a `bd create` / `close` / `dep add` batch, run `./.beads-tasks/sync.sh` without asking — but not while another agent holds uncommitted work, because it commits and pushes.
+- Keep the backlog small and true: file less, record status in the session it changes, close parked work with the `parked` label, and batch `owner-decision` beads onto one page (skill § Keeping the backlog small and true).
 - Closing a bead is not authorization to commit.
