@@ -17,6 +17,8 @@ from fastapi.responses import FileResponse
 
 from app.api import app_state
 from app.api.models import (
+    AddSentenceBlankRequest,
+    AddSentenceBlankResponse,
     BackfillTranslationsResponse,
     BulkDeleteRequest,
     BulkDeleteResponse,
@@ -82,6 +84,7 @@ from app.llm.translate import generate_word_gloss, translate_term
 from app.models.lesson import KeyPhraseInfo, project_key_phrases
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs import sentence_mining
 from app.srs.anki_mirror.queue_engine import assemble_review_queue
 from app.srs.anki_mirror.queue_stats import (
     advance_learning_cutoff,
@@ -3621,6 +3624,53 @@ async def delete_item(item_id: int, request: Request):
     if db.get_collocation_by_id(item_id) is None:
         raise HTTPException(status_code=404, detail="Item not found")
     db.delete_collocation(item_id)
+    return {"status": "deleted"}
+
+
+@router.post("/sentence-blanks", status_code=201, response_model=AddSentenceBlankResponse)
+async def add_sentence_blank(body: AddSentenceBlankRequest, request: Request, response: Response):
+    """Mine a word: blank ``[start, end)`` on a line that has cards, as one more card of its note (tunatale-h0q3.52).
+
+    The row is NEW with no Anki ids (the card-adding contract); the next sync adds
+    its card to the line's note, at the front of the new queue. A blank the line
+    already has answers 200 with its row and calls no model.
+    """
+    db = request.state.srs_db
+    language_code = request.state.language_code
+    span = (body.start, body.end)
+    try:
+        plan = sentence_mining.plan_blank(db, body.line_key, span)
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    if plan.existing is not None:
+        response.status_code = 200
+        _, item, _ = db.get_collocation_by_id(plan.existing)
+        card = sentence_card(item.syntactic_unit)
+        return {"collocation_id": plan.existing, "key": card.key, "gloss": card.blank_gloss, "created": False}
+    gloss = body.gloss or sentence_mining.own_gloss(plan.card, span)
+    if not gloss and (llm := app_state.llm(request)) is not None:
+        word = plan.card.text[body.start : body.end]
+        gloss = await generate_word_gloss(
+            llm, surface=word, lemma=word, source_lang=language_code, sentence=plan.card.text
+        )
+    if not gloss:
+        raise HTTPException(status_code=503, detail="No gloss for the blank: none on the line, and the model gave none")
+    row_id = sentence_mining.add_blank(db, language_code, body.line_key, span, gloss)
+    key = plan.card.with_blank(span, gloss).key
+    return {"collocation_id": row_id, "key": key, "gloss": gloss, "created": True}
+
+
+@router.delete("/sentence-blanks", status_code=200, response_model=StatusResponse)
+async def remove_sentence_blank(line_key: str, start: int, end: int, request: Request, confirm: bool = False):
+    """Un-mark a blank: delete its row; the next push drops its cloze and graves its card.
+
+    Free while the card is new; a reviewed card answers 409 unless ``confirm``,
+    because its review history goes with it (owner, 2026-11-10).
+    """
+    try:
+        sentence_mining.remove_blank(request.state.srs_db, line_key, (start, end), confirm=confirm)
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     return {"status": "deleted"}
 
 

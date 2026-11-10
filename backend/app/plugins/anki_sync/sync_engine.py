@@ -383,6 +383,19 @@ def _derive_revlog_shape(
     return (type_, new_ivl, last_ivl)
 
 
+def _line_placement(rows: list[tuple[str, SRSItem, int]], anki_ords: list[int]) -> tuple[bool, list[int]]:
+    """Where a line's new cards go: (is the note a course note, the ords that go to the FRONT anyway).
+
+    A line with any course row is a course note, its cards placed in the course
+    region; a row that is not the course's (a blank the learner mined,
+    tunatale-h0q3.52) is a TT addition, and goes to the front like the rest of
+    them (owner, 2026-11-10). Only the cards the note lacks are placed at all.
+    """
+    course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
+    front = [o for (_, i, _), o in zip(rows, anki_ords, strict=True) if i.syntactic_unit.source != COURSE_SOURCE]
+    return course, front
+
+
 def _split_sentence_notes(records: list[NoteRecord]) -> list[NoteRecord]:
     """*records*, with each "TT Sentence" note split into one record per card (tunatale-h0q3.55)."""
     out: list[NoteRecord] = []
@@ -1389,8 +1402,8 @@ class AnkiSync:
             return
         for m in media:
             _copy_tt_media_to_anki(self._writer, m)
-        course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
-        if not self._writer.rewrite_sentence_note(note_id, fields, anki_ords, course=course):
+        course, front_ords = _line_placement(rows, anki_ords)
+        if not self._writer.rewrite_sentence_note(note_id, fields, anki_ords, course=course, front_ords=front_ords):
             # Not in THIS collection (peer-sync writes tt_collection): keep the
             # flags for a later sync, as for any other note (tunatale-7p4f).
             report.write_noop += 1
@@ -1917,10 +1930,10 @@ class AnkiSync:
         if plan is None:
             return 0, 0, len(new_ids)
         fields, media, anki_ords = plan
-        course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
         created = linked = 0
         if note_id is None:
             try:
+                course, front_ords = _line_placement(rows, anki_ords)
                 note_id = self._writer.create_sentence_note(
                     deck_name,
                     fields,
@@ -1928,6 +1941,7 @@ class AnkiSync:
                     guid=compute_guid(group, self._language_code, SENTENCE_NOTETYPE),
                     tags=["tunatale", "sentence"],
                     course=course,
+                    front_ords=front_ords,
                 )
                 created = len(new_ids)
             except DuplicateNoteError as exc:
@@ -1939,10 +1953,16 @@ class AnkiSync:
                 if plan is None:
                     return 0, 0, len(new_ids)
                 fields, media, anki_ords = plan
-                self._writer.rewrite_sentence_note(note_id, fields, anki_ords, deck_name=deck_name, course=course)
+                course, front_ords = _line_placement(rows, anki_ords)
+                self._writer.rewrite_sentence_note(
+                    note_id, fields, anki_ords, deck_name=deck_name, course=course, front_ords=front_ords
+                )
                 linked = len(new_ids)
         else:
-            self._writer.rewrite_sentence_note(note_id, fields, anki_ords, deck_name=deck_name, course=course)
+            course, front_ords = _line_placement(rows, anki_ords)
+            self._writer.rewrite_sentence_note(
+                note_id, fields, anki_ords, deck_name=deck_name, course=course, front_ords=front_ords
+            )
             linked = len(new_ids)
         for m in media:
             _copy_tt_media_to_anki(self._writer, m)

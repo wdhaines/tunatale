@@ -148,6 +148,28 @@ class TestWriterCoursePosition:
         assert _dues(conn, a) == [5 + COURSE_REGION_GAP]
         assert _dues(conn, b) == [5 + COURSE_REGION_GAP - 1]
 
+    def _sentence_note(self, writer, conn, *, front_ords):
+        add_sentence_notetype(conn)
+        return writer.create_sentence_note(
+            "0. Slovene", ["x"] * 5, [1, 2, 0], guid="g", tags=[], course=True, front_ords=front_ords
+        )
+
+    def test_a_front_ord_on_a_course_note_goes_ahead_of_everything(self):
+        """A blank mined on a course line (tunatale-h0q3.52): its card is a TT addition, at the front."""
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        nid = self._sentence_note(OfflineWriter(conn), conn, front_ords=[2])
+        course_base = 5 - COURSE_REGION_GAP
+        assert _dues(conn, nid) == [course_base + 1, course_base, course_base - 1]  # ords 0, 1, 2
+        assert f" {COURSE_TAG} " in _tags(conn, nid)
+
+    def test_a_front_ord_under_highest_position_gather_goes_above_everything(self):
+        conn = _make_dual_collection_conn()
+        _seed_new_card(conn, 1, 5)
+        nid = self._sentence_note(OfflineWriter(conn, gather_descending=True), conn, front_ords=[2])
+        course_base = 5 + COURSE_REGION_GAP  # the region opens above every new card
+        assert _dues(conn, nid) == [course_base + 1, course_base, course_base + 2]  # ord 2 highest: served first
+
     def test_an_empty_collection_opens_the_region_from_position_one(self):
         conn = _make_dual_collection_conn()
         nid = _cloze(OfflineWriter(conn), "{{c1::En}}", course=True)

@@ -128,4 +128,6 @@ def test_public_method_count_pinned() -> None:
     # +sibling_groups, +list_sibling_rows, +get_collocation_by_anki_card_id (a lesson line's cards share one Anki note, so the queue
     #  buries them as siblings — h0q3.55)
     # +set_anki_ord (sync_pull records a card's Anki ord, the TEMPLATE sort key — h0q3.60)
-    assert count == 152
+    # +copy_media_row (a mined blank plays its line's takes, which another row of the
+    #  line already holds — h0q3.52)
+    assert count == 153

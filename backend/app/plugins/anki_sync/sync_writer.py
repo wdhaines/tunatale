@@ -10,6 +10,7 @@ import json as _json
 import re
 import sqlite3
 import time as _time
+from collections.abc import Collection
 from contextlib import closing, suppress
 from pathlib import Path
 from typing import NamedTuple
@@ -1008,10 +1009,25 @@ class OfflineWriter:
         row = self._conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
         return None if row is None else row[0].split(_FIELD_SEP)[0]
 
-    def _add_sentence_cards(self, note_id: int, did: int, ords: list[int], *, course: bool, ts: int) -> None:
-        """Insert a card for each of *ords* (in that order) the note lacks, at consecutive new positions."""
+    def _add_sentence_cards(
+        self, note_id: int, did: int, ords: list[int], *, course: bool, ts: int, front_ords: Collection[int] = ()
+    ) -> None:
+        """Insert a card for each of *ords* (in that order) the note lacks, at consecutive new positions.
+
+        On a course note, the ords in *front_ords* still go to the FRONT of the new
+        queue, where TT's own additions go: a blank the learner mined on a course
+        line (tunatale-h0q3.52, owner 2026-11-10). The rest go to the course region.
+        """
         have = {r[0] for r in self._conn.execute("SELECT ord FROM cards WHERE nid = ?", (note_id,))}
         missing = [o for o in ords if o not in have]
+        if course:
+            front = [o for o in missing if o in front_ords]
+            self._insert_sentence_cards(note_id, did, [o for o in missing if o not in front_ords], course=True, ts=ts)
+            self._insert_sentence_cards(note_id, did, front, course=False, ts=ts)
+        else:
+            self._insert_sentence_cards(note_id, did, missing, course=False, ts=ts)
+
+    def _insert_sentence_cards(self, note_id: int, did: int, missing: list[int], *, course: bool, ts: int) -> None:
         if not missing:
             return
         slots = len(missing)
@@ -1036,6 +1052,7 @@ class OfflineWriter:
         guid: str,
         tags: list[str],
         course: bool = False,
+        front_ords: Collection[int] = (),
     ) -> int:
         """Insert a "TT Sentence" note (tunatale-h0q3.55) with one card per Anki ord in *ords*.
 
@@ -1045,7 +1062,7 @@ class OfflineWriter:
         come before its whole-line card although the whole line is ord 0.
 
         *guid* is the caller's (from the line, never the text, so an edited line
-        keeps its note). Raises DuplicateNoteError if a note already has it,
+        keeps its note). ``course``/``front_ords``: as for ``_add_sentence_cards``. Raises DuplicateNoteError if a note already has it,
         ValueError if the notetype or deck is missing. No col.scm change.
         """
         mid = self._sentence_mid()
@@ -1068,13 +1085,20 @@ class OfflineWriter:
             "VALUES (?, ?, ?, ?, -1, ?, ?, ?, ?, 0, '')",
             (note_id, guid, mid, ts, tags_str, _FIELD_SEP.join(fields), sfld, csum),
         )
-        self._add_sentence_cards(note_id, did, ords, course=course, ts=ts)
+        self._add_sentence_cards(note_id, did, ords, course=course, ts=ts, front_ords=front_ords)
         self._bump_col(ts)
         self._conn.commit()
         return note_id
 
     def rewrite_sentence_note(
-        self, note_id: int, fields: list[str], ords: list[int], *, deck_name: str | None = None, course: bool = False
+        self,
+        note_id: int,
+        fields: list[str],
+        ords: list[int],
+        *,
+        deck_name: str | None = None,
+        course: bool = False,
+        front_ords: Collection[int] = (),
     ) -> bool:
         """Make *note_id* hold *fields* and exactly the cards *ords*. Returns whether the note exists.
 
@@ -1106,7 +1130,7 @@ class OfflineWriter:
             did = sibling[0]
         elif deck_name is None or (did := find_deck_id(self._conn, deck_name)) is None:
             raise ValueError(f"note {note_id} has no card to take a deck from, and deck {deck_name!r} is not found")
-        self._add_sentence_cards(note_id, did, ords, course=course, ts=ts)
+        self._add_sentence_cards(note_id, did, ords, course=course, ts=ts, front_ords=front_ords)
         self._bump_col(ts)
         self._conn.commit()
         return True
