@@ -136,6 +136,7 @@ def _settings_overrides(monkeypatch, tmp_path):
     # by the next REAL render of the same key.
     monkeypatch.setattr(settings, "warning_log", tmp_path / "logs" / "warnings.log")
     monkeypatch.setattr(settings, "client_log", tmp_path / "logs" / "client.log")
+    monkeypatch.setattr(settings, "action_log", tmp_path / "logs" / "actions.log")
     monkeypatch.setattr(settings, "anki_fallback_log", tmp_path / "logs" / "anki-fallback.log")
     monkeypatch.setattr(settings, "tts_cache_dir", tmp_path / "tts-cache")
     monkeypatch.setattr(settings, "audio_alignment_cache_dir", tmp_path / "alignment-cache")
