@@ -4026,20 +4026,20 @@ grep -n "^OWNER =\|^USER =\|include_router" backend/app/main.py
 ```
 
 ```output
-494:OWNER = [Depends(require_user), Depends(require_owner)]
-495:USER = [Depends(require_user)]
-496:app.include_router(curriculum.router, dependencies=USER)
-497:app.include_router(generation.router, dependencies=USER)
-498:app.include_router(srs.router, dependencies=[Depends(require_user)])
-499:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
-500:app.include_router(audio.router, dependencies=USER)
-501:app.include_router(reference.router, dependencies=USER)
-502:app.include_router(review_sessions_api.router, dependencies=USER)
-504:    app.include_router(anki.router, dependencies=OWNER)
-505:app.include_router(admin.router, dependencies=OWNER)
-510:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
-511:app.include_router(llm_api.router, dependencies=USER)
-512:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
+521:OWNER = [Depends(require_user), Depends(require_owner)]
+522:USER = [Depends(require_user)]
+523:app.include_router(curriculum.router, dependencies=USER)
+524:app.include_router(generation.router, dependencies=USER)
+525:app.include_router(srs.router, dependencies=[Depends(require_user)])
+526:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
+527:app.include_router(audio.router, dependencies=USER)
+528:app.include_router(reference.router, dependencies=USER)
+529:app.include_router(review_sessions_api.router, dependencies=USER)
+531:    app.include_router(anki.router, dependencies=OWNER)
+532:app.include_router(admin.router, dependencies=OWNER)
+537:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
+538:app.include_router(llm_api.router, dependencies=USER)
+539:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 ```
 
 Three tiers result:

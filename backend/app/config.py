@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     # a hit-test, and a device console dies with the tab.
     client_log: Path = Field(default_factory=lambda: tt_home() / "logs/client.log")
     client_log_enabled: bool = False
+    # Dated record of every successful write request (tunatale-5i1p.1): which
+    # actions get used. Appended by main.py::_count_write_actions.
+    action_log: Path = Field(default_factory=lambda: tt_home() / "logs/actions.log")
 
     # Peer-sync (anki subprocess) config — see sync_orchestrator.py. Also the
     # master toggle main.py reads (alongside plugin importability) to decide

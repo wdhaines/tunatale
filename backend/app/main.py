@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import anyio
@@ -10,6 +11,7 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app import action_log
 from app.api.health import STATUS_OK, check_health
 from app.api.models import HealthResponse, LanguagesResponse
 from app.audio.renderer import build_lesson_renderer
@@ -459,6 +461,31 @@ async def _refuse_while_parked(request, call_next):
             content={"detail": f"TunaTale is running elsewhere right now: {target}", "parked_at": target},
         )
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _count_write_actions(request, call_next):
+    """Append one dated line per successful write request (tunatale-5i1p.1).
+
+    The instrument for "which actions get used". It records the route TEMPLATE
+    (``/api/srs/items/{item_id}``), never the concrete path or a request body.
+    A failed append never fails the request: the write it reports already happened.
+    """
+    response = await call_next(request)
+    route = getattr(request.scope.get("route"), "path", request.url.path)
+    if action_log.is_counted(request.method, route, response.status_code):
+        try:
+            action_log.record(
+                settings.action_log,
+                when=datetime.now().astimezone(),
+                method=request.method,
+                route=route,
+                language=getattr(request.state, "language_code", None),
+                user_id=getattr(request.state, "user_id", None),
+            )
+        except OSError:
+            logger.warning("ACTION_LOG_WRITE_FAILED path=%s", settings.action_log, exc_info=True)
+    return response
 
 
 from app.api import admin, anki, audio, curriculum, generation, reference, srs  # noqa: E402
