@@ -465,13 +465,10 @@ async def drill_feedback(item_id: int, direction: str, body: DrillRequest, reque
     # don't re-charge the daily review budget — the card was counted once already.
     # Guarded by has_counting_review_today so a genuine first review still counts.
     budget_neutral = body.lesson_review and db.has_counting_review_today(item_id, dir_enum, anki_today())
-    # Releasing a staged listen grade: the provisional row was never a real grade,
-    # so this IS the card's first grade — nothing to overwrite. Anki's review-ahead
-    # kind is decided from the card's dueness NOW, not from the grade_class stored
-    # at stage time: a sync or a day rollover in between can have moved due_at, and
-    # a stale "due" would log a not-due grade as an ordinary review.
-    releasing = db.get_pending_grade(item_id, dir_enum.value) is not None
-    review_kind = _release_review_kind(prev_dir) if releasing else None
+    # A not-due REVIEW card is Anki's review-ahead (kind 3, uncharged), whether or
+    # not a staged listen grade is being released: a staged row was never a real
+    # grade, so this is the card's first grade either way.
+    review_kind = _review_ahead_kind(prev_dir)
     row = build_revlog_row(
         item_id,
         dir_enum,
@@ -839,11 +836,19 @@ def _listen_grade_class(
     lr = rec.last_review
     if isinstance(lr, datetime.datetime) and today_start <= lr.astimezone(datetime.UTC) < today_end:
         return None
-    if rec.due_at is not None:
-        due_str = rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at)
-        if due_str <= end_of_day_utc:
-            return "due"
-    return "ahead"
+    return "due" if _review_is_due(rec, end_of_day_utc) else "ahead"
+
+
+def _review_is_due(rec: DirectionState, end_of_day_utc: str) -> bool:
+    """Whether a REVIEW direction is due by the end of today's Anki day.
+
+    The boundary ``count_review_due_collocations`` uses (``due_at <= end_of_day_utc``);
+    a NULL ``due_at`` is not counted as due there, so it is not due here.
+    """
+    if rec.due_at is None:
+        return False
+    due_str = rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at)
+    return due_str <= end_of_day_utc
 
 
 def _listen_deferred_reason(
@@ -939,16 +944,24 @@ def _kp_claimed_collocation_ids(
     return claimed
 
 
-def _release_review_kind(prev_dir: DirectionState) -> int | None:
-    """Anki's review-ahead kind (3) for a card being released from the pending bucket.
+def _review_ahead_kind(prev_dir: DirectionState) -> int | None:
+    """Anki's review-ahead kind (3) for a grade on a REVIEW card that is not due; else ``None``.
 
-    Decided from the card's dueness NOW, never from the ``grade_class`` stored on
-    the pending row: a sync or a day rollover between staging and release can have
-    moved ``due_at``, and a stale "due" would log a not-due grade as an ordinary
-    review. The stored class is a record of stage time, not an input here.
+    Every TT grade path passes this (owner, 2026-11-13: "Match Anki"). Anki cannot
+    grade a not-due card in its home deck; its one early path, a rescheduling
+    filtered deck, logs type 3 and does not charge the home deck's review count
+    (measured: briefs/design-grade-page-2026-11.md § P1). ``None`` lets the revlog
+    take the kind of the card's state.
+
+    Dueness alone decides, and it is read NOW: never from a ``grade_class`` stored
+    on a pending row (a sync or day rollover since staging can have moved
+    ``due_at``), and not gated on "graded today" (a same-day re-grade of a card
+    the first grade sent out by days is review-ahead in Anki too).
     """
-    start, end, end_of_day_utc = _listen_day_window()
-    return 3 if _listen_grade_class(prev_dir, start, end, end_of_day_utc=end_of_day_utc) == "ahead" else None
+    if prev_dir.state != SRSState.REVIEW:
+        return None
+    _, _, end_of_day_utc = _listen_day_window()
+    return None if _review_is_due(prev_dir, end_of_day_utc) else 3
 
 
 def _created_in_window(
@@ -2176,7 +2189,7 @@ def _apply_grade_now(
         0,
         now=now,
         col_crt=col_crt,
-        review_kind=_release_review_kind(prev_dir),
+        review_kind=_review_ahead_kind(prev_dir),
     )
     db.append_revlog(row)
     _balancer_add(balancer, card_id=prev_dir.anki_card_id, note_id=item.anki_note_id, interval=row.interval)
