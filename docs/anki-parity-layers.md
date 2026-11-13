@@ -1867,3 +1867,19 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 
 **Files.** `app/srs/migrations.py` (v51), `app/models/srs_item.py`, `app/srs/direction_fields.py`, `app/srs/db_directions.py` (`set_anki_ord`), `app/srs/db_sync.py`, `app/srs/db_base.py` (`FLAG_CARD_DATA_SQL`), `app/srs/anki_mirror/queue_engine.py`, `app/srs/sentence_note.py`, `app/plugins/anki_sync/sync_engine.py`, `app/plugins/anki_sync/sync_writer.py` (`sentence_note_text`). Tests: `test_parity_sentence_card_ord.py` (oracle), `test_new_card_display_order.py::TestTemplateRankIsTheCardsOwnOrd`, `test_anki_sentence_note_sync.py` (`TestACardStaysWithItsBlank`, `TestHeld`, `TestPullStoresTheCardsOrd`), `test_sentence_note.py` (`TestClozeNumbersIn`, `TestClozeOrdsAbove`).
 
+
+## Layer 95 — a grade on a not-due card logged an ordinary review and charged today's review count
+
+**The report.** No divergence was reported; the Grade-page design (tunatale-5i1p) found two grade paths disagreeing about a not-due card. The listen popup's confirmed grades (`_apply_grade_now`) logged Anki's review-ahead kind 3; the card-review route (`drill_feedback`, behind the review screen and the Read popover and blur) logged kind 3 only when it was releasing a staged listen grade, and otherwise the kind of the card's state, 1.
+
+**Mechanism.** Measured on the Anki 26.9.4 engine (`.beads-tasks/briefs/tool-not-due-grade-probe-2026-11.py`): Anki refuses to grade a not-due card in its home deck (`not at top of queue`); its only early path, a rescheduling filtered deck, logs revlog type 3, leaves the home deck's `revToday` unchanged, and produces the same memory state as an on-time grade at the same elapsed time. Both TT counters exclude type 3 (`db_counts.py::count_reviews_completed_today`, `sync_writer.py::count_reviews_today_for_deck`), so a kind-1 grade on a not-due card charged TT's review budget at once and Anki's home `revToday` at the next push, which native Anki never does. The owner decided on 2026-11-13: "Match Anki", on every path.
+
+**Fix.** `api/srs.py::_review_ahead_kind` (was `_release_review_kind`): 3 for a REVIEW direction that is not due by the end of today's Anki day, else `None` (the state's kind). Dueness alone, read now: not the stored `grade_class`, and not gated on "graded today", so a same-day re-grade of a card the first grade sent out by days is review-ahead as in Anki. `drill_feedback` passes it on every grade; `_apply_grade_now` already did. The dueness boundary is one predicate, `_review_is_due`, shared with `_listen_grade_class` (the boundary of `count_review_due_collocations`).
+
+**An early lapse.** The push counts a lapse as `review_kind == 1 AND Again`, so a kind-3 Again reaches `cards.lapses` through the `MAX(lapses + n, ds_lapses)` floor in `OfflineWriter.write_revlog`, as Anki's filtered-deck Again does. Pinned by the oracle test below; do not narrow that floor.
+
+**Not changed.** `pattern_gate.py` counts only `review_kind == 1`, so an early grade does not count toward the affix pace gate. Whether it should is part of the gate's respecification (tunatale-ve4p.36), not this fix.
+
+**Diagnostic signature.** A not-due card graded in TT that charges the review badge or Anki's `revToday`: `SELECT review_kind, last_interval, budget_neutral FROM tt_revlog WHERE collocation_id = ?` shows kind 1 for a grade made before the card's `due_at`.
+
+**Files.** `app/api/srs.py`. Tests: `test_feedback_review_ahead.py` (D1-D4), `test_parity_review_ahead_push.py` (oracle, D5), `test_pending_grade_apply.py::test_a_grade_with_no_pending_row_is_review_ahead_too` (flipped from the old behaviour).

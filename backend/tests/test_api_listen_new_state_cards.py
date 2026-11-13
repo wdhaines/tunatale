@@ -166,11 +166,11 @@ class TestGradeClass:
         )
         assert self._classify(rec) is None
 
-    def test_release_review_kind_is_none_for_new_state(self):
+    def test_review_ahead_kind_is_none_for_new_state(self):
         """An introduction is not a review-ahead, so kind stays None."""
-        from app.api.srs import _release_review_kind
+        from app.api.srs import _review_ahead_kind
 
-        assert _release_review_kind(_dir(SRSState.NEW)) is None
+        assert _review_ahead_kind(_dir(SRSState.NEW)) is None
 
 
 # `TestBudgetAllocator` lived here and unit-tested `_allocate_new_state_budget`

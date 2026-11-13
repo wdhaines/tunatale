@@ -147,14 +147,14 @@ class TestReviewKindOnRelease:
 
         assert _revlog(db, cid)[0]["review_kind"] == 3
 
-    async def test_a_grade_with_no_pending_row_is_untouched(self, db):
-        """Main-queue grading of a not-due card keeps its existing kind — the
-        kind-3 override belongs to the release path only."""
+    async def test_a_grade_with_no_pending_row_is_review_ahead_too(self, db):
+        """Kind 3 is not the release path's: any grade on a not-due card is
+        review-ahead (owner, 2026-11-13: "Match Anki"; test_feedback_review_ahead.py)."""
         cid = _seed(db, ahead=True)
 
         await _grade(cid, lesson_review=False)
 
-        assert _revlog(db, cid)[0]["review_kind"] != 3
+        assert _revlog(db, cid)[0]["review_kind"] == 3
 
 
 class TestStalePendingRowsCannotSurviveARealGrade:
