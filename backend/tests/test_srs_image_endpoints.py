@@ -753,6 +753,76 @@ class TestDeleteImage:
 # -- coverage gap helpers ------------------------------------------------------
 
 
+class TestSharedPictureWarning:
+    """tunatale-iiwm.10: the editor saves a picture another card already shows,
+    and says which card.
+
+    Owner decision 2026-11-13: warn, don't refuse — one picture on two cards can
+    be intentional. The automatic paths still refuse (``image_no_other_card_holds``).
+    """
+
+    async def _upload(self, c, cid, data, name="p.jpg"):
+        return await c.put(
+            f"/api/srs/items/{cid}/image/upload",
+            files={"file": (name, io.BytesIO(data), "image/jpeg")},
+        )
+
+    async def test_upload_of_a_picture_another_card_shows_saves_and_names_that_card(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit("samfunn", "society"), language_code="no")
+        api.add_collocation(_unit("forhold", "relationship"), language_code="no")
+        owner, cid = _id_for_text(api, "samfunn"), _id_for_text(api, "forhold")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            first = await self._upload(c, owner, _JPG)
+            resp = await self._upload(c, cid, _JPG)
+        assert first.json()["shared_with"] is None
+        assert resp.status_code == 200
+        assert resp.json()["shared_with"] == {"id": owner, "text": "samfunn"}
+        assert api.get_image_filename(cid) is not None  # stored anyway: a warning, not a refusal
+
+    @respx.mock
+    async def test_url_pick_of_a_picture_another_card_shows_saves_and_names_that_card(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit("samfunn", "society"), language_code="no")
+        api.add_collocation(_unit("forhold", "relationship"), language_code="no")
+        owner, cid = _id_for_text(api, "samfunn"), _id_for_text(api, "forhold")
+        respx.get("http://img.test/same.jpg").mock(
+            return_value=httpx.Response(200, content=_JPG, headers={"content-type": "image/jpeg"}),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await self._upload(c, owner, _JPG)
+            resp = await c.put(f"/api/srs/items/{cid}/image", json={"url": "http://img.test/same.jpg"})
+        assert resp.status_code == 200
+        assert resp.json()["shared_with"] == {"id": owner, "text": "samfunn"}
+        assert api.get_image_filename(cid) is not None
+
+    async def test_a_picture_no_other_card_shows_warns_nothing(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit("samfunn", "society"), language_code="no")
+        api.add_collocation(_unit("forhold", "relationship"), language_code="no")
+        owner, cid = _id_for_text(api, "samfunn"), _id_for_text(api, "forhold")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await self._upload(c, owner, _JPG)
+            resp = await self._upload(c, cid, _JPG2)
+        assert resp.json()["shared_with"] is None
+
+    async def test_re_storing_a_cards_own_picture_warns_nothing(self, api, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.cards.media.vocab_media._MEDIA_DIR", tmp_path)
+        api.add_collocation(_unit("samfunn", "society"), language_code="no")
+        cid = _id_for_text(api, "samfunn")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            await self._upload(c, cid, _JPG)
+            resp = await self._upload(c, cid, _JPG)
+        assert resp.json()["shared_with"] is None
+
+    async def test_delete_reports_no_shared_card(self, api):
+        api.add_collocation(_unit("samfunn", "society"), language_code="no")
+        cid = _id_for_text(api, "samfunn")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            resp = await c.delete(f"/api/srs/items/{cid}/image")
+        assert resp.json()["shared_with"] is None
+
+
 class TestImageItemKeySets:
     """Key-set oracles for the 6d response_model flips (the three image verbs).
 

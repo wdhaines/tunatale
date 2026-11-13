@@ -1407,6 +1407,16 @@
             ],
             "title": "Image Url"
           },
+          "shared_with": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImageSharedWith"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -1421,9 +1431,29 @@
           "text",
           "translation",
           "card_type",
-          "image_url"
+          "image_url",
+          "shared_with"
         ],
         "title": "ImageItemResponse",
+        "type": "object"
+      },
+      "ImageSharedWith": {
+        "description": "Another card that already shows the picture just stored.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "ImageSharedWith",
         "type": "object"
       },
       "ImportCurriculumPlanResponse": {

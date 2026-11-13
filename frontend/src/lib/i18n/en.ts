@@ -123,6 +123,8 @@ export const en = {
   "imageEditModal.title": "Edit Image",
   "imageEditModal.close": "Close",
   "imageEditModal.working": "Working…",
+  "imageEditModal.sharedWith": "Saved — card {id} “{text}” already shows this picture.",
+  "imageEditModal.done": "Done",
   "imageEditModal.currentImage": "Current image",
   "imageEditModal.remove": "Remove",
   "imageEditModal.noImage": "No image",

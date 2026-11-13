@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { SRSItemDetail, ImageCandidate, LangeekCandidatesResponse } from '#lib/api.js';
+	import type { SRSItemDetail, ImageCandidate, ImageItemResponse, LangeekCandidatesResponse } from '#lib/api.js';
 	import { api } from '#lib/api.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 
@@ -27,12 +27,27 @@
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 
+	// tunatale-iiwm.10: a picture another card already shows is saved anyway
+	// (the owner may share one on purpose), and the modal stays open to say so.
+	// Once saved, every way out refreshes the list.
+	let sharedWith = $state<ImageItemResponse['shared_with']>(null);
+
+	function afterSave(resp: ImageItemResponse) {
+		if (resp.shared_with) sharedWith = resp.shared_with;
+		else onupdated();
+	}
+
+	function close() {
+		if (sharedWith) onupdated();
+		else onclose();
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') onclose();
+		if (e.key === 'Escape') close();
 	}
 
 	function handleBackdropClick(e: MouseEvent) {
-		if (e.target === e.currentTarget) onclose();
+		if (e.target === e.currentTarget) close();
 	}
 
 	async function loadLangeek() {
@@ -82,8 +97,7 @@
 		busy = true;
 		error = null;
 		try {
-			await api.setItemImageFromUrl(item.id, url);
-			onupdated();
+			afterSave(await api.setItemImageFromUrl(item.id, url));
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -109,9 +123,9 @@
 		pasteLoading = true;
 		error = null;
 		try {
-			await api.setItemImageFromUrl(item.id, pasteUrl.trim());
+			const resp = await api.setItemImageFromUrl(item.id, pasteUrl.trim());
 			pasteUrl = '';
-			onupdated();
+			afterSave(resp);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -126,8 +140,7 @@
 		busy = true;
 		error = null;
 		try {
-			await api.uploadItemImage(item.id, file);
-			onupdated();
+			afterSave(await api.uploadItemImage(item.id, file));
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -151,11 +164,18 @@
 	<div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} tabindex="-1">
 		<div class="modal-header">
 			<h2>{t('imageEditModal.title')}</h2>
-			<button class="close-btn" onclick={onclose} aria-label={t('imageEditModal.close')}>&times;</button>
+			<button class="close-btn" onclick={close} aria-label={t('imageEditModal.close')}>&times;</button>
 		</div>
 
 		{#if error}
 			<p class="error" role="alert">{error}</p>
+		{/if}
+
+		{#if sharedWith}
+			<div class="shared" role="status">
+				<span>{t('imageEditModal.sharedWith', { id: sharedWith.id, text: sharedWith.text })}</span>
+				<button onclick={onupdated}>{t('imageEditModal.done')}</button>
+			</div>
 		{/if}
 
 		{#if busy}
@@ -305,6 +325,17 @@
 		font-size: 0.85rem;
 		padding: 0.4rem;
 		border: 1px solid var(--color-danger);
+		border-radius: var(--radius);
+		margin-bottom: 0.5rem;
+	}
+	.shared {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.85rem;
+		padding: 0.4rem;
+		border: 1px solid var(--color-warning);
 		border-radius: var(--radius);
 		margin-bottom: 0.5rem;
 	}

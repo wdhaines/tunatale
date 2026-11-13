@@ -3085,10 +3085,21 @@ export interface components {
       id: number;
       /** Image Url */
       image_url: string | null;
+      shared_with: components["schemas"]["ImageSharedWith"] | null;
       /** Text */
       text: string;
       /** Translation */
       translation: string;
+    };
+    /**
+     * ImageSharedWith
+     * @description Another card that already shows the picture just stored.
+     */
+    ImageSharedWith: {
+      /** Id */
+      id: number;
+      /** Text */
+      text: string;
     };
     /**
      * ImportCurriculumPlanResponse
