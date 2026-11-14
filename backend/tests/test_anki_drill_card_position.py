@@ -197,11 +197,22 @@ class TestRotationDoesNotMove:
         cid = rows["sent:test-01:drill-1"]
         nid = _note_id(db, cid)
         due, tags = _due(anki, nid), _tags(anki, nid)
-        with db._get_conn() as conn:
-            conn.execute(
-                "UPDATE collocation_directions SET reps = 1 WHERE collocation_id = ? AND direction = 'production'",
-                (cid,),
+        from app.models.srs_item import RevlogRow
+
+        db.append_revlog(  # an answer that landed it in review: the next step (5i1p.10)
+            RevlogRow(
+                id=1_700_000_000_000,
+                collocation_id=cid,
+                direction=Direction.PRODUCTION,
+                button_chosen=4,
+                interval=4,
+                last_interval=0,
+                factor=5000,
+                taken_millis=1000,
+                review_kind=0,
+                anki_card_id=None,
             )
+        )
 
         n = AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(anki), language_code=LANG).rotate_drill_notes()
 

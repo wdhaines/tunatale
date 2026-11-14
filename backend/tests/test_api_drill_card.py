@@ -1,8 +1,9 @@
 """Drill cards through the routes (tunatale-5i1p.4): mint, review payload (A1), Grade plan, mining.
 
 The review payload carries the step view of a drill card, built per request
-from the card's ``reps``: a card graded Again comes back showing the next step,
-and after Undo the step it showed before (oracle A1, through the real routes).
+from the card's answers that left it in review (tunatale-5i1p.10): a learning
+answer keeps the step, the graduating one moves it on, and Undo takes it back
+(oracle A1 / S9, through the real routes).
 A plain sentence card is the control: its payload does not move.
 
 Brief: ``.beads-tasks/briefs/design-rotating-drill-card-2026-11.md`` § Build 1, § Oracle.
@@ -66,35 +67,45 @@ async def _queue_item(c: AsyncClient, cid: int) -> dict:
     return next(q for q in queue if q["id"] == cid)
 
 
+async def _listed_drill(c: AsyncClient, cid: int) -> dict:
+    r = await c.get("/api/srs/items", params={"limit": 200})
+    assert r.status_code == 200
+    return next(i for i in r.json()["items"] if i["id"] == cid)["drill"]
+
+
 # --------------------------------------------------------------------------
-# A1: the payload is built per request from reps
+# A1: the payload is built per request from the card's answers into review
 # --------------------------------------------------------------------------
 
 
 class TestReviewPayload:
-    async def test_a1_again_shows_the_next_step_and_undo_the_first(self):
+    async def test_a1_a_learning_answer_keeps_the_step_graduating_moves_it_and_undo_takes_it_back(self):
+        """S9 (5i1p.10), through the real routes: the step moves when the card lands in review."""
         db = _install(_mixed_story())
         drill_id, sentence_id = _mint_mixed(db)
+
+        async def grade(cid: int, rating: str) -> None:
+            r = await c.post(f"/api/srs/items/{cid}/direction/production/feedback", json={"rating": rating})
+            assert r.status_code == 200
+
         async with _client() as c:
             first = await _queue_item(c, drill_id)
             control_first = await _queue_item(c, sentence_id)
-            # the drill last: undo unwinds only the most recent grade
-            for cid in (sentence_id, drill_id):
-                r = await c.post(f"/api/srs/items/{cid}/direction/production/feedback", json={"rating": "again"})
-                assert r.status_code == 200
+            await grade(sentence_id, "again")
+            await grade(drill_id, "again")  # learning: the same step comes back
             second = await _queue_item(c, drill_id)
             control_second = await _queue_item(c, sentence_id)
+            await grade(drill_id, "easy")  # graduates: the next step
+            assert db.count_answers_into_review(drill_id) == 1
+            graduated = await _listed_drill(c, drill_id)  # not due now: read from the item list
             r = await c.post(f"/api/srs/items/{drill_id}/direction/production/undo")
             assert r.status_code == 200
-            third = await _queue_item(c, drill_id)
+            undone = await _listed_drill(c, drill_id)
 
         assert (first["drill"]["step"], first["drill"]["cue"], first["drill"]["before"]) == (1, "hun", "Han er her.")
-        assert (second["drill"]["step"], second["drill"]["cue"], second["drill"]["before"]) == (
-            2,
-            "de",
-            "Hun er her.",
-        )
-        assert third["drill"] == first["drill"]
+        assert second["drill"] == first["drill"]
+        assert (graduated["step"], graduated["cue"], graduated["before"]) == (2, "de", "Hun er her.")
+        assert undone == first["drill"]
         # control: a plain sentence card graded the same way shows the same card
         assert control_first["drill"] is None
         assert control_second["sentence"] == control_first["sentence"]

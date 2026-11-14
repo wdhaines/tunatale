@@ -466,10 +466,13 @@ class TestPeerSyncSelfHost:
         assert any("{{c1::" in f for f in flds), f"TT-added cloze note never reached the server — peer2 notes: {flds}"
 
     def test_r1_a_drill_note_rotates_while_the_peer_reviews(self, tmp_path: Path):
-        """Oracle R1 (tunatale-5i1p.5): a drill card reviewed on another device while TT
-        rotates its note. Both arrive: the note holds TT's step, the card the peer's
-        reviews, and the next TT sync catches the note up. Proven from rows on both
-        sides, never from ``required`` (which reads 0 after a sync that moved rows)."""
+        """Oracle R1 (tunatale-5i1p.5, reshaped for 5i1p.10): a drill card reviewed on another
+        device. A learning answer leaves the note; the graduating one reaches TT and TT
+        rotates the note in that sync, and the peer gets the step with its own reviews
+        intact. Proven from rows on both sides, never from ``required`` (which reads 0
+        after a sync that moved rows). A graduated card is not answerable again the same
+        day, so the old "the peer reviews while TT's rotation is in flight" leg has no
+        counterpart under 5i1p.10."""
         import sqlite3
         from contextlib import closing
 
@@ -534,9 +537,9 @@ class TestPeerSyncSelfHost:
             finally:
                 db.close()
 
-        def step_fields(reps: int) -> str:
+        def step_fields(in_review: int) -> str:
             card = drill_card(tt_row().syntactic_unit)
-            return "\x1f".join(drill_note_fields(card.view(reps), media={}, source=drill_source_label(card)))
+            return "\x1f".join(drill_note_fields(card.view(in_review), media={}, source=drill_source_label(card)))
 
         def rows(path: Path, nid: int, card_id: int) -> tuple[str, int, int]:
             with closing(sqlite3.connect(path)) as conn:  # closed: Anki opens the file exclusively next
@@ -551,24 +554,23 @@ class TestPeerSyncSelfHost:
         peer_sync_leg("peer2 gets the note")
         assert rows(peer2_col, nid, card_id) == (step_fields(0), 0, 0)
 
-        # A review the peer synced: TT pulls it and rotates the note in that same sync.
+        # A learning answer on the peer (Good on a new card): TT pulls it and leaves the
+        # note where it is. The step moves only when the card lands in review (5i1p.10).
         _driver({"op": "answer_card", "collection_path": str(peer2_col), "deck": deck, "card_id": card_id, "rating": 3})
-        peer_sync_leg("peer2 review 1")
-        tt_sync("rotate to step 1")
+        peer_sync_leg("peer2 learning answer")
+        tt_sync("no rotation while learning")
         assert tt_row().directions[Direction.PRODUCTION].reps == 1
-        assert rows(tt_col, nid, card_id) == (step_fields(1), 1, 1)
+        assert rows(tt_col, nid, card_id) == (step_fields(0), 1, 1)
 
-        # The peer reviews again while TT's rotation is still on its way: both arrive.
+        # The graduating answer on the peer: TT pulls it and rotates the note in that same sync.
         _driver({"op": "answer_card", "collection_path": str(peer2_col), "deck": deck, "card_id": card_id, "rating": 3})
-        peer_sync_leg("peer2 review 2 meets TT's note")
-        assert rows(peer2_col, nid, card_id) == (step_fields(1), 2, 2)
-
-        # The next TT sync catches the note up to the peer's count, and the peer gets it.
-        tt_sync("rotate to step 2")
-        peer_sync_leg("peer2 gets step 2")
+        peer_sync_leg("peer2 graduates the card")
+        assert rows(peer2_col, nid, card_id) == (step_fields(0), 2, 2)
+        tt_sync("rotate to step 1")
+        peer_sync_leg("peer2 gets step 1")
         assert tt_row().directions[Direction.PRODUCTION].reps == 2
         for path in (tt_col, peer2_col):
-            assert rows(path, nid, card_id) == (step_fields(2), 2, 2), path.name
+            assert rows(path, nid, card_id) == (step_fields(1), 2, 2), path.name
 
     def test_tt_card_media_reaches_server_through_peer_sync(self, tmp_path: Path, monkeypatch):
         """End-to-end media: a TT-added cloze card's sentence audio must be copied

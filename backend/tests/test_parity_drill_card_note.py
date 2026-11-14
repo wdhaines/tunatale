@@ -31,7 +31,6 @@ from app.plugins.anki_sync.sync import AnkiSync, OfflineReader, OfflineWriter
 from app.srs.database import SRSDatabase
 from app.srs.lesson_card_mint import mint_lesson_cards
 from tests._helpers.anki_sync_create_new import FakeReader
-from tests._helpers.anki_sync_pull import FakeReader as RecordsReader
 from tests.anki_oracle.harness_fixtures import run_oracle
 from tests.anki_oracle.synthetic_collection import SyntheticCollection
 from tests.test_drill_card import SUBSTITUTION
@@ -51,6 +50,8 @@ def _connect(path) -> sqlite3.Connection:
 async def test_p1_a_reviewed_drill_note_rotated_by_tt_is_one_anki_keeps(
     synthetic_collection: SyntheticCollection, tmp_path
 ) -> None:
+    synthetic_collection.learn_steps = (1.0, 10.0)  # the live decks' steps: Good on a new card is a learning answer
+    synthetic_collection.save()
     deck = synthetic_collection.deck_name
     db = SRSDatabase(":memory:")
     [(cid, _card)] = mint_lesson_cards(db, LANG, CARDS, drills=[SUBSTITUTION])
@@ -61,25 +62,44 @@ async def test_p1_a_reviewed_drill_note_rotated_by_tt_is_one_anki_keeps(
         )
     card_id = db.get_collocation_by_id(cid)[1].directions[Direction.PRODUCTION].anki_card_id
 
-    reviewed = run_oracle(
+    raw = run_oracle(
         synthetic_collection.path,
-        [{"op": "answer_card", "card_id": card_id, "rating": 3}, {"op": "get_card_row", "card_id": card_id}],
-    ).raw()["get_card_row_1"]
-    assert reviewed["reps"] == 1
+        [
+            {"op": "answer_card", "card_id": card_id, "rating": 3},  # Good on a new card: learning
+            {"op": "answer_card", "card_id": card_id, "rating": 4},  # Easy: it graduates
+            {"op": "get_card_row", "card_id": card_id},
+            {"op": "get_revlog", "card_id": card_id},
+        ],
+    ).raw()
+    reviewed, revlog = raw["get_card_row_2"], sorted(raw["get_revlog_3"], key=lambda r: r["id"])
+    assert reviewed["reps"] == 2
+    # Anki's own sign convention, which the step count reads (5i1p.10): the learning
+    # answer is negative seconds, the one that left the card in review positive days.
+    assert [r["ivl"] < 0 for r in revlog] == [True, False], revlog
     # The oracle grades a throwaway copy, so the review reaches the file as a phone's
-    # would through a sync: the card row Anki's own review produced, written in place.
+    # would through a sync: the card row and revlog Anki's own answers produced.
     with _connect(synthetic_collection.path) as conn:
         cols = ", ".join(f"{k} = ?" for k in reviewed)
         conn.execute(
             f"UPDATE cards SET {cols}, mod = mod + 1, usn = -1 WHERE id = ?",  # noqa: S608 - column names are the oracle's
             (*reviewed.values(), card_id),
         )
+        conn.executemany(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) "
+            "VALUES (:id, :cid, -1, :ease, :ivl, :lastIvl, :factor, :time, :type)",
+            revlog,
+        )
 
     with _connect(synthetic_collection.path) as conn:
-        records = OfflineReader(conn, deck, language_code=LANG).get_note_records()
-        sync = AnkiSync(db=db, _reader=RecordsReader(records), _writer=OfflineWriter(conn), language_code=LANG)
+        sync = AnkiSync(
+            db=db,
+            _reader=OfflineReader(conn, deck, language_code=LANG),
+            _writer=OfflineWriter(conn),
+            language_code=LANG,
+        )
         sync.sync_pull()
-        assert db.get_collocation_by_id(cid)[1].directions[Direction.PRODUCTION].reps == 1
+        assert db.get_collocation_by_id(cid)[1].directions[Direction.PRODUCTION].reps == 2
+        assert db.count_answers_into_review(cid) == 1
         assert sync.rotate_drill_notes() == 1
         [nid] = [r[0] for r in conn.execute("SELECT id FROM notes")]
 

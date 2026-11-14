@@ -1,11 +1,14 @@
-"""The drill card: one card per lesson drill, each review asking the drill's next step (tunatale-5i1p.4).
+"""The drill card: one card per lesson drill, moving to the drill's next step each time it lands in review (tunatale-5i1p.4).
 
 Design: ``.beads-tasks/briefs/design-rotating-drill-card-2026-11.md``. The
 scheduler spaces the PATTERN, not one sentence:
 
-* **Which step:** ``step = reps mod steps``, where ``reps`` is the card's review
-  count. TT and Anki hold the same count after a sync, so they agree on the
-  step without storing it, and nothing here is ever written back to the row.
+* **Which step:** ``step = in_review mod steps``, where ``in_review`` is the number
+  of the card's answers that left it in REVIEW (``count_answers_into_review``,
+  tunatale-5i1p.10; it was ``reps`` until the owner asked that a card stay on its
+  step while it learns). Read from ``tt_revlog``, which holds TT's answers and
+  the ones pulled from Anki, so TT and a sync agree on the step without storing
+  it, and nothing here is ever written back to the row.
 * **Front:** the sentence before, then the cue. For a substitution drill the
   sentence before is the model (step 0) or the previous step's answer; for a
   transformation drill it is one worked pair, the previous step's cue and
@@ -127,12 +130,18 @@ class DrillCard:
             return self.steps[self.step].cue
         return self.model if self.kind == "substitution" else self.steps[0].cue
 
-    def step_at(self, reps: int) -> int:
-        return self.step if self.step is not None else reps % len(self.steps)
+    def step_at(self, in_review: int) -> int:
+        """The step shown after *in_review* answers that left the card in review (tunatale-5i1p.10).
 
-    def view(self, reps: int) -> DrillView:
-        """The step a card with *reps* reviews behind it shows."""
-        s = self.step_at(reps)
+        Learning answers do not move it: it stays on a step until it graduates, a
+        lapse relearns the same step, and each answer that lands in review moves it
+        on. *in_review* is ``SRSDatabase.count_answers_into_review``, never ``reps``.
+        """
+        return self.step if self.step is not None else in_review % len(self.steps)
+
+    def view(self, in_review: int) -> DrillView:
+        """The step a card shows after *in_review* answers that left it in review."""
+        s = self.step_at(in_review)
         this = self.steps[s]
         before = before_cue = before_media = before_cue_media = None
         if self.step is None and self.kind == "substitution":
