@@ -897,9 +897,10 @@ class WolffLexicon:
             return None
         return flat[: len(flat) - len(root)]
 
-    def parts(self, word: str, english: str = "") -> list[Part] | None:
+    def parts(self, word: str, english: str = "", *, root_rows: bool = True) -> list[Part] | None:
         """*word* as its affixes and root, each glossed, in the word's order; None when the
-        decoder finds no affix, a piece has no approved label, or the readings differ."""
+        decoder finds no affix, a piece has no approved label, or the readings differ.
+        *root_rows* False reads with the (piece, root kind) labels alone."""
         found = affixes.analyse(word, self._decoder, english)
         if not found or not found[0].affix:
             return None
@@ -917,13 +918,13 @@ class WolffLexicon:
         # 'breastfeed' would read as sûsò 'pound'). Its own stress forms must then agree.
         if set(pieces) <= {"-a", "-i"} and self._first_pos(found[0].root) == "n":
             return None  # on a noun, -a is Wolff's 'that particular' (baláya), not the command
-        readings = self._readings(found[0].root, pieces, inflections, english, word)
+        readings = self._readings(found[0].root, pieces, inflections, english, word, root_rows=root_rows)
         # exactly one reading, and not one form that reads two ways (None)
         if len(readings) != 1 or None in readings:
             return None
         if "ma-" in pieces and self._first_pos(found[0].root) == "a":
             return None  # Wolff's ma-_2: on an adjective root, ma- makes the adjective (mainit 'hot')
-        (labels, (form, sense, shown)) = next(iter(readings.items()))
+        (_, (form, sense, shown, labels)) = next(iter(readings.items()))
         by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
         head = shown["hb"] or shown["wolff"]
         # The card's word is the course spelling, and its i where the Handbook chose a loan's e
@@ -959,7 +960,14 @@ class WolffLexicon:
         return [(s, t) for s, t in scored if any(t)]
 
     def _readings(
-        self, root: str, pieces: list[str], inflections: list[str], english: str = "", word: str = ""
+        self,
+        root: str,
+        pieces: list[str],
+        inflections: list[str],
+        english: str = "",
+        word: str = "",
+        *,
+        root_rows: bool = True,
     ) -> dict:
         """reading -> (the form that gives it, its licensing sense, the form as the word spells
         it) over *root*'s forms and stress forms, a pointer ('suwat = sulat') followed. A root's
@@ -1006,18 +1014,26 @@ class WolffLexicon:
             kinds = (False, True) if agrees else (False,)
         for by_kind in kinds:
             for rec, form, shown, _ in candidates:
-                reading = self._reading(rec, form, pieces, inflections, english, by_kind=by_kind)
+                reading = self._reading(rec, form, pieces, inflections, english, by_kind=by_kind, root_rows=root_rows)
                 if reading is not None:
-                    readings.setdefault(reading[0], (form, reading[1], shown))
+                    readings.setdefault(reading[0], (form, reading[1], shown, reading[2]))
             if readings:
                 break
         return readings
 
     def _reading(
-        self, rec: dict, form: dict, pieces: list[str], inflections: list[str], english: str = "", *, by_kind: bool
+        self,
+        rec: dict,
+        form: dict,
+        pieces: list[str],
+        inflections: list[str],
+        english: str = "",
+        *,
+        by_kind: bool,
+        root_rows: bool = True,
     ):
-        """(labels, licensing sense) of *form* for the pieces, (None, None) when a piece has two
-        labels, or None when the form does not license them."""
+        """(labels, licensing sense, labels with the root's own rows) of *form* for the pieces,
+        (None, None, None) when a piece has two labels, or None when the form does not license them."""
         verbs = [s for s in form["senses"] if s["pos"] == "v" and s["cls"]]
         source = verbs
         if "pa-" in pieces:
@@ -1028,6 +1044,7 @@ class WolffLexicon:
             source = []
             kind = "adjective" if form["senses"] and form["senses"][0]["pos"] == "a" else None
         labels: list[str] = []
+        worded: list[str] = []
         sense = None
         for piece in inflections:
             # Wolff lists a root's main sense first: the first sense that licenses the piece decides
@@ -1063,24 +1080,24 @@ class WolffLexicon:
                 found = {stative: found[stative]}
             if not found:
                 return None
-            # A row the owner worded for this root relabels a piece its class code licensed
-            # (tunatale-tofg.16: molárga 'will', not the state's 'will become'), on its stress
-            # forms too (pútol's ma- must agree with putól's, or the line goes silent)
-            own = _labels().get((piece, f"root {rec['forms'][0]['hb']}"))
-            if own is not None:
-                found = {own: next(iter(found.values()))}
             if len(found) > 1:
-                return (None, None)
+                return (None, None, None)
             ((label, licensing),) = found.items()
             labels.append(label)
+            # A row the owner worded for this root (tunatale-tofg.16: molárga 'will', not the
+            # state's 'will become'). It relabels only: the readings must first agree on the
+            # plain labels, or two homographs (ingón 'say' and ingón 'head for') would agree
+            # by both taking the root's row.
+            worded.append(_labels().get((piece, f"root {rec['forms'][0]['hb']}"), label) if root_rows else label)
             sense = sense or licensing
         if "pa-" in pieces:
             pa = "verb" if verbs else kind
             if (("pa-", pa)) not in _labels():
                 return None
             labels.append(_labels()[("pa-", pa)])
+            worded.append(labels[-1])
             sense = verbs[0] if verbs else None
-        return tuple(labels), sense
+        return tuple(labels), sense, tuple(worded)
 
     def _root_gloss(self, form: dict, sense: dict | None) -> str:
         """The root's own first meaning, then the verb sense that licensed the affix, unless
@@ -1092,9 +1109,9 @@ class WolffLexicon:
             verb = ""
         return " · ".join(filter(None, [own, verb])) or (_plain(first["gloss"]) if first else "")
 
-    def parts_line(self, word: str, english: str = "") -> str | None:
+    def parts_line(self, word: str, english: str = "", *, root_rows: bool = True) -> str | None:
         """*word* glossed by its parts, as the card and the reader show it: 'mo- will + ádto …'."""
-        parts = self.parts(word, english)
+        parts = self.parts(word, english, root_rows=root_rows)
         return None if parts is None else " + ".join(f"{p.text} {p.gloss}" for p in parts)
 
     def _parts_fields(self, cebuano: str, english: str) -> tuple[str, str]:

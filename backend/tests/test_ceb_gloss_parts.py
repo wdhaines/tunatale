@@ -324,6 +324,31 @@ def test_a_root_row_needs_the_class_code_to_license_the_piece(lexicon):
     assert lexicon.parts_line("largahon", "will leave") is None
 
 
+@pytest.mark.parametrize("english", ["told", "was told"])
+def test_a_root_row_does_not_make_two_homographs_agree(lexicon, english):
+    # ingón 'say, tell' gives gi- 'did, to it' ({1a} 'said to be') and the homograph ingón
+    # 'head for' gives gi- 'brought it': two words, silent. The hearsay row must not relabel
+    # both into one line (audit F1 of 330252f4).
+    assert lexicon.parts_line("giingón", english) is None
+
+
+_ROOT_ROW_WORDS = ("molárga", "milárga", "nilárga", "malígò", "maputól", "naputól", "gitúgnaw", "giingón", "gìingón")
+_ROOT_ROW_ENGLISH = (
+    "", "told", "was told", "tell him", "will leave", "left", "want to bathe", "will bathe", "can bathe",
+    "got cut off", "can be cut", "feel cold", "is said", "said", "headed for", "went", "brought",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize("word", _ROOT_ROW_WORDS)
+def test_a_root_row_relabels_a_line_and_never_makes_a_silent_one_speak(lexicon, word):
+    # A row for one root relabels a reading the (piece, root kind) rows already settled; whether
+    # the word reads at all is decided without it.
+    for english in _ROOT_ROW_ENGLISH:
+        worded = lexicon.parts_line(word, english)
+        plain = lexicon.parts_line(word, english, root_rows=False)
+        assert (worded is None) == (plain is None), (word, english, worded, plain)
+
+
 def test_mahimo_stays_silent(lexicon):
     # a fixed word, not a build-up (owner, 2026-11-13)
     assert lexicon.parts_line("mahímò", "can be obtained") is None
