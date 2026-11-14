@@ -56,6 +56,7 @@ from app.plugins.anki_sync.safety import safe_open
 from app.srs.anki_mirror.queue_stats import clear_session_main_queue
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 from app.srs.database import SRSDatabase, _anki_day_bounds_utc
+from app.srs.drill_card import is_drill_key
 from app.srs.sentence_card import SentenceCard
 
 __all__ = ["apply_tt", "grave_note", "main", "plan", "run", "write_capture"]
@@ -87,9 +88,16 @@ class LinePlan:
 
 
 def _line_rows(tt_conn: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
-    """Every sentence row, by line key (derived from ``card_data``, as migration v50 does)."""
+    """Every sentence row, by line key (derived from ``card_data``, as migration v50 does).
+
+    A drill card (tunatale-5i1p.4) is a ``sent:`` row that is no lesson line:
+    its ``card_data`` is not a SentenceCard. Skipped, so this script never plans
+    or writes one.
+    """
     out: dict[str, list[sqlite3.Row]] = {}
     for row in tt_conn.execute("SELECT * FROM collocations WHERE disambig_key LIKE 'sent:%' ORDER BY id"):
+        if is_drill_key(row["disambig_key"]):
+            continue
         out.setdefault(SentenceCard.from_json(row["card_data"]).line_key, []).append(row)
     return out
 

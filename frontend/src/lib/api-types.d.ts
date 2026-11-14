@@ -3105,6 +3105,7 @@ export interface components {
        * @enum {string}
        */
       direction: "recognition" | "production";
+      drill?: components["schemas"]["ItemDrill"] | null;
       /** Due At */
       due_at: string;
       /** Gloss */
@@ -3469,6 +3470,46 @@ export interface components {
       recognition: components["schemas"]["DirectionStateResponse"] | null;
     };
     /**
+     * ItemDrill
+     * @description A drill card's step view (tunatale-5i1p.4): the step its review count asks for.
+     *
+     *     Built per request from the card's ``reps`` (``step = reps mod of``), so a
+     *     card graded Again comes back on its next step. The front is ``before_cue``
+     *     and ``before`` (the worked pair, or the sentence before; either may be
+     *     absent), then ``cue``; the back is ``answer``, and ``english`` where the
+     *     lesson gives one ("" otherwise). ``step`` counts from 1, as the page says
+     *     it: "step 2 of 16". Each part's audio is the lesson's own take, or None.
+     */
+    ItemDrill: {
+      /** Answer */
+      answer: string;
+      /** Answer Audio Url */
+      answer_audio_url: string | null;
+      /** Before */
+      before: string | null;
+      /** Before Audio Url */
+      before_audio_url: string | null;
+      /** Before Cue */
+      before_cue: string | null;
+      /** Before Cue Audio Url */
+      before_cue_audio_url: string | null;
+      /** Cue */
+      cue: string;
+      /** Cue Audio Url */
+      cue_audio_url: string | null;
+      /** English */
+      english: string;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "substitution" | "transformation" | "true_false" | "question_answer";
+      /** Of */
+      of: number;
+      /** Step */
+      step: number;
+    };
+    /**
      * ItemExtra
      * @description One element of SrsItemResponse.extras (a BackField → {label, html, tier}).
      */
@@ -3718,6 +3759,7 @@ export interface components {
       /** Direction */
       direction: string;
       directions: components["schemas"]["ItemDirections"];
+      drill?: components["schemas"]["ItemDrill"] | null;
       /** Due At */
       due_at: string | null;
       /** Extras */
@@ -4407,6 +4449,7 @@ export interface components {
       /** Direction */
       direction: string;
       directions: components["schemas"]["ItemDirections"];
+      drill?: components["schemas"]["ItemDrill"] | null;
       /** Due At */
       due_at: string | null;
       /** Extras */
@@ -4908,7 +4951,7 @@ export interface components {
      * @description Response of create_item, patch_item, reset_item, restore_known_item,
      *     set_item_state, and suspend_item; the element of list_items and untrack_item.
      *
-     *     Exactly 29 keys, one per ``_item_to_dict`` output key.
+     *     Exactly 30 keys, one per ``_item_to_dict`` output key.
      */
     SrsItemResponse: {
       /** Anki Note Id */
@@ -4924,6 +4967,7 @@ export interface components {
       /** Difficulty */
       difficulty: number;
       directions: components["schemas"]["ItemDirections"];
+      drill?: components["schemas"]["ItemDrill"] | null;
       /** Due At */
       due_at: string | null;
       /** Extras */

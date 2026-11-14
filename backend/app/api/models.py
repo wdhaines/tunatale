@@ -1160,11 +1160,36 @@ class ItemSentence(BaseModel):
     cue: SentenceCueModel | None
 
 
+class ItemDrill(BaseModel):
+    """A drill card's step view (tunatale-5i1p.4): the step its review count asks for.
+
+    Built per request from the card's ``reps`` (``step = reps mod of``), so a
+    card graded Again comes back on its next step. The front is ``before_cue``
+    and ``before`` (the worked pair, or the sentence before; either may be
+    absent), then ``cue``; the back is ``answer``, and ``english`` where the
+    lesson gives one ("" otherwise). ``step`` counts from 1, as the page says
+    it: "step 2 of 16". Each part's audio is the lesson's own take, or None.
+    """
+
+    kind: Literal["substitution", "transformation", "true_false", "question_answer"]
+    step: int
+    of: int
+    cue: str
+    answer: str
+    english: str
+    before: str | None
+    before_cue: str | None
+    cue_audio_url: str | None
+    answer_audio_url: str | None
+    before_audio_url: str | None
+    before_cue_audio_url: str | None
+
+
 class SrsItemResponse(BaseModel):
     """Response of create_item, patch_item, reset_item, restore_known_item,
     set_item_state, and suspend_item; the element of list_items and untrack_item.
 
-    Exactly 29 keys, one per ``_item_to_dict`` output key.
+    Exactly 30 keys, one per ``_item_to_dict`` output key.
     """
 
     id: int
@@ -1197,6 +1222,8 @@ class SrsItemResponse(BaseModel):
     focus: ItemFocus | None = None
     # Set on a sentence card only (h0q3.42); the review screen draws it whole.
     sentence: ItemSentence | None = None
+    # Set on a drill card only (5i1p.4): the step its review count asks for.
+    drill: ItemDrill | None = None
     note: str
     article: str
     extras: list[ItemExtra]
@@ -2144,6 +2171,8 @@ class GradePlanCard(BaseModel):
     line_key: str | None = None
     blank_start: int | None = None
     blank_end: int | None = None
+    # A drill card's step view (5i1p.4); `text` is its answer, `gloss` its English.
+    drill: ItemDrill | None = None
 
 
 class GradePlanLater(BaseModel):

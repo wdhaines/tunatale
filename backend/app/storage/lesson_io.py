@@ -120,7 +120,7 @@ def validate_story(story: object, language: Language | None = None) -> None:
             _require(step, f"drills[{i}].steps[{j}]", ("cue", "answer"))
     if "cards" in story:
         line_texts = {line["text"] for scene in scenes for line in scene.get("lines", [])}
-        validate_cards(story["cards"], line_texts=line_texts, language=language)
+        validate_cards(story["cards"], line_texts=line_texts, language=language, drill_count=len(drills))
 
 
 def export_lesson(store: ContentStore, lesson_id: str) -> dict:

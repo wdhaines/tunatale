@@ -209,13 +209,19 @@ class SentenceCard:
 
 
 def sibling_group(unit: SyntacticUnit) -> str | None:
-    """The sibling group a new row for *unit* joins: its line, for a sentence card; else none.
+    """The sibling group a new row for *unit* joins: its line, for a sentence card; its own key,
+    for a drill card (one note, one card: tunatale-5i1p.4); else none.
 
     The rows of one group become the cards of one "TT Sentence" note
     (``collocations.sibling_group``, tunatale-h0q3.55).
     """
     card = sentence_card(unit)
-    return card.line_key if card is not None else None
+    if card is not None:
+        return card.line_key
+    from app.srs.drill_card import drill_card  # drill_card is built on this module
+
+    drill = drill_card(unit)
+    return drill.key if drill is not None else None
 
 
 def sentence_card(unit: SyntacticUnit) -> SentenceCard | None:

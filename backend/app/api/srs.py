@@ -103,6 +103,7 @@ from app.srs.anki_mirror.queue_stats import (
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.collocation_matcher import match_spans
 from app.srs.contrast_card import ContrastCard, paradigm
+from app.srs.drill_card import drill_card
 from app.srs.feedback import rating_from_input
 from app.srs.focus_card import FocusCard, focus
 from app.srs.fsrs import Rating, build_revlog_row, schedule
@@ -246,6 +247,37 @@ def _sentence_dict(unit: SyntacticUnit, cue_audio_url: str | None = None) -> dic
     }
 
 
+def _drill_dict(unit: SyntacticUnit, reps: int, db=None, row_id: int | None = None) -> dict | None:
+    """A drill card's step view for the review screen (tunatale-5i1p.4), or ``None`` for every other card.
+
+    Built from *reps* on every request, never stored: a card graded Again comes
+    back on its next step. With *db*, each part carries its clip's URL.
+    """
+    card = drill_card(unit)
+    if card is None:
+        return None
+    view = card.view(reps)
+
+    def url(kind: str | None) -> str | None:
+        name = db.get_media_filename(row_id, kind) if db is not None and kind is not None else None
+        return f"/api/srs/media/{name}" if name else None
+
+    return {
+        "kind": view.kind,
+        "step": view.step + 1,
+        "of": view.of,
+        "cue": view.cue,
+        "answer": view.answer,
+        "english": view.english,
+        "before": view.before,
+        "before_cue": view.before_cue,
+        "cue_audio_url": url(view.cue_media),
+        "answer_audio_url": url(view.answer_media),
+        "before_audio_url": url(view.before_media),
+        "before_cue_audio_url": url(view.before_cue_media),
+    }
+
+
 def _item_to_dict(
     row_id: int,
     item: SRSItem,
@@ -296,6 +328,7 @@ def _item_to_dict(
         "paradigm": _paradigm_dict(language_code, item.syntactic_unit),
         "focus": _focus_dict(language_code, item.syntactic_unit),
         "sentence": _sentence_dict(item.syntactic_unit),
+        "drill": _drill_dict(item.syntactic_unit, prod.reps if prod else 0),
         "note": item.syntactic_unit.note,
         # Gender article (en/ei/et) — display-time prefix on the headword.
         "article": item.syntactic_unit.article,
@@ -1582,8 +1615,9 @@ def _record_study_pass(db, lesson, content_id: str) -> list:
     new-card limit paces it, and the Anki writer's course region keeps the
     list's order (tunatale-h0q3.43). The listen row is TT-only and never syncs.
     """
-    course_list = (lesson.generation_metadata.get("story") or {}).get("cards")
-    course = mint_lesson_cards(db, lesson.language_code, course_list) if course_list else []
+    story = lesson.generation_metadata.get("story") or {}
+    course_list = story.get("cards")
+    course = mint_lesson_cards(db, lesson.language_code, course_list, story.get("drills", [])) if course_list else []
     db.record_listen(content_id)
     return course
 
@@ -3946,6 +3980,8 @@ def _queue_item_to_dict(
     base["word_audio_url"] = word_audio_url
     if base["sentence"] is not None and (cue_aud := db.get_media_filename(row_id, "audio_cue")):
         base["sentence"] = _sentence_dict(item.syntactic_unit, f"/api/srs/media/{cue_aud}")
+    if base["drill"] is not None:
+        base["drill"] = _drill_dict(item.syntactic_unit, item.directions[direction].reps, db, row_id)
     # `_item_to_dict` populates flat fields from recognition (or production for
     # cloze). For a queue item that's the OTHER direction, those values misrepresent
     # the actual card on screen: a production card due today + heavily-reviewed can

@@ -50,6 +50,7 @@ SRS_ITEM_KEYS = {
     "paradigm",
     "focus",
     "sentence",
+    "drill",
     "note",
     "article",
     "extras",

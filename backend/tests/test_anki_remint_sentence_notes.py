@@ -640,3 +640,49 @@ def test_main_parses_its_flags_into_a_dry_run(world, capsys):
 
     assert code == 0 and "DRY RUN" in capsys.readouterr().out
     assert world.snapshot() == before
+
+
+class TestDrillRows:
+    """A drill row (tunatale-5i1p.4) is a ``sent:`` row that is not a lesson line (audit I2).
+
+    ``_line_rows`` derives every ``sent:`` row's line from its ``card_data`` as a
+    SentenceCard; a drill row's is not one, so the script skips it rather than
+    failing on it, and never writes it.
+    """
+
+    @staticmethod
+    def _drill_row(world: World) -> int:
+        from app.srs.lesson_card_mint import mint_lesson_cards
+        from tests.test_drill_card import DRILLS
+        from tests.test_lesson_drill_cards import _cards
+
+        minted = mint_lesson_cards(world.db, LANG, _cards(), drills=DRILLS)
+        return minted[0][0]
+
+    def test_a_dry_run_beside_a_drill_row_plans_the_line_and_leaves_the_drill(self, world, capsys):
+        world.legacy_line(LINE4)
+        self._drill_row(world)
+        before = world.snapshot()
+
+        assert world.run(KEY4, apply=False) == 0
+
+        assert world.snapshot() == before
+        assert "3 row(s)" in capsys.readouterr().out
+
+    def test_a_lesson_run_over_the_drills_set_finds_no_line(self, world, capsys):
+        drill_id = self._drill_row(world)
+        before = world.row(drill_id)
+
+        assert world.run(lessons=("test-01",)) == 2  # nothing selected: a drill is no line
+
+        assert tuple(world.row(drill_id)) == tuple(before)
+        assert "nothing selected" in capsys.readouterr().out
+
+    def test_an_applied_run_beside_a_drill_row_leaves_it_alone(self, world, no_tts):
+        world.legacy_line(LINE4)
+        drill_id = self._drill_row(world)
+        before = tuple(world.row(drill_id))
+
+        assert world.run(KEY4) == 0
+
+        assert tuple(world.row(drill_id)) == before
