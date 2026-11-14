@@ -3178,6 +3178,7 @@ grep -rn "advance_learning_cutoff(" backend/app --include=*.py | grep -v "def ad
 api/srs.py: advance_learning_cutoff(db, grade_ctx["now"])
 api/srs.py: advance_learning_cutoff(db, now)
 api/srs.py: advance_learning_cutoff(db, now)
+api/srs_grade.py: advance_learning_cutoff(db, now)
 plugins/anki_sync/sync_engine.py: advance_learning_cutoff(self._db, datetime.fromtimestamp(max_revlo
 plugins/anki_sync/sync_engine.py: def _pull_advance_learning_cutoff(self, max_revlog_ms: int, dry_ru
 plugins/anki_sync/sync_engine.py: self._pull_advance_learning_cutoff(max_revlog_ms, dry_run)
@@ -4026,20 +4027,21 @@ grep -n "^OWNER =\|^USER =\|include_router" backend/app/main.py
 ```
 
 ```output
-521:OWNER = [Depends(require_user), Depends(require_owner)]
-522:USER = [Depends(require_user)]
-523:app.include_router(curriculum.router, dependencies=USER)
-524:app.include_router(generation.router, dependencies=USER)
-525:app.include_router(srs.router, dependencies=[Depends(require_user)])
-526:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
-527:app.include_router(audio.router, dependencies=USER)
-528:app.include_router(reference.router, dependencies=USER)
-529:app.include_router(review_sessions_api.router, dependencies=USER)
-531:    app.include_router(anki.router, dependencies=OWNER)
-532:app.include_router(admin.router, dependencies=OWNER)
-537:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
-538:app.include_router(llm_api.router, dependencies=USER)
-539:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
+522:OWNER = [Depends(require_user), Depends(require_owner)]
+523:USER = [Depends(require_user)]
+524:app.include_router(curriculum.router, dependencies=USER)
+525:app.include_router(generation.router, dependencies=USER)
+526:app.include_router(srs.router, dependencies=[Depends(require_user)])
+527:app.include_router(srs_grade_api.router, dependencies=[Depends(require_user)])
+528:app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
+529:app.include_router(audio.router, dependencies=USER)
+530:app.include_router(reference.router, dependencies=USER)
+531:app.include_router(review_sessions_api.router, dependencies=USER)
+533:    app.include_router(anki.router, dependencies=OWNER)
+534:app.include_router(admin.router, dependencies=OWNER)
+539:app.include_router(client_log_api.router, dependencies=[Depends(require_user)])
+540:app.include_router(llm_api.router, dependencies=USER)
+541:app.include_router(auth_api.router)  # NO router-level dependency — login/logout are unauthenticated
 ```
 
 Three tiers result:
@@ -4074,7 +4076,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-109 operations
+111 operations
   9  (untagged)
   3  admin
   3  anki
@@ -4085,7 +4087,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
   4  llm
   3  pipeline
  15  review-sessions
- 38  srs
+ 40  srs
   5  srs-images
 ```
 
@@ -4107,6 +4109,8 @@ for (t, p), ms in sorted(rows.items()): print(f\"{'/'.join(ms):<12}{p.replace('/
 ```output
  POST        /backfill-translations
  POST        /content/{content_id}/commit-pending
+ POST        /content/{content_id}/grade
+ GET         /content/{content_id}/grade-plan
  GET         /content/{content_id}/listen-preview
  GET         /content/{content_id}/review-queue
  POST        /content/{content_id}/reviewed

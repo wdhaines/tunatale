@@ -1,6 +1,7 @@
 """An early Again pushed to Anki: a lapse, a rep, and nothing on the home deck's review count.
 
-Oracle case D5 (= G11 entered through ``/feedback``) of
+Oracle cases D5 (entered through ``/feedback``) and G11 (the same, entered
+through the Grade page's ``POST /content/{id}/grade``) of
 ``.beads-tasks/briefs/design-grade-page-2026-11.md`` § P1 measured. A grade on a
 not-due REVIEW card logs revlog kind 3, Anki's review-ahead (see
 ``test_feedback_review_ahead.py``). Anki's own early path — a rescheduling
@@ -77,7 +78,28 @@ def _seed(db: SRSDatabase, coll: SyntheticCollection, *, due_today: bool) -> int
     return cid
 
 
-async def _again_then_push(synthetic_collection: SyntheticCollection, *, due_today: bool) -> tuple[int, dict, dict]:
+ENTRIES = ["feedback", "grade"]
+
+
+def _install_lesson() -> None:
+    """A one-word lesson saying ``hus``, for the Grade page's route (entry ``grade``)."""
+    from app.models.lesson import Lesson, Phrase, Section, SectionType
+    from app.storage.store import ContentStore
+
+    store = ContentStore(":memory:")
+    phrase = Phrase(text="hus", voice_id="female-1", language_code="no", role="female-1")
+    store.save_lesson(
+        "lesson-1",
+        "curriculum-1",
+        1,
+        Lesson(title="Dag 1", language_code="no", sections=[Section(SectionType.NATURAL_SPEED, [phrase])]),
+    )
+    app.state.content_store = store
+
+
+async def _again_then_push(
+    synthetic_collection: SyntheticCollection, *, due_today: bool, entry: str = "feedback"
+) -> tuple[int, dict, dict]:
     from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
     from tests._helpers.anki_sync_push import FakeReader
 
@@ -86,7 +108,16 @@ async def _again_then_push(synthetic_collection: SyntheticCollection, *, due_tod
     try:
         cid = _seed(db, synthetic_collection, due_today=due_today)
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.post(f"/api/srs/items/{cid}/direction/recognition/feedback", json={"rating": "again"})
+            if entry == "grade":
+                _install_lesson()
+                resp = await client.post(
+                    "/api/srs/content/lesson-1/grade",
+                    json={"card_grades": [{"item_id": cid, "direction": "recognition", "rating": "again"}]},
+                )
+            else:
+                resp = await client.post(
+                    f"/api/srs/items/{cid}/direction/recognition/feedback", json={"rating": "again"}
+                )
         assert resp.status_code == 200, resp.text
         with db._get_conn() as conn:
             [kind] = [r[0] for r in conn.execute("SELECT review_kind FROM tt_revlog WHERE collocation_id = ?", (cid,))]
@@ -115,8 +146,9 @@ def _rev_today(deck: dict) -> int:
 
 
 @pytest.mark.oracle
-async def test_early_again_is_a_lapse_and_leaves_rev_today(synthetic_collection: SyntheticCollection) -> None:
-    kind, card, deck = await _again_then_push(synthetic_collection, due_today=False)
+@pytest.mark.parametrize("entry", ENTRIES)
+async def test_early_again_is_a_lapse_and_leaves_rev_today(synthetic_collection: SyntheticCollection, entry) -> None:
+    kind, card, deck = await _again_then_push(synthetic_collection, due_today=False, entry=entry)
 
     assert kind == 3
     assert (card["reps"], card["lapses"]) == (REPS + 1, LAPSES + 1), card
@@ -124,8 +156,11 @@ async def test_early_again_is_a_lapse_and_leaves_rev_today(synthetic_collection:
 
 
 @pytest.mark.oracle
-async def test_control_due_again_is_a_lapse_and_charges_rev_today(synthetic_collection: SyntheticCollection) -> None:
-    kind, card, deck = await _again_then_push(synthetic_collection, due_today=True)
+@pytest.mark.parametrize("entry", ENTRIES)
+async def test_control_due_again_is_a_lapse_and_charges_rev_today(
+    synthetic_collection: SyntheticCollection, entry
+) -> None:
+    kind, card, deck = await _again_then_push(synthetic_collection, due_today=True, entry=entry)
 
     assert kind == 1
     assert (card["reps"], card["lapses"]) == (REPS + 1, LAPSES + 1), card
