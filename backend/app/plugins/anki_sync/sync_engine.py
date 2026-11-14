@@ -1946,7 +1946,7 @@ class AnkiSync:
     def _drill_line_plan(
         self, row: tuple[str, SRSItem, int], drill: DrillCard
     ) -> tuple[list[str], list[str], list[int]]:
-        """A drill note's plan: the step its row's ``reps`` call for, on its one card (ord 0).
+        """A drill note's plan: the step its answers into review call for (5i1p.10), on its one card (ord 0).
 
         A drill note has one card, always cloze 1, so a row that lost its card link
         is matched to it without reading ``Text``: that holds whatever step the note
@@ -1958,7 +1958,7 @@ class AnkiSync:
         import app.plugins.anki_sync.sync as sync_mod
 
         _guid, item, coll_id = row
-        view = drill.view(item.directions[Direction.PRODUCTION].reps)
+        view = drill.view(self._db.count_answers_into_review(coll_id))
         media: dict[str, str] = {}
         for kind in (view.before_cue_media, view.before_media, view.cue_media, view.answer_media):
             if kind is None:
@@ -2037,18 +2037,19 @@ class AnkiSync:
         return created, linked, 0
 
     def rotate_drill_notes(self, dry_run: bool = False) -> int:
-        """Write each drill note the step its row's ``reps`` call for; return how many notes needed it (5i1p.5).
+        """Write each drill note the step its answers into review call for; return how many notes needed it (5i1p.5).
 
-        A phase of its own in ``run_full_sync``, AFTER the pull: a review made in
-        Anki reaches the row's ``reps`` only there, so a note written in the push
-        would lag one sync behind every Anki-side review.
+        The step counts the row's answers that left it in review (5i1p.10), read
+        from ``tt_revlog``. A phase of its own in ``run_full_sync``, AFTER the pull:
+        a review made in Anki reaches ``tt_revlog`` only there, so a note written in
+        the push would lag one sync behind every Anki-side review.
 
         From state, never from a flag: a note whose stored fields already equal
-        what its ``reps`` call for (and whose row is linked to its card) is not
+        what its step calls for (and whose row is linked to its card) is not
         touched, so a sync with nothing changed writes nothing; and a note a phone
         edit put back to an old step, which flags nothing anywhere (measured
         2026-11-13), is repaired here. A question-and-answer step card's fields do
-        not move with ``reps``, so it is never written. A row that lost its card
+        not move, so it is never written. A row that lost its card
         link is relinked to the note's one card. A note not in this collection is
         skipped. ``dry_run`` counts and writes nothing. The write is the existing
         ``rewrite_sentence_note``: data-only, the card row untouched.
@@ -2083,7 +2084,7 @@ class AnkiSync:
             _log.info(
                 "DRILL_ROTATED key=%s step=%d",
                 line,
-                drill_card(item.syntactic_unit).step_at(item.directions[Direction.PRODUCTION].reps),
+                drill_card(item.syntactic_unit).step_at(self._db.count_answers_into_review(rows[0][2])),
             )
         _log.info("DRILL_ROTATION notes=%d dry_run=%s", rotated, dry_run)
         return rotated

@@ -72,14 +72,14 @@ class _LessonCard:
     sentence: SentenceCard | None = None
     drill: DrillCard | None = None
 
-    def text(self, reps: int) -> str:
+    def text(self, in_review: int) -> str:
         if self.drill is not None:
-            return self.drill.view(reps).answer
+            return self.drill.view(in_review).answer
         return self.sentence.text if self.sentence is not None else self.item.syntactic_unit.text
 
-    def gloss(self, reps: int) -> str:
+    def gloss(self, in_review: int) -> str:
         if self.drill is not None:
-            return self.drill.view(reps).english
+            return self.drill.view(in_review).english
         return self.sentence.english if self.sentence is not None else self.item.syntactic_unit.translation or ""
 
 
@@ -89,7 +89,7 @@ def _lesson_cards(db, lesson, plan: _ListenPlan) -> dict[int, _LessonCard]:
 
     Sentence cards are every row of each line the lesson's card list names,
     including blanks mined since (they join the line's sibling group). A drill
-    card (5i1p.4) is its own sibling group, read as the step its reps ask for.
+    card (5i1p.4) is its own sibling group, read at the step its answers into review ask for (5i1p.10).
     A function-word cloze is not a row: the popup never graded one.
     """
     cards: dict[int, _LessonCard] = {cid: _LessonCard(cid, "word", item) for cid, (_, item) in plan.word_cards.items()}
@@ -212,19 +212,20 @@ async def get_grade_plan(
                 later[direction.value] += 1
                 continue
             blank = card.sentence.blank if card.sentence is not None else None
+            in_review = db.count_answers_into_review(card.item_id) if card.drill is not None else 0
             rows.append(
                 {
                     "item_id": card.item_id,
                     "direction": direction.value,
                     "kind": card.kind,
-                    "text": card.text(rec.reps),
-                    "gloss": card.gloss(rec.reps),
+                    "text": card.text(in_review),
+                    "gloss": card.gloss(in_review),
                     "due_at": rec.due_at.isoformat(),
                     "grade_class": grade_class,
                     "line_key": card.sentence.line_key if card.sentence is not None else None,
                     "blank_start": blank[0] if blank else None,
                     "blank_end": blank[1] if blank else None,
-                    "drill": _drill_dict(card.item.syntactic_unit, rec.reps, db, card.item_id) if card.drill else None,
+                    "drill": _drill_dict(card.item.syntactic_unit, db, card.item_id) if card.drill else None,
                 }
             )
     rows.sort(key=lambda r: (r["due_at"], r["item_id"], r["direction"]))

@@ -25,7 +25,7 @@ from httpx import ASGITransport, AsyncClient
 import app.api.srs as srs_mod
 from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
-from app.models.srs_item import Direction, DirectionState, SRSState
+from app.models.srs_item import Direction, DirectionState, RevlogRow, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.anki_mirror.queue_stats import build_live_load_balancer
 from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc, local_today_rollover
@@ -401,7 +401,7 @@ class TestPlanSentenceCards:
 class TestPlanDrillCards:
     """A drill card in the lesson's card list is a row showing its step view (tunatale-5i1p.4, audit I3).
 
-    The plan reads the drill through ``view(reps)`` like every other reader:
+    The plan reads the drill at the step its answers into review call for (5i1p.10), like every other reader:
     ``text`` is the step's answer, ``gloss`` its English, ``drill`` the whole
     view. ``line_key`` stays None, so the page offers no blank to mine on it.
     """
@@ -416,15 +416,30 @@ class TestPlanDrillCards:
         db = _install(srs_db, _lesson("Hei!", story=_story()))
         await _grade({})  # the first Save mints the list
         cid = self._drill_id(db)
-        _review_by_id(db, cid, PROD, due_in=0)  # reps = 5: step 5 mod 4 = 1
+        _review_by_id(db, cid, PROD, due_in=0)  # reps = 5: the old rule's step 1, which must not show
+        for n in range(3):  # three answers that left it in review: step 3 (5i1p.10)
+            db.append_revlog(
+                RevlogRow(
+                    id=1_700_000_000_000 + n,
+                    collocation_id=cid,
+                    direction=PROD,
+                    button_chosen=3,
+                    interval=10,
+                    last_interval=5,
+                    factor=5000,
+                    taken_millis=1000,
+                    review_kind=1,
+                    anki_card_id=None,
+                )
+            )
 
         plan = await _plan()
 
         row = next(c for c in plan["cards"] if c["item_id"] == cid)
         assert (row["kind"], row["direction"], row["line_key"]) == ("drill", "production", None)
-        assert (row["text"], row["gloss"]) == ("De er her.", "")
-        assert (row["drill"]["step"], row["drill"]["of"], row["drill"]["cue"]) == (2, 4, "de")
-        assert row["drill"]["before"] == "Hun er her."
+        assert (row["text"], row["gloss"]) == ("Vi er der.", "We are there.")
+        assert (row["drill"]["step"], row["drill"]["of"], row["drill"]["cue"]) == (4, 4, "vi")
+        assert row["drill"]["before"] == "De er der."
 
     async def test_a_question_and_answer_step_is_its_own_row(self, srs_db):
         from tests.test_lesson_drill_cards import _story

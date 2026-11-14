@@ -35,7 +35,6 @@ from app.srs.database import SRSDatabase
 from app.srs.drill_card import drill_card
 from app.srs.lesson_card_mint import mint_lesson_cards
 from tests._helpers.anki_sync_create_new import FakeReader
-from tests._helpers.anki_sync_pull import FakeReader as RecordsReader
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 from tests.test_anki_sentence_note_sync import _conn
 from tests.test_api_drill_card import _install
@@ -94,11 +93,12 @@ def _reps(db: SRSDatabase, cid: int) -> int:
     return _row(db, cid).directions[Direction.PRODUCTION].reps
 
 
-def _expected(db: SRSDatabase, cid: int, reps: int | None = None, media: dict[str, str] | None = None) -> str:
+def _expected(db: SRSDatabase, cid: int, step: int | None = None, media: dict[str, str] | None = None) -> str:
+    """The note's fields at *step* (default: the step the row's answers into review call for, 5i1p.10)."""
     from app.srs.sentence_note import drill_note_fields, drill_source_label
 
     card = drill_card(_row(db, cid).syntactic_unit)
-    view = card.view(_reps(db, cid) if reps is None else reps)
+    view = card.view(db.count_answers_into_review(cid) if step is None else step)
     return "\x1f".join(drill_note_fields(view, media=media or {}, source=drill_source_label(card)))
 
 
@@ -131,7 +131,8 @@ async def _sync(db: SRSDatabase, anki) -> int:
     )
     AnkiSync(db=db, _reader=FakeReader(), _writer=writer, language_code=LANG).sync_push()
     records = OfflineReader(anki, DECK, language_code=LANG).get_note_records()
-    puller = AnkiSync(db=db, _reader=RecordsReader(records), _writer=writer, language_code=LANG)
+    del records  # the real reader: the pull ingests the card's Anki answers (5i1p.10)
+    puller = AnkiSync(db=db, _reader=OfflineReader(anki, DECK, language_code=LANG), _writer=writer, language_code=LANG)
     puller.sync_pull()
     return puller.rotate_drill_notes()
 
@@ -143,6 +144,33 @@ def _review_in_anki(anki, card_id: int, reps: int) -> None:
         (reps, int(time.time()), json.dumps({"s": 10.0, "d": 5.0, "lrt": int(time.time()) - 86400}), card_id),
     )
     anki.commit()
+
+
+#: Anki revlog shapes (type, ivl, ease): a learning answer is negative seconds, one that
+#: leaves the card in review positive days (tunatale-5i1p.10).
+LEARN_GOOD = (0, -600, 3)
+GRADUATE_GOOD = (0, 2, 3)
+GRADUATE_EASY = (0, 4, 4)
+REVIEW_GOOD = (1, 10, 3)
+
+
+def _answer_in_anki(anki, card_id: int, answers: list[tuple[int, int, int]]) -> None:
+    """Answers made on the phone: revlog rows, and the card's count and queue moved to match."""
+    base = int(time.time() * 1000) - 3_600_000 + anki.execute("SELECT COUNT(*) FROM revlog").fetchone()[0] * 1000
+    for i, (kind, ivl, ease) in enumerate(answers):
+        anki.execute(
+            "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) VALUES (?, ?, -1, ?, ?, 0, 5000, 1000, ?)",
+            (base + i * 1000, card_id, ease, ivl, kind),
+        )
+    reps = anki.execute("SELECT reps FROM cards WHERE id = ?", (card_id,)).fetchone()[0] + len(answers)
+    if answers[-1][1] > 0:
+        _review_in_anki(anki, card_id, reps)
+    else:
+        anki.execute(
+            "UPDATE cards SET type = 1, queue = 1, due = ?, reps = ?, left = 1001, mod = ?, usn = -1 WHERE id = ?",
+            (int(time.time()) + 600, reps, int(time.time()), card_id),
+        )
+        anki.commit()
 
 
 def _forget_in_anki(anki, card_id: int) -> None:
@@ -194,7 +222,7 @@ class TestMint:
             prod = item.directions[Direction.PRODUCTION]
             assert (prod.anki_card_id, prod.state) == (cards[0]["id"], SRSState.NEW)
             note = _note(anki, db, cid)
-            assert note["flds"] == _expected(db, cid, reps=0)
+            assert note["flds"] == _expected(db, cid, step=0)
             assert note["tags"].split() == ["tunatale", "sentence", "drill"]  # never tt-course: front-placed (5i1p.8)
 
     async def test_a_dry_run_counts_the_drill_rows(self):
@@ -321,20 +349,26 @@ async def _grade_in_tt(cid: int, times: int) -> None:
 
 
 class TestRotation:
-    async def test_s2_a_tt_grade_rotates_the_note_data_only(self, no_tts):
+    async def test_s2_a_tt_learning_answer_leaves_the_note_and_the_graduating_one_rotates_it_data_only(self, no_tts):
         db = _install(_story())
         cid = _minted(db)[SUB]
         anki = _conn()
         await _sync(db, anki)
         scm = _col(anki)[0]
         card_id = _card(anki, db, cid)["id"]
+        _clean_note(anki, _row(db, cid).anki_note_id)
+        before = _note(anki, db, cid)
 
-        await _grade_in_tt(cid, 1)
+        await _grade_in_tt(cid, 1)  # Good on a new card: still learning (5i1p.10)
+        assert await _sync(db, anki) == 0
+        assert _note(anki, db, cid)["flds"] == before["flds"] == _expected(db, cid, step=0)
+
+        await _grade_in_tt(cid, 1)  # Good again: it graduates
         await _sync(db, anki)
 
-        assert _reps(db, cid) == 1
+        assert (_reps(db, cid), db.count_answers_into_review(cid)) == (2, 1)
         note = _note(anki, db, cid)
-        assert note["flds"] == _expected(db, cid, reps=1) != _expected(db, cid, reps=0)
+        assert note["flds"] == _expected(db, cid, step=1) != _expected(db, cid, step=0)
         assert note["usn"] == -1 and note["sfld"] == note["flds"].split("\x1f")[0]
         assert _col(anki)[0] == scm
         assert _graves(anki) == []
@@ -350,7 +384,8 @@ class TestRotation:
 
         await _sync(db, anki)
 
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=2)
+        assert db.count_answers_into_review(cid) == 1  # Good, Good: graduated once
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=1)
         card = _card(anki, db, cid)
         assert card["reps"] == 2 and card["type"] != 0
         assert _reps(db, cid) == 2
@@ -361,17 +396,17 @@ class TestRotation:
         assert await _sync(db, anki) == 0
         assert _note(anki, db, cid) == before
 
-    async def test_s3_a_review_made_in_anki_rotates_the_note_in_one_sync(self, no_tts):
+    async def test_s3_answers_made_in_anki_rotate_the_note_in_one_sync(self, no_tts):
         db = SRSDatabase(":memory:")
         cid = _minted(db)[SUB]
         anki = _conn()
         await _sync(db, anki)
-        _review_in_anki(anki, _card(anki, db, cid)["id"], reps=3)
+        _answer_in_anki(anki, _card(anki, db, cid)["id"], [LEARN_GOOD, GRADUATE_GOOD, REVIEW_GOOD])
 
         assert await _sync(db, anki) == 1
 
-        assert _reps(db, cid) == 3
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=3)
+        assert (_reps(db, cid), db.count_answers_into_review(cid)) == (3, 2)
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=2)
 
     async def test_s4_an_old_step_put_back_on_the_phone_is_repaired_in_one_sync(self, no_tts):
         db = SRSDatabase(":memory:")
@@ -379,29 +414,30 @@ class TestRotation:
         anki = _conn()
         await _sync(db, anki)
         nid = _note(anki, db, cid)["id"]
-        anki.execute("UPDATE notes SET flds = ?, usn = 7 WHERE id = ?", (_expected(db, cid, reps=2), nid))
+        anki.execute("UPDATE notes SET flds = ?, usn = 7 WHERE id = ?", (_expected(db, cid, step=2), nid))
         anki.commit()
         assert db.get_dirty_fields(_row(db, cid).guid) == ""  # nothing flagged in TT
 
         assert await _sync(db, anki) == 1
 
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=0)
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=0)
 
-    async def test_j4_an_anki_forget_puts_the_note_back_to_step_0_in_one_sync(self, no_tts):
+    async def test_j4_an_anki_forget_leaves_the_step_where_it_is(self, no_tts):
+        """A Forget is not an answer (5i1p.10): the card relearns the step it was on."""
         db = SRSDatabase(":memory:")
         cid = _minted(db)[SUB]
         anki = _conn()
         await _sync(db, anki)
         card_id = _card(anki, db, cid)["id"]
-        _review_in_anki(anki, card_id, reps=3)
+        _answer_in_anki(anki, card_id, [GRADUATE_EASY, REVIEW_GOOD])
         await _sync(db, anki)
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=3)
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=2)
         _forget_in_anki(anki, card_id)
 
         await _sync(db, anki)
 
         assert _reps(db, cid) == 0
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=0)
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=2)
 
     async def test_s5_a_sync_with_nothing_changed_writes_nothing(self, no_tts):
         db = SRSDatabase(":memory:")
@@ -441,7 +477,7 @@ class TestRotation:
         await _sync(db, anki)
         card_id = _card(anki, db, cid)["id"]
         nid = _row(db, cid).anki_note_id
-        anki.execute("UPDATE notes SET flds = ? WHERE id = ?", (_expected(db, cid, reps=2), nid))
+        anki.execute("UPDATE notes SET flds = ? WHERE id = ?", (_expected(db, cid, step=2), nid))
         anki.commit()
         with db._get_conn() as conn:
             conn.execute("UPDATE collocation_directions SET anki_card_id = NULL WHERE collocation_id = ?", (cid,))
@@ -451,7 +487,7 @@ class TestRotation:
             await _sync(db, anki)
 
         assert _row(db, cid).directions[Direction.PRODUCTION].anki_card_id == card_id
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=0)
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=0)
         assert "SENTENCE_NOTE_HELD" not in caplog.text
         assert _graves(anki) == []
 
@@ -460,16 +496,16 @@ class TestRotation:
         cid = _minted(db)[SUB]
         anki = _conn()
         await _sync(db, anki)
-        _review_in_anki(anki, _card(anki, db, cid)["id"], reps=3)
-        records = OfflineReader(anki, DECK, language_code=LANG).get_note_records()
-        AnkiSync(db=db, _reader=RecordsReader(records), _writer=OfflineWriter(anki), language_code=LANG).sync_pull()
+        _answer_in_anki(anki, _card(anki, db, cid)["id"], [GRADUATE_EASY, REVIEW_GOOD, REVIEW_GOOD])
+        reader = OfflineReader(anki, DECK, language_code=LANG)
+        AnkiSync(db=db, _reader=reader, _writer=OfflineWriter(anki), language_code=LANG).sync_pull()
         before = _note(anki, db, cid)
 
         assert _rotate(db, anki, dry_run=True) == 1
 
         assert _note(anki, db, cid) == before
         assert _rotate(db, anki) == 1  # control: the same state, not dry, writes
-        assert _note(anki, db, cid)["flds"] == _expected(db, cid, reps=3)
+        assert _note(anki, db, cid)["flds"] == _expected(db, cid, step=3)
 
     async def test_s8_a_note_not_in_this_collection_is_skipped(self, no_tts):
         db = SRSDatabase(":memory:")
@@ -524,7 +560,7 @@ class TestRotation:
         cid = _minted(db)[SUB]
         anki = _conn()
         await _sync(db, anki)
-        _review_in_anki(anki, _card(anki, db, cid)["id"], reps=5)
+        _answer_in_anki(anki, _card(anki, db, cid)["id"], [GRADUATE_EASY] + [REVIEW_GOOD] * 4)
 
         with caplog.at_level(logging.INFO):
             await _sync(db, anki)
@@ -603,9 +639,9 @@ class TestMedia:
         self._attach(db, cid, kinds, set(kinds))
         anki = _conn()
         await _sync(db, anki)
-        _review_in_anki(anki, _card(anki, db, cid)["id"], reps=1)
-        records = OfflineReader(anki, DECK, language_code=LANG).get_note_records()
-        AnkiSync(db=db, _reader=RecordsReader(records), _writer=OfflineWriter(anki), language_code=LANG).sync_pull()
+        _answer_in_anki(anki, _card(anki, db, cid)["id"], [GRADUATE_EASY])
+        reader = OfflineReader(anki, DECK, language_code=LANG)
+        AnkiSync(db=db, _reader=reader, _writer=OfflineWriter(anki), language_code=LANG).sync_pull()
 
         n = AnkiSync(
             db=db, _reader=FakeReader(), _writer=OfflineWriter(anki, media_dir=anki_media), language_code=LANG
@@ -668,7 +704,7 @@ class TestMediaRefreshKeepsEveryStep:
                 size_bytes=len(name),
             )
         # the note shows step 0: only the model, cue 0 and answer 0 are referenced
-        fields = _expected(db, cid, reps=0, media={k: f"{k}.mp3" for k in kinds}).split("\x1f")
+        fields = _expected(db, cid, step=0, media={k: f"{k}.mp3" for k in kinds}).split("\x1f")
         results: dict = {"new_media": 0, "updated_media": 0}
 
         _refresh_media_for_collocation(anki_media, fields, cid, tt_media, db, results)
@@ -742,12 +778,25 @@ class TestFullSyncKeepsDrillAudio:
             await self._full_sync(db, anki, anki_media, tmp_path)
             assert db.list_media_kinds_for_collocation(cid) == set(kinds)
 
-            for reps in (1, 2):
-                _review_in_anki(anki, _card(anki, db, cid)["id"], reps=reps)
+            # S8 (5i1p.10): a learning answer made on the phone leaves the note where it is
+            step_0 = _note(anki, db, cid)["flds"]
+            caplog.clear()
+            _answer_in_anki(anki, _card(anki, db, cid)["id"], [LEARN_GOOD])
+            await self._full_sync(db, anki, anki_media, tmp_path)
+            assert "DRILL_ROTATION notes=0" in caplog.text
+            assert _note(anki, db, cid)["flds"] == step_0
+            assert db.list_media_kinds_for_collocation(cid) == set(kinds)
+
+            # the graduating answer rotates it once; then each review that lands in review
+            for step, answer in ((1, GRADUATE_GOOD), (2, REVIEW_GOOD)):
+                caplog.clear()
+                _answer_in_anki(anki, _card(anki, db, cid)["id"], [answer])
                 await self._full_sync(db, anki, anki_media, tmp_path)
 
-                assert _reps(db, cid) == reps
+                assert "DRILL_ROTATION notes=1" in caplog.text
+                assert f"DRILL_ROTATED key={SUB} step={step}" in caplog.text
                 fields = _note(anki, db, cid)["flds"].split("\x1f")
+                assert fields[0] == _expected(db, cid, step=step).split("\x1f")[0]
                 assert fields[4].count("[sound:") == 2, fields[4]  # CueAudio: the sentence before, then the cue
                 assert fields[5].count("[sound:") == 1, fields[5]  # AnswerAudio
                 assert db.list_media_kinds_for_collocation(cid) == set(kinds)

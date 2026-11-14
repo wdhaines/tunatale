@@ -130,4 +130,6 @@ def test_public_method_count_pinned() -> None:
     # +set_anki_ord (sync_pull records a card's Anki ord, the TEMPLATE sort key — h0q3.60)
     # +copy_media_row (a mined blank plays its line's takes, which another row of the
     #  line already holds — h0q3.52)
-    assert count == 153
+    # +count_answers_into_review (a drill card's step counts the answers that left it
+    #  in review, read from tt_revlog — 5i1p.10)
+    assert count == 154

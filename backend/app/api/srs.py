@@ -247,19 +247,20 @@ def _sentence_dict(unit: SyntacticUnit, cue_audio_url: str | None = None) -> dic
     }
 
 
-def _drill_dict(unit: SyntacticUnit, reps: int, db=None, row_id: int | None = None) -> dict | None:
+def _drill_dict(unit: SyntacticUnit, db, row_id: int) -> dict | None:
     """A drill card's step view for the review screen (tunatale-5i1p.4), or ``None`` for every other card.
 
-    Built from *reps* on every request, never stored: a card graded Again comes
-    back on its next step. With *db*, each part carries its clip's URL.
+    Built on every request from the card's answers that left it in review
+    (tunatale-5i1p.10), never stored: a learning answer leaves the step where it
+    is, the graduating one moves it on. Each part carries its clip's URL.
     """
     card = drill_card(unit)
     if card is None:
         return None
-    view = card.view(reps)
+    view = card.view(db.count_answers_into_review(row_id))
 
     def url(kind: str | None) -> str | None:
-        name = db.get_media_filename(row_id, kind) if db is not None and kind is not None else None
+        name = db.get_media_filename(row_id, kind) if kind is not None else None
         return f"/api/srs/media/{name}" if name else None
 
     return {
@@ -286,6 +287,8 @@ def _item_to_dict(
     audio_url: str | None = None,
     ambiguous_surfaces: set[str] | None = None,
     homograph_surfaces: set[str] | None = None,
+    *,
+    db,
 ) -> dict:
     """Serialize an SRSItem to a response dict.
 
@@ -328,7 +331,7 @@ def _item_to_dict(
         "paradigm": _paradigm_dict(language_code, item.syntactic_unit),
         "focus": _focus_dict(language_code, item.syntactic_unit),
         "sentence": _sentence_dict(item.syntactic_unit),
-        "drill": _drill_dict(item.syntactic_unit, prod.reps if prod else 0),
+        "drill": _drill_dict(item.syntactic_unit, db, row_id),
         "note": item.syntactic_unit.note,
         # Gender article (en/ei/et) — display-time prefix on the headword.
         "article": item.syntactic_unit.article,
@@ -375,7 +378,7 @@ def _triples_to_dicts(db, triples: list[tuple[int, SRSItem, str]]) -> list[dict]
         image_url = f"/api/srs/media/{img}" if img else None
         aud = db.get_audio_filename(row_id)
         audio_url = f"/api/srs/media/{aud}" if aud else None
-        result.append(_item_to_dict(row_id, item, lang, image_url, audio_url))
+        result.append(_item_to_dict(row_id, item, lang, image_url, audio_url, db=db))
     return result
 
 
@@ -3336,7 +3339,7 @@ async def create_item(body: CreateItemRequest, request: Request):
     image_url = f"/api/srs/media/{img}" if img else None
     aud = db.get_audio_filename(row_id)
     audio_url = f"/api/srs/media/{aud}" if aud else None
-    return _item_to_dict(row_id, item, lang, image_url, audio_url)
+    return _item_to_dict(row_id, item, lang, image_url, audio_url, db=db)
 
 
 async def _persist_new_card(
@@ -3393,7 +3396,7 @@ def _card_response(db, coll_id: int, item: SRSItem, language_code: str, *, was_c
     return {
         "id": coll_id,
         "was_created": was_created,
-        "item": _item_to_dict(coll_id, item, language_code, image_url, audio_url),
+        "item": _item_to_dict(coll_id, item, language_code, image_url, audio_url, db=db),
     }
 
 
@@ -3756,10 +3759,7 @@ async def list_items(
     return {
         "items": [
             _item_to_dict(
-                rid,
-                item,
-                lang,
-                image_url=f"/api/srs/media/{image_map[rid]}" if rid in image_map else None,
+                rid, item, lang, image_url=f"/api/srs/media/{image_map[rid]}" if rid in image_map else None, db=db
             )
             for rid, item, lang in rows
         ],
@@ -3777,7 +3777,7 @@ async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     row_id, item, lang = db.get_collocation_by_id(item_id)
-    return _item_to_dict(row_id, item, lang)
+    return _item_to_dict(row_id, item, lang, db=db)
 
 
 @router.delete("/items/{item_id}", status_code=200, response_model=StatusResponse)
@@ -3850,7 +3850,7 @@ async def reset_item(item_id: int, request: Request):
         raise HTTPException(status_code=404, detail="Item not found")
     db.reset_collocation(item_id)
     row_id, item, lang = db.get_collocation_by_id(item_id)
-    return _item_to_dict(row_id, item, lang)
+    return _item_to_dict(row_id, item, lang, db=db)
 
 
 @router.post(
@@ -3882,7 +3882,7 @@ async def set_item_state(item_id: int, body: SetStateRequest, request: Request):
     else:
         db.set_state_by_id(item_id, _STATE_MAP[body.state])
     row_id, item, lang = db.get_collocation_by_id(item_id)
-    return _item_to_dict(row_id, item, lang)
+    return _item_to_dict(row_id, item, lang, db=db)
 
 
 @router.post(
@@ -3902,7 +3902,7 @@ async def restore_known_item(item_id: int, request: Request):
         raise HTTPException(status_code=404, detail="Item not found")
     db.restore_known(item_id)
     row_id, item, lang = db.get_collocation_by_id(item_id)
-    return _item_to_dict(row_id, item, lang)
+    return _item_to_dict(row_id, item, lang, db=db)
 
 
 @router.post(
@@ -3918,7 +3918,7 @@ async def untrack_item(item_id: int, request: Request):
     if result["action"] == "deleted":
         return {"action": "deleted"}
     row_id, item, lang = db.get_collocation_by_id(item_id)
-    return {"action": "suspended", "item": _item_to_dict(row_id, item, lang)}
+    return {"action": "suspended", "item": _item_to_dict(row_id, item, lang, db=db)}
 
 
 @router.post(
@@ -3938,7 +3938,7 @@ async def suspend_item(item_id: int, body: SuspendRequest, request: Request):
             raise HTTPException(status_code=422, detail=f"Invalid direction: {body.direction!r}") from exc
     db.set_suspended(item_id, body.suspended, direction=dir_enum)
     row_id, item, lang = db.get_collocation_by_id(item_id)
-    return _item_to_dict(row_id, item, lang)
+    return _item_to_dict(row_id, item, lang, db=db)
 
 
 @router.post("/ignored-lemmas", status_code=200, response_model=StatusResponse)
@@ -3975,13 +3975,13 @@ def _queue_item_to_dict(
         aud = db.get_audio_filename(row_id)
         audio_url = f"/api/srs/media/{aud}" if aud else None
         word_audio_url = None
-    base = _item_to_dict(row_id, item, lang, image_url, audio_url, ambiguous_surfaces, homograph_surfaces)
+    base = _item_to_dict(row_id, item, lang, image_url, audio_url, ambiguous_surfaces, homograph_surfaces, db=db)
     base["direction"] = direction.value
     base["word_audio_url"] = word_audio_url
     if base["sentence"] is not None and (cue_aud := db.get_media_filename(row_id, "audio_cue")):
         base["sentence"] = _sentence_dict(item.syntactic_unit, f"/api/srs/media/{cue_aud}")
     if base["drill"] is not None:
-        base["drill"] = _drill_dict(item.syntactic_unit, item.directions[direction].reps, db, row_id)
+        base["drill"] = _drill_dict(item.syntactic_unit, db, row_id)
     # `_item_to_dict` populates flat fields from recognition (or production for
     # cloze). For a queue item that's the OTHER direction, those values misrepresent
     # the actual card on screen: a production card due today + heavily-reviewed can
