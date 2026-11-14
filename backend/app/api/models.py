@@ -1299,6 +1299,13 @@ class LessonReviewQueueResponse(BaseModel):
 # (null when the card has no image), so a plain ``response_model=`` suffices.
 
 
+class ImageSharedWith(BaseModel):
+    """Another card that already shows the picture just stored."""
+
+    id: int
+    text: str
+
+
 class ImageItemResponse(BaseModel):
     """Response of the three SRS image endpoints."""
 
@@ -1307,6 +1314,10 @@ class ImageItemResponse(BaseModel):
     translation: str
     card_type: str
     image_url: str | None
+    # tunatale-iiwm.10: the editor stores the picture anyway (the owner may put
+    # one picture on two cards on purpose) and names the other card so the UI
+    # can warn. Always None from DELETE.
+    shared_with: ImageSharedWith | None
 
 
 # ── Batch 6f: LLM rate-limit status ─────────────────────────────────────────

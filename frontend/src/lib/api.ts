@@ -19,6 +19,7 @@ export type ListenPreview = Omit<components["schemas"]["ListenPreviewResponse"],
   affix_cards?: AffixCardPreview[];
 };
 export type CommitPendingResponse = components["schemas"]["CommitPendingResponse"];
+export type ImageItemResponse = components["schemas"]["ImageItemResponse"];
 export type ClozeSentenceVerdict = components["schemas"]["ClozeSentenceVerdict"];
 export type ProposeClozeResponse = components["schemas"]["ProposeClozeResponse"];
 export type SetClozeSentenceResponse = components["schemas"]["SetClozeSentenceResponse"];
@@ -1578,7 +1579,7 @@ export class TunaTaleAPI {
     return this.request(`/api/srs/items/${id}/image/langeek${qs}`);
   }
 
-  async setItemImageFromUrl(id: number, url: string): Promise<SRSItemDetail> {
+  async setItemImageFromUrl(id: number, url: string): Promise<ImageItemResponse> {
     return this.request(`/api/srs/items/${id}/image`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1586,7 +1587,7 @@ export class TunaTaleAPI {
     });
   }
 
-  async uploadItemImage(id: number, file: File): Promise<SRSItemDetail> {
+  async uploadItemImage(id: number, file: File): Promise<ImageItemResponse> {
     const form = new FormData();
     form.append("file", file);
     return this.request(`/api/srs/items/${id}/image/upload`, {

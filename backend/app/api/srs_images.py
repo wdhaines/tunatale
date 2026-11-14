@@ -3,6 +3,7 @@ Pixabay pick, pasted URL, file upload, or remove."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from functools import partial
 from typing import Annotated
@@ -66,7 +67,7 @@ def _resolve_item(db, item_id: int):
     return coll_id, item, lang
 
 
-def _item_response(db, coll_id: int, item) -> dict:
+def _item_response(db, coll_id: int, item, *, stored: bytes | None = None) -> dict:
     img = db.get_image_filename(coll_id)
     return {
         "id": coll_id,
@@ -74,7 +75,22 @@ def _item_response(db, coll_id: int, item) -> dict:
         "translation": item.syntactic_unit.translation,
         "card_type": item.syntactic_unit.card_type,
         "image_url": f"/api/srs/media/{img}" if img else None,
+        "shared_with": _shared_with(db, coll_id, stored) if stored is not None else None,
     }
+
+
+def _shared_with(db, coll_id: int, stored: bytes) -> dict | None:
+    """Name the other card already showing *stored*, for the editor to warn.
+
+    A warning, not a refusal (owner, 2026-11-13, tunatale-iiwm.10): a picture on
+    two cards can be intentional here, unlike on the automatic paths, which
+    refuse via ``vocab_media.image_no_other_card_holds``.
+    """
+    owner = db.image_digest_owner(hashlib.sha256(stored).hexdigest(), exclude_collocation_id=coll_id)
+    if owner is None:
+        return None
+    _owner_id, owner_item, _lang = db.get_collocation_by_id(owner)
+    return {"id": owner, "text": owner_item.syntactic_unit.text}
 
 
 @router.get("/items/{item_id}/image/candidates", response_model=ImageCandidatesResponse)
@@ -196,7 +212,7 @@ async def put_image_from_url(
     source = "langeek" if parsed.hostname == _LANGEEK_IMAGE_HOST else None
     replace_item_image(db, coll_id, item.syntactic_unit.translation, image_bytes, ext, source=source)
 
-    return _item_response(db, coll_id, item)
+    return _item_response(db, coll_id, item, stored=image_bytes)
 
 
 @router.put("/items/{item_id}/image/upload", response_model=ImageItemResponse)
@@ -218,7 +234,7 @@ async def put_image_upload(
         raise HTTPException(status_code=422, detail="Content is not an image") from exc
     replace_item_image(db, coll_id, item.syntactic_unit.translation, contents, ext)
 
-    return _item_response(db, coll_id, item)
+    return _item_response(db, coll_id, item, stored=contents)
 
 
 @router.delete("/items/{item_id}/image", response_model=ImageItemResponse)

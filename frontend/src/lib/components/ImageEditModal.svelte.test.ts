@@ -16,7 +16,16 @@ vi.mock("#lib/api.js", () => ({
 }));
 
 import { api } from "#lib/api.js";
+import type { ImageItemResponse } from "#lib/api.js";
 import ImageEditModal from "./ImageEditModal.svelte";
+
+function imageResp(
+  id: number,
+  image_url: string | null = "http://x/new.jpg",
+  shared_with: ImageItemResponse["shared_with"] = null,
+): ImageItemResponse {
+  return { id, text: "vann", translation: "water", card_type: "vocab", image_url, shared_with };
+}
 
 const mockFetchCandidates = vi.mocked(api.fetchImageCandidates);
 const mockFetchLangeek = vi.mocked(api.fetchLangeekCandidates);
@@ -69,7 +78,7 @@ describe("ImageEditModal", () => {
   it("paste URL + Set calls api.setItemImageFromUrl then onupdated", async () => {
     const onupdated = vi.fn();
     const item = makeSRSItemDetail({ id: 3 });
-    mockSetFromUrl.mockResolvedValue(makeSRSItemDetail({ id: 3, image_url: "http://x/new.jpg" }));
+    mockSetFromUrl.mockResolvedValue(imageResp(3, "http://x/new.jpg"));
 
     const { getByPlaceholderText, getByText } = render(ImageEditModal, {
       props: { item, onclose: vi.fn(), onupdated },
@@ -189,7 +198,7 @@ describe("ImageEditModal", () => {
         },
       ],
     });
-    mockSetFromUrl.mockResolvedValue(makeSRSItemDetail({ id: 3, image_url: "http://x/b.jpg" }));
+    mockSetFromUrl.mockResolvedValue(imageResp(3, "http://x/b.jpg"));
     const item = makeSRSItemDetail({ id: 3 });
     const { getByRole } = render(ImageEditModal, {
       props: { item, onclose: vi.fn(), onupdated },
@@ -280,7 +289,7 @@ describe("ImageEditModal", () => {
 
   it("file upload calls api.uploadItemImage then onupdated", async () => {
     const onupdated = vi.fn();
-    mockUpload.mockResolvedValue(makeSRSItemDetail({ id: 1, image_url: "http://x/uploaded.jpg" }));
+    mockUpload.mockResolvedValue(imageResp(1, "http://x/uploaded.jpg"));
     const item = makeSRSItemDetail({ id: 1 });
     const { container } = render(ImageEditModal, {
       props: { item, onclose: vi.fn(), onupdated },
@@ -343,7 +352,7 @@ describe("ImageEditModal", () => {
 
   it("Enter key in paste URL input triggers setFromPaste", async () => {
     const item = makeSRSItemDetail({ id: 1 });
-    mockSetFromUrl.mockResolvedValue(makeSRSItemDetail({ id: 1, image_url: "http://x/new.jpg" }));
+    mockSetFromUrl.mockResolvedValue(imageResp(1, "http://x/new.jpg"));
     const { getByPlaceholderText } = render(ImageEditModal, {
       props: { item, onclose: vi.fn(), onupdated: vi.fn() },
     });
@@ -502,7 +511,7 @@ describe("ImageEditModal", () => {
   it("picking a LanGeek sense sets its picture", async () => {
     const onupdated = vi.fn();
     mockFetchLangeek.mockResolvedValue({ term: "band", status: "ok", senses: BAND });
-    mockSetFromUrl.mockResolvedValue(makeSRSItemDetail({ id: 7 }));
+    mockSetFromUrl.mockResolvedValue(imageResp(7));
     const item = makeSRSItemDetail({ id: 7, text: "banda" });
 
     const { findByTitle } = render(ImageEditModal, {
@@ -576,5 +585,93 @@ describe("ImageEditModal", () => {
     await fireEvent.click(getByText("Search"));
 
     await waitFor(() => expect(mockFetchLangeek).toHaveBeenLastCalledWith(7, "orchestra"));
+  });
+
+  // tunatale-iiwm.10: a picture another card already shows is saved, and the
+  // editor stays open to say which card (owner: warn, don't refuse).
+  describe("picture another card already shows", () => {
+    const shared = { id: 1772, text: "samfunn" };
+
+    async function uploadShared(onupdated = vi.fn(), onclose = vi.fn()) {
+      mockUpload.mockResolvedValue(imageResp(1, "http://x/new.jpg", shared));
+      const r = render(ImageEditModal, {
+        props: { item: makeSRSItemDetail({ id: 1 }), onclose, onupdated },
+      });
+      const fileInput = r.container.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(fileInput, "files", {
+        value: [new File(["x"], "p.jpg", { type: "image/jpeg" })],
+      });
+      await fireEvent.change(fileInput);
+      return r;
+    }
+
+    it("upload names the other card and waits for Done before closing", async () => {
+      const onupdated = vi.fn();
+      const { findByRole, getByText } = await uploadShared(onupdated);
+      const note = await findByRole("status");
+      expect(note.textContent).toContain("card 1772");
+      expect(note.textContent).toContain("samfunn");
+      expect(onupdated).not.toHaveBeenCalled();
+      await fireEvent.click(getByText("Done"));
+      expect(onupdated).toHaveBeenCalledTimes(1);
+    });
+
+    it("closing with × after a shared save still refreshes the list", async () => {
+      const onupdated = vi.fn();
+      const onclose = vi.fn();
+      const { findByRole, getByLabelText } = await uploadShared(onupdated, onclose);
+      await findByRole("status");
+      await fireEvent.click(getByLabelText("Close"));
+      expect(onupdated).toHaveBeenCalledTimes(1);
+      expect(onclose).not.toHaveBeenCalled();
+    });
+
+    it("Escape after a shared save still refreshes the list", async () => {
+      const onupdated = vi.fn();
+      const { findByRole, container } = await uploadShared(onupdated);
+      await findByRole("status");
+      await fireEvent.keyDown(container.querySelector(".backdrop")!, { key: "Escape" });
+      expect(onupdated).toHaveBeenCalledTimes(1);
+    });
+
+    it("a candidate pick also warns", async () => {
+      mockFetchCandidates.mockResolvedValue({
+        query: "water",
+        status: "ok",
+        candidates: [
+          {
+            preview_url: "http://x/a.jpg",
+            webformat_url: "http://x/b.jpg",
+            tags: "water",
+            width: 1,
+            height: 1,
+            likes: 0,
+          },
+        ],
+      });
+      mockSetFromUrl.mockResolvedValue(imageResp(2, "http://x/new.jpg", shared));
+      const onupdated = vi.fn();
+      const { container, findByRole } = render(ImageEditModal, {
+        props: { item: makeSRSItemDetail({ id: 2 }), onclose: vi.fn(), onupdated },
+      });
+      await waitFor(() => expect(container.querySelector(".candidate-btn")).toBeTruthy());
+      await fireEvent.click(container.querySelector(".candidate-btn")!);
+      expect((await findByRole("status")).textContent).toContain("samfunn");
+      expect(onupdated).not.toHaveBeenCalled();
+    });
+
+    it("a pasted URL also warns", async () => {
+      mockSetFromUrl.mockResolvedValue(imageResp(3, "http://x/new.jpg", shared));
+      const onupdated = vi.fn();
+      const { getByPlaceholderText, getByText, findByRole } = render(ImageEditModal, {
+        props: { item: makeSRSItemDetail({ id: 3 }), onclose: vi.fn(), onupdated },
+      });
+      await fireEvent.input(getByPlaceholderText(/https:\/\/example\.com/), {
+        target: { value: "http://x/n.jpg" },
+      });
+      await fireEvent.click(getByText("Set"));
+      expect((await findByRole("status")).textContent).toContain("samfunn");
+      expect(onupdated).not.toHaveBeenCalled();
+    });
   });
 });
