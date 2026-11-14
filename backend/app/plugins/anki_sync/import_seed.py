@@ -39,6 +39,7 @@ from app.plugins.anki_sync.sqlite_reader import (
     resolve_deck_name,
 )
 from app.srs.database import SRSDatabase
+from app.srs.drill_card import is_drill_media
 from app.srs.lemmatizer import headword_lemma
 
 
@@ -147,6 +148,10 @@ def _refresh_media_for_collocation(
 
     existing_kinds = db.list_media_kinds_for_collocation(coll_id)
     for kind in set(current_by_kind) | existing_kinds:
+        if is_drill_media(kind):
+            # A drill note shows one step's clips; the rest are TT's, kept for the
+            # steps it will show next (tunatale-5i1p.9: a refresh deleted 30 of 33).
+            continue
         keep = current_by_kind.get(kind, set())
         if keep:
             removed = db.delete_stale_media_for_kind(coll_id, kind, keep)

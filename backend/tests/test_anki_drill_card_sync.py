@@ -195,7 +195,7 @@ class TestMint:
             assert (prod.anki_card_id, prod.state) == (cards[0]["id"], SRSState.NEW)
             note = _note(anki, db, cid)
             assert note["flds"] == _expected(db, cid, reps=0)
-            assert note["tags"].split() == ["tunatale", "sentence", "drill", "tt-course"]
+            assert note["tags"].split() == ["tunatale", "sentence", "drill"]  # never tt-course: front-placed (5i1p.8)
 
     async def test_a_dry_run_counts_the_drill_rows(self):
         db = SRSDatabase(":memory:")
@@ -617,3 +617,139 @@ class TestMedia:
             "drill_answer_1.mp3",
             "drill_cue_1.mp3",
         ]
+
+
+# --------------------------------------------------------------------------
+# tunatale-5i1p.9: the Anki->TT media refresh keeps every step's audio
+# --------------------------------------------------------------------------
+
+
+def _attach_all(db: SRSDatabase, cid: int) -> list[str]:
+    """Every clip any view of the card plays, on disk in TT's media dir, one media row each."""
+    import app.plugins.anki_sync.sync as sync_mod
+
+    kinds = [kind for kind, _ in drill_card(_row(db, cid).syntactic_unit).media_kinds()]
+    for kind in kinds:
+        name = f"{kind}.mp3"
+        (sync_mod._MEDIA_DIR / name).write_bytes(name.encode())
+        db.add_media(
+            collocation_id=cid,
+            kind=kind,
+            filename=name,
+            path=str(sync_mod._MEDIA_DIR / name),
+            anki_filename=name,
+            sha256="x",
+            size_bytes=len(name),
+        )
+    return kinds
+
+
+class TestMediaRefreshKeepsEveryStep:
+    def test_a_step_0_note_keeps_every_drill_kind_and_a_plain_kind_still_collapses(self, tmp_path):
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
+
+        anki_media = tmp_path / "anki-media"
+        anki_media.mkdir()
+        tt_media = tmp_path / "refresh-dest"
+        tt_media.mkdir()
+        db = SRSDatabase(":memory:")
+        cid = _minted(db)[SUB]
+        kinds = [kind for kind, _ in drill_card(_row(db, cid).syntactic_unit).media_kinds()]
+        for kind in [*kinds, "audio"]:
+            name = f"{kind}.mp3"
+            (anki_media / name).write_bytes(name.encode())
+            db.add_media(
+                collocation_id=cid,
+                kind=kind,
+                filename=name,
+                path=str(tt_media / name),
+                anki_filename=name,
+                sha256="x",
+                size_bytes=len(name),
+            )
+        # the note shows step 0: only the model, cue 0 and answer 0 are referenced
+        fields = _expected(db, cid, reps=0, media={k: f"{k}.mp3" for k in kinds}).split("\x1f")
+        results: dict = {"new_media": 0, "updated_media": 0}
+
+        _refresh_media_for_collocation(anki_media, fields, cid, tt_media, db, results)
+
+        assert db.list_media_kinds_for_collocation(cid) == set(kinds)
+        assert results["collapsed_media"] == 1  # the plain "audio" row, nothing else
+
+    def test_control_a_note_referencing_every_kind_keeps_them_all(self, tmp_path):
+        from app.plugins.anki_sync.import_seed import _refresh_media_for_collocation
+
+        anki_media = tmp_path / "anki-media"
+        anki_media.mkdir()
+        db = SRSDatabase(":memory:")
+        cid = _minted(db)[SUB]
+        kinds = [kind for kind, _ in drill_card(_row(db, cid).syntactic_unit).media_kinds()]
+        for kind in kinds:
+            (anki_media / f"{kind}.mp3").write_bytes(kind.encode())
+            db.add_media(
+                collocation_id=cid,
+                kind=kind,
+                filename=f"{kind}.mp3",
+                path=f"m/{kind}.mp3",
+                anki_filename=f"{kind}.mp3",
+                sha256="x",
+                size_bytes=1,
+            )
+        fields = ["".join(f"[sound:{k}.mp3]" for k in kinds)]
+
+        _refresh_media_for_collocation(anki_media, fields, cid, tmp_path, db, {"new_media": 0, "updated_media": 0})
+
+        assert db.list_media_kinds_for_collocation(cid) == set(kinds)
+
+
+class TestFullSyncKeepsDrillAudio:
+    """Sociable: the real ``run_full_sync`` with its media-refresh phase, three syncs in a row.
+
+    The 5i1p.5 tests ran rotation alone, never the refresh between two rotations,
+    which is how the live card lost 30 of its 33 clips (2026-11-14)."""
+
+    async def _full_sync(self, db: SRSDatabase, anki, anki_media, tmp_path) -> None:
+        from app.plugins.anki_sync.sync import run_full_sync
+
+        sync = AnkiSync(
+            db=db,
+            _reader=OfflineReader(anki, DECK, language_code=LANG),
+            _writer=OfflineWriter(anki, media_dir=anki_media),
+            language_code=LANG,
+        )
+        await run_full_sync(
+            sync,
+            anki,
+            db,
+            deck_name=DECK,
+            model_name="Slovene Vocabulary",
+            sync_log_path=tmp_path / "sync.log",
+            media_dir=anki_media,
+        )
+
+    async def test_every_step_keeps_its_audio_across_syncs(self, tmp_path, no_tts, caplog):
+        anki_media = tmp_path / "anki-media"
+        anki_media.mkdir()
+        db = SRSDatabase(":memory:")
+        cid = _minted(db)[SUB]
+        kinds = _attach_all(db, cid)
+        anki = _conn()
+        anki.execute(
+            "ALTER TABLE decks ADD COLUMN kind BLOB"
+        )  # real Anki's decks has it; the deck-config refreshes read it
+
+        with caplog.at_level(logging.INFO):
+            await self._full_sync(db, anki, anki_media, tmp_path)
+            assert db.list_media_kinds_for_collocation(cid) == set(kinds)
+
+            for reps in (1, 2):
+                _review_in_anki(anki, _card(anki, db, cid)["id"], reps=reps)
+                await self._full_sync(db, anki, anki_media, tmp_path)
+
+                assert _reps(db, cid) == reps
+                fields = _note(anki, db, cid)["flds"].split("\x1f")
+                assert fields[4].count("[sound:") == 2, fields[4]  # CueAudio: the sentence before, then the cue
+                assert fields[5].count("[sound:") == 1, fields[5]  # AnswerAudio
+                assert db.list_media_kinds_for_collocation(cid) == set(kinds)
+
+        assert f"DRILL_CARD_NO_AUDIO key={SUB} " not in caplog.text
