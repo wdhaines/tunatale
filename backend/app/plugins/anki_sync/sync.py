@@ -376,6 +376,13 @@ async def run_full_sync(
     with _phase(timings, "pull"):
         pull_report = sync.sync_pull(dry_run=dry_run)
 
+    # A drill note holds the step its card's review count calls for
+    # (tunatale-5i1p.5). AFTER the pull, which is where a review made in Anki
+    # reaches TT's reps; written from state, so it also repairs a note a phone
+    # edit put back to an old step.
+    with _phase(timings, "rotate_drills"):
+        sync.rotate_drill_notes(dry_run=dry_run)
+
     # Just-in-time production mint: a paced batch of words whose recognition card
     # has graduated get their production counterpart (tunatale-qf6.2). AFTER the
     # pull on purpose — that is what brings in graduations made in Anki since the

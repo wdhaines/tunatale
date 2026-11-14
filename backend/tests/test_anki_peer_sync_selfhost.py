@@ -465,6 +465,111 @@ class TestPeerSyncSelfHost:
             peer2.close()
         assert any("{{c1::" in f for f in flds), f"TT-added cloze note never reached the server — peer2 notes: {flds}"
 
+    def test_r1_a_drill_note_rotates_while_the_peer_reviews(self, tmp_path: Path):
+        """Oracle R1 (tunatale-5i1p.5): a drill card reviewed on another device while TT
+        rotates its note. Both arrive: the note holds TT's step, the card the peer's
+        reviews, and the next TT sync catches the note up. Proven from rows on both
+        sides, never from ``required`` (which reads 0 after a sync that moved rows)."""
+        import sqlite3
+        from contextlib import closing
+
+        from app.models.srs_item import Direction
+        from app.plugins.anki_sync.add_sentence_notetype import add_sentence_notetype
+        from app.plugins.anki_sync.safety import safe_open
+        from app.srs.database import SRSDatabase
+        from app.srs.drill_card import drill_card
+        from app.srs.lesson_card_mint import mint_lesson_cards
+        from app.srs.sentence_note import drill_note_fields, drill_source_label
+        from tests.test_drill_card import SUBSTITUTION
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        deck = settings.anki_deck_name
+        auth = _login()
+
+        # Baseline: the deck, graduated out of today's queue (Easy) so the drill card
+        # is the queue head the peer grades; the notetype; uploaded as the server's.
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        base = _driver({"op": "add_note", "collection_path": str(tt_col), "deck": deck, "fields": ["b", "b"]})
+        _driver(
+            {
+                "op": "answer_card",
+                "collection_path": str(tt_col),
+                "deck": deck,
+                "card_id": base["card_ids"][0],
+                "rating": 4,
+            }
+        )
+        with safe_open(tt_col, backup_dir=tmp_path / "backups", mode="rw") as ctx:
+            assert add_sentence_notetype(ctx.conn) == "created"
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        db_path = settings.database_url.removeprefix("sqlite:///")
+        db = SRSDatabase(db_path)
+        try:
+            cards = {"set": "test-01", "items": [{"kind": "drill", "drill": 1, "role": "male-1"}]}
+            [(cid, _)] = mint_lesson_cards(db, "no", cards, drills=[SUBSTITUTION])
+        finally:
+            db.close()
+
+        def tt_sync(where: str) -> None:
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(settings, "tt_collection_path", tt_col)
+                report = peer_sync(dry_run=False)
+            assert report.tt_push_pull_exit == 0, where
+            _assert_incremental(report.pull_required, f"{where} pull")
+            _assert_incremental(report.push_required, f"{where} push")
+
+        def peer_sync_leg(where: str) -> None:
+            _assert_incremental(
+                _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth})["required"], where
+            )
+
+        def tt_row():
+            db = SRSDatabase(db_path)
+            try:
+                return db.get_collocation_by_id(cid)[1]
+            finally:
+                db.close()
+
+        def step_fields(reps: int) -> str:
+            card = drill_card(tt_row().syntactic_unit)
+            return "\x1f".join(drill_note_fields(card.view(reps), media={}, source=drill_source_label(card)))
+
+        def rows(path: Path, nid: int, card_id: int) -> tuple[str, int, int]:
+            with closing(sqlite3.connect(path)) as conn:  # closed: Anki opens the file exclusively next
+                flds = conn.execute("SELECT flds FROM notes WHERE id = ?", (nid,)).fetchone()[0]
+                reps = conn.execute("SELECT reps FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+                revlog = conn.execute("SELECT COUNT(*) FROM revlog WHERE cid = ?", (card_id,)).fetchone()[0]
+            return flds, reps, revlog
+
+        tt_sync("mint")
+        item = tt_row()
+        nid, card_id = item.anki_note_id, item.directions[Direction.PRODUCTION].anki_card_id
+        peer_sync_leg("peer2 gets the note")
+        assert rows(peer2_col, nid, card_id) == (step_fields(0), 0, 0)
+
+        # A review the peer synced: TT pulls it and rotates the note in that same sync.
+        _driver({"op": "answer_card", "collection_path": str(peer2_col), "deck": deck, "card_id": card_id, "rating": 3})
+        peer_sync_leg("peer2 review 1")
+        tt_sync("rotate to step 1")
+        assert tt_row().directions[Direction.PRODUCTION].reps == 1
+        assert rows(tt_col, nid, card_id) == (step_fields(1), 1, 1)
+
+        # The peer reviews again while TT's rotation is still on its way: both arrive.
+        _driver({"op": "answer_card", "collection_path": str(peer2_col), "deck": deck, "card_id": card_id, "rating": 3})
+        peer_sync_leg("peer2 review 2 meets TT's note")
+        assert rows(peer2_col, nid, card_id) == (step_fields(1), 2, 2)
+
+        # The next TT sync catches the note up to the peer's count, and the peer gets it.
+        tt_sync("rotate to step 2")
+        peer_sync_leg("peer2 gets step 2")
+        assert tt_row().directions[Direction.PRODUCTION].reps == 2
+        for path in (tt_col, peer2_col):
+            assert rows(path, nid, card_id) == (step_fields(2), 2, 2), path.name
+
     def test_tt_card_media_reaches_server_through_peer_sync(self, tmp_path: Path, monkeypatch):
         """End-to-end media: a TT-added cloze card's sentence audio must be copied
         into the collection's media dir by the reconcile and uploaded by the

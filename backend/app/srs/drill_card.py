@@ -29,7 +29,7 @@ goes no further into the drill.
 
 The step view names the media row each clip lives in (``drill_model``,
 ``drill_cue_<k>``, ``drill_answer_<k>``, k = the 0-based step), so the review
-payload and, later, the note's fields find a step's sound the same way.
+payload and the note's fields (``sentence_note.drill_note_fields``) find a step's sound the same way.
 
 Nothing here writes anything.
 """
@@ -48,7 +48,10 @@ ROTATING_KINDS = ("substitution", "transformation", "true_false")
 #: Kinds that make one card per step.
 PER_STEP_KINDS = ("question_answer",)
 
-_DRILL_KEY = re.compile(r"sent:[a-z0-9]+(?:-[a-z0-9]+)*:drill-[1-9][0-9]*(?::[1-9][0-9]*)?")
+#: A card set's name: the card list's own rule (``lesson_cards`` validates ``set`` with
+#: it), so every set a card list accepts makes a key :func:`is_drill_key` recognises.
+SET_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_DRILL_KEY = re.compile(rf"sent:{SET_SLUG.pattern}:drill-[1-9][0-9]*(?::[1-9][0-9]*)?")
 
 MODEL_MEDIA = "drill_model"
 

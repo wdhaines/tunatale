@@ -23,17 +23,16 @@ Nothing here writes anything.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 
 from app.models.language import Language
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.drill_card import drill_cards
+from app.srs.drill_card import SET_SLUG, drill_cards
 from app.srs.sentence_card import Cue, Gloss, SentenceCard, blank_span
 
 COURSE_SOURCE = "course"
 
-_SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+_SLUG = SET_SLUG  # one rule with the drill key's set part (drill_card.SET_SLUG)
 _SENTENCE_FIELDS = ("speaker", "role", "text", "spoken", "english")
 
 
