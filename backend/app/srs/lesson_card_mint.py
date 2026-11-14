@@ -18,9 +18,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from app.audio.sentence_card_audio import attach_sentence_card_audio
+from app.audio.sentence_card_audio import attach_drill_card_audio, attach_sentence_card_audio
 from app.common.guid import compute_guid
 from app.models.lesson import Lesson
+from app.srs.drill_card import drill_card
 from app.srs.lesson_cards import LessonCard, lesson_cards
 from app.srs.sentence_card import sentence_card
 
@@ -36,10 +37,15 @@ def _in_deck(db, card: LessonCard, language_code: str) -> bool:
     return False
 
 
-def mint_lesson_cards(db, language_code: str, cards: dict) -> list[tuple[int, LessonCard]]:
-    """Add the cards *cards* makes that the deck lacks, NEW and in list order; return ``(id, card)`` per row added."""
+def mint_lesson_cards(
+    db, language_code: str, cards: dict, drills: list[dict] | tuple = ()
+) -> list[tuple[int, LessonCard]]:
+    """Add the cards *cards* makes that the deck lacks, NEW and in list order; return ``(id, card)`` per row added.
+
+    *drills* are the story's own, which a ``drill`` item names (tunatale-5i1p.4).
+    """
     minted: list[tuple[int, LessonCard]] = []
-    for card in lesson_cards(cards):
+    for card in lesson_cards(cards, drills):
         if _in_deck(db, card, language_code):
             continue
         db.add_collocation(card.unit, language_code=language_code)
@@ -59,12 +65,19 @@ def attach_lesson_card_audio(
     cache_dir: Path,
     media_dir: Path,
 ) -> None:
-    """Give each minted sentence card the lesson's own takes of its line and its cue.
+    """Give each minted sentence card the lesson's own takes of its line and its cue, and each
+    drill card the takes of every clip its steps play.
 
     A word's audio is not here: it is an ordinary vocab card, voiced by the
     listen's media step like any other.
     """
     for cid, card in minted:
+        drill = drill_card(card.unit)
+        if drill is not None:
+            attach_drill_card_audio(
+                db, cid, drill, lesson, cache_dir=cache_dir, media_dir=media_dir, answer_voice=voice_map.get(card.role)
+            )
+            continue
         sentence = sentence_card(card.unit)
         if sentence is None:
             continue

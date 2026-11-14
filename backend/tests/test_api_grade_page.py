@@ -398,6 +398,64 @@ class TestPlanSentenceCards:
         assert whole_id not in {c["item_id"] for c in plan["cards"]}  # still NEW: waiting, not a row
 
 
+class TestPlanDrillCards:
+    """A drill card in the lesson's card list is a row showing its step view (tunatale-5i1p.4, audit I3).
+
+    The plan reads the drill through ``view(reps)`` like every other reader:
+    ``text`` is the step's answer, ``gloss`` its English, ``drill`` the whole
+    view. ``line_key`` stays None, so the page offers no blank to mine on it.
+    """
+
+    @staticmethod
+    def _drill_id(db) -> int:
+        return db.list_sibling_rows("sent:test-01:drill-1")[0][2]
+
+    async def test_a_drill_card_is_a_row_with_its_step_view(self, srs_db):
+        from tests.test_lesson_drill_cards import _story
+
+        db = _install(srs_db, _lesson("Hei!", story=_story()))
+        await _grade({})  # the first Save mints the list
+        cid = self._drill_id(db)
+        _review_by_id(db, cid, PROD, due_in=0)  # reps = 5: step 5 mod 4 = 1
+
+        plan = await _plan()
+
+        row = next(c for c in plan["cards"] if c["item_id"] == cid)
+        assert (row["kind"], row["direction"], row["line_key"]) == ("drill", "production", None)
+        assert (row["text"], row["gloss"]) == ("De er her.", "")
+        assert (row["drill"]["step"], row["drill"]["of"], row["drill"]["cue"]) == (2, 4, "de")
+        assert row["drill"]["before"] == "Hun er her."
+
+    async def test_a_question_and_answer_step_is_its_own_row(self, srs_db):
+        from tests.test_lesson_drill_cards import _story
+
+        db = _install(srs_db, _lesson("Hei!", story=_story()))
+        await _grade({})
+        cid = db.list_sibling_rows("sent:test-01:drill-4:2")[0][2]
+        _review_by_id(db, cid, PROD, due_in=0)
+
+        row = next(c for c in (await _plan())["cards"] if c["item_id"] == cid)
+        assert (row["kind"], row["text"], row["drill"]["cue"], row["drill"]["step"]) == (
+            "drill",
+            "Hun er der.",
+            "Hvor er hun?",
+            2,
+        )
+
+    async def test_a_drill_row_is_graded_like_any_other(self, srs_db):
+        from tests.test_lesson_drill_cards import _story
+
+        db = _install(srs_db, _lesson("Hei!", story=_story()))
+        await _grade({})
+        cid = self._drill_id(db)
+        _review_by_id(db, cid, PROD, due_in=0)
+
+        body = await _grade({"card_grades": [_g(cid, "good", PROD)]})
+
+        assert body["applied"] == 1
+        assert _direction_row(db, cid, PROD)["reps"] == 6
+
+
 def _review_by_id(db, cid: int, direction: Direction, *, due_in: int) -> None:
     _, item, _ = db.get_collocation_by_id(cid)
     db.update_direction(

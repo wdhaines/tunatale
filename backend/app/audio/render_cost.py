@@ -503,18 +503,26 @@ def estimate_render(
 
 
 def natural_take(lesson: Lesson, text: str, *, cache_dir: Path, voice_id: str | None = None) -> Path | None:
-    """The cached clip of *text* as *lesson*'s Natural Speed section said it, or ``None``.
+    """The cached clip of *text* as *lesson*'s Natural Speed section said it, or ``None`` (:func:`section_take`)."""
+    return section_take(lesson, text, SectionType.NATURAL_SPEED, cache_dir=cache_dir, voice_id=voice_id)
 
-    A sentence card's audio (tunatale-h0q3.42): the card sounds like the lesson,
+
+def section_take(
+    lesson: Lesson, text: str, section_type: SectionType, *, cache_dir: Path, voice_id: str | None = None
+) -> Path | None:
+    """The cached clip of *text* as *lesson*'s *section_type* section said it, or ``None``.
+
+    A sentence card's audio (tunatale-h0q3.42) is its Natural Speed take; a
+    drill card's (tunatale-5i1p.4) its Drill section's. The card sounds like the lesson,
     and the take is already paid for. The clip is addressed exactly as the cost
     report addresses it, ``plan_section`` and the adapter's own ``_cache_path``
     (``gemini_cache_path`` for a Gemini voice), with the app renderer's
     resolvers (``estimate_render``'s: no slicer). ``None`` when the lesson never
-    says *text* in its Natural Speed section, or says it but the clip is not in
+    says *text* in that section, or says it but the clip is not in
     *cache_dir*: nothing here synthesizes. *voice_id* picks between two
     speakers saying the same line.
     """
-    section = next((s for s in lesson.sections if s.section_type is SectionType.NATURAL_SPEED), None)
+    section = next((s for s in lesson.sections if s.section_type is section_type), None)
     if section is None:
         return None
     code = lesson.language_code

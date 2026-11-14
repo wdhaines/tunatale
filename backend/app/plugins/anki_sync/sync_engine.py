@@ -57,6 +57,7 @@ from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.contrast_card import cloze_note_text
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
+from app.srs.drill_card import is_drill_key
 from app.srs.fsrs import (
     MANUAL_REVIEW_KIND,
     is_day_level_last_review,
@@ -2021,6 +2022,20 @@ class AnkiSync:
             for g, i, c in items
             if i.syntactic_unit.card_type != "vocab" or i.syntactic_unit.translation.strip() or i.syntactic_unit.extras
         ]
+
+        # Hold back a DRILL card (tunatale-5i1p.4) until its note is built
+        # (5i1p.5). Its card_data is not a SentenceCard, so the loop below would
+        # take this `sent:` cloze row down the plain-cloze branch and mint it on
+        # Anki's built-in Cloze notetype: a wrong-notetype note. HELD, not
+        # dropped, as above: the row stays NEW and studiable in TT. 5i1p.5
+        # replaces this hold with the drill's own fields.
+        held_drills = [
+            i.syntactic_unit.disambig_key for _, i, _ in items if is_drill_key(i.syntactic_unit.disambig_key)
+        ]
+        if held_drills:
+            items = [(g, i, c) for g, i, c in items if not is_drill_key(i.syntactic_unit.disambig_key)]
+            for key in held_drills:
+                _log.info("DRILL_CARD_HELD key=%s — a drill note is not built yet (5i1p.5); held unlinked", key)
 
         if dry_run:
             return CreateNewReport(count=len(items))

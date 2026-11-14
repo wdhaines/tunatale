@@ -16,9 +16,12 @@ Format::
          "text": ..., "spoken": <a scenes line's text>, "english": ...,
          "glosses": [{"word": ..., "gloss": ...}],
          "cue": null | {"speaker", "role", "text", "spoken", "english", "glosses"},
-         "picture"?: "<media filename>", "whole": <bool>, "blanks": [{"form": ..., "gloss": ...}]}
+         "picture"?: "<media filename>", "whole": <bool>, "blanks": [{"form": ..., "gloss": ...}]},
+        {"kind": "drill", "drill": <int >= 1: the story's drills[n - 1]>, "role": <voice-map key>}
       ]
     }
+
+A ``drill`` item (tunatale-5i1p.4) is tested in ``test_lesson_drill_cards.py``.
 
 ``text`` is what the card shows (it may carry accents the lesson line lacks);
 ``spoken`` is the lesson line whose take is the card's audio, so it must be one

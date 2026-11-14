@@ -35,6 +35,7 @@ from app.api.srs import (
     _apply_grade_now,
     _build_listen_plan,
     _create_ranked_words,
+    _drill_dict,
     _listen_day_window,
     _ListenPlan,
     _record_study_pass,
@@ -51,6 +52,7 @@ from app.srs.anki_mirror.queue_stats import (
     resolve_relearning_steps,
 )
 from app.srs.anki_mirror.rollover import anki_today
+from app.srs.drill_card import DrillCard, drill_card
 from app.srs.lesson_cards import lesson_cards
 from app.srs.sentence_card import SentenceCard, sentence_card
 
@@ -68,36 +70,46 @@ class _LessonCard:
     kind: str
     item: SRSItem
     sentence: SentenceCard | None = None
+    drill: DrillCard | None = None
 
-    @property
-    def text(self) -> str:
+    def text(self, reps: int) -> str:
+        if self.drill is not None:
+            return self.drill.view(reps).answer
         return self.sentence.text if self.sentence is not None else self.item.syntactic_unit.text
 
-    @property
-    def gloss(self) -> str:
+    def gloss(self, reps: int) -> str:
+        if self.drill is not None:
+            return self.drill.view(reps).english
         return self.sentence.english if self.sentence is not None else self.item.syntactic_unit.translation or ""
 
 
 def _lesson_cards(db, lesson, plan: _ListenPlan) -> dict[int, _LessonCard]:
-    """The lesson's cards by id: its words, its phrases (a phrase wins a shared card), its own sentence cards.
+    """The lesson's cards by id: its words, its phrases (a phrase wins a shared card), its own sentence
+    and drill cards.
 
     Sentence cards are every row of each line the lesson's card list names,
-    including blanks mined since (they join the line's sibling group). A
-    function-word cloze is not a row: the popup never graded one.
+    including blanks mined since (they join the line's sibling group). A drill
+    card (5i1p.4) is its own sibling group, read as the step its reps ask for.
+    A function-word cloze is not a row: the popup never graded one.
     """
     cards: dict[int, _LessonCard] = {cid: _LessonCard(cid, "word", item) for cid, (_, item) in plan.word_cards.items()}
     cards.update({cid: _LessonCard(cid, "phrase", item) for cid, (_, item) in plan.phrase_cards.items()})
-    course_list = (lesson.generation_metadata.get("story") or {}).get("cards")
+    story = lesson.generation_metadata.get("story") or {}
+    course_list = story.get("cards")
     lines: dict[str, None] = {}
-    for card in lesson_cards(course_list) if course_list else []:
+    for card in lesson_cards(course_list, story.get("drills", [])) if course_list else []:
         made = sentence_card(card.unit)
         if made is not None:
             lines.setdefault(made.line_key, None)
+        elif drill_card(card.unit) is not None:
+            lines.setdefault(card.unit.disambig_key, None)
     for line_key in lines:
         for _guid, item, cid in db.list_sibling_rows(line_key):
             made = sentence_card(item.syntactic_unit)
             if made is not None:
                 cards[cid] = _LessonCard(cid, "sentence", item, made)
+            elif (drill := drill_card(item.syntactic_unit)) is not None:
+                cards[cid] = _LessonCard(cid, "drill", item, drill=drill)
     return cards
 
 
@@ -205,13 +217,14 @@ async def get_grade_plan(
                     "item_id": card.item_id,
                     "direction": direction.value,
                     "kind": card.kind,
-                    "text": card.text,
-                    "gloss": card.gloss,
+                    "text": card.text(rec.reps),
+                    "gloss": card.gloss(rec.reps),
                     "due_at": rec.due_at.isoformat(),
                     "grade_class": grade_class,
                     "line_key": card.sentence.line_key if card.sentence is not None else None,
                     "blank_start": blank[0] if blank else None,
                     "blank_end": blank[1] if blank else None,
+                    "drill": _drill_dict(card.item.syntactic_unit, rec.reps, db, card.item_id) if card.drill else None,
                 }
             )
     rows.sort(key=lambda r: (r["due_at"], r["item_id"], r["direction"]))

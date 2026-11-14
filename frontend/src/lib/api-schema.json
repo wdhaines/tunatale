@@ -1332,6 +1332,16 @@
             "title": "Direction",
             "type": "string"
           },
+          "drill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDrill"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "due_at": {
             "title": "Due At",
             "type": "string"
@@ -2117,6 +2127,123 @@
         "title": "ItemDirections",
         "type": "object"
       },
+      "ItemDrill": {
+        "description": "A drill card's step view (tunatale-5i1p.4): the step its review count asks for.\n\nBuilt per request from the card's ``reps`` (``step = reps mod of``), so a\ncard graded Again comes back on its next step. The front is ``before_cue``\nand ``before`` (the worked pair, or the sentence before; either may be\nabsent), then ``cue``; the back is ``answer``, and ``english`` where the\nlesson gives one (\"\" otherwise). ``step`` counts from 1, as the page says\nit: \"step 2 of 16\". Each part's audio is the lesson's own take, or None.",
+        "properties": {
+          "answer": {
+            "title": "Answer",
+            "type": "string"
+          },
+          "answer_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Audio Url"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "before_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Audio Url"
+          },
+          "before_cue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Cue"
+          },
+          "before_cue_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Cue Audio Url"
+          },
+          "cue": {
+            "title": "Cue",
+            "type": "string"
+          },
+          "cue_audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cue Audio Url"
+          },
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "substitution",
+              "transformation",
+              "true_false",
+              "question_answer"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "of": {
+            "title": "Of",
+            "type": "integer"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "step",
+          "of",
+          "cue",
+          "answer",
+          "english",
+          "before",
+          "before_cue",
+          "cue_audio_url",
+          "answer_audio_url",
+          "before_audio_url",
+          "before_cue_audio_url"
+        ],
+        "title": "ItemDrill",
+        "type": "object"
+      },
       "ItemExtra": {
         "description": "One element of SrsItemResponse.extras (a BackField \u2192 {label, html, tier}).",
         "properties": {
@@ -2655,6 +2782,16 @@
           },
           "directions": {
             "$ref": "#/components/schemas/ItemDirections"
+          },
+          "drill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDrill"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "due_at": {
             "anyOf": [
@@ -4230,6 +4367,16 @@
           "directions": {
             "$ref": "#/components/schemas/ItemDirections"
           },
+          "drill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDrill"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "due_at": {
             "anyOf": [
               {
@@ -5471,7 +5618,7 @@
         "type": "object"
       },
       "SrsItemResponse": {
-        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 29 keys, one per ``_item_to_dict`` output key.",
+        "description": "Response of create_item, patch_item, reset_item, restore_known_item,\nset_item_state, and suspend_item; the element of list_items and untrack_item.\n\nExactly 30 keys, one per ``_item_to_dict`` output key.",
         "properties": {
           "anki_note_id": {
             "anyOf": [
@@ -5513,6 +5660,16 @@
           },
           "directions": {
             "$ref": "#/components/schemas/ItemDirections"
+          },
+          "drill": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDrill"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "due_at": {
             "anyOf": [
