@@ -2112,3 +2112,100 @@ class ReferencePagesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pages: list[ReferencePage]
+
+
+# ── Grade page (tunatale-5i1p.2) ────────────────────────────────────────────
+
+
+class GradePlanCard(BaseModel):
+    """One gradable direction of one of the lesson's cards."""
+
+    item_id: int
+    direction: Literal["recognition", "production"]
+    kind: Literal["word", "phrase", "sentence", "drill"]
+    text: str
+    gloss: str
+    due_at: str
+    # due = due by the end of today's Anki day; ahead = later (a grade logs
+    # review-ahead, kind 3); learning = a (re)learning step that is already ripe.
+    grade_class: Literal["due", "ahead", "learning"]
+    # A sentence card's line, and its blank as a span of `text` (None = the whole line).
+    line_key: str | None = None
+    blank_start: int | None = None
+    blank_end: int | None = None
+
+
+class GradePlanLater(BaseModel):
+    """How many of the lesson's directions fall past the range, per direction."""
+
+    recognition: int
+    production: int
+
+
+class GradeWordSuggestion(BaseModel):
+    """A word the Save would add: an untracked lemma of the lesson."""
+
+    key: str  # the lemma: what `declined` / `over_cap` / `restored` name, and what the ignore list holds
+    text: str  # the headword the card would carry
+    gloss: str
+    # False past the day's new-card budget: made only when named in `over_cap`.
+    will_create: bool
+
+
+class GradeSuggestions(BaseModel):
+    words: list[GradeWordSuggestion]
+    contrast: list[AffixCardPreview]
+
+
+class GradePlanResponse(BaseModel):
+    """Response of GET /api/srs/content/{id}/grade-plan."""
+
+    studied: bool
+    listen_count: int
+    range_days: int | None
+    cards: list[GradePlanCard]
+    later: GradePlanLater
+    # Directions of the lesson's cards that exist and are still NEW: card
+    # reviews introduce them, Grade does not.
+    waiting_new: int
+    suggestions: GradeSuggestions
+
+
+class CardGrade(BaseModel):
+    item_id: int
+    direction: Literal["recognition", "production"]
+    # No "skip": a row the page does not send is untouched.
+    rating: Literal["again", "hard", "good", "easy"]
+
+
+class SuggestionKey(BaseModel):
+    kind: Literal["word", "contrast"]
+    key: str  # a word's lemma, or a contrast card's form
+
+
+class RestoredKey(BaseModel):
+    # Only a word's decline is kept (the ignore list); a contrast card's is per Save.
+    kind: Literal["word"]
+    key: str
+
+
+class GradeRequest(BaseModel):
+    """Body of POST /api/srs/content/{id}/grade. Explicit only: nothing absent is graded."""
+
+    card_grades: list[CardGrade] = []
+    declined: list[SuggestionKey] = []
+    restored: list[RestoredKey] = []
+    over_cap: list[SuggestionKey] = []
+    # The first Save of a lesson marks it studied whatever is sent; a later
+    # Save records another study pass only when this is true.
+    studied: bool = False
+
+
+class GradeResponse(BaseModel):
+    """Response of POST /api/srs/content/{id}/grade."""
+
+    status: str
+    applied: int
+    created: int
+    recorded_study: bool
+    listen_count: int

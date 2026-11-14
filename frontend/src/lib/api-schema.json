@@ -257,6 +257,39 @@
         "title": "BulkDeleteResponse",
         "type": "object"
       },
+      "CardGrade": {
+        "properties": {
+          "direction": {
+            "enum": [
+              "recognition",
+              "production"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "integer"
+          },
+          "rating": {
+            "enum": [
+              "again",
+              "hard",
+              "good",
+              "easy"
+            ],
+            "title": "Rating",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "direction",
+          "rating"
+        ],
+        "title": "CardGrade",
+        "type": "object"
+      },
       "ClientLogRequest": {
         "description": "Body for POST /api/client-log \u2014 a batch of already-formatted lines.\n\nDeliberately opaque strings rather than a typed event schema. The endpoint's\njob is to make browser-side evidence DURABLE, not to understand it; a schema\nhere would have to change every time a new thing needs tracing, and the\nwhole point is that the next mobile-only bug is one nobody predicted.",
         "properties": {
@@ -1264,6 +1297,300 @@
           "user_prompt"
         ],
         "title": "GetStoryPromptResponse",
+        "type": "object"
+      },
+      "GradePlanCard": {
+        "description": "One gradable direction of one of the lesson's cards.",
+        "properties": {
+          "blank_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blank End"
+          },
+          "blank_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blank Start"
+          },
+          "direction": {
+            "enum": [
+              "recognition",
+              "production"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "due_at": {
+            "title": "Due At",
+            "type": "string"
+          },
+          "gloss": {
+            "title": "Gloss",
+            "type": "string"
+          },
+          "grade_class": {
+            "enum": [
+              "due",
+              "ahead",
+              "learning"
+            ],
+            "title": "Grade Class",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "word",
+              "phrase",
+              "sentence",
+              "drill"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "line_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Key"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "direction",
+          "kind",
+          "text",
+          "gloss",
+          "due_at",
+          "grade_class"
+        ],
+        "title": "GradePlanCard",
+        "type": "object"
+      },
+      "GradePlanLater": {
+        "description": "How many of the lesson's directions fall past the range, per direction.",
+        "properties": {
+          "production": {
+            "title": "Production",
+            "type": "integer"
+          },
+          "recognition": {
+            "title": "Recognition",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recognition",
+          "production"
+        ],
+        "title": "GradePlanLater",
+        "type": "object"
+      },
+      "GradePlanResponse": {
+        "description": "Response of GET /api/srs/content/{id}/grade-plan.",
+        "properties": {
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/GradePlanCard"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "later": {
+            "$ref": "#/components/schemas/GradePlanLater"
+          },
+          "listen_count": {
+            "title": "Listen Count",
+            "type": "integer"
+          },
+          "range_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Range Days"
+          },
+          "studied": {
+            "title": "Studied",
+            "type": "boolean"
+          },
+          "suggestions": {
+            "$ref": "#/components/schemas/GradeSuggestions"
+          },
+          "waiting_new": {
+            "title": "Waiting New",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "studied",
+          "listen_count",
+          "range_days",
+          "cards",
+          "later",
+          "waiting_new",
+          "suggestions"
+        ],
+        "title": "GradePlanResponse",
+        "type": "object"
+      },
+      "GradeRequest": {
+        "description": "Body of POST /api/srs/content/{id}/grade. Explicit only: nothing absent is graded.",
+        "properties": {
+          "card_grades": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CardGrade"
+            },
+            "title": "Card Grades",
+            "type": "array"
+          },
+          "declined": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SuggestionKey"
+            },
+            "title": "Declined",
+            "type": "array"
+          },
+          "over_cap": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SuggestionKey"
+            },
+            "title": "Over Cap",
+            "type": "array"
+          },
+          "restored": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RestoredKey"
+            },
+            "title": "Restored",
+            "type": "array"
+          },
+          "studied": {
+            "default": false,
+            "title": "Studied",
+            "type": "boolean"
+          }
+        },
+        "title": "GradeRequest",
+        "type": "object"
+      },
+      "GradeResponse": {
+        "description": "Response of POST /api/srs/content/{id}/grade.",
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "listen_count": {
+            "title": "Listen Count",
+            "type": "integer"
+          },
+          "recorded_study": {
+            "title": "Recorded Study",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "applied",
+          "created",
+          "recorded_study",
+          "listen_count"
+        ],
+        "title": "GradeResponse",
+        "type": "object"
+      },
+      "GradeSuggestions": {
+        "properties": {
+          "contrast": {
+            "items": {
+              "$ref": "#/components/schemas/AffixCardPreview"
+            },
+            "title": "Contrast",
+            "type": "array"
+          },
+          "words": {
+            "items": {
+              "$ref": "#/components/schemas/GradeWordSuggestion"
+            },
+            "title": "Words",
+            "type": "array"
+          }
+        },
+        "required": [
+          "words",
+          "contrast"
+        ],
+        "title": "GradeSuggestions",
+        "type": "object"
+      },
+      "GradeWordSuggestion": {
+        "description": "A word the Save would add: an untracked lemma of the lesson.",
+        "properties": {
+          "gloss": {
+            "title": "Gloss",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "will_create": {
+            "title": "Will Create",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "text",
+          "gloss",
+          "will_create"
+        ],
+        "title": "GradeWordSuggestion",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -4693,6 +5020,25 @@
         "title": "RenderSectionCue",
         "type": "object"
       },
+      "RestoredKey": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "const": "word",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "key"
+        ],
+        "title": "RestoredKey",
+        "type": "object"
+      },
       "ReviewPressureRequest": {
         "properties": {
           "pressure": {
@@ -5409,6 +5755,28 @@
           "phrase_count"
         ],
         "title": "StorySection",
+        "type": "object"
+      },
+      "SuggestionKey": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "word",
+              "contrast"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "key"
+        ],
+        "title": "SuggestionKey",
         "type": "object"
       },
       "SuspendRequest": {
@@ -8905,6 +9273,119 @@
           }
         },
         "summary": "Commit Pending Grades",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/grade": {
+      "post": {
+        "description": "Save the Grade page: apply the grades sent, add the suggestions left on, and mark the lesson studied.\n\nOrder: validate every grade (any refusal applies nothing: 422 for a row\nthat was never this lesson's to grade, else 409, the plan was stale and the\npage refetches), then the grades, then the creations, then the study mark.\nCreations come before the course list's mint, as on the listen: the mint\nskips a word the deck already has, so the other order could make a twin.\n\n``declined`` words are skipped (each keeps its slot: nothing is promoted\ninto it) and written to the ignore list, so they stay off; ``restored``\ntakes a word back off that list. A declined contrast card is skipped for\nthis Save only. ``over_cap`` opts a suggestion past the day's budget.\n\nThe first Save of a lesson is its study mark whatever ``studied`` says; a\nlater one records another listen only when ``studied`` is true. The mark\nmints the lesson's own card list. Media work runs after the response.",
+        "operationId": "grade_lesson_api_srs_content__content_id__grade_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grade Lesson",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/grade-plan": {
+      "get": {
+        "description": "The lesson's gradable cards, one row per direction, soonest first; plus what a Save would add.\n\n``range_days`` keeps REVIEW rows due within that many days of today (0 =\ndue today); omitted, every gradable row. Ripe (re)learning rows always\nshow. Rows past the range, and unripe steps, are counted in ``later``.\nRead-only.",
+        "operationId": "get_grade_plan_api_srs_content__content_id__grade_plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range_days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Range Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradePlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Grade Plan",
         "tags": [
           "srs"
         ]

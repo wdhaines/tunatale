@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import json
 import logging
@@ -1445,6 +1446,175 @@ def _lemmas_losing_a_shared_card(
     return dropped
 
 
+@dataclasses.dataclass
+class _Created:
+    """What a creation pass made: a count, and the media work to run after the response."""
+
+    created: int = 0
+    vocab: list = dataclasses.field(default_factory=list)
+    clozes: list = dataclasses.field(default_factory=list)
+    reglosses: list = dataclasses.field(default_factory=list)
+
+
+def _lesson_sentence_translations(lesson) -> dict[str, str]:
+    """The lesson's sentence → English map, recovered from TRANSLATED for lessons that predate it.
+
+    A copy: the lesson's own metadata is not written to. First occurrence wins.
+    """
+    from app.models.lesson import extract_sentence_translations_from_translated
+
+    translations = dict(lesson.generation_metadata.get("sentence_translations", {}))
+    for k, v in extract_sentence_translations_from_translated(lesson).items():
+        translations.setdefault(k, v)
+    return translations
+
+
+def _create_ranked_words(
+    db,
+    lesson,
+    words: _LessonWords,
+    ranked: list[str],
+    live_creates: list[str],
+    *,
+    opted_in: set[str],
+    skipped: set[str],
+) -> _Created:
+    """Create the ranked untracked lemmas a listen (or a Grade Save) makes, in rank order.
+
+    A lemma is made when the shared introduction budget reaches it
+    (``live_creates``) or the learner opted it past the budget (``opted_in``),
+    and it was not ``skipped``: a skip consumes its slot, so nothing below it is
+    promoted (``1535071``). ``ranked`` and ``live_creates`` must come from the
+    same ``_allocate_intro_pool`` call the preview made. Shared by
+    ``mark_lesson_listened`` and ``grade_lesson``.
+    """
+    made = _Created()
+    token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
+    sentence_translations = _lesson_sentence_translations(lesson)
+    verb_base_glosses: dict[str, str] = lesson.generation_metadata.get("verb_base_glosses", {})
+    lemma_plausible = get_lemma_plausible(lesson.language_code)
+    lemma_to_surfaces = words.surfaces
+    surface_to_upos = words.surface_upos
+    lemma_to_sentence = words.first_sentence
+    lemma_to_first_surface = words.first_surface
+    skipped_lemmas = skipped
+    live_create_set = set(live_creates)
+    for cand in ranked:
+        # Over-budget rows are skipped (a gated `continue`, not a `break`) so
+        # an opted-in tail lemma ranked BELOW the first over-budget row is still
+        # reached. A name is honoured only here, while iterating real ranked
+        # candidates — an unknown or in-budget lemma matches nothing and
+        # creates nothing, structurally (no standalone validation pass).
+        if cand not in live_create_set and cand not in opted_in:
+            continue
+        if cand in skipped_lemmas:
+            continue  # slot consumed, nothing created — no promotion
+        lemma = cand
+        is_func = is_function_word_for(
+            lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
+        )
+        upos_for_lemma = None
+        if not is_func:
+            upos_for_lemma = next(
+                (
+                    surface_to_upos.get(s.casefold())
+                    for s in lemma_to_surfaces.get(lemma, set())
+                    if s.casefold() in surface_to_upos
+                ),
+                None,
+            )
+        sent = lemma_to_sentence.get(lemma, "")
+        # Cloze rows blank the surface as it appeared, not the dictionary lemma:
+        # the lemmatizer may map an inflected surface to a different lemma (classla
+        # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
+        # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
+        stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
+        # Stanza can return a truncated fragment as the lemma (`trøtt` → `trø`).
+        # When the fragment fails the language's plausibility check, key the card
+        # on the surface as it appeared instead — the headword stays a real word,
+        # and the surface key means the next listen resolves the same card rather
+        # than spawning a duplicate (a `trø` lookup falls back to the `trøtt` row).
+        first_surface = lemma_to_first_surface.get(lemma, lemma)
+        card_lemma = _card_key_for_lemma(lemma, first_surface, is_func=is_func, lemma_plausible=lemma_plausible)
+        unit = SyntacticUnit(
+            text=format_vocab_headword(card_lemma, upos_for_lemma, lesson.language_code) if not is_func else lemma,
+            translation=_resolve_gloss_translation(
+                lemma,
+                token_glosses,
+                lemma_to_surfaces.get(lemma, set()),
+                first_surface,
+                language_code=lesson.language_code,
+                surface_upos=surface_to_upos,
+                verb_base_glosses=verb_base_glosses,
+            ),
+            word_count=1,
+            difficulty=1,
+            source="llm",
+            lemma=card_lemma,
+            card_type="cloze" if is_func else "vocab",
+            source_sentence=stored_sentence,
+            source_sentence_translation=sentence_translations.get(sent, ""),
+            # From the lemma, not a tagged gender: _LessonWords keeps none, and
+            # prod's table lemmatizer tags none (tunatale-vvb6). Same answer on
+            # every host, which is what a shared deck needs.
+            article=get_gender_article(lesson.language_code, "", lemma=card_lemma) if upos_for_lemma == "NOUN" else "",
+        )
+        db.add_collocation(unit, language_code=lesson.language_code)
+        if is_func:
+            coll = db.get_collocation_by_lemma_with_id(card_lemma)
+            new_id, _ = coll
+            made.clozes.append((new_id, sent, lemma_to_first_surface.get(lemma, lemma), lemma))
+        else:
+            new_id, _ = db.get_collocation_by_lemma_with_id(card_lemma)
+            made.vocab.append((new_id, unit, card_lemma))
+            # The generator dropped this word from its whole-dialogue gloss
+            # (_resolve_gloss_translation already warned). Retry it per word.
+            if not unit.translation.strip():
+                made.reglosses.append((new_id, db.get_collocation_by_id(new_id)[1].guid, card_lemma, stored_sentence))
+        made.created += 1
+    return made
+
+
+def _record_study_pass(db, lesson, content_id: str) -> list:
+    """Mark *lesson* studied: mint its own card list, then record one listen. Returns the minted rows.
+
+    The list mints all of it, NEW, outside the listen budget: the deck's
+    new-card limit paces it, and the Anki writer's course region keeps the
+    list's order (tunatale-h0q3.43). The listen row is TT-only and never syncs.
+    """
+    course_list = (lesson.generation_metadata.get("story") or {}).get("cards")
+    course = mint_lesson_cards(db, lesson.language_code, course_list) if course_list else []
+    db.record_listen(content_id)
+    return course
+
+
+def _schedule_listen_media(
+    background_tasks: BackgroundTasks, request: Request, db, lesson, *, vocab, clozes, reglosses, course
+) -> None:
+    """Queue the media work a listen or a Save found; Starlette runs it after the response."""
+    llm = app_state.llm(request)
+    if vocab or clozes or reglosses:
+        background_tasks.add_task(
+            app_state.background_work(request.app).track("listen_media", _complete_listen_media),
+            db,
+            llm,
+            vocab=vocab,
+            clozes=clozes,
+            reglosses=reglosses,
+            language_code=lesson.language_code,
+        )
+    if course:
+        background_tasks.add_task(
+            app_state.background_work(request.app).track("lesson_card_audio", attach_lesson_card_audio),
+            db,
+            course,
+            lesson,
+            get_language(lesson.language_code).tts_voice_map,
+            cache_dir=settings.tts_cache_dir,
+            media_dir=_MEDIA_DIR,
+        )
+
+
 @router.post("/listen", status_code=200, response_model=ListenResponse)
 async def mark_lesson_listened(body: ListenRequest, request: Request, background_tasks: BackgroundTasks):
     store = request.state.content_store
@@ -1453,7 +1623,6 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         raise HTTPException(status_code=404, detail="Lesson not found")
 
     db = request.state.srs_db
-    llm = app_state.llm(request)
     # Media work found while building cards, executed after the response by
     # _complete_listen_media. Collected rather than awaited so the request does
     # not pay for a TTS/Pixabay round trip per new word (tunatale-byw's shape).
@@ -1464,20 +1633,10 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     pending_regloss: list = []
 
     # ── Word-level tracking from NATURAL_SPEED section ──────────────────
-    from app.models.lesson import extract_sentence_translations_from_translated
-
     token_glosses: dict[str, str] = lesson.generation_metadata.get("token_glosses", {})
-    sentence_translations: dict[str, str] = lesson.generation_metadata.get("sentence_translations", {})
-    # Backfill path: pre-Layer-N lessons have no `sentence_translations` in
-    # metadata. Recover from the TRANSLATED section so old lessons can still
-    # populate cloze cards' Back Extra. First-occurrence wins on the merge.
-    derived_st = extract_sentence_translations_from_translated(lesson)
-    for k, v in derived_st.items():
-        sentence_translations.setdefault(k, v)
-    # VERB base-form glosses (Part A): lessons generated before it existed have
-    # no key — treat as an empty map, so _resolve_gloss_translation falls back
-    # to the aligner for them. Never a crash.
-    verb_base_glosses: dict[str, str] = lesson.generation_metadata.get("verb_base_glosses", {})
+    # Pre-Layer-N lessons have no `sentence_translations` in metadata: recovered
+    # from the TRANSLATED section so old lessons still fill a cloze's Back Extra.
+    sentence_translations = _lesson_sentence_translations(lesson)
 
     # Lemma analysis shared verbatim with /lesson/{id}/review-queue — the
     # blocking (classla) pass runs on a worker thread so the event loop
@@ -1854,80 +2013,13 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
             db.stage_pending_grade(body.content_id, _coll_id, Direction.RECOGNITION.value, _rating, "new")
             staged_count += 1
 
-    live_create_set = set(live_creates)
-    for cand in ranked:
-        # Over-budget rows are skipped (a gated `continue`, not a `break`) so
-        # an opted-in tail lemma ranked BELOW the first over-budget row is still
-        # reached. A name is honoured only here, while iterating real ranked
-        # candidates — an unknown or in-budget lemma matches nothing and
-        # creates nothing, structurally (no standalone validation pass).
-        if cand not in live_create_set and cand not in over_cap_creates:
-            continue
-        if cand in skipped_lemmas:
-            continue  # slot consumed, nothing created — no promotion
-        lemma = cand
-        is_func = is_function_word_for(
-            lemma, lemma_to_surfaces.get(lemma, set()), lesson.language_code, surface_to_upos
-        )
-        upos_for_lemma = None
-        if not is_func:
-            upos_for_lemma = next(
-                (
-                    surface_to_upos.get(s.casefold())
-                    for s in lemma_to_surfaces.get(lemma, set())
-                    if s.casefold() in surface_to_upos
-                ),
-                None,
-            )
-        sent = lemma_to_sentence.get(lemma, "")
-        # Cloze rows blank the surface as it appeared, not the dictionary lemma:
-        # the lemmatizer may map an inflected surface to a different lemma (classla
-        # "sem" → "biti") that isn't in the sentence. Store the cloze pre-built;
-        # sync's idempotent make_cloze_text passes it through. (Phase 2b.)
-        stored_sentence = make_cloze_text(lemma_to_first_surface.get(lemma, lemma), sent) if is_func else sent
-        # Stanza can return a truncated fragment as the lemma (`trøtt` → `trø`).
-        # When the fragment fails the language's plausibility check, key the card
-        # on the surface as it appeared instead — the headword stays a real word,
-        # and the surface key means the next listen resolves the same card rather
-        # than spawning a duplicate (a `trø` lookup falls back to the `trøtt` row).
-        first_surface = lemma_to_first_surface.get(lemma, lemma)
-        card_lemma = _card_key_for_lemma(lemma, first_surface, is_func=is_func, lemma_plausible=lemma_plausible)
-        unit = SyntacticUnit(
-            text=format_vocab_headword(card_lemma, upos_for_lemma, lesson.language_code) if not is_func else lemma,
-            translation=_resolve_gloss_translation(
-                lemma,
-                token_glosses,
-                lemma_to_surfaces.get(lemma, set()),
-                first_surface,
-                language_code=lesson.language_code,
-                surface_upos=surface_to_upos,
-                verb_base_glosses=verb_base_glosses,
-            ),
-            word_count=1,
-            difficulty=1,
-            source="llm",
-            lemma=card_lemma,
-            card_type="cloze" if is_func else "vocab",
-            source_sentence=stored_sentence,
-            source_sentence_translation=sentence_translations.get(sent, ""),
-            # From the lemma, not a tagged gender: _LessonWords keeps none, and
-            # prod's table lemmatizer tags none (tunatale-vvb6). Same answer on
-            # every host, which is what a shared deck needs.
-            article=get_gender_article(lesson.language_code, "", lemma=card_lemma) if upos_for_lemma == "NOUN" else "",
-        )
-        db.add_collocation(unit, language_code=lesson.language_code)
-        if is_func:
-            coll = db.get_collocation_by_lemma_with_id(card_lemma)
-            new_id, _ = coll
-            pending_cloze.append((new_id, sent, lemma_to_first_surface.get(lemma, lemma), lemma))
-        else:
-            new_id, _ = db.get_collocation_by_lemma_with_id(card_lemma)
-            pending_vocab.append((new_id, unit, card_lemma))
-            # The generator dropped this word from its whole-dialogue gloss
-            # (_resolve_gloss_translation already warned). Retry it per word.
-            if not unit.translation.strip():
-                pending_regloss.append((new_id, db.get_collocation_by_id(new_id)[1].guid, card_lemma, stored_sentence))
-        created_count += 1
+    made = _create_ranked_words(
+        db, lesson, words, ranked, live_creates, opted_in=over_cap_creates, skipped=skipped_lemmas
+    )
+    created_count += made.created
+    pending_vocab += made.vocab
+    pending_cloze += made.clozes
+    pending_regloss += made.reglosses
     remaining_candidates = len(ranked) - created_count
 
     # ── Contrast cards for the lesson's affix drill (tunatale-ve4p.6) ────
@@ -1951,44 +2043,25 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     pending_cloze += contrast
     created_count += len(contrast)
 
-    # ── The lesson's own card list (tunatale-h0q3.43) ─────────────────────
-    # All of it, NEW, outside the listen budget: the deck's new-card limit paces
-    # it, and the Anki writer's course region keeps the list's order.
-    course_list = (lesson.generation_metadata.get("story") or {}).get("cards")
-    course = mint_lesson_cards(db, lesson.language_code, course_list) if course_list else []
+    course = _record_study_pass(db, lesson, body.content_id)
     created_count += len(course)
     pending_vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
-
-    # Server-side listened state (TT-only, never syncs): one row per listen.
-    db.record_listen(body.content_id)
 
     # Anki parity: grading advances the learning cutoff. A batch of confirmed
     # grades is still one grade event, so advance once at the end.
     if grade_ctx["applied"]:
         advance_learning_cutoff(db, grade_ctx["now"])
 
-    # Off the critical path: Starlette runs this after the response is sent.
-    if pending_vocab or pending_cloze or pending_regloss:
-        background_tasks.add_task(
-            app_state.background_work(request.app).track("listen_media", _complete_listen_media),
-            db,
-            llm,
-            vocab=pending_vocab,
-            clozes=pending_cloze,
-            reglosses=pending_regloss,
-            language_code=lesson.language_code,
-        )
-
-    if course:
-        background_tasks.add_task(
-            app_state.background_work(request.app).track("lesson_card_audio", attach_lesson_card_audio),
-            db,
-            course,
-            lesson,
-            get_language(lesson.language_code).tts_voice_map,
-            cache_dir=settings.tts_cache_dir,
-            media_dir=_MEDIA_DIR,
-        )
+    _schedule_listen_media(
+        background_tasks,
+        request,
+        db,
+        lesson,
+        vocab=pending_vocab,
+        clozes=pending_cloze,
+        reglosses=pending_regloss,
+        course=course,
+    )
 
     return {
         "status": "ok",
@@ -2335,6 +2408,35 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
     db = request.state.srs_db
 
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
+    plan = _build_listen_plan(db, store, lesson, content_id, words)
+    return {"candidates": plan.candidates, "affix_cards": plan.affix_cards}
+
+
+class _ListenPlan(NamedTuple):
+    """What a listen of a lesson would act on, read once: the preview's rows and the pieces its writers reuse.
+
+    ``word_cards`` / ``phrase_cards`` are the lesson's tracked cards by id, kept
+    BEFORE any grade-class filter (the Grade plan classifies every direction
+    itself): a word card is one the preview's resolution settles on (not a
+    dropped twin, not an undecided sense, not a cloze); a phrase card is a key
+    phrase or matched phrase card with a card that is not a cloze.
+    """
+
+    candidates: list[dict]
+    affix_cards: list[dict]
+    ranked: list[str]
+    live_creates: list[str]
+    offered: list
+    word_cards: dict[int, tuple[str, SRSItem]]
+    phrase_cards: dict[int, tuple[str, SRSItem]]
+
+
+def _build_listen_plan(db, store, lesson, content_id: str, words: _LessonWords) -> _ListenPlan:
+    """The listen preview's read, shared by the preview, the Grade plan and the Grade Save.
+
+    One computation for all three is what keeps a suggestion's ``will_create``
+    and what a Save then creates in step (the 6a5c718 class). Read-only.
+    """
     listen_phrases = _listen_key_phrases(lesson, words, db)
     # Read here, above the word loop: the gloss is what picks among a spelling's
     # cards, and the create rows further down read the same map.
@@ -2382,6 +2484,8 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
 
     candidates: list[dict] = []
     lemma_candidates: list[str] = []
+    word_cards: dict[int, tuple[str, SRSItem]] = {}
+    phrase_cards: dict[int, tuple[str, SRSItem]] = {}
     # lemma → the key a card is actually made on. Populated in the word loop so
     # the create rows below reuse the SAME decision (function-word status
     # included) instead of recomputing it with a guessed `is_func`.
@@ -2473,6 +2577,8 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             lemma_candidates.append(lemma)
         else:
             existing_id, existing = res
+            if not sense_undecided and existing.syntactic_unit.card_type != "cloze":
+                word_cards[existing_id] = (card_key, existing)
             # Owned by the key-phrase pass below. Dropping the row here rather
             # than after assembly matters: a NEW-state row spends a slot of the
             # shared introduction budget, and budgeting a row that then vanishes
@@ -2544,13 +2650,14 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
             continue
         if item.syntactic_unit.card_type == "cloze":
             continue
+        kp_id = db.get_collocation_id_by_guid(item.guid)
+        phrase_cards[kp_id] = (kp.phrase, item)
         rec = item.directions.get(Direction.RECOGNITION)
         if rec is None:
             continue
         grade_cls = _listen_grade_class(rec, today_start, today_end, end_of_day_utc=end_of_day_utc)
         if grade_cls is None:
             continue
-        kp_id = db.get_collocation_id_by_guid(item.guid)
         progress = compute_mastery_progress(item.directions.values())
         due_at_str = (
             (rec.due_at.isoformat() if isinstance(rec.due_at, datetime.datetime) else str(rec.due_at))
@@ -2681,7 +2788,15 @@ async def get_listen_preview(content_id: str, request: Request) -> ListenPreview
         }
         for card, live in offered
     ]
-    return {"candidates": creates + tracked, "affix_cards": affix_cards}
+    return _ListenPlan(
+        candidates=creates + tracked,
+        affix_cards=affix_cards,
+        ranked=ranked,
+        live_creates=live_creates,
+        offered=offered,
+        word_cards=word_cards,
+        phrase_cards=phrase_cards,
+    )
 
 
 @router.get("/content/{content_id}/transcript", status_code=200, response_model=LessonTranscriptResponse)

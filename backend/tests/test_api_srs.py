@@ -15,7 +15,7 @@ from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 # Frozen session_main_queue seeds must carry the current logic version, or the
 # reader discards them as stale (the deploy-time invalidation this field exists for).
 from app.srs.anki_mirror.cache_registry import REGISTRY as _CACHE_REGISTRY
-from app.srs.anki_mirror.rollover import anki_today
+from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
 from tests.conftest import anki_day_anchor, seed_direction
 
 _SMQ_V = _CACHE_REGISTRY["session_main_queue"].logic_version
@@ -2739,7 +2739,9 @@ class TestLearningStatePriority:
             db,
             text="first_review_today",
             state=SRSState.REVIEW,
-            due_at=datetime.now(UTC) - timedelta(hours=1),
+            # Day-level, as every REVIEW row is: an instant an hour ago crosses the
+            # UTC date line after 19:00 EST and reads as not due (review-ahead, uncharged).
+            due_at=due_at_rollover_utc(today),
             stability=5.0,
             reps=3,
             last_review=lr,

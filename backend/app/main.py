@@ -493,6 +493,7 @@ from app.api import auth as auth_api  # noqa: E402
 from app.api import client_log as client_log_api  # noqa: E402
 from app.api import llm as llm_api  # noqa: E402
 from app.api import review_sessions as review_sessions_api  # noqa: E402
+from app.api import srs_grade as srs_grade_api  # noqa: E402
 from app.api import srs_images as srs_images_api  # noqa: E402
 from app.auth.dependencies import require_owner, require_user  # noqa: E402
 
@@ -523,6 +524,7 @@ USER = [Depends(require_user)]
 app.include_router(curriculum.router, dependencies=USER)
 app.include_router(generation.router, dependencies=USER)
 app.include_router(srs.router, dependencies=[Depends(require_user)])
+app.include_router(srs_grade_api.router, dependencies=[Depends(require_user)])
 app.include_router(srs_images_api.router, dependencies=[Depends(require_user)])
 app.include_router(audio.router, dependencies=USER)
 app.include_router(reference.router, dependencies=USER)

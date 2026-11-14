@@ -1418,6 +1418,66 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/srs/content/{content_id}/grade": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Grade Lesson
+     * @description Save the Grade page: apply the grades sent, add the suggestions left on, and mark the lesson studied.
+     *
+     *     Order: validate every grade (any refusal applies nothing: 422 for a row
+     *     that was never this lesson's to grade, else 409, the plan was stale and the
+     *     page refetches), then the grades, then the creations, then the study mark.
+     *     Creations come before the course list's mint, as on the listen: the mint
+     *     skips a word the deck already has, so the other order could make a twin.
+     *
+     *     ``declined`` words are skipped (each keeps its slot: nothing is promoted
+     *     into it) and written to the ignore list, so they stay off; ``restored``
+     *     takes a word back off that list. A declined contrast card is skipped for
+     *     this Save only. ``over_cap`` opts a suggestion past the day's budget.
+     *
+     *     The first Save of a lesson is its study mark whatever ``studied`` says; a
+     *     later one records another listen only when ``studied`` is true. The mark
+     *     mints the lesson's own card list. Media work runs after the response.
+     */
+    post: operations["grade_lesson_api_srs_content__content_id__grade_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/srs/content/{content_id}/grade-plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Grade Plan
+     * @description The lesson's gradable cards, one row per direction, soonest first; plus what a Save would add.
+     *
+     *     ``range_days`` keeps REVIEW rows due within that many days of today (0 =
+     *     due today); omitted, every gradable row. Ripe (re)learning rows always
+     *     show. Rows past the range, and unripe steps, are counted in ``later``.
+     *     Read-only.
+     */
+    get: operations["get_grade_plan_api_srs_content__content_id__grade_plan_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/content/{content_id}/listen-preview": {
     parameters: {
       query?: never;
@@ -2512,6 +2572,21 @@ export interface components {
       /** Deleted */
       deleted: number;
     };
+    /** CardGrade */
+    CardGrade: {
+      /**
+       * Direction
+       * @enum {string}
+       */
+      direction: "recognition" | "production";
+      /** Item Id */
+      item_id: number;
+      /**
+       * Rating
+       * @enum {string}
+       */
+      rating: "again" | "hard" | "good" | "easy";
+    };
     /**
      * ClientLogRequest
      * @description Body for POST /api/client-log — a batch of already-formatted lines.
@@ -3015,6 +3090,137 @@ export interface components {
       system_prompt: string;
       /** User Prompt */
       user_prompt: string;
+    };
+    /**
+     * GradePlanCard
+     * @description One gradable direction of one of the lesson's cards.
+     */
+    GradePlanCard: {
+      /** Blank End */
+      blank_end?: number | null;
+      /** Blank Start */
+      blank_start?: number | null;
+      /**
+       * Direction
+       * @enum {string}
+       */
+      direction: "recognition" | "production";
+      /** Due At */
+      due_at: string;
+      /** Gloss */
+      gloss: string;
+      /**
+       * Grade Class
+       * @enum {string}
+       */
+      grade_class: "due" | "ahead" | "learning";
+      /** Item Id */
+      item_id: number;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "word" | "phrase" | "sentence" | "drill";
+      /** Line Key */
+      line_key?: string | null;
+      /** Text */
+      text: string;
+    };
+    /**
+     * GradePlanLater
+     * @description How many of the lesson's directions fall past the range, per direction.
+     */
+    GradePlanLater: {
+      /** Production */
+      production: number;
+      /** Recognition */
+      recognition: number;
+    };
+    /**
+     * GradePlanResponse
+     * @description Response of GET /api/srs/content/{id}/grade-plan.
+     */
+    GradePlanResponse: {
+      /** Cards */
+      cards: components["schemas"]["GradePlanCard"][];
+      later: components["schemas"]["GradePlanLater"];
+      /** Listen Count */
+      listen_count: number;
+      /** Range Days */
+      range_days: number | null;
+      /** Studied */
+      studied: boolean;
+      suggestions: components["schemas"]["GradeSuggestions"];
+      /** Waiting New */
+      waiting_new: number;
+    };
+    /**
+     * GradeRequest
+     * @description Body of POST /api/srs/content/{id}/grade. Explicit only: nothing absent is graded.
+     */
+    GradeRequest: {
+      /**
+       * Card Grades
+       * @default []
+       */
+      card_grades: components["schemas"]["CardGrade"][];
+      /**
+       * Declined
+       * @default []
+       */
+      declined: components["schemas"]["SuggestionKey"][];
+      /**
+       * Over Cap
+       * @default []
+       */
+      over_cap: components["schemas"]["SuggestionKey"][];
+      /**
+       * Restored
+       * @default []
+       */
+      restored: components["schemas"]["RestoredKey"][];
+      /**
+       * Studied
+       * @default false
+       */
+      studied: boolean;
+    };
+    /**
+     * GradeResponse
+     * @description Response of POST /api/srs/content/{id}/grade.
+     */
+    GradeResponse: {
+      /** Applied */
+      applied: number;
+      /** Created */
+      created: number;
+      /** Listen Count */
+      listen_count: number;
+      /** Recorded Study */
+      recorded_study: boolean;
+      /** Status */
+      status: string;
+    };
+    /** GradeSuggestions */
+    GradeSuggestions: {
+      /** Contrast */
+      contrast: components["schemas"]["AffixCardPreview"][];
+      /** Words */
+      words: components["schemas"]["GradeWordSuggestion"][];
+    };
+    /**
+     * GradeWordSuggestion
+     * @description A word the Save would add: an untracked lemma of the lesson.
+     */
+    GradeWordSuggestion: {
+      /** Gloss */
+      gloss: string;
+      /** Key */
+      key: string;
+      /** Text */
+      text: string;
+      /** Will Create */
+      will_create: boolean;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -4479,6 +4685,16 @@ export interface components {
       /** Text */
       text: string;
     };
+    /** RestoredKey */
+    RestoredKey: {
+      /** Key */
+      key: string;
+      /**
+       * Kind
+       * @constant
+       */
+      kind: "word";
+    };
     /** ReviewPressureRequest */
     ReviewPressureRequest: {
       /**
@@ -4794,6 +5010,16 @@ export interface components {
       phrase_count: number;
       /** Type */
       type: string;
+    };
+    /** SuggestionKey */
+    SuggestionKey: {
+      /** Key */
+      key: string;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "word" | "contrast";
     };
     /** SuspendRequest */
     SuspendRequest: {
@@ -7001,6 +7227,74 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["CommitPendingResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  grade_lesson_api_srs_content__content_id__grade_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GradeRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GradeResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_grade_plan_api_srs_content__content_id__grade_plan_get: {
+    parameters: {
+      query?: {
+        range_days?: number | null;
+      };
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["GradePlanResponse"];
         };
       };
       /** @description Validation Error */
