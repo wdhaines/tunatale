@@ -3518,29 +3518,31 @@ sed -n '/^async def run_full_sync/,/^class NoMintNotetypeError/p' backend/app/pl
      4	create_new
      5	push
      6	pull
-     7	promote
-     8	refresh_col_crt
-     9	refresh_daily_new_cap
-    10	refresh_daily_review_cap
-    11	refresh_desired_retention
-    12	refresh_fsrs_params
-    13	watch_fsrs_preset
-    14	refresh_fsrs_short_term_flag
-    15	refresh_maximum_review_interval
-    16	refresh_review_settings
-    17	refresh_learning_steps
-    18	refresh_load_balancer_enabled
-    19	refresh_new_cards_ignore_review_limit
-    20	refresh_easy_days
-    21	warn_if_multi_deck_preset
-    22	media_refresh
-    23	soak_log
+     7	rotate_drills
+     8	promote
+     9	refresh_col_crt
+    10	refresh_daily_new_cap
+    11	refresh_daily_review_cap
+    12	refresh_desired_retention
+    13	refresh_fsrs_params
+    14	watch_fsrs_preset
+    15	refresh_fsrs_short_term_flag
+    16	refresh_maximum_review_interval
+    17	refresh_review_settings
+    18	refresh_learning_steps
+    19	refresh_load_balancer_enabled
+    20	refresh_new_cards_ignore_review_limit
+    21	refresh_easy_days
+    22	warn_if_multi_deck_preset
+    23	media_refresh
+    24	soak_log
 ```
 
 Reading it as a story:
 
 - **Tripwires first** (`guid_collisions`, `recognition_only`). Both are read-only and both run on dry-runs. `warn_if_guid_collisions` logs `GUID_COLLISION` when two Anki notes share one `(text, disambig)` and therefore one TT guid; it keys on the disambig as well as the text because POS homonyms (Norwegian `løfte` noun and verb) are legitimately separate. `warn_if_recognition_only_deck` fires when over half a deck's notes sit on single-template notetypes, since every production-capable code path then degrades silently (the 2,990-word Norwegian gap that motivated §11.6).
 - **`orphans`** runs unconditionally, then **`create_new`** (TT-added collocations become Anki notes, minted into the language's mint deck), **`push`** (dirty FSRS state, field edits, one Anki revlog row per TT grade) and **`pull`** (Anki's state wins, see §10.5).
+- **`rotate_drills`** also runs after the pull on purpose. A drill card (one card per lesson drill, tunatale-5i1p.5) asks step `reps mod steps`, and its "TT Sentence" note holds that step's fields. A review made in Anki reaches TT's `reps` only in the pull, so this is the first moment the note can be written right. It compares each drill note's stored fields with what the row's `reps` call for and writes only a note that differs (`DRILL_ROTATED` per note), so a sync with nothing changed writes nothing, and a phone edit that put an old step back is repaired without any flag. It honours `dry_run`.
 - **`promote`** runs after the pull on purpose: the pull is what brings in graduations made in Anki since the last sync, so the trigger sees fresh state. It is covered in 11.6.
 - **The non-dry block.** Only on a real sync: `refresh_col_crt` and the deck-config refreshes (daily new and review caps, desired retention, FSRS parameters, short-term flag, maximum interval, review settings, learning steps, load balancer, easy days, the new-cards-ignore-review-limit flag), each a no-op when the config is absent. `watch_fsrs_preset` is placed straight after the FSRS parameters (§10.8). `media_refresh` copies pulled note media into TT's media table when the peer path supplies a media directory. `soak_log` writes the `SYNC_SOAK` heartbeat.
 

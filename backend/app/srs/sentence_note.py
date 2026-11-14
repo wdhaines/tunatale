@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 import re
 
+from app.srs.drill_card import DrillCard, DrillView
 from app.srs.sentence_card import Gloss, SentenceCard, rich
 
 #: The whole line's cloze number.
@@ -171,5 +172,49 @@ def sentence_note_fields(
         blank_glosses,
         _gloss_rows(line.glosses),
         cue_means,
+        _esc(source),
+    ]
+
+
+def drill_source_label(card: DrillCard) -> str:
+    """Where a drill card comes from: ``Wolff 1 practice 1 · drill 2``."""
+    title = card.card_set.replace("-", " ")
+    return f"{title[:1].upper()}{title[1:]} · drill {card.drill}"
+
+
+def drill_note_fields(view: DrillView, *, media: dict[str, str], source: str) -> list[str]:
+    """A drill card's note fields in ``FIELD_NAMES`` order, for the step *view* shows (tunatale-5i1p.5).
+
+    The same notetype as a lesson line, no new field or template: ``Text`` is the
+    step's answer as cloze 1; ``Cue`` is the sentence before (or a transformation's
+    worked pair), then the cue as its own block (``+ cue`` for a substitution, so it
+    reads right before any CSS); ``CueAudio`` plays those parts in order and
+    ``AnswerAudio`` the answer. *media* maps a part's media kind (``view.*_media``)
+    to its file; a part missing from it has no ``[sound:]``. English only where the
+    lesson gives the step one. No speaker: the bubbles show none.
+    """
+    if any(mark in view.answer for mark in ("{{", "}}", "::")):
+        raise ValueError(f"cloze syntax in a drill step's answer: {view.answer!r}")
+    if view.before is None:
+        cue = _esc(view.cue)
+    elif view.before_cue is None:
+        cue = f'{_esc(view.before)}<div class="tt-sub">+ {_esc(view.cue)}</div>'
+    else:
+        cue = f'{_esc(view.before_cue)} → {_esc(view.before)}<div class="tt-sub">{_esc(view.cue)} → ?</div>'
+    cue_audio = "".join(
+        _sound(media.get(kind)) for kind in (view.before_cue_media, view.before_media, view.cue_media) if kind
+    )
+    return [
+        f"{{{{c{WHOLE_ORD}::{_esc(view.answer)}}}}}",
+        "",
+        "",
+        cue,
+        cue_audio,
+        _sound(media.get(view.answer_media)),
+        "",
+        _esc(view.english),
+        "",
+        "",
+        "",
         _esc(source),
     ]

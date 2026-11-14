@@ -57,7 +57,7 @@ from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.contrast_card import cloze_note_text
 from app.srs.database import SRSDatabase
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
-from app.srs.drill_card import is_drill_key
+from app.srs.drill_card import DrillCard, drill_card, is_drill_key
 from app.srs.fsrs import (
     MANUAL_REVIEW_KIND,
     is_day_level_last_review,
@@ -68,7 +68,14 @@ from app.srs.function_words import is_function_word, make_cloze_text, uncloze_te
 from app.srs.lemmatizer import headword_lemma
 from app.srs.lesson_cards import COURSE_SOURCE
 from app.srs.sentence_card import is_sentence_key, sentence_card
-from app.srs.sentence_note import cloze_numbers_in, cloze_ords, sentence_note_fields, source_label
+from app.srs.sentence_note import (
+    cloze_numbers_in,
+    cloze_ords,
+    drill_note_fields,
+    drill_source_label,
+    sentence_note_fields,
+    source_label,
+)
 
 # Logger name pinned to "app.anki.sync": BURY_TRACE assertions in
 # tests/test_anki_sync_pull.py (caplog.at_level(..., logger="app.anki.sync"))
@@ -395,6 +402,11 @@ def _line_placement(rows: list[tuple[str, SRSItem, int]], anki_ords: list[int]) 
     course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
     front = [o for (_, i, _), o in zip(rows, anki_ords, strict=True) if i.syntactic_unit.source != COURSE_SOURCE]
     return course, front
+
+
+def _on_sentence_note(unit) -> bool:
+    """Whether *unit*'s card lives on a "TT Sentence" note: a lesson line's card, or a drill card (5i1p.5)."""
+    return sentence_card(unit) is not None or drill_card(unit) is not None
 
 
 def _split_sentence_notes(records: list[NoteRecord]) -> list[NoteRecord]:
@@ -1436,7 +1448,7 @@ class AnkiSync:
             if anki_note_id is None:
                 report.no_anki_id += 1
                 continue
-            line = sibling_groups.get(coll_id) if sentence_card(item.syntactic_unit) is not None else None
+            line = sibling_groups.get(coll_id) if _on_sentence_note(item.syntactic_unit) else None
             if line is not None:
                 if line not in pushed_lines:
                     pushed_lines.add(line)
@@ -1899,8 +1911,11 @@ class AnkiSync:
         do not make a note (overlapping blanks, cloze syntax in the text). Those
         used to raise out of the whole sync, after the lines ahead had been written.
         """
+        drill = drill_card(rows[0][1].syntactic_unit) if rows else None
         cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
         try:
+            if drill is not None:
+                return self._drill_line_plan(rows[0], drill)
             ords = self._sentence_line_ords(rows, note_id)
             if ords is not None:
                 fields, media = self._sentence_line_fields(rows, cards, ords)
@@ -1910,6 +1925,38 @@ class AnkiSync:
             reason = str(exc)
         _log.warning("SENTENCE_NOTE_HELD line=%s note=%s — %s; nothing written for this line", line, note_id, reason)
         return None
+
+    def _drill_line_plan(
+        self, row: tuple[str, SRSItem, int], drill: DrillCard
+    ) -> tuple[list[str], list[str], list[int]]:
+        """A drill note's plan: the step its row's ``reps`` call for, on its one card (ord 0).
+
+        A drill note has one card, always cloze 1, so a row that lost its card link
+        is matched to it without reading ``Text``: that holds whatever step the note
+        was last written at, and ``_sentence_line_ords`` would never find this step
+        there. A part whose take is not in TT's media dir is written with no
+        ``[sound:]``, said in the log, and the sync goes on: the next write after
+        the take arrives puts it in.
+        """
+        import app.plugins.anki_sync.sync as sync_mod
+
+        _guid, item, coll_id = row
+        view = drill.view(item.directions[Direction.PRODUCTION].reps)
+        media: dict[str, str] = {}
+        for kind in (view.before_cue_media, view.before_media, view.cue_media, view.answer_media):
+            if kind is None:
+                continue
+            name = self._db.get_media_filename(coll_id, kind)
+            if name is not None and (sync_mod._MEDIA_DIR / name).exists():
+                media[kind] = name
+            else:
+                _log.warning(
+                    "DRILL_CARD_NO_AUDIO key=%s part=%s — no take on disk; written with no [sound:] for it",
+                    drill.key,
+                    kind,
+                )
+        fields = drill_note_fields(view, media=media, source=drill_source_label(drill))
+        return fields, list(media.values()), [0]
 
     def _mint_sentence_line(self, group: str, new_ids: list[int], deck_name: str) -> tuple[int, int, int]:
         """Mint a line's unlinked rows *new_ids* into the line's ONE "TT Sentence" note. Returns (created, linked, skipped).
@@ -1940,7 +1987,7 @@ class AnkiSync:
                     fields,
                     anki_ords,
                     guid=compute_guid(group, self._language_code, SENTENCE_NOTETYPE),
-                    tags=["tunatale", "sentence"],
+                    tags=["tunatale", "sentence", "drill"] if is_drill_key(group) else ["tunatale", "sentence"],
                     course=course,
                     front_ords=front_ords,
                 )
@@ -1971,6 +2018,58 @@ class AnkiSync:
         for (guid, _item, _), anki_ord in zip(rows, anki_ords, strict=True):
             self._db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: card_ids[anki_ord]})
         return created, linked, 0
+
+    def rotate_drill_notes(self, dry_run: bool = False) -> int:
+        """Write each drill note the step its row's ``reps`` call for; return how many notes needed it (5i1p.5).
+
+        A phase of its own in ``run_full_sync``, AFTER the pull: a review made in
+        Anki reaches the row's ``reps`` only there, so a note written in the push
+        would lag one sync behind every Anki-side review.
+
+        From state, never from a flag: a note whose stored fields already equal
+        what its ``reps`` call for (and whose row is linked to its card) is not
+        touched, so a sync with nothing changed writes nothing; and a note a phone
+        edit put back to an old step, which flags nothing anywhere (measured
+        2026-11-13), is repaired here. A question-and-answer step card's fields do
+        not move with ``reps``, so it is never written. A row that lost its card
+        link is relinked to the note's one card. A note not in this collection is
+        skipped. ``dry_run`` counts and writes nothing. The write is the existing
+        ``rewrite_sentence_note``: data-only, the card row untouched.
+        """
+        from app.plugins.anki_sync.sync import _copy_tt_media_to_anki
+
+        rotated = 0
+        for line in sorted({g for g in self._db.sibling_groups().values() if is_drill_key(g)}):
+            rows = [r for r in self._db.list_sibling_rows(line) if r[1].anki_note_id is not None]
+            if not rows:
+                continue
+            note_id = rows[0][1].anki_note_id
+            held = self._writer.note_field_values(note_id)
+            if held is None:
+                continue
+            plan = self._plan_sentence_line(line, rows, note_id)
+            if plan is None:
+                continue
+            fields, media, anki_ords = plan
+            guid, item, _ = rows[0]
+            card_ids = self._writer.get_cards_for_note(note_id)
+            if held == fields and item.directions[Direction.PRODUCTION].anki_card_id == card_ids.get(0):
+                continue
+            rotated += 1
+            if dry_run:
+                continue
+            for m in media:
+                _copy_tt_media_to_anki(self._writer, m)
+            course, front_ords = _line_placement(rows, anki_ords)
+            self._writer.rewrite_sentence_note(note_id, fields, anki_ords, course=course, front_ords=front_ords)
+            self._db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: self._writer.get_cards_for_note(note_id)[0]})
+            _log.info(
+                "DRILL_ROTATED key=%s step=%d",
+                line,
+                drill_card(item.syntactic_unit).step_at(item.directions[Direction.PRODUCTION].reps),
+            )
+        _log.info("DRILL_ROTATION notes=%d dry_run=%s", rotated, dry_run)
+        return rotated
 
     async def sync_create_new(
         self,
@@ -2023,19 +2122,19 @@ class AnkiSync:
             if i.syntactic_unit.card_type != "vocab" or i.syntactic_unit.translation.strip() or i.syntactic_unit.extras
         ]
 
-        # Hold back a DRILL card (tunatale-5i1p.4) until its note is built
-        # (5i1p.5). Its card_data is not a SentenceCard, so the loop below would
-        # take this `sent:` cloze row down the plain-cloze branch and mint it on
-        # Anki's built-in Cloze notetype: a wrong-notetype note. HELD, not
-        # dropped, as above: the row stays NEW and studiable in TT. 5i1p.5
-        # replaces this hold with the drill's own fields.
-        held_drills = [
-            i.syntactic_unit.disambig_key for _, i, _ in items if is_drill_key(i.syntactic_unit.disambig_key)
+        # A drill-keyed row whose card_data is not a drill card cannot be built,
+        # and the loop below would take it down the plain-cloze branch onto Anki's
+        # built-in Cloze notetype. Held unlinked, loudly; it never happens to a
+        # row lesson_card_mint wrote.
+        unreadable = [
+            i.syntactic_unit.disambig_key
+            for _, i, _ in items
+            if is_drill_key(i.syntactic_unit.disambig_key) and drill_card(i.syntactic_unit) is None
         ]
-        if held_drills:
-            items = [(g, i, c) for g, i, c in items if not is_drill_key(i.syntactic_unit.disambig_key)]
-            for key in held_drills:
-                _log.info("DRILL_CARD_HELD key=%s — a drill note is not built yet (5i1p.5); held unlinked", key)
+        if unreadable:
+            items = [(g, i, c) for g, i, c in items if i.syntactic_unit.disambig_key not in unreadable]
+            for key in unreadable:
+                _log.warning("DRILL_CARD_UNREADABLE key=%s — card_data is not a drill card; held unlinked", key)
 
         if dry_run:
             return CreateNewReport(count=len(items))
@@ -2059,7 +2158,7 @@ class AnkiSync:
         sibling_groups = self._db.sibling_groups()
         pending_lines: dict[str, list[int]] = {}
         for _g, i, c in items:
-            if sentence_card(i.syntactic_unit) is not None and c in sibling_groups:
+            if _on_sentence_note(i.syntactic_unit) and c in sibling_groups:
                 pending_lines.setdefault(sibling_groups[c], []).append(c)
         minted_lines: set[str] = set()
         has_sentence_notetype = bool(pending_lines) and self._writer.has_sentence_notetype()
@@ -2078,7 +2177,7 @@ class AnkiSync:
         mint_l2_field: str | None = None
 
         for guid, item, coll_id in items:
-            if sentence_card(item.syntactic_unit) is not None:
+            if _on_sentence_note(item.syntactic_unit):
                 group = sibling_groups.get(coll_id)
                 if group is None:
                     # Every sentence row is grouped at insert, and v50 grouped the

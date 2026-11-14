@@ -302,3 +302,88 @@ def _plain_fixture_bytes() -> list[str]:
 
 def test_u5_plain_sentence_cards_serialise_byte_for_byte_as_before():
     assert _plain_fixture_bytes() == _PLAIN_BYTES
+
+
+# --------------------------------------------------------------------------
+# The note's fields (tunatale-5i1p.5 § Sync 1): one builder, from view(reps)
+# --------------------------------------------------------------------------
+
+
+def _note(drill: dict, reps: int, media: dict[str, str] | None = None) -> list[str]:
+    from app.srs.sentence_note import drill_note_fields, drill_source_label
+
+    card = _card(drill)
+    return drill_note_fields(card.view(reps), media=media or {}, source=drill_source_label(card))
+
+
+class TestNoteFields:
+    def test_a_substitution_step_shows_the_sentence_before_then_plus_the_cue(self):
+        fields = _note(
+            SUBSTITUTION, 1, {"drill_answer_0": "a0.mp3", "drill_cue_1": "c1.mp3", "drill_answer_1": "a1.mp3"}
+        )
+        assert fields == [
+            "{{c1::De er her.}}",
+            "",
+            "",
+            'Hun er her.<div class="tt-sub">+ de</div>',
+            "[sound:a0.mp3][sound:c1.mp3]",
+            "[sound:a1.mp3]",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "Test 01 · drill 1",
+        ]
+
+    def test_substitution_step_0_follows_the_model_and_plays_its_take(self):
+        fields = _note(SUBSTITUTION, 0, {"drill_model": "m.mp3", "drill_cue_0": "c0.mp3"})
+        assert fields[3:5] == ['Han er her.<div class="tt-sub">+ hun</div>', "[sound:m.mp3][sound:c0.mp3]"]
+
+    def test_a_transformation_step_shows_one_worked_pair_then_the_new_cue(self):
+        fields = _note(
+            TRANSFORMATION, 3, {"drill_cue_2": "c2.mp3", "drill_answer_2": "a2.mp3", "drill_cue_3": "c3.mp3"}
+        )
+        assert fields[0] == "{{c1::Hvor er vi?}}"
+        assert fields[3] == 'De er hjemme. → Hvor er de?<div class="tt-sub">Vi er ute. → ?</div>'
+        assert fields[4] == "[sound:c2.mp3][sound:a2.mp3][sound:c3.mp3]"
+
+    def test_a_true_false_statement_stands_alone(self):
+        fields = _note(TRUE_FALSE, 1, {"drill_cue_1": "c1.mp3", "drill_answer_1": "a1.mp3"})
+        assert fields[0] == "{{c1::Nei.}}"
+        assert fields[3:6] == ["Bergen er i Sverige.", "[sound:c1.mp3]", "[sound:a1.mp3]"]
+
+    def test_english_goes_on_the_back_only_where_the_lesson_gives_it(self):
+        assert _note(SUBSTITUTION, 3)[7] == "We are there."
+        assert _note(SUBSTITUTION, 2)[7] == ""
+
+    def test_a_part_with_no_clip_has_no_sound(self):
+        fields = _note(SUBSTITUTION, 1)
+        assert (fields[4], fields[5]) == ("", "")
+
+    def test_text_is_escaped(self):
+        drill = {**SUBSTITUTION, "model": "A <b> & B.", "steps": [{"cue": "x<y", "answer": "C & D."}]}
+        fields = _note(drill, 0)
+        assert fields[0] == "{{c1::C &amp; D.}}"
+        assert fields[3] == 'A &lt;b&gt; &amp; B.<div class="tt-sub">+ x&lt;y</div>'
+
+    def test_cloze_syntax_in_an_answer_is_refused(self):
+        drill = {**TRUE_FALSE, "steps": [{"cue": "Ja?", "answer": "{{c2::Ja}}"}]}
+        with pytest.raises(ValueError, match="cloze syntax"):
+            _note(drill, 0)
+
+    def test_the_fields_fill_the_notetype(self):
+        from app.cards.sentence_notetype import FIELD_NAMES
+
+        assert len(_note(TRANSFORMATION, 0)) == len(FIELD_NAMES)
+
+
+def test_j5_the_set_part_of_a_drill_key_is_the_card_list_slug():
+    """One pattern, so a set name the card list accepts is always a drill key (audit J5)."""
+    from app.srs import drill_card as drill_mod
+    from app.srs import lesson_cards
+
+    assert lesson_cards._SLUG is drill_mod.SET_SLUG
+    for card_set in ("test-01", "who-is-here-wolff-1-practice-1-0bb4590a", "a"):
+        assert lesson_cards._SLUG.fullmatch(card_set)
+        assert is_drill_key(f"sent:{card_set}:drill-1")

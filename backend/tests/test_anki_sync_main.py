@@ -70,6 +70,7 @@ class TestRunFullSync:
         sync.sync_create_new = _create
         sync.sync_push = MagicMock(side_effect=lambda **kw: (calls.append("push"), PushReport())[1])
         sync.sync_pull = MagicMock(side_effect=lambda **kw: (calls.append("pull"), PullReport())[1])
+        sync.rotate_drill_notes = MagicMock(side_effect=lambda **kw: (calls.append("rotate_drills"), 0)[1])
 
         async def _promote(**kwargs):
             calls.append("promote")
@@ -144,7 +145,16 @@ class TestRunFullSync:
         )
 
         # Core phases run in the create→push→pull order, soak last.
-        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
+        assert calls == [
+            "guid_collisions",
+            "recognition_only",
+            "orphans",
+            "create",
+            "push",
+            "pull",
+            "rotate_drills",
+            "promote",
+        ]
         # The soak heartbeat is the real file the phase writes, not a mock marker.
         assert "SYNC_SOAK" in soak_log.read_text()
         # bd tunatale-resh: a RUNNING total, not just this sync's count. The
@@ -199,7 +209,17 @@ class TestRunFullSync:
             dry_run=True,
         )
 
-        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
+        assert calls == [
+            "guid_collisions",
+            "recognition_only",
+            "orphans",
+            "create",
+            "push",
+            "pull",
+            "rotate_drills",
+            "promote",
+        ]
+        sync.rotate_drill_notes.assert_called_once_with(dry_run=True)  # S7: rotation honours dry_run
         # dry_run writes no soak artifact at all.
         assert not soak_log.exists()
         assert refreshed == []
@@ -315,7 +335,16 @@ class TestRunFullSync:
             dry_run=False,
         )
 
-        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
+        assert calls == [
+            "guid_collisions",
+            "recognition_only",
+            "orphans",
+            "create",
+            "push",
+            "pull",
+            "rotate_drills",
+            "promote",
+        ]
         # The phase ran: the image is now in TT's media dir with the right bytes.
         assert media_report["new_media"] == 1
         assert (tt_media / "voda.jpg").read_bytes() == b"VODAIMAGE"
@@ -352,7 +381,16 @@ class TestRunFullSync:
             dry_run=False,
         )
 
-        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
+        assert calls == [
+            "guid_collisions",
+            "recognition_only",
+            "orphans",
+            "create",
+            "push",
+            "pull",
+            "rotate_drills",
+            "promote",
+        ]
         assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
@@ -390,7 +428,16 @@ class TestRunFullSync:
             dry_run=True,
         )
 
-        assert calls == ["guid_collisions", "recognition_only", "orphans", "create", "push", "pull", "promote"]
+        assert calls == [
+            "guid_collisions",
+            "recognition_only",
+            "orphans",
+            "create",
+            "push",
+            "pull",
+            "rotate_drills",
+            "promote",
+        ]
         assert list(tt_media.iterdir()) == []
         assert media_report == {
             "new_media": 0,
@@ -1309,7 +1356,16 @@ class TestReconcileTiming:
             timings=timings,
         )
 
-        for phase in ("guid_collisions", "recognition_only", "orphans", "create_new", "push", "pull", "promote"):
+        for phase in (
+            "guid_collisions",
+            "recognition_only",
+            "orphans",
+            "create_new",
+            "push",
+            "pull",
+            "rotate_drills",
+            "promote",
+        ):
             assert phase in timings, f"phase {phase!r} is untimed"
         for refresh in _REFRESH_FUNCS:
             assert refresh in timings, f"deck-config refresh {refresh!r} is untimed"

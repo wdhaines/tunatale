@@ -175,7 +175,7 @@ the `AnkiSync` engine is in `sync_engine.py`, collection I/O in
 `sync_reader.py`/`sync_writer.py`, leaf helpers in `sync_common.py`; import and
 patch through `app.plugins.anki_sync.sync`. It runs `warn_if_guid_collisions →
 warn_if_recognition_only_deck → detect_and_reset_orphans → sync_create_new →
-sync_push → sync_pull → promote_production_cards → (every refresh_* deck-config
+sync_push → sync_pull → rotate_drill_notes → promote_production_cards → (every refresh_* deck-config
 sync + watch_fsrs_preset + Anki→TT media refresh + soak heartbeat)`. That list is
 a reading aid, not the contract: the order is whatever `sync.py::run_full_sync`
 does, and `tests/test_anki_sync_main.py::TestRunFullSync` pins it.

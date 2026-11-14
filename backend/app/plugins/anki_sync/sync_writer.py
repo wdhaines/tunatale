@@ -1030,6 +1030,11 @@ class OfflineWriter:
         row = self._conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
         return None if row is None else row[0].split(_FIELD_SEP)[0]
 
+    def note_field_values(self, note_id: int) -> list[str] | None:
+        """Every field of note *note_id* as the collection holds it, in order, or None if it has no such note."""
+        row = self._conn.execute("SELECT flds FROM notes WHERE id = ?", (note_id,)).fetchone()
+        return None if row is None else row[0].split(_FIELD_SEP)
+
     def _add_sentence_cards(
         self, note_id: int, did: int, ords: list[int], *, course: bool, ts: int, front_ords: Collection[int] = ()
     ) -> None:
