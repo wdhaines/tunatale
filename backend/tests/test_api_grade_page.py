@@ -27,7 +27,8 @@ from app.main import app
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
-from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc
+from app.srs.anki_mirror.queue_stats import build_live_load_balancer
+from app.srs.anki_mirror.rollover import anki_today, due_at_rollover_utc, local_today_rollover
 from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
@@ -314,6 +315,63 @@ class TestPlanEdges:
 
         assert kept in ids
         assert broken not in ids
+
+
+class TestPlanUnburies:
+    """The daily unbury sweep runs before the plan is read (Fable audit, 2026-11-13).
+
+    Anki releases yesterday's sibling-buries at rollover; TT does it in
+    ``unbury_if_needed``, which before this ran only on the card-review path. A
+    card buried yesterday was then silently missing from the plan until card
+    reviews were opened (96 such directions on the live Norwegian deck).
+    """
+
+    def _bury_yesterday(self, db) -> int:
+        hus = _card(db, "hus")
+        _review(db, "hus", due_in=-1)
+        _review(db, "hus", PROD, due_in=-1)
+        with db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET state = 'buried', bury_kind = 'sched' "
+                "WHERE collocation_id = ? AND direction = 'production'",
+                (hus,),
+            )
+            conn.commit()
+        db.set_anki_state_cache("last_unbury_day", (anki_today() - timedelta(days=1)).isoformat())
+        return hus
+
+    async def test_a_card_buried_yesterday_is_in_the_plan(self, srs_db):
+        db = _install(srs_db)
+        hus = self._bury_yesterday(db)
+
+        plan = await _plan()
+
+        assert (hus, "production") in {(c["item_id"], c["direction"]) for c in plan["cards"]}
+
+    async def test_a_card_buried_yesterday_can_be_graded(self, srs_db):
+        db = _install(srs_db)
+        hus = self._bury_yesterday(db)
+
+        result = await _grade({"card_grades": [_g(hus, "good", PROD)]})
+
+        assert result["applied"] == 1
+
+
+class TestGradeClassNullDueAt:
+    """A REVIEW or (re)learning row with no due date is never a row, and is refused if sent.
+
+    ``due_at`` is NOT NULL in a fresh schema, but migration 451 added it as a
+    nullable column and the live decks were built through it. None was measured
+    there (0 rows, Fable 2026-11-13); this keeps one from becoming a 500.
+    """
+
+    @pytest.mark.parametrize("state", [SRSState.REVIEW, SRSState.LEARNING, SRSState.RELEARNING])
+    def test_no_due_date_is_not_gradable(self, state):
+        from app.api.srs_grade import _grade_class, _Window
+
+        rec = DirectionState(direction=REC, state=state, due_at=None, last_review=None)
+
+        assert _grade_class(rec, _Window.read()) == (None, "no_due_date")
 
 
 class TestPlanSentenceCards:
@@ -659,6 +717,11 @@ def _seed_mixed(db) -> None:
 async def _old_listen(db, grades: dict[int, str]) -> None:
     """Today's /listen with *grades* confirmed and every other row skipped."""
     _install(db)
+    await _old_listen_in_place(grades)
+
+
+async def _old_listen_in_place(grades: dict[int, str]) -> None:
+    """``_old_listen`` against whatever lesson and database are installed."""
     preview = (await _get("/api/srs/content/lesson-1/listen-preview")).json()
     word_ratings = {str(c["item_id"]): "skip" for c in preview["candidates"] if c["item_id"] is not None}
     word_ratings.update({str(i): r for i, r in grades.items()})
@@ -694,25 +757,58 @@ class TestDifferential:
         assert new_state == old_state
         assert {r["review_kind"] for r in new_state["revlog"]} == {1, 3}
 
-    async def test_g7_two_grades_share_one_balancer_as_the_old_path_does(self, tmp_path):
-        """Two Good grades on cards that land in the same fuzz window: the second sees the first's due day."""
+    async def test_g7_grades_in_one_save_share_one_balancer_as_the_old_path_does(self, tmp_path):
+        """Each grade feeds the balancer the next one reads, exactly as the old path's shared balancer.
+
+        Eight identical, Anki-linked cards graded Good in one request: every one
+        lands inside the same fuzz window, so where the first lands moves the
+        later picks. A balancer that does not see the batch's earlier grades (one
+        built before the batch and copied per grade) puts them elsewhere; the old
+        /listen path is the reference. Proven red under that sabotage and under
+        no balancer at all. A balancer REBUILT per grade is not a fault: it
+        replays the session's TT grades from the database
+        (``get_load_balancer_session_replay``), so it equals the fed one.
+        """
+        words = [f"ord{i}" for i in range(8)]
 
         def seed(db):
-            for w in ("hus", "bil"):
+            _install(db, _lesson(" ".join(words)))
+            for i, w in enumerate(words):
                 _card(db, w)
-                _review(db, w, due_in=0)
+                db.set_anki_ids(db.get_collocation(w).guid, 9000 + i, {REC: 90000 + i})
+                item = db.get_collocation(w)
+                db.update_direction(
+                    item.guid,
+                    REC,
+                    DirectionState(
+                        direction=REC,
+                        state=SRSState.REVIEW,
+                        due_at=due_at_rollover_utc(anki_today()),
+                        last_review=datetime.now(UTC) - timedelta(days=30),
+                        stability=30.0,
+                        difficulty=5.0,
+                        reps=5,
+                        anki_card_id=90000 + i,
+                    ),
+                )
             db.set_anki_state_cache("load_balancer_enabled", "true")
+            # Without a synced col.crt the balancer is never built (None: pure fuzz),
+            # which is how the first version of this test passed whatever the route did.
+            crt = local_today_rollover(datetime.now(UTC)) - timedelta(days=400)
+            db.set_anki_state_cache("col_crt", str(int(crt.timestamp())))
 
         old, new = _twin(tmp_path, seed)
-        ids = [old.get_collocation_id_by_guid(old.get_collocation(w).guid) for w in ("hus", "bil")]
+        ids = [old.get_collocation_id_by_guid(old.get_collocation(w).guid) for w in words]
+        assert build_live_load_balancer(new) is not None
 
-        await _old_listen(old, dict.fromkeys(ids, "good"))
-        _install(new)
+        _install(old, _lesson(" ".join(words)))
+        await _old_listen_in_place(dict.fromkeys(ids, "good"))
+        _install(new, _lesson(" ".join(words)))
         await _grade({"card_grades": [_g(i, "good") for i in ids], "studied": True})
 
-        assert [_direction_row(new, i, REC)["due_at"] for i in ids] == [
-            _direction_row(old, i, REC)["due_at"] for i in ids
-        ]
+        old_due = [_direction_row(old, i, REC)["due_at"] for i in ids]
+        assert [_direction_row(new, i, REC)["due_at"] for i in ids] == old_due
+        assert len(set(old_due)) > 1, "the eight grades must spread across the window, or nothing is tested"
 
     async def test_c1_the_created_set_equals_the_old_routes_at_every_default(self, tmp_path):
         def seed(db):

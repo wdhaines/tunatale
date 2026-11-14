@@ -127,8 +127,13 @@ def _grade_class(rec: DirectionState, window: _Window) -> tuple[str | None, str 
     REVIEW: once per Anki day (graded today → refused), then due or ahead by
     the same boundary ``count_review_due_collocations`` uses. (Re)learning: only
     once its step is ripe. Every other state (new, suspended, buried, known) is
-    never a row.
+    never a row. A REVIEW or (re)learning row with no due date is not either:
+    ``due_at`` is NOT NULL in a fresh schema, but migration 451 added it
+    nullable and the live decks were built through it.
     """
+    gradable = (SRSState.REVIEW, SRSState.LEARNING, SRSState.RELEARNING)
+    if rec.state in gradable and rec.due_at is None:
+        return None, "no_due_date"
     if rec.state in (SRSState.LEARNING, SRSState.RELEARNING):
         if _as_utc(rec.due_at) <= window.now:
             return "learning", None
@@ -147,6 +152,10 @@ async def _read_plan(request: Request, content_id: str):
     if lesson is None:
         raise HTTPException(status_code=404, detail="Lesson not found")
     db = request.state.srs_db
+    # Anki releases yesterday's sibling-buries at rollover; TT does it here and on
+    # the card-review path. Without it a card buried yesterday is missing from the
+    # plan, and refused by a Save, until card reviews are next opened.
+    db.unbury_if_needed(anki_today())
     words = await anyio.to_thread.run_sync(_analyze_lesson_words, lesson, db)
     plan = _build_listen_plan(db, store, lesson, content_id, words)
     return db, lesson, words, plan
