@@ -8,7 +8,7 @@ The step is the number of the card's answers that left it in REVIEW, mod its ste
 ``tt_revlog``: an answer that left the card in review has a positive ``interval`` (days), a
 learning or relearning one a negative ``interval`` (seconds), in TT's own rows
 (``fsrs._compute_revlog_interval``) and in the ones pulled from Anki. Rows that are not answers
-(manual, Forget, reschedule) and budget-neutral re-grades never move it.
+(manual, Forget, reschedule: button 0) never move it; a budget-neutral lesson re-grade is an answer.
 
 "Shows" means every reader agrees: the review payload (``_queue_item_to_dict``), the item payload
 (``_item_to_dict``) and the note's fields (``_drill_line_plan``). The Grade page's reader is
@@ -175,9 +175,8 @@ class TestNotAnswers:
             ((4, 0, 0), {}),  # manual (promote_to_learning and the like)
             ((4, 0, 0), {"factor": 0}),  # Anki's Forget
             ((5, 12, 0), {}),  # a reschedule
-            (REVIEW_GOOD, {"budget_neutral": True}),  # a lesson re-grade already counted today
         ],
-        ids=["manual", "forget", "reschedule", "budget-neutral"],
+        ids=["manual", "forget", "reschedule"],
     )
     def test_s10_a_row_that_is_not_an_answer_does_not_move_it(self, shape, kw):
         db, rows = _rows()
@@ -186,6 +185,21 @@ class TestNotAnswers:
         _answer(db, cid, shape, **kw)
         _set_reps(db, cid, 2)
         _shows(db, cid, 1)
+
+
+class TestLessonRegrade:
+    def test_a_budget_neutral_lesson_regrade_that_lands_in_review_moves_it_on(self):
+        """Graded in the queue, then again on the Grade page the same evening: two real answers.
+
+        The re-grade keeps its FSRS state change and only skips the daily-budget charge
+        (``api/srs.py``), so it counts; otherwise the learner is asked the step just answered.
+        """
+        db, rows = _rows()
+        cid = rows[SUB]
+        _history(db, cid, [GRADUATE_GOOD, REVIEW_GOOD])
+        _answer(db, cid, REVIEW_GOOD, budget_neutral=True)
+        _set_reps(db, cid, 3)
+        _shows(db, cid, 3)
 
 
 class TestControls:

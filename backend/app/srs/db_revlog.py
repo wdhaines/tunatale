@@ -79,12 +79,14 @@ class DbRevlogMixin:
     def count_answers_into_review(self, collocation_id: int, direction: Direction = Direction.PRODUCTION) -> int:
         """How many of the card's answers left it in REVIEW: a drill card's step count (tunatale-5i1p.10).
 
-        An answer is a row with a button (1-4) of kind Learn, Review, Relearn or
-        Filtered; it left the card in review when its ``interval`` is positive
-        (days), as Anki writes it and as ``fsrs._compute_revlog_interval`` does for
-        TT's own grades. A (re)learning answer is negative (seconds). Not answers:
-        manual rows and a Forget (kind 4), a reschedule (kind 5), and a
-        budget-neutral lesson re-grade of a card already counted today.
+        An answer is a row with a button (1-4); it left the card in review when its
+        ``interval`` is positive (days), as Anki writes it and as
+        ``fsrs._compute_revlog_interval`` does for TT's own grades. A (re)learning
+        answer is negative (seconds). Not answers, all button 0: TT's manual rows
+        (``append_manual_revlog``), Anki's Forget and set-due-date (kind 4) and
+        reschedule (kind 5). A budget-neutral lesson re-grade IS an answer: it
+        changes the card's state and only skips the daily-budget charge, so a
+        card graded in the queue and again on the Grade page moves on twice.
 
         Read from the log, never stored, so TT and a sync agree with nothing to keep
         in step. Two known edges, accepted: a learning step of a day or more is
@@ -95,8 +97,7 @@ class DbRevlogMixin:
         with self._get_conn() as conn:
             return conn.execute(
                 "SELECT COUNT(*) FROM tt_revlog WHERE collocation_id = ? AND direction = ? "
-                "AND interval > 0 AND button_chosen BETWEEN 1 AND 4 AND review_kind IN (0, 1, 2, 3) "
-                "AND budget_neutral = 0",
+                "AND interval > 0 AND button_chosen BETWEEN 1 AND 4",
                 (collocation_id, direction.value),
             ).fetchone()[0]
 
