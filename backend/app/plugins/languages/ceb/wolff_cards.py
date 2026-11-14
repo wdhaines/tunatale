@@ -1063,6 +1063,12 @@ class WolffLexicon:
                 found = {stative: found[stative]}
             if not found:
                 return None
+            # A row the owner worded for this root relabels a piece its class code licensed
+            # (tunatale-tofg.16: molárga 'will', not the state's 'will become'), on its stress
+            # forms too (pútol's ma- must agree with putól's, or the line goes silent)
+            own = _labels().get((piece, f"root {rec['forms'][0]['hb']}"))
+            if own is not None:
+                found = {own: next(iter(found.values()))}
             if len(found) > 1:
                 return (None, None)
             ((label, licensing),) = found.items()

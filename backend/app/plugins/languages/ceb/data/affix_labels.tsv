@@ -12,6 +12,10 @@
 # A noun with no verb sense labels nothing either (Wolff's mu- 2a, 'added to nouns'): the decoder
 # also 'finds' mi- + sor in misor, a form of address, and 'did + the south wind' is a confident
 # wrong line. An adjective stands in (mu- 3a, 'become [adj.]').
+# A root kind 'root <Handbook spelling>' is a row for one root (owner, 2026-11-13, tunatale-tofg.16):
+# it relabels a piece the root's class code already licenses, where the approved label is one no
+# root kind selects (a motion verb's mu-, ma- 'want to', the accidental potential, -un 2, hearsay).
+# It never licenses a piece by itself.
 mu-	the one doing it	will	mu- 1, 2
 mi-	the one doing it	did	mu- 1, 2
 ni-	the one doing it	did	mu- 1, 2
@@ -66,3 +70,11 @@ magka-	the one it happens to	more and more	magka-
 nagka-	the one it happens to	more and more	magka-
 pa-	verb	have someone	pa- 1
 pa-	adjective	make it	pa- 1a
+mu-	root lárga	will	mu- 1, 2
+mi-	root lárga	did	mu- 1, 2
+ni-	root lárga	did	mu- 1, 2
+ma-	root lígò	want to	ma- 3
+ma-	root putól	get, by accident	ma- 1
+na-	root putól	got, by accident	ma- 1
+gi-	root túgnaw	feels it	-un 2
+gi-	root ingón	is said to	-un 1

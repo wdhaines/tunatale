@@ -287,6 +287,48 @@ def test_a_withheld_row_with_no_reading_says_nothing(lexicon, word, english):
     assert lexicon.parts_line(word, english) is None
 
 
+# ── the five rows the owner worded on 2026-11-13 (tunatale-tofg.16) ──────────────────────────
+# Each row's affix is licensed by the root's class code as before, but the approved label is one
+# the (piece, root kind) table cannot select: a motion verb's mu- 3, ma- 'want to' or the accidental
+# potential on a direct verb, gi- on -un 2, gi- on ingón's hearsay. They are rows for the root
+# (affix_labels.tsv, root kind 'root <Handbook spelling>'). Lines written before the rows existed.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "line"),
+    [
+        # lárga [B36] 'for a passenger vehicle to leave': mu- on a motion verb is the plain 'will'
+        ("molárga", "will leave", "mo- will + lárga for a passenger vehicle to leave"),
+        # lígò: Wolff's ma- 'want to' on a B verb
+        ("malígò", "want to bathe", "ma- want to + lígò bathe"),
+        # putól [A; a1]: the direct passive's potential, read as the accident it is
+        ("maputól", "got cut off", "ma- get, by accident + putól sever with a bladed instrument or by snapping"),
+        ("naputól", "got cut off", "na- got, by accident + putól sever with a bladed instrument or by snapping"),
+        # túgnaw [a4] 'feel cold': -un 2, the one the weather is felt by
+        ("gitúgnaw", "feel cold", "gi- feels it + túgnaw cold to the touch, feel"),
+        # ingón [a12] 'said to be s.t.': gi- is hearsay
+        ("gìingón", "is said", "gi- is said to + ingón said to be"),
+    ],
+)
+def test_a_row_the_owner_worded_for_its_root(lexicon, word, english, line):
+    assert lexicon.parts_line(word, english) == line
+
+
+def test_a_root_row_cites_its_wolff_sense(lexicon):
+    fields = lexicon.card_fields("gitúgnaw", "feel cold")
+    assert "gi- = -un 2" in fields.details
+
+
+def test_a_root_row_needs_the_class_code_to_license_the_piece(lexicon):
+    # the root rows only relabel: lárga takes no -un, so a root row for mu- cannot make one read
+    assert lexicon.parts_line("largahon", "will leave") is None
+
+
+def test_mahimo_stays_silent(lexicon):
+    # a fixed word, not a build-up (owner, 2026-11-13)
+    assert lexicon.parts_line("mahímò", "can be obtained") is None
+
+
 # --- the helpers the 30t0 readings stand on ----------------------------------------------------
 
 
