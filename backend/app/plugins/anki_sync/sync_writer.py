@@ -81,6 +81,17 @@ COURSE_REGION_GAP = 100_000
 #: through ordinary new-card positions (owner chose the tag, 2026-11-10). The
 #: prefix has no ``_`` or ``%``, so it is safe inside LIKE.
 MINED_TAG_PREFIX = "tt-mined-c"
+#: TT's tag exactly as TT writes it: the prefix, then a cloze number with no
+#: leading zero. Anything else that merely starts with the prefix is the
+#: learner's own tag (``tt-mined-check``): never parsed, never removed. A bare
+#: ``startswith`` once ran ``int()`` on such a tag and stopped the sync.
+_MINED_TAG = re.compile(re.escape(MINED_TAG_PREFIX) + r"([1-9][0-9]*)")
+
+
+def _mined_ord(tag: str) -> int | None:
+    """The card ord a ``tt-mined-c<N>`` tag names (N - 1), or ``None`` for any other tag."""
+    match = _MINED_TAG.fullmatch(tag)
+    return int(match.group(1)) - 1 if match else None
 
 
 def _with_course_tag(tags: list[str] | None, course: bool) -> list[str]:
@@ -1053,9 +1064,9 @@ class OfflineWriter:
         if COURSE_TAG not in tags:
             return
         cards = {r[0] for r in self._conn.execute("SELECT ord FROM cards WHERE nid = ?", (note_id,))}
-        mined = {int(t.removeprefix(MINED_TAG_PREFIX)) - 1 for t in tags if t.startswith(MINED_TAG_PREFIX)}
+        mined = {o for t in tags if (o := _mined_ord(t)) is not None}
         mined = ((mined - set(course)) | set(front)) & cards
-        kept = [t for t in tags if not t.startswith(MINED_TAG_PREFIX)]
+        kept = [t for t in tags if _mined_ord(t) is None]
         updated = kept + [f"{MINED_TAG_PREFIX}{o + 1}" for o in sorted(mined)]
         if updated != tags:
             self._conn.execute(
