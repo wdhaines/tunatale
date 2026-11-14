@@ -534,9 +534,14 @@ it; verify it is still firing, then look for new edge cases.
 - Sibling-bury: `_compute_live_main` gathers
   `_NEW_OVERFETCH = max(count_new_available(), new_quota + 50)` new cards, buries
   siblings, then caps at `new_quota`.
-- **Sort key (Layer 25):** `get_new_items` orders by `d.anki_due DESC NULLS FIRST,
-  c.created_at DESC, d.anki_card_id ASC, c.id ASC`. **This requires the Anki deck
-  setting "New card gather order = Descending position".**
+- **Sort key (Layers 25, 83):** `get_new_items` orders by `d.anki_due` in the
+  deck's mirrored gather direction (ASC under DECK, DESC under HighestPosition),
+  `NULLS FIRST` either way, then `c.created_at DESC, d.anki_card_id ASC, c.id ASC`.
+  The direction is read from the deck's preset at sync (tunatale-qf6.13), so it
+  holds under either "New card gather order" setting.
+- **Where TT's own adds are placed:** a TT addition, a mined blank and every drill
+  card (tunatale-5i1p.8) go to the FRONT (`_next_front_position`); a course card
+  goes FIFO to the course region (`_next_course_position`, tagged `tt-course`).
 - **Cross-direction gather, bury and Template sort (Layer 28).** Per-direction
   sorting isn't enough: Anki gathers both ords in one pass and buries the
   second-seen sibling, so the higher-due one wins

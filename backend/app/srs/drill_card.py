@@ -64,6 +64,18 @@ def answer_media(k: int) -> str:
     return f"drill_answer_{k}"
 
 
+_DRILL_MEDIA = re.compile(rf"{MODEL_MEDIA}|drill_(?:cue|answer)_[0-9]+")
+
+
+def is_drill_media(kind: str) -> bool:
+    """Whether *kind* is one of a drill card's clips (``drill_model``, ``drill_cue_<k>``, ``drill_answer_<k>``).
+
+    TT owns these rows: a drill note references only the step it shows, so the
+    Anki->TT media refresh must not collapse the other steps' clips (tunatale-5i1p.9).
+    """
+    return _DRILL_MEDIA.fullmatch(kind) is not None
+
+
 def is_drill_key(key: str) -> bool:
     """Whether *key* is a drill card's: ``sent:<set>:drill-<n>`` or ``sent:<set>:drill-<n>:<k>``, whole."""
     return _DRILL_KEY.fullmatch(key) is not None

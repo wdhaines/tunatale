@@ -398,7 +398,14 @@ def _line_placement(rows: list[tuple[str, SRSItem, int]], anki_ords: list[int]) 
     region; a row that is not the course's (a blank the learner mined,
     tunatale-h0q3.52) is a TT addition, and goes to the front like the rest of
     them (owner, 2026-11-10). Only the cards the note lacks are placed at all.
+
+    A drill card is never a course note, whatever its row's ``source`` says: it
+    goes to the front, untagged, so it is studied with its lesson rather than
+    behind the course's backlog (tunatale-5i1p.8; measured live 2026-11-14,
+    1,064 new cards ahead of the first one).
     """
+    if any(is_drill_key(i.syntactic_unit.disambig_key) for _, i, _ in rows):
+        return False, list(anki_ords)
     course = any(i.syntactic_unit.source == COURSE_SOURCE for _, i, _ in rows)
     front = [o for (_, i, _), o in zip(rows, anki_ords, strict=True) if i.syntactic_unit.source != COURSE_SOURCE]
     return course, front
@@ -2147,6 +2154,13 @@ class AnkiSync:
         # the row id breaks the tie in insertion order, which for a course's card
         # list IS the course's order (tunatale-h0q3.43).
         items.sort(key=lambda gi: (self._db.get_created_at_by_guid(gi[0]) or "", gi[2]))
+        # Drill cards go to the front, where each add lands AHEAD of the one before:
+        # minted in card-list order they would serve last-first. So the drill rows
+        # trade places among their own slots, mint in reverse, and serve in the card
+        # list's order (tunatale-5i1p.8). Every other item keeps its slot.
+        drill_slots = [n for n, (_g, i, _c) in enumerate(items) if is_drill_key(i.syntactic_unit.disambig_key)]
+        for n, item in zip(drill_slots, [items[n] for n in reversed(drill_slots)], strict=True):
+            items[n] = item
 
         # A lesson line's cards are minted together, as one "TT Sentence" note
         # (tunatale-h0q3.55), when the loop reaches the line's first row: so a
