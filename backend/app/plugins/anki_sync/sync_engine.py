@@ -405,8 +405,14 @@ def _line_placement(rows: list[tuple[str, SRSItem, int]], anki_ords: list[int]) 
 
 
 def _on_sentence_note(unit) -> bool:
-    """Whether *unit*'s card lives on a "TT Sentence" note: a lesson line's card, or a drill card (5i1p.5)."""
-    return sentence_card(unit) is not None or drill_card(unit) is not None
+    """Whether *unit*'s card lives on a "TT Sentence" note: a lesson line's card, or a drill card (5i1p.5).
+
+    A drill row is known by its KEY, not by whether its ``card_data`` reads: a row
+    whose card stopped reading (a new required ``DrillCard`` field does that to every
+    existing row) still belongs on its note, and ``_plan_sentence_line`` holds it
+    there. Taken by the key alone it would fall into the plain-cloze branch.
+    """
+    return sentence_card(unit) is not None or is_drill_key(unit.disambig_key)
 
 
 def _split_sentence_notes(records: list[NoteRecord]) -> list[NoteRecord]:
@@ -1912,6 +1918,10 @@ class AnkiSync:
         used to raise out of the whole sync, after the lines ahead had been written.
         """
         drill = drill_card(rows[0][1].syntactic_unit) if rows else None
+        if drill is None and is_drill_key(line):
+            # Held, never raised: mint, push and rotation all meet here (audit F1).
+            _log.warning("DRILL_CARD_UNREADABLE key=%s — card_data is not a drill card; held, nothing written", line)
+            return None
         cards = [sentence_card(i.syntactic_unit) for _, i, _ in rows]
         try:
             if drill is not None:
@@ -2121,20 +2131,6 @@ class AnkiSync:
             for g, i, c in items
             if i.syntactic_unit.card_type != "vocab" or i.syntactic_unit.translation.strip() or i.syntactic_unit.extras
         ]
-
-        # A drill-keyed row whose card_data is not a drill card cannot be built,
-        # and the loop below would take it down the plain-cloze branch onto Anki's
-        # built-in Cloze notetype. Held unlinked, loudly; it never happens to a
-        # row lesson_card_mint wrote.
-        unreadable = [
-            i.syntactic_unit.disambig_key
-            for _, i, _ in items
-            if is_drill_key(i.syntactic_unit.disambig_key) and drill_card(i.syntactic_unit) is None
-        ]
-        if unreadable:
-            items = [(g, i, c) for g, i, c in items if i.syntactic_unit.disambig_key not in unreadable]
-            for key in unreadable:
-                _log.warning("DRILL_CARD_UNREADABLE key=%s — card_data is not a drill card; held unlinked", key)
 
         if dry_run:
             return CreateNewReport(count=len(items))

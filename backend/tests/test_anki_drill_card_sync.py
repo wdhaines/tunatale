@@ -238,6 +238,48 @@ class TestMint:
         # control: the other drill rows in the same run have their notes
         assert _notes_by_notetype(anki) == {"TT Sentence": len(EXPECTED_KEYS) - 1}
 
+    async def test_f1_a_linked_unreadable_drill_row_is_held_by_the_rotation_and_the_rest_rotate(self, no_tts, caplog):
+        """Audit F1: a linked drill row whose card_data stopped reading as a drill card (a new
+        required DrillCard field would do it to every existing row) must not raise out of the sync."""
+        db = SRSDatabase(":memory:")
+        minted = _minted(db)
+        anki = _conn()
+        await _sync(db, anki)
+        bad, good = minted[SUB], minted["sent:test-01:drill-2"]
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET card_data = '{}' WHERE id = ?", (bad,))
+            conn.commit()
+        for cid in (bad, good):
+            anki.execute("UPDATE notes SET flds = 'x' || flds WHERE id = ?", (_row(db, cid).anki_note_id,))
+        anki.commit()
+        bad_before = _note(anki, db, bad)
+
+        with caplog.at_level(logging.INFO):
+            assert _rotate(db, anki) == 1
+
+        assert f"DRILL_CARD_UNREADABLE key={SUB}" in caplog.text
+        assert _note(anki, db, bad) == bad_before
+        assert _note(anki, db, good)["flds"] == _expected(db, good)  # control: the other drill is written
+
+    async def test_f1_a_flagged_linked_unreadable_drill_row_keeps_its_flag_and_the_push_goes_on(self, no_tts, caplog):
+        db = SRSDatabase(":memory:")
+        cid = _minted(db)[SUB]
+        anki = _conn()
+        await _sync(db, anki)
+        with db._get_conn() as conn:
+            conn.execute("UPDATE collocations SET card_data = '{}' WHERE id = ?", (cid,))
+            conn.commit()
+        db.add_dirty_field_by_id(cid, "audio")
+        before = _note(anki, db, cid)
+
+        with caplog.at_level(logging.INFO):
+            report = AnkiSync(db=db, _reader=FakeReader(), _writer=OfflineWriter(anki), language_code=LANG).sync_push()
+
+        assert report.write_noop == 1
+        assert db.get_dirty_fields(_row(db, cid).guid) == "audio"
+        assert _note(anki, db, cid) == before
+        assert f"DRILL_CARD_UNREADABLE key={SUB}" in caplog.text
+
     def test_a_flagged_drill_row_with_no_note_has_nothing_to_write(self):
         db = SRSDatabase(":memory:")
         minted = _minted(db)
