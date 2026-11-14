@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from app.plugins.anki_sync.add_sentence_notetype import add_sentence_notetype
 from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
 from app.plugins.anki_sync.sync_writer import COURSE_REGION_GAP, COURSE_TAG, MINED_TAG_PREFIX
@@ -184,6 +186,37 @@ class TestWriterCoursePosition:
         conn = _make_dual_collection_conn()
         nid = self._sentence_note(OfflineWriter(conn), conn, front_ords=[])
         assert _tags(conn, nid).split() == [COURSE_TAG]
+
+    # Only ``tt-mined-c<N>`` as TT writes it (N = 1, 2, ... with no leading zero) is TT's tag.
+    # ``int()`` on any tag with the prefix raised ValueError out of ``rewrite_sentence_note`` for a
+    # hand-made ``tt-mined-check`` and stopped the sync (probed 2026-11-10, re-audit of PR #415);
+    # the same prefix test also deleted such a tag whenever the mined set changed.
+
+    @pytest.mark.parametrize(
+        "foreign", ["tt-mined-check", "tt-mined-c", "tt-mined-c3x", "tt-mined-c0", "tt-mined-c03", "leech"]
+    )
+    def test_a_tag_that_only_looks_mined_is_left_alone(self, foreign):
+        conn = _make_dual_collection_conn()
+        # The rewrite drops a card, and a dropped card is a grave (anki-sync.md § graves).
+        conn.execute(
+            "CREATE TABLE graves (oid INTEGER NOT NULL, type INTEGER NOT NULL, usn INTEGER NOT NULL, "
+            "PRIMARY KEY (oid, type))"
+        )
+        writer = OfflineWriter(conn)
+        nid = self._sentence_note(writer, conn, front_ords=[2])
+        conn.execute("UPDATE notes SET tags = ? WHERE id = ?", (f" {COURSE_TAG} tt-mined-c3 {foreign} ", nid))
+        # The mined blank (ord 2) leaves the line: its card and its tag go, the learner's tag stays.
+        assert writer.rewrite_sentence_note(nid, ["x"] * 5, [1, 0], course=True)
+        assert sorted(_tags(conn, nid).split()) == sorted([COURSE_TAG, foreign])
+
+    @pytest.mark.parametrize("foreign", ["tt-mined-check", "tt-mined-c03", "leech"])
+    def test_a_tag_that_only_looks_mined_does_not_stop_a_new_mined_tag(self, foreign):
+        conn = _make_dual_collection_conn()
+        writer = OfflineWriter(conn)
+        nid = self._sentence_note(writer, conn, front_ords=[])
+        conn.execute("UPDATE notes SET tags = ? WHERE id = ?", (f" {COURSE_TAG} {foreign} ", nid))
+        assert writer.rewrite_sentence_note(nid, ["x"] * 5, [1, 2, 0, 3], course=True, front_ords=[3])
+        assert sorted(_tags(conn, nid).split()) == sorted([COURSE_TAG, foreign, "tt-mined-c4"])
 
     def _learn(self, conn, nid, ords):
         conn.execute(
