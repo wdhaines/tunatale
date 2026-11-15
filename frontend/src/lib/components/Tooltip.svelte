@@ -3,6 +3,7 @@
 	import type { GradeRating, WordToken } from '#lib/api.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { untrack } from 'svelte';
+	import GradeButtons from './GradeButtons.svelte';
 
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
@@ -371,9 +372,6 @@
 		)
 	);
 
-	// The review queue's order (DrillCard), so the two surfaces read alike.
-	const RATINGS: readonly GradeRating[] = ['again', 'hard', 'good', 'easy'];
-
 	// "More…" disclosure (bd tunatale-8jgb): when a primary action shares the
 	// popover with two or more utilities, the utilities hide behind one "More…"
 	// button to keep the popover short. Reset to false whenever the popover
@@ -463,13 +461,7 @@
 			{#if word?.parts}<span class="tt-parts">{word.parts}</span>{/if}
 			{#if masterySides}<span class="tt-sides">{#each masterySides as line (line)}<span class="tt-side">{line}</span>{/each}</span>{/if}
 			{#if ratings}
-				<span class="tt-rate">
-					{#each RATINGS as rating (rating)}
-						<button type="button" class="tt-btn tt-btn-{rating}" onclick={() => ratings!.onRate(rating)}
-							>{t(`tooltip.${rating}`)}</button
-						>
-					{/each}
-				</span>
+				<GradeButtons variant="popover" onRate={ratings.onRate} />
 			{/if}
 			{#if showGrade || showDrillIn || (!collapsed && (showStartPhrase || showCreateInflection || showCreateSense || showUnignore || showUnignoreCardless || showIgnore || showIgnoreCardless || showMarkKnown || showUnmarkKnown || showResetNew)) || collapsed}
 				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
@@ -707,12 +699,6 @@
 		font-size: 11px;
 		opacity: 0.8;
 	}
-	.tt-rate {
-		display: flex;
-		flex-wrap: nowrap;
-		gap: 4px;
-		margin-top: 4px;
-	}
 	.tt-actions {
 		display: flex;
 		flex-wrap: wrap;
@@ -769,38 +755,6 @@
 	.tt-btn-grade:hover {
 		background: var(--color-primary-hover, #1d4ed8);
 	}
-	/* The four production ratings take the review card's colours (DrillCard's
-	   .btn-again / -hard / -good / -easy), so a rating looks the same wherever it
-	   is given. Good used to be the lone accent-blue button here, which is Easy's
-	   colour on the review card. */
-	.tt-btn-again,
-	.tt-btn-again:hover {
-		background: var(--color-danger);
-		border-color: var(--color-danger);
-	}
-	.tt-btn-hard,
-	.tt-btn-hard:hover {
-		background: var(--color-warning);
-		border-color: var(--color-warning);
-	}
-	.tt-btn-good,
-	.tt-btn-good:hover {
-		background: var(--color-success);
-		border-color: var(--color-success);
-	}
-	.tt-btn-easy,
-	.tt-btn-easy:hover {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-	}
-	/* The :hover selectors above outrank .tt-btn:hover's translucent white, so
-	   the colour holds under the pointer and only brightens. */
-	.tt-btn-again:hover,
-	.tt-btn-hard:hover,
-	.tt-btn-good:hover,
-	.tt-btn-easy:hover {
-		filter: brightness(1.12);
-	}
 	/* More button for utility actions */
 	.tt-btn-more {
 		background: rgba(255, 255, 255, 0.15);
@@ -823,13 +777,6 @@
 		.tt-btn {
 			font-size: 14px;
 			padding: 8px 12px;
-		}
-		.tt-rate {
-			gap: 8px;
-			margin-top: 8px;
-		}
-		.tt-rate > .tt-btn {
-			padding: 8px 10px;
 		}
 		.tt-actions {
 			gap: 8px;

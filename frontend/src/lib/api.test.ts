@@ -2981,6 +2981,38 @@ describe("image methods", () => {
     expect(result.candidates[1].item_id).toBe(5);
   });
 
+  it("getGradePlan sends range_days, and omits it for every row", async () => {
+    const plan = { studied: false, listen_count: 0, range_days: 3, cards: [] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(plan)));
+
+    const result = await api.getGradePlan("l1", 3);
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/l1/grade-plan?range_days=3`);
+    expect(result.range_days).toBe(3);
+
+    await api.getGradePlan("l1", 0);
+    expect(fetch).toHaveBeenLastCalledWith(`${BASE}/api/srs/content/l1/grade-plan?range_days=0`);
+
+    await api.getGradePlan("l1", null);
+    expect(fetch).toHaveBeenLastCalledWith(`${BASE}/api/srs/content/l1/grade-plan`);
+  });
+
+  it("saveGrades POSTs the explicit grade set as JSON", async () => {
+    const resp = { status: "ok", applied: 1, created: 0, recorded_study: true, listen_count: 1 };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));
+    const body = {
+      card_grades: [{ item_id: 7, direction: "recognition" as const, rating: "good" as const }],
+      studied: false,
+    };
+
+    const result = await api.saveGrades("l1", body);
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/content/l1/grade`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify(body) }),
+    );
+    expect(result.applied).toBe(1);
+  });
+
   it("commitPending calls POST /api/srs/content/:id/commit-pending with no body", async () => {
     const resp = { status: "ok", applied: 3 };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));

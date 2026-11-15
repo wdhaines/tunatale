@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { FocusRun, SRSItemDetail } from '#lib/api.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import GradeButtons from './GradeButtons.svelte';
 
 	type Rating = 'again' | 'hard' | 'good' | 'easy';
 
@@ -388,10 +389,7 @@
 			{/if}
 		</div>
 		<div class="ratings">
-			<button class="btn-again" class:suggested={pendingRating === 'again'} onclick={() => rate('again')}>{t('drillCard.again')}</button>
-			<button class="btn-hard" class:suggested={pendingRating === 'hard'} onclick={() => rate('hard')}>{t('drillCard.hard')}</button>
-			<button class="btn-good" class:suggested={pendingRating === 'good'} onclick={() => rate('good')}>{t('drillCard.good')}</button>
-			<button class="btn-easy" class:suggested={pendingRating === 'easy'} onclick={() => rate('easy')}>{t('drillCard.easy')}</button>
+			<GradeButtons variant="card" suggested={pendingRating} onRate={rate} />
 		</div>
 	{:else}
 		<div class="actions">
@@ -804,23 +802,8 @@
 	   note + ratings. That is what the docked bar at the end of this file is
 	   for; this comment used to claim the caps were sufficient, which is the
 	   belief that shipped tunatale-asi. */
-	.ratings button {
-		margin-top: 0;
-		flex: 1 1 calc(50% - 0.5rem);
-		min-height: 44px;
-		font-size: 1rem;
-	}
-	.btn-again { background: var(--color-danger); }
-	.btn-hard  { background: var(--color-warning); }
-	.btn-good  { background: var(--color-success); }
-	.btn-easy  { background: var(--color-primary); }
-
-	/* The listen preview's provisional grade — a subtle ring, not a color swap,
-	   so it reads as a suggestion rather than a state change. */
-	.ratings button.suggested {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
+	/* The buttons themselves are GradeButtons' `card` variant: a 2-up grid of
+	   44px pills on a phone, one row from 641px. */
 
 	.key-hint {
 		margin: 0.75rem 0 0;
@@ -892,6 +875,5 @@
 		.prompt.revealed .prompt-image { max-height: 120px; }
 		.play-btn { margin-bottom: 0.75rem; }
 		.ratings { gap: 0.75rem; }
-		.ratings button { flex: 0 1 auto; }
 	}
 </style>

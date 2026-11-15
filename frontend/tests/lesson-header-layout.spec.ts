@@ -339,18 +339,31 @@ test("lesson card: Mark as Listened stays centered in the card", async ({ page, 
 	await page.setViewportSize(PHONE);
 	const card = await openLesson(page, await curriculumId(request));
 
-	const btn = await card.getByRole("button", { name: "Mark as Listened" }).boundingBox();
 	const cardBox = await card.boundingBox();
-	expect(btn && cardBox).toBeTruthy();
+	expect(cardBox).toBeTruthy();
 
-	// This lesson has never been listened to, so the button is the row's only
-	// item and lands dead centre.
-	const btnCenter = btn!.x + btn!.width / 2;
+	// This lesson has never been listened to, so the row holds the button and
+	// the Grade link beside it (tunatale-5i1p.3), on one line, and the pair lands
+	// dead centre.
+	const row = await card.locator(".listen-actions").evaluate((el) => {
+		const boxes = [...el.children].map((c) => c.getBoundingClientRect());
+		return {
+			items: [...el.children].map((c) => c.textContent?.trim()),
+			left: Math.min(...boxes.map((b) => b.left)),
+			right: Math.max(...boxes.map((b) => b.right)),
+			lines: new Set(boxes.map((b) => Math.round(b.top))).size,
+			heights: boxes.map((b) => Math.round(b.height)),
+		};
+	});
+	expect(row.items).toEqual(["Mark as Listened", "Grade"]);
+	expect(row.lines, `the button and Grade share one line: ${JSON.stringify(row)}`).toBe(1);
+	expect(new Set(row.heights).size, `the two pills differ in height: ${row.heights}`).toBe(1);
+	const rowCenter = (row.left + row.right) / 2;
 	const cardCenter = cardBox!.x + cardBox!.width / 2;
-	expect(Math.abs(btnCenter - cardCenter)).toBeLessThanOrEqual(1);
+	expect(Math.abs(rowCenter - cardCenter)).toBeLessThanOrEqual(1);
 
 	// Pinned as a rule too, because the geometry above only covers the
-	// button-alone state: once a listen adds a confirmation / check-work link
+	// unlistened state: once a listen adds a confirmation / check-work link
 	// beside it, the ROW stays centered and the pair reads as one unit.
 	const justify = await card
 		.locator(".listen-actions")

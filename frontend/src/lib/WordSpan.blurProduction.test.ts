@@ -131,7 +131,7 @@ describe("WordSpan blur-as-cloze", () => {
       },
     });
     await fireEvent.click(wordEl(container));
-    const rate = container.querySelector(".tt-rate") as HTMLElement;
+    const rate = container.querySelector(".grade-popover") as HTMLElement;
     const labels = [...rate.querySelectorAll("button")].map((b) => b.textContent?.trim());
     expect(labels).toEqual(RATING_LABELS);
     // The ratings are a row of their own; the utilities live in `.tt-actions`.
@@ -156,8 +156,9 @@ describe("WordSpan blur-as-cloze", () => {
       const rating = label.toLowerCase();
       // Exactly its own colour: Good used to be the one accent-blue button,
       // which is Easy's colour in the review queue.
-      expect(classes.filter((c) => /^tt-btn-(again|hard|good|easy|grade)$/.test(c))).toEqual([
-        `tt-btn-${rating}`,
+      // The colour class is GradeButtons' (one control everywhere, tunatale-5i1p.3).
+      expect(classes.filter((c) => /^(tt-)?btn-(again|hard|good|easy|grade)$/.test(c))).toEqual([
+        `btn-${rating}`,
       ]);
     }
   });

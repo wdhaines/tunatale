@@ -68,4 +68,20 @@ describe("ListenActions", () => {
     await fireEvent.click(getByText("Mark as Listened"));
     expect((l as { open: ReturnType<typeof vi.fn> }).open).toHaveBeenCalledTimes(1);
   });
+
+  it("offers the Grade page beside Mark as Listened when given its link (tunatale-5i1p.3)", () => {
+    const { getByRole, container } = render(ListenActions, {
+      props: { listen: listen(), reviewHref: "/review", gradeHref: "/grade/l1?back=%2F" },
+    });
+    const link = getByRole("link", { name: "Grade" });
+    expect(link.getAttribute("href")).toBe("/grade/l1?back=%2F");
+    expect(link.parentElement).toBe(container.querySelector(".listen-actions"));
+  });
+
+  it("has no Grade link without one", () => {
+    const { queryByRole } = render(ListenActions, {
+      props: { listen: listen(), reviewHref: "/review" },
+    });
+    expect(queryByRole("link", { name: "Grade" })).toBeNull();
+  });
 });

@@ -87,6 +87,7 @@ find frontend/src/routes -name '+page.svelte' | sed 's|frontend/src/routes||; s|
 /c/[curriculumId]/l/[lessonId]
 /c/[curriculumId]/plan
 /cards
+/grade/[contentId]
 /invite
 /login
 /reference
@@ -4409,6 +4410,7 @@ cd frontend/src/routes && find . -name '+page.svelte' | sort; grep -n "adapter("
 ./c/[curriculumId]/l/[lessonId]/+page.svelte
 ./c/[curriculumId]/plan/+page.svelte
 ./cards/+page.svelte
+./grade/[contentId]/+page.svelte
 ./invite/+page.svelte
 ./login/+page.svelte
 ./reference/+page.svelte
@@ -4510,7 +4512,7 @@ export function createLocalPref<T>(key: string, opts: LocalPrefOptions<T>): Loca
     value = next;
     if (typeof localStorage === "undefined") return;
     try {
-20
+22
 ```
 
 `createLocalPref` exists because each preference store had separately re-spelled three needs: a self-init on first read (a deep component like `LessonPlayer` mounts before the layout's `onMount` seeds anything), tolerance of blocked localStorage (private mode throws on get *and* set; a preference must never break the thing it is attached to), and a safe no-window default. The key and stored string format stay the caller's, because users already have those values on disk. Theme and language are deliberately not built on it: they act on the value, so they need to know when it is applied.
@@ -5083,7 +5085,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grade-page-layout.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;

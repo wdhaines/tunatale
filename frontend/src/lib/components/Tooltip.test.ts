@@ -528,12 +528,12 @@ describe("Tooltip", () => {
     // The grade button's old variant-class feature is gone (bd tunatale-8jgb):
     // the read-ahead "ahead" variant is replaced by the four-rating row below,
     // and the plain grade button no longer has a variant to distinguish it.
-    it("renders the four ratings in a .tt-rate row when ratings is set", () => {
+    it("renders the four ratings in a .grade-popover row when ratings is set", () => {
       const word = makeWordToken({ is_due: true, srs_item_id: 1 });
       const { container } = render(TooltipTest, {
         props: { word, childText: "test", ratings: { onRate: vi.fn() } },
       });
-      const row = container.querySelector(".tt-rate")!;
+      const row = container.querySelector(".grade-popover")!;
       expect(row).toBeTruthy();
       const labels = Array.from(row.querySelectorAll("button")).map((b) =>
         (b.textContent ?? "").trim(),
@@ -546,7 +546,7 @@ describe("Tooltip", () => {
       const { container } = render(TooltipTest, {
         props: { word, childText: "test", gradeLabel: "Undo ↩", onGrade: vi.fn() },
       });
-      expect(container.querySelector(".tt-rate")).toBeNull();
+      expect(container.querySelector(".grade-popover")).toBeNull();
     });
 
     it("grade button alone makes the popover renderable (counts as content)", () => {

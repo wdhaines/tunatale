@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { gradeHref } from '#lib/grading/grade.js';
 	import Banner from '#lib/components/Banner.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { api } from '#lib/api.js';
@@ -458,6 +459,7 @@
 			<ListenActions
 				{listen}
 				reviewHref="/review?lesson={data.session.id}&back=/review-sessions/{data.session.id}"
+				gradeHref={gradeHref(data.session.id, `/review-sessions/${data.session.id}`, data.session.title)}
 				hasError={error !== ''}
 				{recallInline}
 			/>
