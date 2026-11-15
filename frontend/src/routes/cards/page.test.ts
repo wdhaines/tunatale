@@ -1132,7 +1132,7 @@ describe("cards/+page.svelte", () => {
       },
     ],
   ] as [string, Partial<SRSItemDetail>][])(
-    "Cloze sentence is not offered on %s",
+    "Cloze sentence and Edit are not offered on %s",
     async (_name, over) => {
       const item = makeSRSItemDetail({
         id: 43,
@@ -1148,6 +1148,7 @@ describe("cards/+page.svelte", () => {
       await openRowMenu(findByLabelText, "Han er her");
       expect(await findByText("Suspend")).toBeTruthy();
       expect(queryByText("Cloze sentence…")).toBeNull();
+      expect(queryByText("Edit")).toBeNull();
     },
   );
 

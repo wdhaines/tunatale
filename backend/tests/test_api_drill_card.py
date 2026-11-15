@@ -279,3 +279,36 @@ class TestClozeSentenceRewrite:
         assert statuses == [409, 409, 409, 409]
         assert {cid: db.get_collocation_by_id(cid)[1].syntactic_unit for cid in rows} == stored
         assert (db.list_dirty_field_edits(), llm.calls) == ([], 0)
+
+
+class TestRowEdit:
+    """The Cards page's Edit is refused on a lesson card's row: the lesson is where its text is corrected.
+
+    A row's guid is built from its text, and the mint finds a card by guid.
+    Measured before the refusal (2026-11-15): the edit returned 200 and changed
+    the guid, the next mint of the same lesson added a second row under the
+    same key, and from then on a sentence line was held at every sync
+    ("listed twice") while a drill row raised out of ``sync_create_new``.
+    A vocabulary row's edit is the control, in ``test_api_srs.py``.
+    """
+
+    async def test_an_edit_is_refused_and_the_next_mint_adds_nothing(self):
+        story = _mixed_story()
+        db = _install(story)
+        rows = _mint_mixed(db)
+        before = _keys(db)
+        stored = {cid: db.get_collocation_by_id(cid)[1].syntactic_unit for cid in rows}
+
+        async with _client() as c:
+            statuses = [
+                (
+                    await c.patch(f"/api/srs/items/{cid}", json={"text": "Endret tekst.", "translation": "changed"})
+                ).status_code
+                for cid in rows
+            ]
+
+        assert statuses == [409, 409]
+        assert {cid: db.get_collocation_by_id(cid)[1].syntactic_unit for cid in rows} == stored
+        assert db.list_dirty_field_edits() == []
+        assert mint_lesson_cards(db, "no", story["cards"], story["drills"]) == []
+        assert _keys(db) == before
