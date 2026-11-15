@@ -711,6 +711,8 @@ export const en = {
   "gradePage.saved": "Saved",
   "gradePage.savedGraded": "{count} graded",
   "gradePage.savedStudied": "counted as studied",
+  "gradePage.savedTurnedOff": "{count} turned off",
+  "gradePage.firstSaveStudies": "Saving marks this lesson studied.",
   "gradePage.stale":
     "Some cards changed since this page loaded. The list is refreshed; check it and save again.",
   "gradePage.open": "Grade",

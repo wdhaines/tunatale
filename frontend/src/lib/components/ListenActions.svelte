@@ -114,6 +114,21 @@
 		font-weight: 600;
 		text-decoration: none;
 	}
+	/* At 320px the two pills must still share one line (owner, 2026-11-14): on
+	   CI's Linux fonts the 390px padding left Grade on a row of its own, which
+	   grew the sticky card and pushed the dialogue below the fold. Measured at
+	   320px on macOS fonts, this frees ~27px on top of the ~21px left before. */
+	@media (max-width: 359px) {
+		.listen-actions {
+			column-gap: 0.6rem;
+		}
+		.listen-btn {
+			padding-inline: 0.9rem;
+		}
+		.grade-link {
+			padding-inline: calc(0.9rem - 2px);
+		}
+	}
 	.listen-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;

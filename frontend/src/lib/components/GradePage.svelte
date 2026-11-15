@@ -17,8 +17,7 @@
 	import { queueStatsStore } from '#lib/stores/queueStats.svelte.js';
 	import { gradeRangePref } from '#lib/stores/gradeRangePref.svelte.js';
 	import {
-		daysUntil,
-		dueLabel,
+		dueTag,
 		gradeKey,
 		RANGE_PRESETS,
 		sayLine,
@@ -137,10 +136,12 @@
 			(!plan.studied || cardGrades.length > 0 || newOn > 0 || declined.length > 0 || studiedAgain)
 	);
 
-	function savedText(r: GradeResponse): string {
+	function savedText(r: GradeResponse, turnedOff: number): string {
 		const parts: string[] = [];
 		if (r.applied > 0) parts.push(t('gradePage.savedGraded', { count: r.applied }));
 		if (r.created > 0) parts.push(t('gradePage.newCards', { count: r.created }));
+		// A turned-off word went on the ignore list: say so, or it vanishes silently.
+		if (turnedOff > 0) parts.push(t('gradePage.savedTurnedOff', { count: turnedOff }));
 		if (r.recorded_study) parts.push(t('gradePage.savedStudied'));
 		return parts.length ? `${t('gradePage.saved')}: ${parts.join(' · ')}` : t('gradePage.saved');
 	}
@@ -149,6 +150,7 @@
 		saving = true;
 		notice = '';
 		error = '';
+		const turnedOff = declined.length;
 		try {
 			const result = await api.saveGrades(contentId, {
 				card_grades: cardGrades,
@@ -160,7 +162,7 @@
 			opened = {};
 			flipped = {};
 			studiedAgain = false;
-			notice = savedText(result);
+			notice = savedText(result, turnedOff);
 			await load(range);
 			void listenedStore.refresh();
 			queueStatsStore.refresh();
@@ -269,14 +271,14 @@
 			{/if}
 			{#each rows as card (gradeKey(card))}
 				{@const key = gradeKey(card)}
-				{@const days = daysUntil(card.due_at, now)}
+				{@const due = dueTag(card, now)}
 				{#if tab === 'understand'}
 					<div class="row" data-row-text={card.text}>
 						<div class="row-main">
 							<span class="word">{card.text}</span>
 							<button class="gloss" class:blurred={!opened[key]} onclick={() => open(key)}>{card.gloss}</button>
 						</div>
-						<span class="due" class:over={days <= 0}>{dueLabel(days)}</span>
+						<span class="due" class:over={due.over}>{due.label}</span>
 						<div class="row-grades">
 							<GradeButtons variant="row" selected={grades[key] ?? null} onRate={(r) => rate(card, r)} />
 						</div>
@@ -301,7 +303,7 @@
 							>
 							<span class="english">{line.english}</span>
 						</div>
-						<span class="due" class:over={days <= 0}>{dueLabel(days)}</span>
+						<span class="due" class:over={due.over}>{due.label}</span>
 						{#if opened[key]}
 							<div class="row-grades">
 								<GradeButtons variant="row" selected={grades[key] ?? null} onRate={(r) => rate(card, r)} />
@@ -318,6 +320,9 @@
 
 	<footer class="foot">
 		{#if notice}<p class="notice" role="status">{notice}</p>{/if}
+		{#if plan && !plan.studied}
+			<p class="hint">{t('gradePage.firstSaveStudies')}</p>
+		{/if}
 		{#if plan?.studied}
 			<label class="again">
 				<input type="checkbox" bind:checked={studiedAgain} />
@@ -555,6 +560,11 @@
 	.notice {
 		margin: 0;
 		color: var(--color-success);
+		font-size: 0.85rem;
+	}
+	.hint {
+		margin: 0;
+		color: var(--color-muted);
 		font-size: 0.85rem;
 	}
 	.again {

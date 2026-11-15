@@ -5,6 +5,7 @@ import {
   daysUntil,
   DEFAULT_RANGE,
   dueLabel,
+  dueTag,
   gradeHref,
   safeBack,
   gradeKey,
@@ -69,6 +70,47 @@ describe("daysUntil / dueLabel", () => {
   });
 });
 
+describe("dueTag", () => {
+  const now = new Date(2026, 10, 14, 1, 30); // 01:30 local: after midnight, before Anki's 04:00 rollover
+
+  it("takes 'today' from the server's grade_class, not the viewer's calendar (Fable F3)", () => {
+    // The server classed it due (inside its Anki day), so it reads today whatever
+    // the viewer's calendar says about its due time.
+    const due = makeGradePlanCard({
+      grade_class: "due",
+      due_at: new Date(2026, 10, 14, 23, 0).toISOString(),
+    });
+    expect(dueTag(due, now)).toEqual({ label: "today", over: true });
+    const learning = makeGradePlanCard({
+      grade_class: "learning",
+      due_at: new Date(2026, 10, 14, 1, 0).toISOString(),
+    });
+    expect(dueTag(learning, now)).toEqual({ label: "today", over: true });
+  });
+
+  it("an ahead row never reads today, even when its calendar day is today", () => {
+    // Due at 03:00 today: before the 04:00 rollover it belongs to the next Anki day.
+    const ahead = makeGradePlanCard({
+      grade_class: "ahead",
+      due_at: new Date(2026, 10, 14, 3, 0).toISOString(),
+    });
+    expect(dueTag(ahead, now)).toEqual({ label: "in 1d", over: false });
+    const later = makeGradePlanCard({
+      grade_class: "ahead",
+      due_at: new Date(2026, 10, 17, 9, 0).toISOString(),
+    });
+    expect(dueTag(later, now)).toEqual({ label: "in 3d", over: false });
+  });
+
+  it("a due row from an earlier day says how late it is", () => {
+    const late = makeGradePlanCard({
+      grade_class: "due",
+      due_at: new Date(2026, 10, 12, 9, 0).toISOString(),
+    });
+    expect(dueTag(late, now)).toEqual({ label: "2d late", over: true });
+  });
+});
+
 describe("gradeKey", () => {
   it("keys a row by card and direction", () => {
     expect(gradeKey({ item_id: 9, direction: "production" })).toBe("9:production");
@@ -108,6 +150,27 @@ describe("sayLine", () => {
       english: "is here",
       prompt: [],
     });
+  });
+
+  it("hides only the first occurrence of a word that appears twice in its line (Fable F2)", () => {
+    const twice: TranscriptData = {
+      lesson_id: "l1",
+      key_phrases: [],
+      dialogue_lines: [
+        {
+          role: "male-1",
+          words: ["Nia", "mi", "dinhi", "kay", "nia", "si", "Gamelo"].map((surface, i) =>
+            makeWordToken({ surface, srs_item_id: surface.toLowerCase() === "nia" ? 4 : 50 + i }),
+          ),
+        },
+      ],
+    };
+    const line = sayLine(makeGradePlanCard({ item_id: 4 }), twice);
+    expect([line.before, line.hidden, line.after]).toEqual([
+      "",
+      "Nia",
+      " mi dinhi kay nia si Gamelo",
+    ]);
   });
 
   it("hides a phrase card's whole span", () => {

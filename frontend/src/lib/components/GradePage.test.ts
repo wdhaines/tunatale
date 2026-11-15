@@ -287,6 +287,8 @@ describe("GradePage — New cards", () => {
       over_cap: [{ kind: "word", key: "kuan" }],
       studied: false,
     });
+    // A turned-off word goes on the ignore list, so the notice says so (Fable, PR #425).
+    expect(await view.findByText("Saved: 2 turned off · counted as studied")).toBeTruthy();
   });
 
   it("says when there is nothing to add", async () => {
@@ -344,6 +346,7 @@ describe("GradePage — Save", () => {
     const view = await ready();
     const button = view.getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    expect(view.queryByText("Saving marks this lesson studied.")).toBeNull();
     await fireEvent.click(view.getByLabelText("I studied it again (studied 2 times)"));
     expect(button.disabled).toBe(false);
     await fireEvent.click(button);
@@ -355,6 +358,8 @@ describe("GradePage — Save", () => {
     save.mockResolvedValue({ ...ok, created: 3 });
     const view = await ready();
     expect(view.queryByLabelText(/studied it again/)).toBeNull();
+    // Said before the tap, not only after it.
+    expect(view.getByText("Saving marks this lesson studied.")).toBeTruthy();
     const button = view.getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
     await fireEvent.click(button);

@@ -334,9 +334,10 @@ for (const width of [412, 360, 320]) {
 	});
 }
 
-test("lesson card: Mark as Listened stays centered in the card", async ({ page, request }) => {
+for (const viewport of [PHONE, { width: 320, height: 700 }]) {
+test(`lesson card @ ${viewport.width}px: Mark as Listened and Grade share one centered line`, async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
-	await page.setViewportSize(PHONE);
+	await page.setViewportSize(viewport);
 	const card = await openLesson(page, await curriculumId(request));
 
 	const cardBox = await card.boundingBox();
@@ -349,6 +350,9 @@ test("lesson card: Mark as Listened stays centered in the card", async ({ page, 
 		const boxes = [...el.children].map((c) => c.getBoundingClientRect());
 		return {
 			items: [...el.children].map((c) => c.textContent?.trim()),
+			// Slack left in the row's own box: how much wider fonts (CI's Linux
+			// ones run wider than macOS's) can grow before Grade wraps.
+			slack: Math.round(el.getBoundingClientRect().width - boxes.reduce((n, b) => n + b.width, 0)),
 			left: Math.min(...boxes.map((b) => b.left)),
 			right: Math.max(...boxes.map((b) => b.right)),
 			lines: new Set(boxes.map((b) => Math.round(b.top))).size,
@@ -370,6 +374,8 @@ test("lesson card: Mark as Listened stays centered in the card", async ({ page, 
 		.evaluate((el) => getComputedStyle(el).justifyContent);
 	expect(justify).toBe("center");
 });
+}
+
 
 /**
  * tunatale-b2mn. On Android a tap leaves `:hover` stuck on the button, and

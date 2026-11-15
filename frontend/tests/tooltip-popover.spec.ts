@@ -171,9 +171,26 @@ test.describe("word popover (coarse pointer)", () => {
 	/** Long-press is the ONLY touch opener: LONG_PRESS_MS = 450, jitter budget
 	 *  MOVE_CANCEL_PX = 10. Held well past both, with no movement in between. */
 	async function longPress(page: import("@playwright/test").Page, index: number) {
-		const box = await page.locator(".tt-wrap").nth(index).boundingBox();
+		const target = page.locator(".tt-wrap").nth(index);
+		// The press is by viewport coordinates, so an off-screen or covered word
+		// is pressed as nothing and reads as "popover never opened": a clean
+		// negative. That is how PR #425 first failed on CI (the word was at
+		// y=758 in a 720px viewport). Bring it on screen (a no-op when it already
+		// is), then refuse to press unless the point lands on the word itself.
+		await target.scrollIntoViewIfNeeded();
+		const box = await target.boundingBox();
 		if (!box) return false;
-		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+		const hit = await target.evaluate(
+			(el, [px, py]) => {
+				const at = document.elementFromPoint(px, py);
+				return at !== null && el.contains(at) ? "" : `${at?.tagName ?? "nothing"}.${at?.className ?? ""}`;
+			},
+			[x, y],
+		);
+		if (hit) throw new Error(`long-press point (${x}, ${y}) lands on ${hit}, not on word ${index}`);
+		await page.mouse.move(x, y);
 		await page.mouse.down();
 		await page.waitForTimeout(700);
 		await page.mouse.up();

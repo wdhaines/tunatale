@@ -54,6 +54,21 @@ export function dueLabel(days: number): string {
   return `in ${days}d`;
 }
 
+/**
+ * A row's due tag. Whether it is due TODAY is the server's call (`grade_class`,
+ * by the Anki day and its 04:00 rollover); only the distance is counted in the
+ * viewer's calendar days. Counting both from the calendar made a row the "now"
+ * range had included read "in 1d" between midnight and rollover (Fable F3).
+ */
+export function dueTag(
+  card: Pick<GradePlanCard, "due_at" | "grade_class">,
+  now: Date,
+): { label: string; over: boolean } {
+  const days = daysUntil(card.due_at, now);
+  if (card.grade_class === "ahead") return { label: dueLabel(Math.max(1, days)), over: false };
+  return { label: dueLabel(Math.min(0, days)), over: true };
+}
+
 export function gradeKey(card: Pick<GradePlanCard, "item_id" | "direction">): string {
   return `${card.item_id}:${card.direction}`;
 }
@@ -87,13 +102,16 @@ function joinWords(words: WordToken[]): string {
  * card's own text hidden under its gloss.
  */
 function lineFor(card: GradePlanCard, transcript: TranscriptData | null): SayLine | null {
+  const carries = (w: WordToken) =>
+    w.srs_item_id === card.item_id || w.collocation_span_id === card.item_id;
   for (const line of transcript?.dialogue_lines ?? []) {
-    const idx = line.words.flatMap((w, i) =>
-      w.srs_item_id === card.item_id || w.collocation_span_id === card.item_id ? [i] : [],
-    );
-    if (idx.length === 0) continue;
-    const first = idx[0];
-    const last = idx[idx.length - 1];
+    const first = line.words.findIndex(carries);
+    if (first < 0) continue;
+    // The first contiguous run only: a phrase's span is one run, and a word
+    // that occurs twice in its line hides once, not everything between the two
+    // ("Nia mi dinhi kay nia ...", Fable F2 on PR #425).
+    let last = first;
+    while (last + 1 < line.words.length && carries(line.words[last + 1])) last += 1;
     const before = joinWords(line.words.slice(0, first));
     const after = joinWords(line.words.slice(last + 1));
     return {
