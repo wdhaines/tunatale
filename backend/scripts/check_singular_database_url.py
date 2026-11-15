@@ -94,7 +94,11 @@ def scan_source(source: str) -> list[tuple[str, int]]:
     ``settings.database_urls`` (plural) is a DIFFERENT attribute and never
     matches, which is the whole point.
     """
-    tree = ast.parse(source)
+    tree = ast.parse(source)  # always: an unparseable file is an error, never a clean skip
+    if "database_url" not in source:
+        # No attribute of that name can be in the tree. Walking all ~450 files was
+        # 0.56 s of CPU, which put this gate's own test near its 1 s budget.
+        return []
     return [
         (_TARGET, node.lineno)
         for node in ast.walk(tree)

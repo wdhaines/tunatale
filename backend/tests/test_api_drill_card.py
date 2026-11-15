@@ -312,3 +312,21 @@ class TestRowEdit:
         assert db.list_dirty_field_edits() == []
         assert mint_lesson_cards(db, "no", story["cards"], story["drills"]) == []
         assert _keys(db) == before
+
+    async def test_an_edit_of_a_mined_blank_is_refused(self):
+        """The third kind of lesson row: a blank mined on a sentence line, keyed
+        ``sent:<lesson>:<line>:<start>-<end>`` (Fable's #428 audit)."""
+        db = _install(_mixed_story())
+        _mint_mixed(db)
+        async with _client() as c:
+            mined = await c.post(
+                "/api/srs/sentence-blanks", json={"line_key": "sent:test-01:1", "start": 0, "end": 3, "gloss": "hi"}
+            )
+            assert mined.status_code == 201
+            cid = mined.json()["collocation_id"]
+            stored = db.get_collocation_by_id(cid)[1].syntactic_unit
+            assert stored.disambig_key == "sent:test-01:1:0-3"
+            r = await c.patch(f"/api/srs/items/{cid}", json={"text": "Endret tekst.", "translation": "changed"})
+        assert r.status_code == 409
+        assert db.get_collocation_by_id(cid)[1].syntactic_unit == stored
+        assert db.list_dirty_field_edits() == []
