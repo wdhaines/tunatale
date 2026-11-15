@@ -4837,7 +4837,7 @@ What each guards:
 | `check_llm_call_sites.py` | every product `.complete()` call passes `call_site=`, so Groq usage-ledger spend is attributed (§5) |
 | `check_media_filename_case.py` | media rows match on-disk filename case (APFS vs ext4) |
 | `check_content_surface_parity.py` | lessons and review sessions keep the same verbs, held as an explicit verb map rather than a router-vs-router diff |
-| `check_response_fields_read.py` | every API schema field is named somewhere in the frontend source, or allowlisted with a reason (matched by name, so a field read for another schema passes) |
+| `check_response_fields_read.py` | every API schema field is named in the frontend's code (not its comments, CSS or type declarations), or allowlisted with a reason; matched by name, so a field read for another schema passes |
 
 One more check runs after the backend tests rather than among these: the **Walkthrough check**, `uvx showboat@0.6.1 verify docs/walkthrough.md`, which re-runs every block of this document and fails on any output that no longer matches the code (about 50 s; it needs the NST lexicon the backend group builds first). It is not a `scripts/` checker, so the listing above does not show it.
 

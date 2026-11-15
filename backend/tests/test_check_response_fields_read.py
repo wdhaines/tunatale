@@ -70,6 +70,65 @@ def test_a_name_is_read_only_as_a_whole_word(tmp_path: Path) -> None:
     assert "before_cue" not in words
 
 
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        ("a.ts", "// the pull_required flag\nconst x = 1;"),
+        ("a.ts", "/* pull_required\n   spans lines */ const x = 1;"),
+        ("a.ts", "/** @param pull_required doc comment */\nfunction f() {}"),
+        ("C.svelte", "<!-- pull_required in markup -->\n<p>hi</p>"),
+        ("C.svelte", '<div class="x"></div>\n<style>\n\t.pull_required { color: red; }\n</style>'),
+        (
+            "api.ts",
+            "export interface Status {\n  pull_required: boolean;\n  nested: { inner: { pull_required: number } };\n}",
+        ),
+        ("api.ts", "export type Status = {\n  pull_required: boolean;\n};"),
+        ("api.ts", "type Kind = Pick<Status, 'id' | 'pull_required'>;"),
+        ("C.svelte", '<script lang="ts">\n\tinterface Props {\n\t\tpull_required: boolean;\n\t}\n</script>'),
+        ("api.ts", "async undo(): Promise<{\n    status: string;\n    pull_required: string;\n  }> {\n  return x;\n}"),
+        ("api.ts", "const r = await this.request<{ pull_required: boolean }>(url);"),
+    ],
+    ids=[
+        "line-comment",
+        "block-comment",
+        "jsdoc",
+        "html-comment",
+        "style",
+        "interface",
+        "type-literal",
+        "type-alias",
+        "svelte-props",
+        "generic-return-type",
+        "generic-argument",
+    ],
+)
+def test_a_mention_that_is_not_a_read_does_not_count(tmp_path: Path, rel: str, text: str) -> None:
+    """Comments, CSS and type declarations name a field without reading it (Fable's #429 audit)."""
+    assert "pull_required" not in frontend_words(_tree(tmp_path / "src", {rel: text}))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "body: JSON.stringify({ card_grades: grades })",  # a request key is a real send
+        "const { card_grades } = plan;",  # destructuring reads it
+        "if (s.card_grades) go();",
+        "const url = `${BASE}/x?n=${p.card_grades}`;",
+        'fetch("http://example.com/a"); use(p.card_grades);',  # a URL is not a line comment
+        "interface P { a: string }\nconst v = p.card_grades;",  # code after an interface still counts
+    ],
+    ids=["request-key", "destructure", "property", "template", "url-then-code", "after-interface"],
+)
+def test_code_that_reads_or_sends_a_field_counts(tmp_path: Path, text: str) -> None:
+    assert "card_grades" in frontend_words(_tree(tmp_path / "src", {"a.ts": text}))
+
+
+def test_svelte_markup_and_script_both_count(tmp_path: Path) -> None:
+    text = '<script lang="ts">\n\tconst a = item.in_script;\n</script>\n<p>{item.in_markup}</p>'
+    words = frontend_words(_tree(tmp_path / "src", {"C.svelte": text}))
+    assert {"in_script", "in_markup"} <= words
+
+
 def test_an_unread_name_fails_and_names_its_schema() -> None:
     errors = do_check(_schema(Item=["shown", "dropped"]), {"shown"}, {})
     assert len(errors) == 1

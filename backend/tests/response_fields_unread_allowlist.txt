@@ -5,7 +5,9 @@
 # fails until it is removed. The match is by NAME across all schemas (see the
 # script's docstring), so an entry here covers every schema with that field.
 #
-# Measured 2026-11-15: 185 schemas, 391 names, these 35 unread.
+# Measured 2026-11-15: 185 schemas, 391 names, these 63 unread. The first count
+# was 35, while comments, <style> CSS and type declarations still counted as
+# reads (Fable's #429 audit); 28 more appeared once they stopped counting.
 #
 # FRAMEWORK — not ours to change:
 ctx  # FastAPI's own ValidationError shape (422 detail); no screen shows validation internals.
@@ -18,6 +20,11 @@ last_finished  # GET /api/admin/background-work (ops endpoint, no screen calls i
 file_count  # GET /api/admin/tts-cache (ops endpoint, no screen calls it).
 total_bytes  # GET /api/admin/tts-cache (ops endpoint, no screen calls it).
 glosses_found  # POST /api/srs/backfill-translations (maintenance endpoint, no screen calls it).
+checks  # GET /api/health (deploy and monitoring probe, no screen calls it).
+completed  # GET /api/admin/background-work (ops endpoint, no screen calls it).
+errors  # POST /api/admin/refresh-media (ops endpoint, no screen calls it).
+unchanged  # POST /api/admin/refresh-media (ops endpoint, no screen calls it).
+present  # GET /api/admin/tts-cache (ops endpoint, no screen calls it).
 #
 # OWNER DECISION PENDING — a screen calls the route and drops the field. Each is
 # "read it, delete it, or keep it here with a better reason"; no deletion before the owner says so.
@@ -48,3 +55,26 @@ start_day  # OWNER DECISION: GET /api/curriculum/{id} (proposed batch) — calle
 line_key  # OWNER DECISION: GradePlanCard drops it; also AddSentenceBlankRequest, whose route (POST /api/srs/sentence-blanks) no screen calls.
 collocation_id  # OWNER DECISION: AddSentenceBlankResponse; POST /api/srs/sentence-blanks has no frontend caller.
 restored  # OWNER DECISION: GradeRequest can un-ignore a declined word, but the Grade page never sends it — a missing control, not only a dead field.
+accepted  # OWNER DECISION: POST /api/client-log (fire-and-forget) — called by the frontend, field not read.
+anki_card_id  # OWNER DECISION: SRS item/queue payloads (declared in api.ts only) — called by the frontend, field not read.
+anki_note_id  # OWNER DECISION: SRS item/queue payloads (declared in api.ts only) — called by the frontend, field not read.
+guid  # OWNER DECISION: SRS item/queue payloads (declared in api.ts only) — called by the frontend, field not read.
+difficulty  # OWNER DECISION: SRS item/queue payloads, FSRS difficulty (declared in api.ts only) — called by the frontend, field not read.
+lapses  # OWNER DECISION: SRS item/queue payloads (declared in api.ts only) — called by the frontend, field not read.
+last_review  # OWNER DECISION: SRS item/queue payloads (declared in api.ts only) — called by the frontend, field not read.
+collocation_lemma  # OWNER DECISION: GET .../transcript TranscriptWord (declared in api.ts only) — called by the frontend, field not read.
+collocation_progress  # OWNER DECISION: GET .../transcript TranscriptWord (declared in api.ts only) — called by the frontend, field not read.
+collocation_start  # OWNER DECISION: GET .../transcript TranscriptWord (declared in api.ts only) — called by the frontend, field not read.
+srs_state  # OWNER DECISION: GET .../transcript TranscriptWord (declared in api.ts only) — called by the frontend, field not read.
+deleted  # OWNER DECISION: DELETE curriculum / review-session responses (typed in api.ts only) — called by the frontend, field not read.
+deleted_day  # OWNER DECISION: DELETE /api/curriculum/{id}/days/{day} (typed in api.ts only) — called by the frontend, field not read.
+new_due_at  # OWNER DECISION: POST .../direction/{d}/feedback (typed in api.ts only) — called by the frontend, field not read.
+new_state  # OWNER DECISION: POST .../direction/{d}/feedback (typed in api.ts only) — called by the frontend, field not read.
+restored_due_at  # OWNER DECISION: POST .../direction/{d}/undo (typed in api.ts only) — called by the frontend, field not read.
+restored_state  # OWNER DECISION: POST .../direction/{d}/undo (typed in api.ts only) — called by the frontend, field not read.
+was_created  # OWNER DECISION: POST /api/srs/items/base and inflection-clozes (typed in api.ts only) — called by the frontend, field not read.
+reply_count_cleared  # OWNER DECISION: POST /api/curriculum/{id}/plan/reset (typed in api.ts only) — called by the frontend, field not read.
+phrase_count  # OWNER DECISION: POST /api/story/import StorySection (declared in api.ts only) — called by the frontend, field not read.
+phrase_index  # OWNER DECISION: POST /api/audio/render RenderSectionCue (declared in api.ts only) — called by the frontend, field not read.
+pull_required  # OWNER DECISION: POST /api/anki/peer-sync (only a doc comment names it; also run by curl) — called by the frontend, field not read.
+push_required  # OWNER DECISION: POST /api/anki/peer-sync (only a doc comment names it; also run by curl) — called by the frontend, field not read.
