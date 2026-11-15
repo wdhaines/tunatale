@@ -218,7 +218,7 @@ def committed():
 
 @pytest.fixture(scope="module")
 def no_relations(committed):
-    return WolffLexicon(committed.entries, relations=EnglishRelations.empty())
+    return committed.variant(relations=EnglishRelations.empty())
 
 
 @pytest.mark.parametrize(
@@ -249,13 +249,13 @@ def test_a_light_word_never_relates_even_if_the_table_says_so(committed):
     # The builder keeps light words out of the table; the matcher does not
     # rely on that.
     rel = EnglishRelations(base={}, related={"like": frozenset({"kind"})}, defined_by={"nice": frozenset({"like"})})
-    assert isinstance(WolffLexicon(committed.entries, relations=rel).match("buotan", "kind; nice"), Miss)
+    assert isinstance(committed.variant(relations=rel).match("buotan", "kind; nice"), Miss)
 
 
 def test_the_same_words_outrank_a_relation(committed):
     # Relate 'three' to túlò's 'drip': the exact gloss still wins.
     rel = EnglishRelations(base={}, related={"drip": frozenset({"three"})}, defined_by={})
-    assert WolffLexicon(committed.entries, relations=rel).card_fields("tulo", "three").spelling == "tuló"
+    assert committed.variant(relations=rel).card_fields("tulo", "three").spelling == "tuló"
 
 
 @pytest.mark.parametrize(
@@ -668,7 +668,7 @@ def test_a_decoded_form_reads_the_sub_entry_its_hand_row_names(committed):
 
 def test_without_its_hand_row_kabalo_reads_the_shame_entry(committed):
     # the control: the same lexicon with no hand rows is what card 841 showed
-    bare = WolffLexicon(committed.entries, committed.relations, decoded=())
+    bare = committed.variant(decoded=())
     f = bare.card_fields("kabalo", "can")
     assert (f.spelling, f.meaning) == ("kabálo", "feeling of shame and hurt for not being given s.t")
 
@@ -683,7 +683,37 @@ def test_every_hand_row_names_a_sub_entry_that_exists(committed):
 def test_a_hand_row_naming_a_missing_sub_entry_is_refused(committed):
     row = Decoded("kabalo", "kabaló", "balu", "no-such-label", "ka-", "")
     with pytest.raises(ValueError, match="no-such-label"):
-        WolffLexicon(committed.entries, committed.relations, decoded=[row])
+        committed.variant(decoded=[row])
+
+
+# ── variant: the same entries with other relations or hand rows ───────────────────────
+#
+# Tests rebuilt the committed lexicon to change one input, and each rebuild redid
+# the affix decoder and the entry index (~0.8 s CPU under coverage), which put
+# them at the per-test CPU budget. A variant shares what the entries alone decide.
+
+
+def test_a_variant_with_other_relations_answers_as_a_fresh_build(lexicon):
+    rel = EnglishRelations(base={}, related={"see": frozenset({"watch"})}, defined_by={})
+    fresh = WolffLexicon(lexicon.entries, relations=rel)
+    variant = lexicon.variant(relations=rel)
+    assert variant.relations is rel and variant.entries == lexicon.entries
+    for word, english in [("tan-aw", "watch"), ("tan-aw", "watch; look"), ("libro", "book")]:
+        assert variant.match(word, english) == fresh.match(word, english)
+        assert variant.card_fields(word, english) == fresh.card_fields(word, english)
+
+
+def test_a_variant_keeps_what_it_is_not_given(committed):
+    same = committed.variant()
+    assert same.relations is committed.relations
+    row = load_decoded()[0]
+    assert same.match(row.word, "").decoded == row
+
+
+def test_a_variant_does_not_change_its_source(committed):
+    committed.variant(decoded=())
+    row = load_decoded()[0]
+    assert committed.match(row.word, "").decoded == row
 
 
 # ── a two-form card's Spelling line (the owner, 2026-10-23: "It just says manong in the

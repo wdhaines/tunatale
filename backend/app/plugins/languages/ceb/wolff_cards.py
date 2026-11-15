@@ -662,18 +662,8 @@ class WolffLexicon:
         #: Every head spelling, marks and all: a stress form spelt like another word's head is
         #: that other word, not a variant (sákit 'torture' is also sákit 'socket').
         self._spellings = frozenset(h.lower() for rec in self.entries for h in rec["heads"])
-        self._decoded: dict[str, _Hit] = {}
-        for row in decoded:
-            found = [
-                (ei, fi)
-                for ei, rec in enumerate(self.entries)
-                if row.head in rec["heads"]
-                for fi, f in enumerate(rec["forms"])
-                if f["label"] == row.label
-            ]
-            if len(found) != 1:
-                raise ValueError(f"wolff_decoded: {row.head} {row.label} names {len(found)} sub-entries, not one")
-            self._decoded[letters_key(row.word)] = _Hit(*found[0], row.spelling, None, decoded=row)
+        self._decoded_rows = tuple(decoded)
+        self._decoded = self._index_decoded(self._decoded_rows)
         self._attested: dict[str, list[tuple[int, str, int, str, str]]] = {}
         for ei, rec in enumerate(self.entries):
             for hb, n, example, translation in rec.get("attested", ()):
@@ -688,6 +678,43 @@ class WolffLexicon:
                     self._index.setdefault(letters_key(f["wolff"]), []).append((ei, fi, None))
                 for wolff, hb in f["short"]:
                     self._index.setdefault(letters_key(wolff), []).append((ei, fi, hb))
+
+    def _index_decoded(self, decoded: Sequence[Decoded]) -> dict[str, _Hit]:
+        """The hand rows by the card word's letters; a row naming no single sub-entry raises."""
+        table: dict[str, _Hit] = {}
+        for row in decoded:
+            found = [
+                (ei, fi)
+                for ei, rec in enumerate(self.entries)
+                if row.head in rec["heads"]
+                for fi, f in enumerate(rec["forms"])
+                if f["label"] == row.label
+            ]
+            if len(found) != 1:
+                raise ValueError(f"wolff_decoded: {row.head} {row.label} names {len(found)} sub-entries, not one")
+            table[letters_key(row.word)] = _Hit(*found[0], row.spelling, None, decoded=row)
+        return table
+
+    def variant(
+        self, *, relations: EnglishRelations | None = None, decoded: Sequence[Decoded] | None = None
+    ) -> WolffLexicon:
+        """This lexicon's entries with other *relations* or hand rows (*decoded*); None keeps this one's.
+
+        Shares everything the entries alone decide (the heads and form indexes, the
+        affix decoder), which a fresh ``WolffLexicon(self.entries, ...)`` would rebuild:
+        about 0.4 s for the committed lexicon, most of it the decoder.
+        """
+        new = object.__new__(WolffLexicon)
+        new.entries = self.entries
+        new.relations = self.relations if relations is None else relations
+        new._spellings = self._spellings
+        new._attested = self._attested
+        new._index = self._index
+        new._heads = self._heads
+        new._decoded_rows = self._decoded_rows if decoded is None else tuple(decoded)
+        new._decoded = self._decoded if decoded is None else new._index_decoded(new._decoded_rows)
+        new.__dict__["_decoder"] = self._decoder  # the cached_property's slot: built once, shared
+        return new
 
     def _resolve(self, ei: int, fi: int, word_key: str, depth: int = 0) -> tuple[int, int] | None:
         """Follow a form's '= x' / 'see x' / 'short for x' to the form it points at."""
