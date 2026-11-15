@@ -177,7 +177,12 @@ def sentence_note_fields(
 
 
 def drill_source_label(card: DrillCard) -> str:
-    """Where a drill card comes from: ``Wolff 1 practice 1 · drill 2``."""
+    """Where a drill card comes from: ``Wolff 1 practice 1 · drill 2``, or an affix drill card's pattern."""
+    from app.srs.affix_drill_card import affix_set_title  # built on the drill-card modules this one imports
+
+    affix = affix_set_title(card.card_set)
+    if affix is not None:
+        return affix
     title = card.card_set.replace("-", " ")
     return f"{title[:1].upper()}{title[1:]} · drill {card.drill}"
 

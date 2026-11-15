@@ -24,19 +24,33 @@ recognition card is in review, and no listened drill of the pattern voiced it.
 from __future__ import annotations
 
 from app.generation.drill_lines import understood
-from app.generation.grammar_lesson import find_pattern
-from app.languages import get_a1_morphology
+from app.generation.grammar_lesson import find_pattern, pattern_title
+from app.languages import get_a1_morphology, known_language_codes
 from app.models.lesson import Lesson
 from app.models.srs_item import Direction
 from app.srs.drill_card import DrillCard, DrillStep
 from app.srs.sentence_card import SENTENCE_KEY_PREFIX
 
 _DRILL = 1
+_SET_PREFIX = "affix-"
 
 
 def affix_card_set(pattern_key: str) -> str:
     """The card set an affix drill card is filed under: ``affix-<pattern>``."""
-    return f"affix-{pattern_key}"
+    return f"{_SET_PREFIX}{pattern_key}"
+
+
+def affix_set_title(card_set: str) -> str | None:
+    """``Affix drill: mo- / mi-`` for an affix drill card's set, ``None`` for any other set.
+
+    The note's source label: the pattern's own title, which spells each affix
+    as it attaches (``-on / gi-``), not the set's slug.
+    """
+    if not card_set.startswith(_SET_PREFIX):
+        return None
+    key = card_set.removeprefix(_SET_PREFIX)
+    pattern = next((p for code in sorted(known_language_codes()) if (p := find_pattern(code, key))), None)
+    return pattern_title(pattern) if pattern is not None else None
 
 
 def _recorded(lesson: Lesson | None) -> dict | None:
@@ -65,13 +79,18 @@ def affix_drill_card(db, store, lesson: Lesson) -> DrillCard | None:
     recorded = _recorded(lesson)
     code = lesson.language_code
     pattern = find_pattern(code, recorded["pattern"])
-    heard = set(_voiced(recorded))
-    for listened in db.get_listened_lessons():
-        other = _recorded(store.get_readable_content(listened["lesson_id"]))
-        if other is not None and other["pattern"] == pattern.key:
-            heard.update(_voiced(other))
+    heard: set[str] | None = None
 
     def known(root: str) -> bool:
+        # The listened lessons are read on the plugin's first question, so a
+        # pattern with no chain (or a drill of no chain root) reads none.
+        nonlocal heard
+        if heard is None:
+            heard = set(_voiced(recorded))
+            for listened in db.get_listened_lessons():
+                other = _recorded(store.get_readable_content(listened["lesson_id"]))
+                if other is not None and other["pattern"] == pattern.key:
+                    heard.update(_voiced(other))
         return root not in heard and any(
             understood(item.directions.get(Direction.RECOGNITION))
             for _, item in db.get_collocations_by_lemma_with_id(root)

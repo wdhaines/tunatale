@@ -32,7 +32,7 @@ from app.models.lesson import Lesson, Section, SectionType
 from app.models.srs_item import Direction, SRSState
 from app.plugins.anki_sync.sync import AnkiSync, OfflineWriter
 from app.srs.affix_drill_card import affix_drill_card, mint_affix_drill_card
-from app.srs.drill_card import DrillStep, drill_card
+from app.srs.drill_card import DrillCard, DrillStep, drill_card
 from app.srs.lesson_cards import COURSE_SOURCE
 from app.storage.store import ContentStore
 from tests._helpers.anki_sync_create_new import FakeReader
@@ -344,3 +344,56 @@ async def test_a_clip_the_cache_does_not_hold_is_logged_and_left_out(owner, tmp_
     assert _media(db, cid) == {}
     assert "audio" not in db.get_dirty_fields(db.get_collocation_by_id(cid)[1].guid)
     assert caplog.text.count(f"DRILL_CARD_NO_TAKE key={KEY}") == 13
+
+
+# --- audit follow-ups (PR #426) ------------------------------------------------------
+
+
+def test_mining_a_blank_on_the_card_is_refused(owner):  # noqa: F811
+    """``sentence_mining.add_blank`` refuses a drill row (5i1p.4, U8); the affix card is one."""
+    from app.srs.sentence_mining import LineNotFound, add_blank
+
+    db, store = owner
+    _learn(db, "gawas")
+    mint_affix_drill_card(db, store, _drill_lesson(_DAY_3))
+
+    with pytest.raises(LineNotFound):
+        add_blank(db, "ceb", KEY, (0, 7), "will walk")
+    assert len(_rows(db)) == 1
+
+
+def test_the_notes_source_label_is_the_patterns_title(owner):  # noqa: F811
+    from app.srs.sentence_note import drill_source_label
+
+    db, store = owner
+    _learn(db, "gawas")
+
+    card = affix_drill_card(db, store, _drill_lesson(_DAY_3))
+
+    assert drill_source_label(card) == "Affix drill: mo- / mi-"
+    # Control: a lesson's drill card keeps its set-and-number label.
+    assert drill_source_label(DrillCard("wolff-1-practice-1", 2, "substitution", "m", ())) == (
+        "Wolff 1 practice 1 · drill 2"
+    )
+    # A set that only looks like an affix card's falls back to the same rule.
+    assert drill_source_label(DrillCard("affix-nope", 1, "substitution", "m", ())) == "Affix nope · drill 1"
+
+
+def test_a_pattern_with_no_chain_reads_no_listened_lesson(owner):  # noqa: F811
+    """The listened-lesson scan runs only when the plugin asks about a root."""
+    db, store = owner
+    reads: list[str] = []
+
+    class _CountingStore:
+        def get_readable_content(self, lesson_id):
+            reads.append(lesson_id)
+            return store.get_readable_content(lesson_id)
+
+    db.record_listen("wake-1")
+
+    assert affix_drill_card(db, _CountingStore(), _drill_lesson(_DAY_3, pattern="maka-naka")) is None
+    assert reads == []
+    # Control: a pattern with a chain does read it.
+    _learn(db, "gawas")
+    assert affix_drill_card(db, _CountingStore(), _drill_lesson(_DAY_3)) is not None
+    assert reads == ["wake-1"]
