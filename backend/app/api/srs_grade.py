@@ -43,6 +43,7 @@ from app.api.srs import (
     _schedule_listen_media,
 )
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+from app.srs.affix_drill_card import affix_card_key
 from app.srs.anki_mirror.queue_stats import (
     advance_learning_cutoff,
     build_live_load_balancer,
@@ -85,7 +86,7 @@ class _LessonCard:
 
 def _lesson_cards(db, lesson, plan: _ListenPlan) -> dict[int, _LessonCard]:
     """The lesson's cards by id: its words, its phrases (a phrase wins a shared card), its own sentence
-    and drill cards.
+    and drill cards, and its affix drill's card.
 
     Sentence cards are every row of each line the lesson's card list names,
     including blanks mined since (they join the line's sibling group). A drill
@@ -103,6 +104,10 @@ def _lesson_cards(db, lesson, plan: _ListenPlan) -> dict[int, _LessonCard]:
             lines.setdefault(made.line_key, None)
         elif drill_card(card.unit) is not None:
             lines.setdefault(card.unit.disambig_key, None)
+    # The pattern's affix drill card (5i1p.6), on every lesson that drills the pattern.
+    affix_key = affix_card_key(lesson)
+    if affix_key is not None:
+        lines.setdefault(affix_key, None)
     for line_key in lines:
         for _guid, item, cid in db.list_sibling_rows(line_key):
             made = sentence_card(item.syntactic_unit)
@@ -337,7 +342,7 @@ async def grade_lesson(
     made.clozes += contrast
 
     recorded = body.studied or not db.has_listen(content_id)
-    course = _record_study_pass(db, lesson, content_id) if recorded else []
+    course, affix = _record_study_pass(db, request.state.content_store, lesson, content_id) if recorded else ([], None)
     made.vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
 
     for lemma in declined["word"]:
@@ -354,11 +359,12 @@ async def grade_lesson(
         clozes=made.clozes,
         reglosses=made.reglosses,
         course=course,
+        affix=affix,
     )
     return {
         "status": "ok",
         "applied": applied,
-        "created": made.created + len(contrast) + len(course),
+        "created": made.created + len(contrast) + len(course) + (affix is not None),
         "recorded_study": recorded,
         "listen_count": db.count_listens(content_id),
     }

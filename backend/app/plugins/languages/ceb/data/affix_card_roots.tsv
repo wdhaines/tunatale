@@ -1,0 +1,15 @@
+# Roots an affix drill CARD may bring in that the audio drill never voices (tunatale-5i1p.6). Hand-written.
+# root<TAB>pattern<TAB>the root's English<TAB>the English of each form, in the pattern's order
+#
+# The columns of affix_glosses.tsv, and the same rules (tests/test_ceb_affix_chain.py): both forms
+# vouched by native news, and no root that is also a gloss row of the same pattern. This file is NOT
+# read by affix_patterns.py::pattern_roots, so the audio drill never picks these roots. The card
+# takes the first one the learner understands (its recognition card in review) that no listened
+# drill of the pattern records, so in steps 2 to 6 it asks for a root the drill never voiced.
+#
+# Written 2026-11-13 and checked against John U. Wolff, A Dictionary of Cebuano Visayan (1972;
+# Project Gutenberg #40074). NOT checked by a native speaker, like every table in this plugin.
+#   gawas [A2] "Migawas siya sa balay, He went out of the house" (news: mo- 587, mi- 665)
+#   abot  [A]  "arrive, reach a place" (news: mo- 2644, mi- 1140)
+gawas	mo-mi	go out	will go out	went out
+abot	mo-mi	arrive	will arrive	arrived

@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
-from tests.test_api_grammar_lesson import _client, _contrast_rows, _drill_lesson, deck  # noqa: F401
+from tests.test_api_grammar_lesson import AFFIX_CARD, _client, _contrast_rows, _drill_lesson, deck  # noqa: F401
 
 
 def _keys(kind: str, forms: list[str]) -> list[dict]:
@@ -50,4 +50,4 @@ async def test_c3_a_save_adds_the_contrast_cards_the_listen_would(deck, srs_db, 
     assert saved.status_code == 200, saved.text
     assert plan["suggestions"]["contrast"] == preview["affix_cards"]
     assert [row["text"] for row in _contrast_rows(srs_db)] == added
-    assert saved.json()["created"] == len(added)
+    assert saved.json()["created"] == len(added) + AFFIX_CARD

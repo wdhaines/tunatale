@@ -64,7 +64,7 @@ def attach_sentence_card_audio(
                 spoken,
             )
             continue
-        _add_take(db, collocation_id, kind, take, media_dir)
+        add_take(db, collocation_id, kind, take, media_dir)
         added = True
     if added:
         db.add_dirty_field_by_id(collocation_id, "audio")
@@ -102,13 +102,13 @@ def attach_drill_card_audio(
                 text,
             )
             continue
-        _add_take(db, collocation_id, kind, take, media_dir)
+        add_take(db, collocation_id, kind, take, media_dir)
         added = True
     if added:
         db.add_dirty_field_by_id(collocation_id, "audio")
 
 
-def _add_take(db, collocation_id: int, kind: str, take: Path, media_dir: Path) -> None:
+def add_take(db, collocation_id: int, kind: str, take: Path, media_dir: Path) -> None:
     name = f"take_{take.name}"
     dest = media_dir / name
     if not dest.exists():

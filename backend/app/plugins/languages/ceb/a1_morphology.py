@@ -31,6 +31,7 @@ vouch for forms on the strength of a different word.
 from app.plugins.languages.ceb.affix_patterns import (
     PATTERNS,
     pattern_cards,
+    pattern_chain,
     pattern_forms,
     pattern_glosses,
     pattern_lines,
@@ -138,4 +139,5 @@ CEBUANO_A1_MORPHOLOGY = A1Morphology(
     pattern_lines=pattern_lines,
     pattern_sentences=pattern_sentences,
     pattern_cards=pattern_cards,
+    pattern_chain=pattern_chain,
 )

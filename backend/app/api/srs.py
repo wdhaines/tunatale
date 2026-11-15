@@ -61,6 +61,7 @@ from app.api.models import (
     UntrackItemResponse,
     UpdateItemRequest,
 )
+from app.audio.affix_card_audio import synthesize_drill_card_audio
 from app.audio.cloze_tts import synthesize_cloze_audios
 from app.cards.field_map import upos_for_disambig
 from app.cards.media.langeek import base_forms
@@ -86,6 +87,7 @@ from app.models.lesson import KeyPhraseInfo, project_key_phrases
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs import sentence_mining
+from app.srs.affix_drill_card import mint_affix_drill_card
 from app.srs.anki_mirror.queue_engine import assemble_review_queue
 from app.srs.anki_mirror.queue_stats import (
     advance_learning_cutoff,
@@ -103,7 +105,7 @@ from app.srs.anki_mirror.queue_stats import (
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.collocation_matcher import match_spans
 from app.srs.contrast_card import ContrastCard, paradigm
-from app.srs.drill_card import drill_card
+from app.srs.drill_card import DrillCard, drill_card
 from app.srs.feedback import rating_from_input
 from app.srs.focus_card import FocusCard, focus
 from app.srs.fsrs import Rating, build_revlog_row, schedule
@@ -1611,22 +1613,26 @@ def _create_ranked_words(
     return made
 
 
-def _record_study_pass(db, lesson, content_id: str) -> list:
-    """Mark *lesson* studied: mint its own card list, then record one listen. Returns the minted rows.
+def _record_study_pass(db, store, lesson, content_id: str) -> tuple[list, tuple[int, DrillCard] | None]:
+    """Mark *lesson* studied: mint its own card list and its pattern's affix drill card, then record one listen.
 
+    Returns the minted course rows and the affix drill card, if one was minted.
     The list mints all of it, NEW, outside the listen budget: the deck's
     new-card limit paces it, and the Anki writer's course region keeps the
-    list's order (tunatale-h0q3.43). The listen row is TT-only and never syncs.
+    list's order (tunatale-h0q3.43). The affix drill card (tunatale-5i1p.6) is
+    minted once per pattern, also outside the budget, and goes to the front of
+    the new queue like every drill card. The listen row is TT-only and never syncs.
     """
     story = lesson.generation_metadata.get("story") or {}
     course_list = story.get("cards")
     course = mint_lesson_cards(db, lesson.language_code, course_list, story.get("drills", [])) if course_list else []
+    affix = mint_affix_drill_card(db, store, lesson)
     db.record_listen(content_id)
-    return course
+    return course, affix
 
 
 def _schedule_listen_media(
-    background_tasks: BackgroundTasks, request: Request, db, lesson, *, vocab, clozes, reglosses, course
+    background_tasks: BackgroundTasks, request: Request, db, lesson, *, vocab, clozes, reglosses, course, affix=None
 ) -> None:
     """Queue the media work a listen or a Save found; Starlette runs it after the response."""
     llm = app_state.llm(request)
@@ -1647,6 +1653,18 @@ def _schedule_listen_media(
             course,
             lesson,
             get_language(lesson.language_code).tts_voice_map,
+            cache_dir=settings.tts_cache_dir,
+            media_dir=_MEDIA_DIR,
+        )
+    if affix is not None:
+        affix_id, affix_card = affix
+        background_tasks.add_task(
+            app_state.background_work(request.app).track("affix_drill_card_audio", synthesize_drill_card_audio),
+            db,
+            affix_id,
+            affix_card,
+            lesson.language_code,
+            tts=app_state.tts(request),
             cache_dir=settings.tts_cache_dir,
             media_dir=_MEDIA_DIR,
         )
@@ -2080,8 +2098,8 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     pending_cloze += contrast
     created_count += len(contrast)
 
-    course = _record_study_pass(db, lesson, body.content_id)
-    created_count += len(course)
+    course, affix = _record_study_pass(db, store, lesson, body.content_id)
+    created_count += len(course) + (affix is not None)
     pending_vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
 
     # Anki parity: grading advances the learning cutoff. A batch of confirmed
@@ -2098,6 +2116,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         clozes=pending_cloze,
         reglosses=pending_regloss,
         course=course,
+        affix=affix,
     )
 
     return {

@@ -108,6 +108,12 @@ def deck(srs_db, tmp_path):
     return store, pipeline, generator
 
 
+# The study mark also mints the pattern's affix drill card, once (tunatale-5i1p.6): this
+# deck's drill voices inom, a chain root, so every first listen below creates one more card
+# than its contrast cards. Its own tests: test_api_affix_drill_card.py.
+AFFIX_CARD = 1
+
+
 def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=_CEB)
 
@@ -359,8 +365,8 @@ async def test_marking_a_grammar_lesson_listened_adds_its_contrast_cards(deck, s
 
     rows = _contrast_rows(srs_db)
     assert sorted(row["text"] for row in rows) == ["miadto", "miinom", "miuban"]
-    assert _cards(srs_db) == cards_before + 3
-    assert listened.json()["created"] == 3
+    assert _cards(srs_db) == cards_before + 3 + AFFIX_CARD
+    assert listened.json()["created"] == 3 + AFFIX_CARD
     # Added, not graded: NEW, production only, nothing for the sync to mistake
     # for a linked or reviewed card (.claude/rules/anki-sync.md, card-adding contract).
     for row in rows:
@@ -424,7 +430,7 @@ async def test_contrast_cards_stop_at_the_days_new_card_budget(deck, srs_db):
         listened = await client.post("/api/srs/listen", json={"content_id": lesson_id})
     await pipeline.shutdown()
 
-    assert listened.json()["created"] == 2
+    assert listened.json()["created"] == 2 + AFFIX_CARD
     assert [row["text"] for row in _contrast_rows(srs_db)] == ["miuban", "miinom"]
 
 
@@ -505,7 +511,7 @@ async def test_the_listen_honours_what_the_preview_rows_were_set_to(deck, srs_db
     await pipeline.shutdown()
 
     assert [row["text"] for row in _contrast_rows(srs_db)] == added
-    assert listened.json()["created"] == len(added)
+    assert listened.json()["created"] == len(added) + AFFIX_CARD
 
 
 async def test_a_review_session_adds_no_contrast_cards(deck, srs_db):

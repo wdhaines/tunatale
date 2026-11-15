@@ -22,6 +22,8 @@ forms are lost (``maglakaw`` 49, ``mianhi`` 40, ``mitan-aw`` 43).
 from __future__ import annotations
 
 import gzip
+import logging
+from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
 
@@ -31,12 +33,15 @@ from app.plugins.languages.ceb.focus_sentences import (
     focus_row,
     focus_sentence,
 )
-from app.srs.a1_morphology import AffixPattern, PatternCard, PatternSentences
+from app.srs.a1_morphology import AffixPattern, ChainStep, PatternCard, PatternChain, PatternSentences
 
 COUNTS_PATH = Path(__file__).parent / "data" / "cebuano_affix_counts.tsv.gz"
 GLOSSES_PATH = Path(__file__).parent / "data" / "affix_glosses.tsv"
+# Roots only an affix drill card brings in: never read by ``pattern_roots``.
+CARD_ROOTS_PATH = Path(__file__).parent / "data" / "affix_card_roots.tsv"
 VOUCH_FLOOR = 20
 _VOWELS = "aeiou"
+_log = logging.getLogger(__name__)
 
 # The two forms of a pair are not a future and a past (tunatale-ve4p.25). Wolff's
 # course calls them UNREAL and REAL (Beginning Cebuano, lesson 4B): what has not
@@ -294,3 +299,101 @@ def pattern_roots(pattern: AffixPattern) -> tuple[str, ...]:
     if pattern.sentences:
         return focus_roots()
     return tuple(root for root, key in load_affix_glosses(GLOSSES_PATH) if key == pattern.key)
+
+
+# The affix drill card's chain (tunatale-5i1p.6; brief-ve4p-affix-drill-card-2026-11.md).
+# Each frame is ``(sentence, its English, the cue)``: ``{unreal}`` / ``{real}`` are the
+# root's two forms, ``{root}`` its English and ``{real_english}`` the real form's. The first
+# frame is the model. A cue of ``None`` swaps the ROOT, keeping the frame before: from that
+# step on the card says root C, which the learner's audio drill never voiced.
+#
+# Checked against Wolff's dictionary and Bunye & Yap, NOT by a native speaker:
+#   {Mo} ko ugma.         "Muadtu ku didtu ugmà, I will go there tomorrow"
+#   {Mi} ko gahapon.      "Miadtu ku didtu gahápun, I went there yesterday"
+#   {Mo} ko kada adlaw.   already in _LINES ("Mumata mi sa alas singku káda buntag")
+#   {Mo} ko unya.         "Mukáun ku unyà, I will eat later"
+#   {Mi} ko ganiha.       "Milakaw siya ganíhang buntag, She left this morning"
+#   Wala ko {mo} ganiha.  B&Y lesson 7: "Wala sila muadto sa sine gabii"; Wolff "Wala ku muadtu didtu"
+# Left out on purpose: "Dili ko {mo} ugma." is good Cebuano, but it would grade dili against
+# wala, which is not this pattern.
+_ROOT_CUE = None
+_CHAINS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
+    "mo-mi": (
+        ("{unreal} ko ugma.", "I'll {root} tomorrow.", ""),
+        ("{real} ko gahapon.", "I {real_english} yesterday.", "gahapon"),
+        ("{real} ko gahapon.", "I {real_english} yesterday.", _ROOT_CUE),
+        ("{unreal} ko kada adlaw.", "I {root} every day.", "kada adlaw"),
+        ("{unreal} ko unya.", "I'll {root} later.", "unya"),
+        ("{real} ko ganiha.", "I {real_english} earlier today.", "ganiha"),
+        ("Wala ko {unreal} ganiha.", "I didn't {root} earlier today.", "wala"),
+    ),
+}
+# Root A, in the order it is chosen: the gloss rows whose sentences stand without an object
+# or a place. adto wants a place, tan-aw and sulti an object, and sulod and uban are not
+# worded "will {root}" (the test ``pattern_lines`` applies).
+_CHAIN_ROOTS: dict[str, tuple[str, ...]] = {"mo-mi": ("lakaw", "balik", "anhi", "kaon", "inom")}
+
+
+def chain_roots(pattern: AffixPattern) -> tuple[str, ...]:
+    """The roots *pattern*'s chain may open on (root A), in the order they are chosen."""
+    return _CHAIN_ROOTS.get(pattern.key, ())
+
+
+def _card_only_roots(pattern: AffixPattern) -> tuple[str, ...]:
+    return tuple(root for root, key in load_affix_glosses(CARD_ROOTS_PATH) if key == pattern.key)
+
+
+def _worded(root: str, pattern: AffixPattern, path: Path) -> tuple[tuple[str, ...], tuple[str, tuple[str, ...]]] | None:
+    """*root*'s forms and English in *pattern* from the table at *path*, or ``None`` unless both are there."""
+    forms, glosses = pattern_forms(root, pattern), load_affix_glosses(path).get((root, pattern.key))
+    return None if forms is None or glosses is None else (forms, glosses)
+
+
+def _say(frame: str, english: str, worded: tuple[tuple[str, ...], tuple[str, tuple[str, ...]]]) -> tuple[str, str]:
+    (unreal, real), (root_english, (_, real_english)) = worded
+    text = frame.format(unreal=unreal, real=real)
+    return text[0].upper() + text[1:], english.format(root=root_english, real_english=real_english)
+
+
+def pattern_chain(
+    pattern: AffixPattern, drilled: Sequence[str], understood: Callable[[str], bool]
+) -> PatternChain | None:
+    """The affix drill card's chain for *pattern*, or ``None``.
+
+    Root A is the first chain root the studied lesson's drill voiced
+    (*drilled*); none, and there is no card (``DRILL_CARD_NO_ROOT``). Root C is
+    the first card-only root *understood* accepts (the caller decides: the
+    learner knows it, and no listened drill voiced it); none, and the chain
+    root after A stands in (``DRILL_CARD_NO_NEW_ROOT``).
+    """
+    frames = _CHAINS.get(pattern.key)
+    if frames is None:
+        return None
+    voiced = {root.casefold() for root in drilled}
+    chain = chain_roots(pattern)
+    a = next((root for root in chain if root in voiced and _worded(root, pattern, GLOSSES_PATH)), None)
+    if a is None:
+        _log.info("DRILL_CARD_NO_ROOT pattern=%s drilled=%s", pattern.key, ",".join(drilled))
+        return None
+    c = next(
+        (
+            (root, worded)
+            for root in _card_only_roots(pattern)
+            if understood(root) and (worded := _worded(root, pattern, CARD_ROOTS_PATH))
+        ),
+        None,
+    )
+    if c is None:
+        i = chain.index(a)
+        root = (chain[i + 1 :] + chain[:i])[0]
+        c = (root, _worded(root, pattern, GLOSSES_PATH))
+        _log.info("DRILL_CARD_NO_NEW_ROOT pattern=%s root=%s", pattern.key, root)
+    cue_root, worded = a, _worded(a, pattern, GLOSSES_PATH)
+    model, model_english = _say(*frames[0][:2], worded)
+    steps = []
+    for frame, english, cue in frames[1:]:
+        if cue is _ROOT_CUE:
+            cue_root, worded = c
+            cue = cue_root
+        steps.append(ChainStep(cue, *_say(frame, english, worded)))
+    return PatternChain(model=model, english=model_english, steps=tuple(steps))
