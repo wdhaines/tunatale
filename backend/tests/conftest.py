@@ -78,6 +78,12 @@ def _settings_overrides(monkeypatch, tmp_path):
     from app.srs.lemmatizer import get_lemmatizer
 
     monkeypatch.setattr(settings, "anki_backup_dir", tmp_path / "anki-backups")
+    # Cheap argon2. Production's cost is ~0.13 s CPU per hash or verify, and the
+    # auth tests assert route behaviour (throttle order, status codes, cookies),
+    # not hash strength: five logins put a test at 0.7-0.9 s of its 1 s CPU budget,
+    # and a busy laptop tipped it over (tests/test_auth_passwords.py::TestCostProfile
+    # covers the default cost; the prod profile refuses "minimal").
+    monkeypatch.setattr(settings, "password_hash_cost", "minimal")
     # Startup DB-backup rotation writes here; pin to tmp so the suite never
     # snapshots into the real ~/.tunatale/db-backups.
     monkeypatch.setattr(settings, "db_backup_dir", tmp_path / "db-backups")

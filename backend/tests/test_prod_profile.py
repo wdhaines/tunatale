@@ -173,6 +173,8 @@ def test_prod_profile_clean_when_fully_configured(monkeypatch, tmp_path):
         ({"lemmatizer_type": "lowercase"}, "lemmatizer_type"),
         ({"lemmatizer_type": "stanza"}, "lemmatizer_type"),
         ({"database_url": "sqlite:///./tunatale_sl.db"}, "database_url"),
+        # Test-suite argon2: a stolen DB's hashes would crack at ~1000x the speed.
+        ({"password_hash_cost": "minimal"}, "password_hash_cost"),
         (
             {"database_urls": {"sl": "sqlite:////data/tunatale_sl.db", "no": "sqlite:///./tunatale_no.db"}},
             "database_urls['no']",
@@ -307,6 +309,7 @@ async def test_lifespan_starts_when_the_prod_profile_is_satisfied(tmp_path, monk
     monkeypatch.setattr(settings, "session_secret", "a-real-secret")
     monkeypatch.setattr(settings, "cors_origins", ["https://tunatale.example.com"])
     monkeypatch.setattr(settings, "trusted_proxy_header", "X-Forwarded-For")
+    monkeypatch.setattr(settings, "password_hash_cost", "default")  # over conftest's test-suite pin
     monkeypatch.setattr(settings, "azure_speech_key", "a-real-key")
     monkeypatch.setattr(settings, "azure_speech_region", "eastus")
     monkeypatch.setattr(settings, "groq_api_key", "gsk_" + "x" * 52)
