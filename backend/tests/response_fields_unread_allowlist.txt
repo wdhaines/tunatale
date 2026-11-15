@@ -1,0 +1,50 @@
+# Schema fields with no reader in frontend/src — scripts/check_response_fields_read.py.
+#
+# One name per line, then `# reason`. A line without a reason fails the gate.
+# Shrink-only: an entry the frontend now reads, or that no schema has any more,
+# fails until it is removed. The match is by NAME across all schemas (see the
+# script's docstring), so an entry here covers every schema with that field.
+#
+# Measured 2026-11-15: 185 schemas, 391 names, these 35 unread.
+#
+# FRAMEWORK — not ours to change:
+ctx  # FastAPI's own ValidationError shape (422 detail); no screen shows validation internals.
+#
+# NO FRONTEND CALLER — the route is an ops/script endpoint; its fields are read by whoever curls it:
+elapsed_s  # GET /api/admin/background-work (ops endpoint, no screen calls it).
+finished_ago_s  # GET /api/admin/background-work (ops endpoint, no screen calls it).
+inflight  # GET /api/admin/background-work (ops endpoint, no screen calls it).
+last_finished  # GET /api/admin/background-work (ops endpoint, no screen calls it).
+file_count  # GET /api/admin/tts-cache (ops endpoint, no screen calls it).
+total_bytes  # GET /api/admin/tts-cache (ops endpoint, no screen calls it).
+glosses_found  # POST /api/srs/backfill-translations (maintenance endpoint, no screen calls it).
+#
+# OWNER DECISION PENDING — a screen calls the route and drops the field. Each is
+# "read it, delete it, or keep it here with a better reason"; no deletion before the owner says so.
+azure_tts_chars_per_month_limit  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+azure_tts_chars_used_month  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+azure_tts_month_reset_in_s  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+requests_day_reset_in_s  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+tokens_completion_24h  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+tokens_day_reset_in_s  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+tokens_prompt_24h  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+tokens_reasoning_24h  # OWNER DECISION: GET /api/llm/rate-limit — called by the frontend, field not read.
+consecutive_failures  # OWNER DECISION: GET /api/llm/health — called by the frontend, field not read.
+auth_success  # OWNER DECISION: POST /api/anki/peer-sync (also run by curl) — called by the frontend, field not read.
+tt_push_pull_exit  # OWNER DECISION: POST /api/anki/peer-sync (also run by curl) — called by the frontend, field not read.
+detected_at_ms  # OWNER DECISION: GET /api/anki/preset-change — called by the frontend, field not read.
+weights_changed  # OWNER DECISION: GET /api/anki/preset-change — called by the frontend, field not read.
+daily_new_cap  # OWNER DECISION: GET /api/srs/queue-stats — called by the frontend, field not read.
+daily_review_cap  # OWNER DECISION: GET /api/srs/queue-stats — called by the frontend, field not read.
+review_cap_source  # OWNER DECISION: GET /api/srs/queue-stats — called by the frontend, field not read.
+due_today  # OWNER DECISION: GET /api/srs/stats — called by the frontend, field not read.
+already_present  # OWNER DECISION: POST /api/srs/listens/import — called by the frontend, field not read.
+cached_clips  # OWNER DECISION: POST .../render-estimate — called by the frontend, field not read.
+likes  # OWNER DECISION: GET /api/srs/items/{id}/image/candidates — called by the frontend, field not read.
+last_review_time_ms  # OWNER DECISION: DirectionStateResponse (due, items, review-queue) — called by the frontend, field not read.
+files_removed  # OWNER DECISION: DELETE /api/review-sessions/{id} — called by the frontend, field not read.
+session_id  # OWNER DECISION: GET /api/review-sessions/{id}/source — called by the frontend, field not read.
+start_day  # OWNER DECISION: GET /api/curriculum/{id} (proposed batch) — called by the frontend, field not read.
+line_key  # OWNER DECISION: GradePlanCard drops it; also AddSentenceBlankRequest, whose route (POST /api/srs/sentence-blanks) no screen calls.
+collocation_id  # OWNER DECISION: AddSentenceBlankResponse; POST /api/srs/sentence-blanks has no frontend caller.
+restored  # OWNER DECISION: GradeRequest can un-ignore a declined word, but the Grade page never sends it — a missing control, not only a dead field.

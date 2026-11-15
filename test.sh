@@ -182,6 +182,8 @@ log_step() {
 
   log_step backend "Content surface parity check" uv run python scripts/check_content_surface_parity.py
 
+  log_step backend "Response fields read check" uv run python scripts/check_response_fields_read.py
+
   # pytest-cov combines per-worker coverage, so the 100% gate still applies to
   # the full run at any -n.
   #

@@ -198,6 +198,9 @@ jobs:
       - name: Content surface parity check
         run: uv run python scripts/check_content_surface_parity.py
 
+      - name: Response fields read check
+        run: uv run python scripts/check_response_fields_read.py
+
       # --cpu-budget=enforce: same gate as test.sh (tests/_helpers/cpu_budget.py). The
       # calibration workload prices this runner's cores, but real tests (coverage, more
       # memory) still read ~1.7x the laptop here, so --cpu-budget-scale=1.8 declares that
