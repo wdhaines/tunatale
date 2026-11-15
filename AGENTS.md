@@ -133,6 +133,16 @@ When completing a phase or fix, the definition of done includes pasting the veri
 1. **`./test.sh` output tail** — the actual log lines showing backend/frontend/E2E all pass.
 2. **CI Actions run URL** — after push, confirm all parallel jobs are green and provide the link.
 3. **Commit message** — states what was verified (and how), plus any non-obvious mechanism or diagnostic signature that would help the next person debugging this class of bug.
+4. **A screenshot of each screen the work changes**, taken from the running app with a real row behind it (see below).
+
+## Work the learner sees is done at the screen
+
+Drill cards shipped "in TT" (#421) with a `drill` field that no component read. The Review card showed a bare `[...]` for two days while Anki was right; the design's 22 oracle rows all stopped at a payload, a row or a note, and the audit passed the diff against that oracle (fixed in #427).
+
+- **Design.** Each screen a design changes gets its own build step and a bead that names the screen. "Part of another bead" counts only when that bead's description names it too. The oracle table carries at least one row that reads the screen: the real backend payload rendered by the real component, or a Playwright journey.
+- **Bead scope.** A bead whose title names a surface ("in TT", "on the Review card") closes on that surface, never on the route that feeds it.
+- **Audit.** For every field a diff adds to a response model, name the frontend source file that reads it (`git grep -n '\.<field>\b' -- frontend/src ':!*api-types*' ':!*.test.ts'`). A field with no reader is a finding even when every oracle row is green, because the missing row may be the defect. A diff for a learner-facing bead with no frontend source in it is a finding for the same reason.
+- **Report.** The screenshot in item 4 comes from the app running against a real row of the new kind. A component test built from a hand-written object does not stand in for it: the Grade page's test pinned "step 2 of 16" on step 1.
 
 ## Delegation — BP is the default executor
 

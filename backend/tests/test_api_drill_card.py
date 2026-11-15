@@ -233,3 +233,49 @@ class TestMining:
         assert r.status_code == 404
         assert ok.status_code == 201
         assert _keys(db) == [*before, "sent:test-01:1:0-3"]
+
+
+# --------------------------------------------------------------------------
+# The Cards page's "Cloze sentence" rewrite is refused on a lesson card's row
+# --------------------------------------------------------------------------
+
+
+class _CountingLLM:
+    """Counts model calls; the refusal must come before any."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *_a, **_k):
+        self.calls += 1
+        return ""
+
+
+class TestClozeSentenceRewrite:
+    """A drill row and a sentence card are `card_type = "cloze"`, but their sentence lives in card_data.
+
+    Before the refusal (2026-11-15), saving the stored sentence back on a drill
+    row returned 200: the row was flagged for sync, its translation blanked,
+    and two clips synthesized for a row whose audio is the lesson's own takes.
+    The plain cloze this route exists for is the control, in
+    ``test_api_cloze_sentence.py``.
+    """
+
+    async def test_both_halves_refuse_a_drill_row_and_a_sentence_card_and_write_nothing(self):
+        db = _install(_mixed_story())
+        llm = _CountingLLM()
+        app.state.llm = llm
+        rows = _mint_mixed(db)
+        stored = {cid: db.get_collocation_by_id(cid)[1].syntactic_unit for cid in rows}
+
+        async with _client() as c:
+            statuses = [
+                (
+                    await c.put(f"/api/srs/items/{cid}/cloze/sentence", json={"sentence": unit.source_sentence})
+                ).status_code
+                for cid, unit in stored.items()
+            ] + [(await c.post(f"/api/srs/items/{cid}/cloze/propose")).status_code for cid in rows]
+
+        assert statuses == [409, 409, 409, 409]
+        assert {cid: db.get_collocation_by_id(cid)[1].syntactic_unit for cid in rows} == stored
+        assert (db.list_dirty_field_edits(), llm.calls) == ([], 0)

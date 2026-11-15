@@ -51,6 +51,13 @@ card is keyed on; it survived because every preview test was Slovene, where
   (`tests/test_azure_tts.py`, `tests/test_gemini_tts.py`)
 - **HTTP**: use `respx` for external HTTP calls in `LLMClient` tests
 
+### A fake's return value is a claim about the real thing
+
+A drawn word's tests faked the media fetch as returning no image, so they passed while the real fetch returned LanGeek's photo and the add-time write stored it over the drawing (10-27 to 11-15, fixed in #427). The caller passed `image_query=""` to mean "no image"; LanGeek had been put before that skip on purpose.
+
+- When a caller relies on an argument to make a collaborator do nothing (an empty string, `None`, a `skip_*` flag), one test runs the **real** collaborator with every one of its sources answering, and asserts the caller's stored result. Fake the network under it, not the collaborator.
+- When you change what a function does before or around such an argument, grep every caller that passes it and decide each one. The argument's meaning belongs to the callee, and each caller holds a copy of the old meaning.
+
 ## Mock Boundaries (enforced)
 
 **Mock only at process/network boundaries** — the anki driver subprocess

@@ -126,7 +126,7 @@ from app.srs.lesson_card_mint import attach_lesson_card_audio, mint_lesson_cards
 from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
 from app.srs.sense_match import names_same_sense, sense_label
-from app.srs.sentence_card import rich, sentence_card
+from app.srs.sentence_card import is_sentence_key, rich, sentence_card
 from app.srs.tokenizer import tokenize
 from app.srs.transcript import (
     LemmaCard,
@@ -2978,6 +2978,12 @@ async def _load_cloze(request: Request, item_id: int):
     404 for an unknown id, 409 for an item that is not a cloze — the control
     that reaches these endpoints is only rendered on clozes, so a 409 means the
     caller is out of date rather than the learner mistyping.
+
+    A lesson card's row (a sentence card, a mined blank, a drill card: every
+    ``sent:`` key) is ``card_type = "cloze"`` as well, and is refused the same
+    way. Its sentence is the lesson's line, held in ``card_data``, and its audio
+    is the lesson's own takes; rewriting ``source_sentence`` changed nothing the
+    learner sees, flagged the row for sync and synthesized two clips for it.
     """
     db = request.state.srs_db
     found = db.get_collocation_by_id(item_id)
@@ -2986,6 +2992,8 @@ async def _load_cloze(request: Request, item_id: int):
     row_id, item, language_code = found
     if item.syntactic_unit.card_type != "cloze":
         raise HTTPException(status_code=409, detail="Not a cloze card")
+    if is_sentence_key(item.syntactic_unit.disambig_key):
+        raise HTTPException(status_code=409, detail="A lesson card's sentence is the lesson's line")
     return db, row_id, item, language_code
 
 

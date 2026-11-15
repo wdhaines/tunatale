@@ -49,6 +49,7 @@ const mockProposeCloze = vi.mocked(api.proposeClozeSentence);
 const mockSetCloze = vi.mocked(api.setClozeSentence);
 import { syncStore } from "#lib/stores/sync.svelte.js";
 import { makeSRSItemDetail } from "../../test/factories";
+import type { SRSItemDetail } from "#lib/api.js";
 
 /** Yield to let pending microtasks (Svelte DOM updates) drain. */
 function flushMicrotasks(): Promise<void> {
@@ -1090,6 +1091,65 @@ describe("cards/+page.svelte", () => {
 
     expect(await findByText("Edit Image")).toBeTruthy();
   });
+
+  // A lesson card's row is card_type "cloze" too, but its sentence lives in the
+  // card, not in source_sentence: the rewrite is not offered (2026-11-15).
+  // Control: the plain cloze in the next test, where the item is offered.
+  it.each([
+    [
+      "a drill card",
+      {
+        drill: {
+          kind: "substitution",
+          step: 1,
+          of: 7,
+          cue: "hun",
+          answer: "Hun er her.",
+          english: "",
+          before: "Han er her.",
+          before_cue: null,
+          cue_audio_url: null,
+          answer_audio_url: null,
+          before_audio_url: null,
+          before_cue_audio_url: null,
+        },
+      },
+    ],
+    [
+      "a sentence card",
+      {
+        sentence: {
+          speaker: "Kari",
+          text: "Han er her.",
+          blank_start: null,
+          blank_end: null,
+          blank_gloss_html: "",
+          english: "",
+          glosses: [],
+          picture_url: null,
+          cue: null,
+        },
+      },
+    ],
+  ] as [string, Partial<SRSItemDetail>][])(
+    "Cloze sentence is not offered on %s",
+    async (_name, over) => {
+      const item = makeSRSItemDetail({
+        id: 43,
+        text: "Han er her",
+        card_type: "cloze",
+        source_sentence: "{{c1::Han er her.}}",
+        ...over,
+      });
+      mockList.mockResolvedValue({ items: [item], total: 1 });
+
+      const { findByText, findByLabelText, queryByText } = render(CardsPage);
+
+      await openRowMenu(findByLabelText, "Han er her");
+      expect(await findByText("Suspend")).toBeTruthy();
+      expect(queryByText("Cloze sentence…")).toBeNull();
+    },
+  );
 
   // tunatale-keb0: rewriting a cloze's sentence lives here, not on the drill
   // card's answer side. It is card maintenance, and the previous placement put
