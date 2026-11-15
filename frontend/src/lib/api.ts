@@ -551,6 +551,9 @@ export interface SRSItemDetail {
   /** A sentence card's parts (tunatale-h0q3.42): the cue, who answers, the blank, and the back's
    * glosses; null or absent on every other card. */
   sentence?: components["schemas"]["ItemSentence"] | null;
+  /** A drill card's step view (tunatale-5i1p.4): the step its answers into review ask for.
+   * `step` counts from 1. Null or absent on every other card. */
+  drill?: components["schemas"]["ItemDrill"] | null;
   note?: string;
   // Gender/indefinite article (en/ei/et) — rendered as a display-time prefix on
   // the headword (e.g. "en orden"). Empty for non-nouns / languages without it.

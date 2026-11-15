@@ -65,6 +65,27 @@
 		const end = s.blank_end ?? s.text.length;
 		return { before: s.text.slice(0, start), blank: s.text.slice(start, end), after: s.text.slice(end) };
 	});
+	// A drill card (tunatale-5i1p.4): the front's clips in the order they are
+	// said (a transformation's worked pair, the sentence before, the cue), played
+	// one after another through one element.
+	// Read only under `{#if item.drill}`, and $derived is lazy.
+	const drillFront = $derived(
+		[item.drill?.before_cue_audio_url, item.drill?.before_audio_url, item.drill?.cue_audio_url].filter(
+			(u): u is string => !!u
+		)
+	);
+	let drillClip = $state(0);
+	let drillAudioEl: HTMLAudioElement | undefined = $state();
+
+	function nextDrillClip() {
+		if (drillClip < drillFront.length - 1) drillClip += 1;
+	}
+
+	function replayDrillFront() {
+		drillClip = 0;
+		drillAudioEl?.load();
+		drillAudioEl?.play().catch(() => {});
+	}
 	const startedAt = performance.now();
 
 	function show() {
@@ -237,7 +258,23 @@
 				<p class="context-sentence slovene">{item.context_sentence}</p>
 			{/if}
 		{:else if direction === 'production'}
-			{#if sentenceParts && item.sentence}
+			{#if item.drill}
+				<!-- The step its answers into review ask for, as the Anki note shows it:
+				     the sentence before, then the cue on its own line. -->
+				<p class="drill-step">{t('drillCard.step', { step: item.drill.step, of: item.drill.of })}</p>
+				{#if item.drill.before != null}
+					<p class="drill-before slovene">
+						{#if item.drill.before_cue != null}{`${item.drill.before_cue} → `}{/if}{item.drill.before}
+					</p>
+				{/if}
+				<p class="main-text drill-cue slovene">
+					{#if item.drill.kind === 'substitution' && item.drill.before != null}+ {item.drill.cue}{:else if item.drill.kind === 'transformation'}{item.drill.cue} → ?{:else}{item.drill.cue}{/if}
+				</p>
+				{#if drillFront.length}
+					<audio bind:this={drillAudioEl} src={drillFront[drillClip]} autoplay preload="auto" onended={nextDrillClip}></audio>
+					<button class="play-btn" onclick={replayDrillFront} aria-label={t('drillCard.playCue')}>▶</button>
+				{/if}
+			{:else if sentenceParts && item.sentence}
 				<!-- No English on the front (h0q3.42): the line before, with its own
 				     take, then who answers it. An opener has a picture, or nothing. -->
 				{#if item.sentence.picture_url}
@@ -312,6 +349,15 @@
 					<div class="note">{@html item.note}</div>
 				{/if}
 				{@render backExtras()}
+			{:else if direction === 'production' && item.drill}
+				{#if item.drill.answer_audio_url}
+					<audio bind:this={audioEl} src={item.drill.answer_audio_url} autoplay preload="auto"></audio>
+					<button class="play-btn" onclick={playAudio} aria-label={t('drillCard.playAudio')}>▶</button>
+				{/if}
+				<p class="main-text drill-answer slovene"><mark class="cloze-answer">{item.drill.answer}</mark></p>
+				{#if item.drill.english}
+					<p class="answer-text english">{item.drill.english}</p>
+				{/if}
 			{:else if direction === 'production' && sentenceParts && item.sentence}
 				{#if item.audio_url}
 					<audio bind:this={audioEl} src={item.audio_url} autoplay preload="auto"></audio>
@@ -433,6 +479,16 @@
 	.sentence-words,
 	.sentence-cue-means {
 		margin-top: 0.5rem;
+	}
+	.drill-step {
+		font-size: 0.85rem;
+		color: var(--color-muted);
+		margin: 0 0 0.5rem;
+	}
+	.drill-before {
+		font-size: 1.15rem;
+		color: var(--color-muted);
+		margin: 0 0 0.4rem;
 	}
 	.main-text {
 		font-size: 1.5rem;

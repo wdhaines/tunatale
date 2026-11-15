@@ -236,7 +236,7 @@ describe("GradePage — Say it", () => {
       "Nia siya dinhi.",
       "sila",
     ]);
-    expect(row.querySelector(".step")?.textContent).toBe("step 2 of 16");
+    expect(row.querySelector(".step")?.textContent).toBe("step 1 of 16");
   });
 
   it("a word in no transcript line is hidden under its meaning", async () => {

@@ -236,6 +236,7 @@ async def generate_vocab_media(
             image_query=image_query,
             llm=llm,
             source_sentence=source_sentence,
+            want_image=picture is None,
         )
     except Exception as exc:  # noqa: BLE001 — media is best-effort; never block card creation
         logger.warning("vocab media generation failed for %r: %s", word, exc)

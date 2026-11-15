@@ -165,6 +165,7 @@ async def _run_pass(db: Any, language_code: str, limit: int, fetch_fn: Any) -> A
                 pixabay_key="",
                 language_code=language_code,
                 image_query="",
+                want_image=False,
                 audio="full",
             )
         except Exception as exc:  # noqa: BLE001 — one bad fetch must not cost the others
