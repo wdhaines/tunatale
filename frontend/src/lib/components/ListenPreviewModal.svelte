@@ -182,10 +182,10 @@
 	const GRADES = ['again', 'hard', 'good', 'easy'] as const satisfies readonly WordRating[];
 
 	const GRADE_LABEL_KEYS: Record<string, MessageKey> = {
-		again: 'drillCard.again',
-		hard: 'drillCard.hard',
-		good: 'drillCard.good',
-		easy: 'drillCard.easy',
+		again: 'grade.again',
+		hard: 'grade.hard',
+		good: 'grade.good',
+		easy: 'grade.easy',
 	};
 
 	// Per-ROW state key (which row is skipped, revealed, confirmed). Deliberately

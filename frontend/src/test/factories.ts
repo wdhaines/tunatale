@@ -1,4 +1,10 @@
-import type { WordToken, ReviewQueueItem, SRSItemDetail } from "#lib/api.js";
+import type {
+  WordToken,
+  ReviewQueueItem,
+  SRSItemDetail,
+  GradePlan,
+  GradePlanCard,
+} from "#lib/api.js";
 
 export function makeWordToken(overrides: Partial<WordToken> = {}): WordToken {
   return {
@@ -180,4 +186,34 @@ export function studyDayDueAt(days = 0): string {
       0,
     ),
   ).toISOString();
+}
+
+export function makeGradePlanCard(overrides: Partial<GradePlanCard> = {}): GradePlanCard {
+  return {
+    item_id: 1,
+    direction: "recognition",
+    kind: "word",
+    text: "búntag",
+    gloss: "morning",
+    due_at: "2026-11-14T10:00:00",
+    grade_class: "due",
+    line_key: null,
+    blank_start: null,
+    blank_end: null,
+    drill: null,
+    ...overrides,
+  };
+}
+
+export function makeGradePlan(overrides: Partial<GradePlan> = {}): GradePlan {
+  return {
+    studied: false,
+    listen_count: 0,
+    range_days: 3,
+    cards: [],
+    later: { recognition: 0, production: 0 },
+    waiting_new: 0,
+    suggestions: { words: [], contrast: [] },
+    ...overrides,
+  };
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { gradeHref } from '#lib/grading/grade.js';
 	import Banner from '#lib/components/Banner.svelte';
 	import { onMount, untrack } from 'svelte';
 	import { goto, refreshAll } from '$app/navigation';
@@ -544,6 +545,7 @@
 			<ListenActions
 				{listen}
 				reviewHref="/review?lesson={data.lesson.id}&back=/c/{data.curriculum.id}/l/{data.lesson.id}"
+				gradeHref={gradeHref(data.lesson.id, `/c/${data.curriculum.id}/l/${data.lesson.id}`, data.lesson.title)}
 				hasError={error !== ''}
 				{recallInline}
 			/>

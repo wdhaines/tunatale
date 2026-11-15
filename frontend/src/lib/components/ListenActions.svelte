@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { createListenActions } from '#lib/reading/listenActions.svelte.js';
 	import ReaderChips from './ReaderChips.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * The action row at the foot of the sticky card: mark listened, what the last
@@ -20,8 +21,11 @@
 		/** Read mode with the player collapsed: the Recall chip joins this row,
 		    at the button's height (LessonReader decides; the pages pass it on). */
 		recallInline?: boolean;
+		/** The Grade page for this content (tunatale-5i1p.3). It sits beside
+		    Mark as Listened until the popup retires. */
+		gradeHref?: string | null;
 	}
-	let { listen, reviewHref, hasError = false, recallInline = false }: Props = $props();
+	let { listen, reviewHref, hasError = false, recallInline = false, gradeHref = null }: Props = $props();
 
 	const result = $derived(listen.listenResult);
 	const showConfirmation = $derived(result !== null && !hasError);
@@ -40,6 +44,9 @@
 		Mark as Listened
 	</button>
 	{#if recallInline}<ReaderChips inline />{/if}
+	<!-- After the Recall chip, which must sit right beside the button at its
+	     height (tests/reader-chips-layout.spec.ts). -->
+	{#if gradeHref}<a class="grade-link" href={gradeHref}>{t('gradePage.open')}</a>{/if}
 	{#if showConfirmation && result}
 		<p class="listen-confirmation">
 			{#if result.created > 0}
@@ -88,6 +95,39 @@
 		border-radius: var(--radius-pill);
 		cursor: pointer;
 		font-weight: 600;
+	}
+	/* Same pill as Mark as Listened, outlined: the new path beside the old one.
+	   The button's text is the UA's button font and the link's is the page's, so
+	   their natural heights differ; both stretch to the row's line instead, which
+	   makes them one height by construction. */
+	.listen-btn,
+	.grade-link {
+		align-self: stretch;
+	}
+	.grade-link {
+		display: inline-flex;
+		align-items: center;
+		padding: calc(0.5rem - 2px) calc(1.25rem - 2px);
+		border: 2px solid var(--color-primary);
+		border-radius: var(--radius-pill);
+		color: var(--color-primary);
+		font-weight: 600;
+		text-decoration: none;
+	}
+	/* At 320px the two pills must still share one line (owner, 2026-11-14): on
+	   CI's Linux fonts the 390px padding left Grade on a row of its own, which
+	   grew the sticky card and pushed the dialogue below the fold. Measured at
+	   320px on macOS fonts, this frees ~27px on top of the ~21px left before. */
+	@media (max-width: 359px) {
+		.listen-actions {
+			column-gap: 0.6rem;
+		}
+		.listen-btn {
+			padding-inline: 0.9rem;
+		}
+		.grade-link {
+			padding-inline: calc(0.9rem - 2px);
+		}
 	}
 	.listen-btn:disabled {
 		opacity: 0.5;

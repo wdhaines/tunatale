@@ -171,9 +171,26 @@ test.describe("word popover (coarse pointer)", () => {
 	/** Long-press is the ONLY touch opener: LONG_PRESS_MS = 450, jitter budget
 	 *  MOVE_CANCEL_PX = 10. Held well past both, with no movement in between. */
 	async function longPress(page: import("@playwright/test").Page, index: number) {
-		const box = await page.locator(".tt-wrap").nth(index).boundingBox();
+		const target = page.locator(".tt-wrap").nth(index);
+		// The press is by viewport coordinates, so an off-screen or covered word
+		// is pressed as nothing and reads as "popover never opened": a clean
+		// negative. That is how PR #425 first failed on CI (the word was at
+		// y=758 in a 720px viewport). Bring it on screen (a no-op when it already
+		// is), then refuse to press unless the point lands on the word itself.
+		await target.scrollIntoViewIfNeeded();
+		const box = await target.boundingBox();
 		if (!box) return false;
-		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+		const hit = await target.evaluate(
+			(el, [px, py]) => {
+				const at = document.elementFromPoint(px, py);
+				return at !== null && el.contains(at) ? "" : `${at?.tagName ?? "nothing"}.${at?.className ?? ""}`;
+			},
+			[x, y],
+		);
+		if (hit) throw new Error(`long-press point (${x}, ${y}) lands on ${hit}, not on word ${index}`);
+		await page.mouse.move(x, y);
 		await page.mouse.down();
 		await page.waitForTimeout(700);
 		await page.mouse.up();
@@ -193,7 +210,7 @@ test.describe("word popover (coarse pointer)", () => {
 	/** The open popover's ACTION-row buttons (`.tt-actions`), grouped into visual
 	 *  lines. `shown: 0` when no popover is displayed, so a caller can tell
 	 *  "nothing to measure" from "measured and fine". The four ratings live in
-	 *  their own `.tt-rate` row (bd tunatale-8jgb) and are measured separately —
+	 *  their own `.grade-popover` row (GradeButtons) (bd tunatale-8jgb) and are measured separately —
 	 *  they are deliberately never part of the wrapping action row. */
 	async function measureActionLines(page: import("@playwright/test").Page) {
 		return page.evaluate(() => {
@@ -239,7 +256,7 @@ test.describe("word popover (coarse pointer)", () => {
 	 * `Reset` alone at 10..73 (63px) — a ratio of 0.27.
 	 *
 	 * Since bd tunatale-8jgb the grade button is the ratings row (its own
-	 * `.tt-rate`, `flex-wrap: nowrap`), and the utilities hide behind "More…".
+	 * `.grade-popover`, `flex-wrap: nowrap`), and the utilities hide behind "More…".
 	 * So the row that can still wrap raggedly is the EXPANDED `.tt-actions`
 	 * row — this test opens "More…" first and measures that row alone.
 	 */
@@ -255,7 +272,7 @@ test.describe("word popover (coarse pointer)", () => {
 		// word with two actions passes trivially and would make this vacuous.
 		const targets = await page.evaluate(() =>
 			[...document.querySelectorAll(".tt-wrap")]
-				.map((el, i) => ({ i, btns: el.querySelectorAll(".tt-btn").length }))
+				.map((el, i) => ({ i, btns: el.querySelectorAll(".tt-btn, .grade-btn").length }))
 				.filter((t) => t.btns >= 4)
 				.slice(0, 4)
 				.map((t) => t.i),
@@ -299,7 +316,7 @@ test.describe("word popover (coarse pointer)", () => {
 
 	/**
 	 * bd tunatale-dvdm.5 — a revealed production cloze offers the review queue's
-	 * four ratings. Since bd tunatale-8jgb they render in their OWN `.tt-rate`
+	 * four ratings. Since bd tunatale-8jgb they render in their OWN `.grade-popover`
 	 * row (`flex-wrap: nowrap`, above `.tt-actions`), so they can never wrap into
 	 * a stub — the row is one line or it overflows, and the row's box is measured
 	 * here. The word's utility actions collapse behind "More…" beneath it.
@@ -335,8 +352,8 @@ test.describe("word popover (coarse pointer)", () => {
 				(el) => getComputedStyle(el).display !== "none",
 			);
 			if (!tip) return { shown: 0, labels: [] as string[], tops: [] as number[] };
-			const rate = tip.querySelector(".tt-rate");
-			const buttons = rate ? [...rate.querySelectorAll(".tt-btn")] : [];
+			const rate = tip.querySelector(".grade-popover");
+			const buttons = rate ? [...rate.querySelectorAll(".grade-btn")] : [];
 			const rects = buttons.map((b) => b.getBoundingClientRect());
 			return {
 				shown: 1,
@@ -384,13 +401,13 @@ test.describe("word popover (coarse pointer)", () => {
 
 	/**
 	 * bd tunatale-8jgb — at 320px the four ratings must fit their own row, and
-	 * the popover must not push the page sideways. `.tt-rate` is
+	 * the popover must not push the page sideways. `.grade-popover` is
 	 * `flex-wrap: nowrap` on purpose: a wrapped rating row is worse than a
 	 * slightly narrower button, so the row's job is to FIT, and these are the
 	 * three numbers the browser computes for that.
 	 *
 	 * Runs at 320px — the narrowest screen the product supports — with touch on,
-	 * which is where `@media (pointer: coarse)` widens `.tt-btn` to 8px/10px and
+	 * which is where `@media (pointer: coarse)` widens `.grade-btn` to 8px/10px and
 	 * pushes the row closest to the content box's edge.
 	 */
 	test("8jgb: at 320px the four ratings fit one row without overflowing", async ({
@@ -419,9 +436,9 @@ test.describe("word popover (coarse pointer)", () => {
 				const tip = [...document.querySelectorAll(".tt")].find(
 					(el) => getComputedStyle(el).display !== "none",
 				);
-				const rate = tip?.querySelector(".tt-rate") as HTMLElement | null;
+				const rate = tip?.querySelector(".grade-popover") as HTMLElement | null;
 				const rects = rate
-					? [...rate.querySelectorAll(".tt-btn")].map((b) => b.getBoundingClientRect())
+					? [...rate.querySelectorAll(".grade-btn")].map((b) => b.getBoundingClientRect())
 					: [];
 				const tipRect = tip?.getBoundingClientRect() ?? null;
 				return {

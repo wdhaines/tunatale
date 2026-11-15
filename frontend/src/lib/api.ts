@@ -34,6 +34,12 @@ export type VerbChartRow = components["schemas"]["VerbChartRow"];
 export type VerbChartCell = components["schemas"]["VerbChartCell"];
 export type VerbChartAffix = components["schemas"]["VerbChartAffix"];
 export type VerbChartExample = components["schemas"]["VerbChartExample"];
+// The Grade page (tunatale-5i1p.3): a lesson's grade plan and its Save.
+export type GradePlan = components["schemas"]["GradePlanResponse"];
+export type GradePlanCard = components["schemas"]["GradePlanCard"];
+export type GradeWordSuggestion = components["schemas"]["GradeWordSuggestion"];
+export type GradeRequest = components["schemas"]["GradeRequest"];
+export type GradeResponse = components["schemas"]["GradeResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
@@ -1359,6 +1365,23 @@ export class TunaTaleAPI {
   async markLessonReviewed(lessonId: string): Promise<{ ok: boolean }> {
     return this.request(`/api/srs/content/${lessonId}/reviewed`, {
       method: "POST",
+    });
+  }
+
+  /** The Grade page's rows: the lesson's cards gradable now, due within
+   *  `rangeDays` of today (null = every gradable row), plus what a Save adds. */
+  async getGradePlan(contentId: string, rangeDays: number | null): Promise<GradePlan> {
+    const qs = rangeDays === null ? "" : `?range_days=${rangeDays}`;
+    return this.request(`/api/srs/content/${contentId}/grade-plan${qs}`);
+  }
+
+  /** Save the Grade page. Explicit only: a card not named is untouched. A 409
+   *  means the plan was stale (refetch it); the error carries `.status`. */
+  async saveGrades(contentId: string, body: Partial<GradeRequest>): Promise<GradeResponse> {
+    return this.request(`/api/srs/content/${contentId}/grade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
   }
 
