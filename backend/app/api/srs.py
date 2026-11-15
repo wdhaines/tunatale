@@ -3797,8 +3797,15 @@ async def list_items(
 @router.patch("/items/{item_id}", status_code=200, response_model=SrsItemResponse)
 async def patch_item(item_id: int, body: UpdateItemRequest, request: Request):
     db = request.state.srs_db
-    if db.get_collocation_by_id(item_id) is None:
+    found = db.get_collocation_by_id(item_id)
+    if found is None:
         raise HTTPException(status_code=404, detail="Item not found")
+    if is_sentence_key(found[1].syntactic_unit.disambig_key):
+        # A lesson card's row is found again by its guid, which is built from its
+        # text: an edit here made the next mint add a second row under the same
+        # key, which holds a sentence line at every sync and raised a drill row
+        # out of it. The card shows the lesson's line either way, from card_data.
+        raise HTTPException(status_code=409, detail="A lesson card is corrected in its lesson")
     try:
         db.update_collocation_fields(item_id, text=body.text, translation=body.translation)
     except ValueError as exc:
