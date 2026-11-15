@@ -11,7 +11,7 @@ behaviour in ``app.srs.function_words``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -94,6 +94,28 @@ class PatternCard:
 
 
 @dataclass(frozen=True)
+class ChainStep:
+    """One step of an affix drill card: the cue shown, the sentence to say, and its English."""
+
+    cue: str
+    answer: str
+    english: str
+
+
+@dataclass(frozen=True)
+class PatternChain:
+    """The checked chain an affix drill card is built from (tunatale-5i1p.6).
+
+    ``model`` is said first; each step's sentence before is the previous
+    step's answer (the model for step 1), so one thing changes per step.
+    """
+
+    model: str
+    english: str
+    steps: tuple[ChainStep, ...]
+
+
+@dataclass(frozen=True)
 class A1Morphology:
     """The per-language A1 morphology contract.
 
@@ -131,3 +153,7 @@ class A1Morphology:
     # A root's cards in a sentence pattern, one per ``card_features`` entry in
     # that order; empty for a root nobody has checked sentences for.
     pattern_cards: Callable[[str, AffixPattern], tuple[PatternCard, ...]] | None = None
+    # The affix drill card's chain for a pattern, from the roots the studied
+    # lesson's drill voiced and whether the learner understands a root; ``None``
+    # for a pattern nobody has checked a chain for (tunatale-5i1p.6).
+    pattern_chain: Callable[[AffixPattern, Sequence[str], Callable[[str], bool]], PatternChain | None] | None = None
