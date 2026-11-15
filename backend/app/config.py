@@ -3,6 +3,7 @@
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field
@@ -402,6 +403,11 @@ class Settings(BaseSettings):
     # rather than gating a live CORS fix behind the whole auth phase.
     auth_enabled: bool = False
     session_secret: str = ""
+    # argon2 cost for password hashes. "default" is argon2-cffi's own parameters,
+    # the only cost a deployment uses; the prod profile refuses anything else.
+    # "minimal" exists for the test suite (conftest pins it): the auth tests check
+    # route behaviour, and the default cost is ~0.13 s CPU per login.
+    password_hash_cost: Literal["default", "minimal"] = "default"
 
     # Identity lives in its OWN database. The content DBs are per-language
     # (tunatale_sl.db / tunatale_no.db) and get copied, migrated and restored
@@ -487,6 +493,11 @@ def prod_profile_problems(s: Settings) -> list[str]:
     if not s.cors_origins and not s.cors_allow_origin_regex:
         problems.append(
             "cors_origins is empty and no cors_allow_origin_regex is set — no browser client could reach the API"
+        )
+    if s.password_hash_cost != "default":
+        problems.append(
+            f"password_hash_cost is {s.password_hash_cost!r}, not 'default' — the test suite's"
+            " argon2 cost, so a stolen database's hashes would crack cheaply (unset PASSWORD_HASH_COST)"
         )
     if s.auth_enabled and not s.trusted_proxy_header:
         problems.append(

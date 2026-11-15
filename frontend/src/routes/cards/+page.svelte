@@ -366,11 +366,14 @@
 							{#if openMenuId === item.id}
 								<div class="menu" role="menu">
 									<button role="menuitem" onclick={() => { closeMenu(); imageEditItem = item; }}>{t('cards.changeImage')}</button>
-									<!-- A lesson card's row is a cloze too, but its sentence is the lesson's line. -->
+									<!-- A lesson card's row is a cloze too, but its text is the lesson's line:
+									     neither the sentence rewrite nor Edit is offered on it. -->
 									{#if item.card_type === 'cloze' && !item.sentence && !item.drill}
 										<button role="menuitem" onclick={() => { closeMenu(); clozeEditItem = item; }}>{t('cards.clozeSentence')}</button>
 									{/if}
-									<button role="menuitem" onclick={() => startEdit(item)}>{t('cards.edit')}</button>
+									{#if !item.sentence && !item.drill}
+										<button role="menuitem" onclick={() => startEdit(item)}>{t('cards.edit')}</button>
+									{/if}
 									<button role="menuitem" onclick={() => { closeMenu(); resetItem(item.id); }}>{t('cards.reset')}</button>
 									<button role="menuitem" onclick={() => { closeMenu(); toggleSuspend(item); }}>
 										{item.state === 'suspended' ? t('cards.unsuspend') : t('cards.suspend')}
