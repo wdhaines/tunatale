@@ -120,9 +120,14 @@ class TestVerifyCredentials:
         db.set_active(user.id, True)
         assert db.verify_credentials("a@b.com", "pw") is not None
 
-    def test_rehash_path(self, tmp_path: Path) -> None:
+    def test_rehash_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Create a user with a weak argon2 hash, then verify re-hash occurs."""
         from argon2 import PasswordHasher
+
+        from app.config import settings
+
+        # Production's cost: under the suite's ``minimal`` pin this hash would not be weak.
+        monkeypatch.setattr(settings, "password_hash_cost", "default")
 
         weak = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
         legacy = weak.hash("secret")
@@ -493,3 +498,21 @@ class TestListUsers:
         listed = db.list_users()
         assert len(listed) == 1
         assert listed[0].is_active is False
+
+
+class TestDummyHashCost:
+    """The unknown-email verify exists to cost what a real one costs, so its hash
+    follows ``settings.password_hash_cost`` rather than whichever cost was set when
+    the process first needed it."""
+
+    def test_the_dummy_hash_follows_the_cost_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from argon2 import PasswordHasher, extract_parameters
+
+        from app.auth.database import _dummy_hash
+        from app.auth.passwords import MINIMAL_PARAMETERS
+        from app.config import settings
+
+        minimal = extract_parameters(_dummy_hash())
+        assert (minimal.time_cost, minimal.memory_cost, minimal.parallelism) == MINIMAL_PARAMETERS
+        monkeypatch.setattr(settings, "password_hash_cost", "default")
+        assert extract_parameters(_dummy_hash()).memory_cost == PasswordHasher().memory_cost

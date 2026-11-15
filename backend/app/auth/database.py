@@ -30,30 +30,37 @@ from pathlib import Path
 from app.auth.models import Invite, Session, User
 from app.auth.passwords import hash_password, needs_rehash, verify_password
 from app.auth.tokens import hash_token, mint_token
+from app.config import settings
 
 SCHEMA_VERSION = 3
 
 
-@cache
 def _dummy_hash() -> str:
     """An argon2 hash to verify against when the email is unknown.
 
     Computed once per process from a random string, rather than stored as a
     literal, for two reasons:
 
-    - Its parameters always match ``PasswordHasher()``'s current defaults. A
-      pasted literal silently stops matching when argon2-cffi changes them, and
-      the timing equalisation it exists for drifts away without any test
-      noticing.
+    - Its parameters always match the current hashing cost
+      (``settings.password_hash_cost``, argon2-cffi's defaults in every
+      deployment). A pasted literal silently stops matching when argon2-cffi
+      changes them, and the timing equalisation it exists for drifts away
+      without any test noticing.
     - A hardcoded ``$argon2id$…`` string is what secret scanners match on.
       GitGuardian's "Generic Password" detector already failed a build over a
       throwaway PHC literal in this package's tests (false positive, but a real
       cost in noise).
 
-    ``@cache`` and not a module-level call: computing this at import would put
-    ~50 ms of argon2 work into every process start and every test collection.
-    The first unknown-email login pays it instead, once.
+    Cached per cost and not a module-level call: computing this at import would
+    put argon2 work into every process start and every test collection. The
+    first unknown-email login at each cost pays it instead, once.
     """
+    return _dummy_hash_at(settings.password_hash_cost)
+
+
+@cache
+def _dummy_hash_at(cost: str) -> str:
+    """``_dummy_hash`` for one cost; *cost* is the cache key, read by ``hash_password``."""
     return hash_password(secrets.token_urlsafe(32))
 
 
@@ -386,8 +393,6 @@ class AuthDatabase:
         ``timedelta(days=settings.session_ttl_days)``.
         """
         if ttl is None:
-            from app.config import settings
-
             ttl = timedelta(days=settings.session_ttl_days)
         token = mint_token()
         token_h = hash_token(token)
@@ -567,8 +572,6 @@ class AuthDatabase:
         owner of the flat databases.
         """
         if ttl is None:
-            from app.config import settings
-
             ttl = timedelta(days=settings.invite_ttl_days)
         if now is None:
             now = datetime.now(UTC)
