@@ -92,6 +92,17 @@ class TestParseErrorsFail:
         with pytest.raises(SyntaxError):
             scan_file(bad)
 
+    def test_an_unparseable_file_that_never_names_the_setting_is_still_an_error(self, tmp_path):
+        """The walk is skipped for a file whose text never says ``database_url``;
+        the parse is not, so a broken script still fails the gate."""
+        from check_singular_database_url import scan_file
+
+        bad = tmp_path / "broken.py"
+        bad.write_text("def f():\nreturn 1\n")
+
+        with pytest.raises(SyntaxError):
+            scan_file(bad)
+
 
 class TestEvaluate:
     def test_allowlisted_file_passes(self, tmp_path):

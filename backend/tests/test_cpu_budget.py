@@ -34,21 +34,26 @@ def test_burns_in_its_fixture(heavy):
 
 @pytest.fixture
 def heavy():
-    burn(0.06)
+    burn(0.03)
 
 def test_burns_in_its_body():
-    burn(0.06)
+    burn(0.03)
 
 @pytest.mark.slow(reason="a sweep of every form")
 def test_marked():
-    burn(0.06)
+    burn(0.03)
 """
 
 
 @pytest.fixture
 def small_budget(monkeypatch):
     """A 0.02 s budget and this machine as the reference, so an inner run
-    costs a fraction of a second (these tests are themselves under the budget)."""
+    costs a fraction of a second (these tests are themselves under the budget).
+
+    A burning test spins 0.03 s: always over 0.02, since ``burn`` loops until the
+    process clock passes its target. It was 0.06, and an over-budget test runs
+    three times (cold, then twice warm), which put
+    ``test_a_test_over_budget_fails_the_run_and_is_named`` at 0.62 s."""
     monkeypatch.setattr(cpu_budget, "BUDGET_S", 0.02)
     monkeypatch.setattr(cpu_budget, "COLD_BUDGET_S", 1.0)
     monkeypatch.setattr(cpu_budget, "SLOW_BUDGET_S", 5.0)
@@ -130,7 +135,7 @@ def test_fills_a_cache():
 def test_the_verdict_is_the_warm_runs_cost(pytester, small_budget):
     out = _run(pytester, enforce=True).stdout.str()
     line = next(row for row in out.splitlines() if row.endswith("test_burns_in_its_body"))
-    assert 0.04 < float(line.split("s CPU")[0]) < 0.11  # one 0.06 s burn, not two or three summed
+    assert 0.025 < float(line.split("s CPU")[0]) < 0.055  # one 0.03 s burn, not two or three summed
 
 
 def test_a_huge_first_run_fails_even_when_its_re_run_is_cheap(pytester, small_budget, monkeypatch):
@@ -181,8 +186,8 @@ def test_caches_its_own_work():
 
 
 def test_an_allowance_reaches_the_warm_re_run(pytester, small_budget):
-    # Cold 0.3 s is over the scaled 0.2 s, so it is re-run; warm it burns 0.06 s, under
-    # 0.2 s but over the unscaled 0.02 s, so only an allowance-aware re-run passes it.
+    # Cold 0.15 s is over the scaled 0.1 s, so it is re-run; warm it burns 0.06 s, under
+    # 0.1 s but over the unscaled 0.02 s, so only an allowance-aware re-run passes it.
     tests = """
 import time
 
@@ -194,8 +199,8 @@ def burn(seconds):
         pass
 
 def test_cold_then_warm():
-    burn(0.3 if not _RUNS else 0.06)
+    burn(0.15 if not _RUNS else 0.06)
     _RUNS.append(True)
 """
-    result = _run(pytester, enforce=True, tests=tests, allowance=10.0)
+    result = _run(pytester, enforce=True, tests=tests, allowance=5.0)
     assert result.ret == pytest.ExitCode.OK
