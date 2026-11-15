@@ -1601,3 +1601,146 @@ describe("sentence card", () => {
     expect(container.querySelector("details.sentence-cue-means")).toBeNull();
   });
 });
+
+describe("drill card", () => {
+  // The review payload's step view (tunatale-5i1p.4). The row itself is a
+  // whole-line cloze, so without this branch the front was a bare "[...]" and
+  // the back the model sentence (2026-11-15, "Moanhi ko ugma.").
+  const drill = {
+    kind: "substitution" as "substitution" | "transformation" | "true_false" | "question_answer",
+    step: 2,
+    of: 7,
+    cue: "gahapon",
+    answer: "Milakaw ko gahapon.",
+    english: "",
+    before: "Molakaw ko ugma." as string | null,
+    before_cue: null as string | null,
+    cue_audio_url: "/api/srs/media/cue.mp3" as string | null,
+    answer_audio_url: "/api/srs/media/ans.mp3" as string | null,
+    before_audio_url: "/api/srs/media/before.mp3" as string | null,
+    before_cue_audio_url: null as string | null,
+  };
+  const make = (over: Partial<typeof drill> = {}) =>
+    makeSRSItemDetail({
+      text: "Molakaw ko ugma.",
+      translation: "",
+      card_type: "cloze",
+      source_sentence: "{{c1::Molakaw ko ugma.}}",
+      audio_url: null,
+      drill: { ...drill, ...over },
+    });
+  const norm = (el: Element | null) => el!.textContent!.replace(/\s+/g, " ").trim();
+
+  it("front: the step, the sentence before, then the cue; never the answer or a bare blank", () => {
+    const { container } = render(DrillCard, {
+      item: make(),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    const prompt = container.querySelector(".prompt")!;
+    expect(norm(prompt.querySelector(".drill-step"))).toBe("step 2 of 7");
+    expect(norm(prompt.querySelector(".drill-before"))).toBe("Molakaw ko ugma.");
+    expect(norm(prompt.querySelector(".drill-cue"))).toBe("+ gahapon");
+    expect(prompt.textContent).not.toContain("Milakaw");
+    expect(prompt.textContent).not.toContain("[...]");
+  });
+
+  it("front plays the sentence before, then the cue, and the button replays from the start", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const { container, getByLabelText } = render(DrillCard, {
+      item: make(),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    const audio = container.querySelector(".prompt audio") as HTMLAudioElement;
+    expect(audio.getAttribute("src")).toBe("/api/srs/media/before.mp3");
+    expect(audio.hasAttribute("autoplay")).toBe(true);
+    await fireEvent.ended(audio);
+    expect(audio.getAttribute("src")).toBe("/api/srs/media/cue.mp3");
+    await fireEvent.ended(audio);
+    expect(audio.getAttribute("src")).toBe("/api/srs/media/cue.mp3");
+    await fireEvent.click(getByLabelText("Play the cue"));
+    expect(audio.getAttribute("src")).toBe("/api/srs/media/before.mp3");
+    expect(play).toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it("a refused replay is swallowed", async () => {
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValue(new Error("NotAllowedError"));
+    const { getByLabelText } = render(DrillCard, {
+      item: make(),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByLabelText("Play the cue"));
+    expect(play).toHaveBeenCalled();
+    play.mockRestore();
+  });
+
+  it("a front with no takes has no audio and no play button", () => {
+    const { container, queryByLabelText } = render(DrillCard, {
+      item: make({ cue_audio_url: null, before_audio_url: null, answer_audio_url: null }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    expect(container.querySelector("audio")).toBeNull();
+    expect(queryByLabelText("Play the cue")).toBeNull();
+  });
+
+  it("a transformation shows its worked pair, then the cue asking for its answer", () => {
+    const { container } = render(DrillCard, {
+      item: make({
+        kind: "transformation",
+        before_cue: "Molakaw ko.",
+        before: "Milakaw ko.",
+        cue: "Mokaon ko.",
+        before_cue_audio_url: "/api/srs/media/pc.mp3",
+      }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    expect(norm(container.querySelector(".drill-before"))).toBe("Molakaw ko. → Milakaw ko.");
+    expect(norm(container.querySelector(".drill-cue"))).toBe("Mokaon ko. → ?");
+    expect(container.querySelector(".prompt audio")!.getAttribute("src")).toBe(
+      "/api/srs/media/pc.mp3",
+    );
+  });
+
+  it("a question stands alone", () => {
+    const { container } = render(DrillCard, {
+      item: make({ kind: "question_answer", before: null, cue: "Asa ka?", before_audio_url: null }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    expect(container.querySelector(".drill-before")).toBeNull();
+    expect(norm(container.querySelector(".drill-cue"))).toBe("Asa ka?");
+  });
+
+  it("back: the answer with its own take, and English only where the lesson gives one", async () => {
+    const { container, getByRole } = render(DrillCard, {
+      item: make({ english: "I left yesterday." }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByRole("button", { name: "Show" }));
+    const answer = container.querySelector(".answer")!;
+    expect(norm(answer.querySelector(".drill-answer"))).toBe("Milakaw ko gahapon.");
+    expect(answer.querySelector("audio")!.getAttribute("src")).toBe("/api/srs/media/ans.mp3");
+    expect(answer.textContent).toContain("I left yesterday.");
+    expect(answer.textContent).not.toContain("Molakaw ko ugma.");
+  });
+
+  it("back with no English and no take is just the answer", async () => {
+    const { container, getByRole } = render(DrillCard, {
+      item: make({ answer_audio_url: null }),
+      direction: "production",
+      onRate: vi.fn(),
+    });
+    await fireEvent.click(getByRole("button", { name: "Show" }));
+    const answer = container.querySelector(".answer")!;
+    expect(answer.querySelector("audio")).toBeNull();
+    expect(answer.querySelector(".english")).toBeNull();
+  });
+});

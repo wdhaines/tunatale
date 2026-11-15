@@ -144,6 +144,7 @@ async def fetch_card_media(
     forvo_enabled: bool | None = None,
     audio: AudioMode = "full",
     source_sentence: str = "",
+    want_image: bool = True,
     _forvo_fn: Callable[..., ForvoResult] | None = None,
     _tts_fn: Callable[..., Awaitable[bytes | None]] | None = None,
     _search_fn: Callable[..., Any] | None = None,
@@ -166,6 +167,11 @@ async def fetch_card_media(
       * ``None`` — legacy: Pixabay derives the query from ``english``.
       * ``""``   — skip the image entirely (abstract word, no depiction).
       * non-empty — sent to Pixabay verbatim as a sense-disambiguated query.
+
+    ``want_image=False`` asks for no image from ANY source: the caller already
+    holds the card's picture (a drawn word) or wants audio alone. ``""`` cannot
+    say this, because LanGeek is tried before that skip on purpose; a drawn
+    ngadto got LanGeek's "there" over its drawing that way (2026-11-13).
     """
     forvo_fn = _forvo_fn or fetch_forvo_pronunciation
     tts_fn = _tts_fn or generate_tts_audio
@@ -236,6 +242,10 @@ async def fetch_card_media(
 
     if result.audio_bytes is not None and normalize:
         result.audio_bytes = await anyio.to_thread.run_sync(norm_fn, result.audio_bytes)
+
+    if not want_image:
+        result.image_status = "skipped"
+        return result
 
     # LanGeek first, and BEFORE the "" skip below: the abstract words that skip
     # gives up on are the ones its drawn illustrations exist for (tunatale-xsbh).

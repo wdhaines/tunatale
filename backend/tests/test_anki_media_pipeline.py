@@ -1353,8 +1353,7 @@ class TestLangeekFirst:
             _search_fn=search,
             _download_fn=dl_fn,
             _normalize_fn=norm_fn,
-            _langeek_search_fn=_langeek_search(),
-            **kw,
+            **{"_langeek_search_fn": _langeek_search(), **kw},
         )
         return result, search
 
@@ -1380,6 +1379,27 @@ class TestLangeekFirst:
     async def test_an_abstract_word_langeek_lacks_is_still_skipped(self):
         result, search = await self._fetch("happiness", entries=[], image_query="")
         assert (result.image_status, result.image_bytes, search.queries) == ("skipped", None, [])
+
+    async def test_a_caller_that_wants_no_image_never_asks_langeek(self):
+        """A drawn word's caller already holds its picture: no LanGeek search, no image back.
+
+        The "" query alone does not say this, since LanGeek runs before that skip
+        on purpose (abstract words). Without the flag, Cebuano ngadto's drawing
+        was overwritten at add time by LanGeek's "there" (2026-11-13).
+        """
+        searched: list[str] = []
+        real = _langeek_search()
+
+        def search(term, **kw):
+            searched.append(term)
+            return real(term, **kw)
+
+        result, pixabay = await self._fetch(
+            "happiness", entries=_fixture("happiness"), image_query="", want_image=False, _langeek_search_fn=search
+        )
+
+        assert (result.image_status, result.image_bytes, searched, pixabay.queries) == ("skipped", None, [], [])
+        assert result.audio_bytes is not None, "the audio half still runs"
 
     async def test_an_illustration_already_used_this_run_is_not_reused(self):
         result, _ = await self._fetch("happiness", entries=_fixture("happiness"), used={_LG_PHOTO})

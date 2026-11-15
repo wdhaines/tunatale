@@ -366,7 +366,8 @@
 							{#if openMenuId === item.id}
 								<div class="menu" role="menu">
 									<button role="menuitem" onclick={() => { closeMenu(); imageEditItem = item; }}>{t('cards.changeImage')}</button>
-									{#if item.card_type === 'cloze'}
+									<!-- A lesson card's row is a cloze too, but its sentence is the lesson's line. -->
+									{#if item.card_type === 'cloze' && !item.sentence && !item.drill}
 										<button role="menuitem" onclick={() => { closeMenu(); clozeEditItem = item; }}>{t('cards.clozeSentence')}</button>
 									{/if}
 									<button role="menuitem" onclick={() => startEdit(item)}>{t('cards.edit')}</button>

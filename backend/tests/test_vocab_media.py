@@ -710,6 +710,51 @@ async def test_a_spatial_word_is_drawn_not_searched_for(media_dir, word, languag
     assert (queried, fetched_with) == ([], [""])
 
 
+async def test_langeek_does_not_replace_a_drawn_word_at_add_time(media_dir) -> None:
+    """Cebuano ngadto "there, to there" keeps its drawing with the REAL fetch and LanGeek answering.
+
+    The tests above fake the fetch as returning no image, so they could not see
+    this: LanGeek ran before the "" skip, its "there" came back, and the add-time
+    write stored it over the drawing (live ngadto and anha, 2026-11-13/14).
+    """
+    from functools import partial
+
+    from app.cards.media.forvo import ForvoOutcome, ForvoResult
+    from app.cards.media.langeek import LangeekSearch, LangeekSense
+    from app.cards.media.pipeline import fetch_card_media
+    from app.cards.spatial_picture import spatial_picture
+
+    searched: list[str] = []
+
+    def _langeek(term, **_k):
+        searched.append(term)
+        return LangeekSearch("ok", [LangeekSense(1, "adverb", "in that place", "https://cdn.langeek.co/there")])
+
+    async def _tts(*_a, **_k):
+        return b"AUD"
+
+    fetch = partial(
+        fetch_card_media,
+        forvo_enabled=True,
+        normalize=False,
+        _forvo_fn=lambda word, **_k: ForvoResult(ForvoOutcome.NO_PRONUNCIATION),
+        _tts_fn=_tts,
+        _langeek_search_fn=_langeek,
+        _langeek_download_fn=lambda sense, **_k: (b"LGK", "jpg", sense.photo_url),
+    )
+    db = _FakeDB()
+
+    out = await vocab_media.generate_vocab_media(
+        db, 7, "ngadto", "there, to there", llm=None, pixabay_key="k", language_code="ceb", _fetch_fn=fetch
+    )
+
+    picture = spatial_picture("ngadto", "ceb", "there, to there")
+    assert picture is not None and out["image"] == picture.filename
+    assert [m[2] for m in db.media if m[1] == "image"] == [picture.filename]
+    assert searched == []
+    assert out["audio"].startswith("tts_")
+
+
 async def test_a_spatial_homograph_glossed_with_its_other_sense_is_searched_for(media_dir) -> None:
     """Cebuano `wala` is "left" and "none": a card glossed "none" gets no arrow."""
     db = _FakeDB()

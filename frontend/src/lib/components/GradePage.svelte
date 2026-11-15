@@ -288,7 +288,7 @@
 					<div class="row say-row" data-row-text={card.text}>
 						<div class="row-main">
 							{#if card.drill}
-								<span class="step">{t('gradePage.step', { step: card.drill.step + 1, of: card.drill.of })}</span>
+								<span class="step">{t('gradePage.step', { step: card.drill.step, of: card.drill.of })}</span>
 							{/if}
 							{#each line.prompt as p, i (i)}
 								<span class="prompt">{p}</span>

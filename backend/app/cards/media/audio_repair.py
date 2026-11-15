@@ -134,6 +134,7 @@ async def apply_audio_repair(
             pixabay_key="",
             language_code=language_code,
             image_query="",
+            want_image=False,
             audio="forvo",
         )
         if media is not None and media.audio_bytes is not None:

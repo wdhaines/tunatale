@@ -152,6 +152,7 @@ class TestWhatItRenders:
         assert kwargs["language_code"] == LANG
         assert kwargs["audio"] == "full"
         assert kwargs["image_query"] == "", "the picture is not this pass's business"
+        assert kwargs["want_image"] is False, "nor is LanGeek's"
 
     async def test_an_upcoming_new_card_is_rendered_before_it_is_met(self, db):
         coll_id = _add_new(db, "morgen")

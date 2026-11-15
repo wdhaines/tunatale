@@ -216,7 +216,13 @@ class TestApply:
         )
 
         word, kwargs = fetch.calls[0]
-        assert (word, kwargs["language_code"], kwargs["audio"], kwargs["image_query"]) == ("gabii", LANG, "forvo", "")
+        assert (word, kwargs["language_code"], kwargs["audio"], kwargs["image_query"], kwargs["want_image"]) == (
+            "gabii",
+            LANG,
+            "forvo",
+            "",
+            False,
+        )
 
     async def test_a_fetch_returning_none_counts_as_nothing_found(self, db):
         _card(db, "gabii")

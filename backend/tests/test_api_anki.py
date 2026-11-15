@@ -343,6 +343,26 @@ class TestBuildMediaFn:
 
         assert media_calls == ["voda"]
 
+    @pytest.mark.parametrize(("skip_image", "want_image"), [(True, False), (False, True)])
+    async def test_a_caller_holding_its_picture_asks_for_no_image(self, monkeypatch, skip_image, want_image):
+        """`skip_image` (a drawn word) reaches the fetch as `want_image=False`, so LanGeek is not asked."""
+        from app.api.anki import _build_media_fn
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "pixabay_api_key", "test-key")
+        seen: list[bool] = []
+
+        async def fake_fetch(word, english, *, want_image=True, **kw):
+            seen.append(want_image)
+            return None
+
+        with patch("app.api.anki.fetch_card_media", fake_fetch):
+            await _build_media_fn(None, app.state.srs_db, "no")(
+                "dit", "there", used_image_urls=set(), skip_image=skip_image
+            )
+
+        assert seen == [want_image]
+
     async def test_llm_image_query_threads_into_media_fetch(self, monkeypatch):
         from app.api.anki import _build_media_fn
         from app.config import settings

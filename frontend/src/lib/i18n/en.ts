@@ -112,6 +112,7 @@ export const en = {
   "drillCard.playWordAudio": "Play word audio",
   "drillCard.details": "Details",
   "drillCard.playCue": "Play the cue",
+  "drillCard.step": "step {step} of {of}",
   "drillCard.wordByWord": "Word by word",
   "drillCard.cueMeans": "What the cue means",
   "drillCard.show": "Show",
