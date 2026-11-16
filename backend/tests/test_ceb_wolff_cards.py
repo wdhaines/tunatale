@@ -1192,35 +1192,52 @@ def test_a_words_short_gloss_is_its_first_senses_first_alternative(committed, wo
     assert committed.short_gloss(word) == gloss
 
 
-# ── the owner's flagged cards (2026-11-16): bay and way took the wrong entry ──
+# ── the owner's flagged cards (2026-11-16) ──
 #
-# Wolff has no 'bay' (form of address): the letters reach abay 'move along together',
-# and every 'bay' in his examples is the particle ba + the linker -y. 'way' is walà +
-# -y, but its letters reach only the pointer 'way gid = waray gid'.
+# bay is abáy's short form, and the entry is right: its senses n 3 'man's male friend'
+# and n 3a 'title used by males of the same age to each other' are the form of address
+# (example: "Ása man ning dyípa, bay?"). The card led with v 1 'move along together',
+# Wolff's first sense, and n 3a fell off the end. 'way' is walà + -y, but its letters
+# reach only the pointer 'way gid = waray gid'.
 
 
 def test_way_is_wala_plus_the_linker(committed):
     f = committed.card_fields("way", "there is no (way sapayan: you're welcome)")
     assert not isinstance(f, Miss)
-    assert "there is no" in f.meaning and "walâ" in f.meaning and "no, not" in f.meaning
+    assert f.meaning.startswith("<b>way</b> = walâ + -y: there is no")  # a suffix follows its root
+    assert "no, not" in f.meaning
+    assert "Not written out in Wolff: <b>walâ</b> + <b>-y</b>" in f.details
     assert "gid = waray gid" not in f.meaning  # the pointer entry it used to take...
     confused = f.details.split("Not to be confused with")[1]
     assert "gid = waray gid" in confused  # ...is now only the homograph it is told apart from
 
 
-def test_bay_takes_no_wolff_entry(committed):
-    assert committed.match("bay", "form of address for a man about your own age") == Miss("not-listed", ())
-    assert committed.card_fields("bay", "form of address for a man about your own age") == Miss("not-listed", ())
+def test_a_prefix_still_comes_first(committed):
+    # the control: kabalo's hand row is ka- + baló, as before
+    assert committed.card_fields("kabalo", "know (how to); can + a verb").meaning.startswith(
+        "<b>kabaló</b> = ka- (short"
+    )
 
 
-def test_a_not_listed_word_does_not_hide_its_neighbours(committed):
-    # the control: abay itself still reaches its own entry
-    hit = committed.match("abay", "move along together")
-    assert not isinstance(hit, Miss) and committed.entries[hit.entry]["id"] == "abay"
+def test_bay_keeps_abay_and_leads_with_the_form_of_address(committed):
+    english = "form of address for a man about your own age"
+    hit = committed.match("bay", english)
+    assert committed.entries[hit.entry]["id"] == "abay"
+    f = committed.card_fields("bay", english)
+    assert f.meaning.startswith("man’s male friend; title used by males of the same age to each other")
+    assert "move along together" in f.meaning or "move along together" in f.details  # Wolff's other senses stay
+    assert "Short form of <b>abáy</b>" in f.details
+    assert f.verb == ""  # a noun leads now, so no verb table (as for bátà 'child')
 
 
-def test_a_not_listed_word_survives_a_variant(committed):
-    assert committed.variant(relations=EnglishRelations.empty()).match("bay", "pal") == Miss("not-listed", ())
+def test_abay_itself_keeps_wolffs_order(committed):
+    # the control: the lead table is keyed by the card word, so abay's own card is untouched
+    assert committed.card_fields("abay", "move along together").meaning.startswith("move along together")
+
+
+def test_a_sense_lead_naming_no_sense_raises(committed):
+    with pytest.raises(ValueError, match="names no sense"):
+        committed.variant(sense_lead={"bay": (("n", 99),)})
 
 
 def test_the_owners_new_glosses_keep_their_entries(committed):

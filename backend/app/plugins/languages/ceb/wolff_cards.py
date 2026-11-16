@@ -42,7 +42,7 @@ import json
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import cache, cached_property
 from pathlib import Path
@@ -69,7 +69,7 @@ from app.plugins.languages.ceb.wolff_dictionary import (
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
 DECODED_PATH = Path(__file__).parent / "data" / "wolff_decoded.tsv"
-NOT_LISTED_PATH = Path(__file__).parent / "data" / "wolff_not_listed.tsv"
+SENSE_LEAD_PATH = Path(__file__).parent / "data" / "wolff_sense_lead.tsv"
 LABELS_PATH = Path(__file__).parent / "data" / "affix_labels.tsv"
 CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spelling"
 FIELD_NAMES = DICTIONARY_FIELDS
@@ -492,6 +492,12 @@ def _repeats_front(spelling: str, front: str) -> bool:
     return mine == theirs[: len(mine)]
 
 
+def _built(affix: str, root: str, *, bold: bool = False) -> str:
+    """'ka- + baló', but 'walâ + -y': a suffix follows its root. Escaped; *bold* wraps each part."""
+    a, r = (f"<b>{html.escape(x)}</b>" if bold else html.escape(x) for x in (affix, root))
+    return f"{r} + {a}" if affix.startswith("-") else f"{a} + {r}"
+
+
 @dataclass(frozen=True)
 class CardFields:
     spelling: str
@@ -519,10 +525,14 @@ class Decoded(NamedTuple):
     reading: str = ""  # the card word's own meaning, which the Meaning field leads with
 
 
-def load_not_listed(path: Path = NOT_LISTED_PATH) -> list[str]:
-    """Card words Wolff does not list although their letters reach an entry (``wolff_not_listed.tsv``)."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [line.split("\t")[0] for line in lines if line and not line.startswith("#")]
+def load_sense_lead(path: Path = SENSE_LEAD_PATH) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Card word -> the ``(pos, n)`` senses that lead its Meaning (``wolff_sense_lead.tsv``)."""
+    lead: dict[str, tuple[tuple[str, str], ...]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#"):
+            word, pos, n = line.split("\t")
+            lead[word] = (*lead.get(word, ()), (pos, n))
+    return lead
 
 
 def load_decoded(path: Path = DECODED_PATH) -> list[Decoded]:
@@ -673,11 +683,9 @@ class WolffLexicon:
         entries: Sequence[dict],
         relations: EnglishRelations | None = None,
         decoded: Sequence[Decoded] = (),
-        not_listed: Sequence[str] = (),
+        sense_lead: Mapping[str, Sequence[tuple[str, str]]] | None = None,
     ):
         self.entries = list(entries)
-        #: Words whose letters reach only some other word's entry (bay -> abay): no layers at all.
-        self._not_listed = frozenset(letters_key(w) for w in not_listed)
         self.relations = relations if relations is not None else EnglishRelations.empty()
         #: Every head spelling, marks and all: a stress form spelt like another word's head is
         #: that other word, not a variant (sákit 'torture' is also sákit 'socket').
@@ -698,6 +706,18 @@ class WolffLexicon:
                     self._index.setdefault(letters_key(f["wolff"]), []).append((ei, fi, None))
                 for wolff, hb in f["short"]:
                     self._index.setdefault(letters_key(wolff), []).append((ei, fi, hb))
+        self._sense_lead = self._index_sense_lead(sense_lead or {})
+
+    def _index_sense_lead(
+        self, lead: Mapping[str, Sequence[tuple[str, str]]]
+    ) -> dict[str, tuple[tuple[str, str], ...]]:
+        """The lead table by the card word's letters; a row naming no sense of the entries it reaches raises."""
+        for word, keys in lead.items():
+            have = {(s["pos"], str(s["n"])) for h in self._hits(word) for s in self._senses(h)}
+            for pos, n in keys:
+                if (pos, n) not in have:
+                    raise ValueError(f"wolff_sense_lead: {word} {pos} {n} names no sense of the entries it reaches")
+        return {letters_key(word): tuple(keys) for word, keys in lead.items()}
 
     def _index_decoded(self, decoded: Sequence[Decoded]) -> dict[str, _Hit]:
         """The hand rows by the card word's letters; a row naming no single sub-entry raises."""
@@ -716,7 +736,11 @@ class WolffLexicon:
         return table
 
     def variant(
-        self, *, relations: EnglishRelations | None = None, decoded: Sequence[Decoded] | None = None
+        self,
+        *,
+        relations: EnglishRelations | None = None,
+        decoded: Sequence[Decoded] | None = None,
+        sense_lead: Mapping[str, Sequence[tuple[str, str]]] | None = None,
     ) -> WolffLexicon:
         """This lexicon's entries with other *relations* or hand rows (*decoded*); None keeps this one's.
 
@@ -728,13 +752,13 @@ class WolffLexicon:
         new.entries = self.entries
         new.relations = self.relations if relations is None else relations
         new._spellings = self._spellings
-        new._not_listed = self._not_listed
         new._attested = self._attested
         new._index = self._index
         new._heads = self._heads
         new._decoded_rows = self._decoded_rows if decoded is None else tuple(decoded)
         new._decoded = self._decoded if decoded is None else new._index_decoded(new._decoded_rows)
         new.__dict__["_decoder"] = self._decoder  # the cached_property's slot: built once, shared
+        new._sense_lead = self._sense_lead if sense_lead is None else new._index_sense_lead(sense_lead)
         return new
 
     def _resolve(self, ei: int, fi: int, word_key: str, depth: int = 0) -> tuple[int, int] | None:
@@ -838,10 +862,7 @@ class WolffLexicon:
     def match(self, cebuano: str, english: str) -> _Hit | Attested | Miss:
         # A gloss naming two senses leads with the card's own ('I; my, mine' is
         # ako's subject card, R2), and matched whole the second can outscore it.
-        key = letters_key(cebuano.split(",")[0].strip())
-        if key in self._not_listed:
-            return Miss("not-listed", ())
-        if (row := self._decoded.get(key)) is not None:
+        if (row := self._decoded.get(letters_key(cebuano.split(",")[0].strip()))) is not None:
             return row
         first = english.split(";")[0]
         if first != english:
@@ -1244,8 +1265,16 @@ class WolffLexicon:
 
     # --- the tiers ----------------------------------------------------------------------------
 
-    def _meaning(self, hit: _Hit, *, verb_shown: bool = False) -> str:
+    def _led_senses(self, hit: _Hit) -> list[dict]:
+        """*hit*'s senses, the card word's lead senses first (``wolff_sense_lead.tsv``), else Wolff's order."""
         senses = self._senses(hit)
+        if lead := self._sense_lead.get(letters_key(hit.surface)):
+            first = [s for key in lead for s in senses if (s["pos"], str(s["n"])) == key]
+            senses = first + [s for s in senses if s not in first]
+        return senses
+
+    def _meaning(self, hit: _Hit, *, verb_shown: bool = False) -> str:
+        senses = self._led_senses(hit)
         if verb_shown and senses and senses[0]["pos"] != "v":
             senses = [s for s in senses if s["pos"] != "v"]  # the verb's own glosses lead its label
         glosses = list(dict.fromkeys(s["gloss"] for s in senses if s["gloss"]))
@@ -1258,7 +1287,7 @@ class WolffLexicon:
         rec = self.entries[hit.entry]
         affix = f"{row.affix} (short for {_SHORT_OF[row.affix]})" if row.affix in _SHORT_OF else row.affix
         return (
-            f"<b>{html.escape(row.spelling)}</b> = {html.escape(affix)} + {html.escape(rec['forms'][0]['hb'] or '')}: "
+            f"<b>{html.escape(row.spelling)}</b> = {_built(affix, rec['forms'][0]['hb'] or '')}: "
             f"{html.escape(row.reading)}"
             f'<div class="wolff-under">Wolff, under {html.escape(rec["forms"][hit.form]["hb"] or "")}: {meaning}</div>'
         )
@@ -1267,7 +1296,7 @@ class WolffLexicon:
         """The verb, when the card is the verb: its first sense is one, or its English is a
         verb sense's (a noun card such as bátà 'child' gets no verb line). The kind of verb,
         then a row per affix, grouped by sense when senses take different affixes."""
-        senses = self._senses(hit)
+        senses = self._led_senses(hit)
         verbs = [s for s in senses if s["pos"] == "v"]
         if not verbs or not (senses[0]["pos"] == "v" or any(card & _words(s["gloss"]) for s in verbs)):
             return ""
@@ -1388,8 +1417,8 @@ class WolffLexicon:
         if hit.decoded is not None:
             note = f" {html.escape(hit.decoded.note)}" if hit.decoded.note else ""
             out.append(
-                f"<div>Not written out in Wolff: <b>{html.escape(hit.decoded.affix)}</b> + "
-                f"<b>{html.escape(rec['forms'][0]['hb'] or '')}</b>. He gives the meaning under "
+                f"<div>Not written out in Wolff: "
+                f"{_built(hit.decoded.affix, rec['forms'][0]['hb'] or '', bold=True)}. He gives the meaning under "
                 f"<b>{html.escape(form['hb'] or '')}</b>.{note}</div>"
             )
         # A pointer is a short form ('náa = anáa') only when what it points at
@@ -1473,4 +1502,4 @@ class WolffLexicon:
 def load_lexicon() -> WolffLexicon:
     """The committed lexicon."""
     with gzip.open(LEXICON_PATH, "rt", encoding="utf-8") as fh:
-        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load(), load_decoded(), load_not_listed())
+        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load(), load_decoded(), load_sense_lead())

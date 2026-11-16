@@ -1,0 +1,11 @@
+# Card words whose sense is not Wolff's first: the senses named here lead the card's Meaning, in this
+# order, ahead of the rest of the entry in Wolff's own order. Hand-curated; keyed by the card word, so the
+# entry's own headword card keeps Wolff's order. app/plugins/languages/ceb/wolff_cards.py raises on a row
+# naming no sense of the entries the word reaches.
+#
+# Why: the owner's bay card (2026-11-16) is abáy's short form, the right entry, but Meaning led with
+# v 1 'move along together' and the form of address (n 3, n 3a) fell off the end.
+#
+# Columns: the card's word; the sense's part of speech; its number as Wolff prints it.
+bay	n	3
+bay	n	3a
