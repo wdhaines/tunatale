@@ -189,7 +189,7 @@ def test_a_pointer_to_a_missing_entry_is_taken_as_it_stands(lexicon):
         "forms": [{"label": "zz", "wolff": "zz", "hb": "zz", "short": [], "xref": ["=", "qq"], "senses": []}],
     }
     f = WolffLexicon([rec]).card_fields("zz", "anything")
-    assert f.spelling == "zz" and "Related words" not in f.details
+    assert f.spelling == "" and "Related words" not in f.details  # "zz" is the card word itself
 
 
 def test_the_committed_lexicon():
@@ -200,6 +200,19 @@ def test_the_committed_lexicon():
     assert f.spelling == "tán-aw"
     assert lex.card_fields("maayo", "good").spelling == "màáyo"
     assert lex.card_fields("tulo", "three").spelling == "tuló"
+
+
+@pytest.mark.parametrize(("word", "english"), [("to", "that one (short for kadto)"), ("bus", "bus"), ("Day", "Miss")])
+def test_a_spelling_that_only_repeats_the_word_is_left_blank(committed, word, english):
+    # The owner's 'to' card (2026-11-16) read "to / to": the Spelling line under the
+    # word says something only when Wolff marks it differently. 23 live cards repeated it.
+    f = committed.card_fields(word, english)
+    assert not isinstance(f, Miss) and f.spelling == "" and f.meaning
+
+
+def test_a_marked_spelling_still_shows(committed):
+    # the control: anha's line adds Wolff's marks, so it stays
+    assert committed.card_fields("anha", "there (near you)").spelling == "ánhà"
 
 
 # ── close meanings (the owner, 2026-10-18: "You need to allow synonyms or close meanings") ──
@@ -419,7 +432,7 @@ def test_the_committed_lexicon_has_the_printed_words(committed, word, english, s
 
 def test_ka_is_ikaw_s_short_form(committed):
     f = committed.card_fields("ka", "you (one person)")
-    assert f.spelling == "ka"
+    assert f.spelling == ""  # 'ka' repeats the word
     assert f.meaning.startswith("you (singular)")
     assert "Short form of <b>ikáw</b>" in f.details
 
@@ -591,7 +604,7 @@ def test_a_pointer_chain_stops_after_two_hops():
     ("word", "english", "spelling", "meaning"),
     [
         ("ako", "I; my, mine", "akó", "I, me"),
-        ("mo", "you (plural); your (one person)", "mo", "you (plural)"),
+        ("mo", "you (plural); your (one person)", "", "you (plural)"),  # "mo" repeats the word
         ("kita", "see; we (including you)", "kítà", "see"),  # the verb card is the verb
     ],
 )
