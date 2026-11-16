@@ -40,6 +40,7 @@ export type GradePlanCard = components["schemas"]["GradePlanCard"];
 export type GradeWordSuggestion = components["schemas"]["GradeWordSuggestion"];
 export type GradeRequest = components["schemas"]["GradeRequest"];
 export type GradeResponse = components["schemas"]["GradeResponse"];
+export type DueCountsResponse = components["schemas"]["DueCountsResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
@@ -1376,6 +1377,18 @@ export class TunaTaleAPI {
   async getGradePlan(contentId: string, rangeDays: number | null): Promise<GradePlan> {
     const qs = rangeDays === null ? "" : `?range_days=${rangeDays}`;
     return this.request(`/api/srs/content/${contentId}/grade-plan${qs}`);
+  }
+
+  /** The lesson list's badges: per lesson, how many rows its Grade page shows
+   *  for `rangeDays` (null = every gradable row). Unknown ids are left out. */
+  async getDueCounts(
+    contentIds: string[],
+    rangeDays: number | null,
+  ): Promise<Record<string, number>> {
+    const qs = new URLSearchParams(contentIds.map((id) => ["content_id", id]));
+    if (rangeDays !== null) qs.set("range_days", String(rangeDays));
+    const r: DueCountsResponse = await this.request(`/api/srs/due-counts?${qs}`);
+    return r.counts;
   }
 
   /** Save the Grade page. Explicit only: a card not named is untouched. A 409

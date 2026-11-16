@@ -24,11 +24,12 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+from typing import Annotated
 
 import anyio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
-from app.api.models import GradePlanResponse, GradeRequest, GradeResponse
+from app.api.models import DueCountsResponse, GradePlanResponse, GradeRequest, GradeResponse
 from app.api.srs import (
     _add_contrast_cards,
     _analyze_lesson_words,
@@ -192,7 +193,52 @@ async def get_grade_plan(
     Read-only.
     """
     db, lesson, _words, plan = await _read_plan(request, content_id)
+    rows, later, waiting_new = _plan_rows(db, lesson, plan, _Window.read(), range_days)
+    return {
+        "studied": db.has_listen(content_id),
+        "listen_count": db.count_listens(content_id),
+        "range_days": range_days,
+        "cards": rows,
+        "later": later,
+        "waiting_new": waiting_new,
+        "suggestions": {
+            "words": [
+                {"key": c["lemma"], "text": c["text"], "gloss": c["translation"], "will_create": c["will_create"]}
+                for c in plan.candidates
+                if c["kind"] == "create"
+            ],
+            "contrast": plan.affix_cards,
+        },
+    }
+
+
+@router.get("/due-counts", status_code=200, response_model=DueCountsResponse)
+async def get_due_counts(
+    request: Request,
+    content_id: Annotated[list[str] | None, Query()] = None,
+    range_days: int | None = Query(None, ge=0),
+) -> dict:
+    """Per lesson, how many rows its Grade page shows for *range_days* (the lesson list's badge).
+
+    Same reads and the same row rule as ``get_grade_plan``, so the badge and
+    the page cannot disagree. An id with no readable lesson is left out.
+    It writes what opening each Grade page would: the day's unbury, and the
+    lemma cache of a lesson not analysed before. It reads the whole deck once
+    per lesson: 12 lessons measured 0.6-0.8 s (tunatale-5i1p.11).
+    """
     window = _Window.read()
+    counts: dict[str, int] = {}
+    for cid in content_id or []:
+        try:
+            db, lesson, _words, plan = await _read_plan(request, cid)
+        except HTTPException:
+            continue
+        counts[cid] = len(_plan_rows(db, lesson, plan, window, range_days)[0])
+    return {"counts": counts}
+
+
+def _plan_rows(db, lesson, plan: _ListenPlan, window: _Window, range_days: int | None):
+    """The Grade page's rows for *range_days*, soonest first, with the ``later`` and ``waiting_new`` tallies."""
     horizon = (
         None
         if range_days is None
@@ -234,22 +280,7 @@ async def get_grade_plan(
                 }
             )
     rows.sort(key=lambda r: (r["due_at"], r["item_id"], r["direction"]))
-    return {
-        "studied": db.has_listen(content_id),
-        "listen_count": db.count_listens(content_id),
-        "range_days": range_days,
-        "cards": rows,
-        "later": later,
-        "waiting_new": waiting_new,
-        "suggestions": {
-            "words": [
-                {"key": c["lemma"], "text": c["text"], "gloss": c["translation"], "will_create": c["will_create"]}
-                for c in plan.candidates
-                if c["kind"] == "create"
-            ],
-            "contrast": plan.affix_cards,
-        },
-    }
+    return rows, later, waiting_new
 
 
 def _refusals(db, cards: dict[int, _LessonCard], body: GradeRequest, window: _Window) -> tuple[int, list[dict]]:

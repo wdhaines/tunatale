@@ -2996,6 +2996,19 @@ describe("image methods", () => {
     expect(fetch).toHaveBeenLastCalledWith(`${BASE}/api/srs/content/l1/grade-plan`);
   });
 
+  it("getDueCounts sends each lesson id and the range, and omits the range for every row", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ counts: { l1: 2 } })));
+
+    const result = await api.getDueCounts(["l1", "l 2"], 3);
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/due-counts?content_id=l1&content_id=l+2&range_days=3`,
+    );
+    expect(result).toEqual({ l1: 2 });
+
+    await api.getDueCounts(["l1"], null);
+    expect(fetch).toHaveBeenLastCalledWith(`${BASE}/api/srs/due-counts?content_id=l1`);
+  });
+
   it("saveGrades POSTs the explicit grade set as JSON", async () => {
     const resp = { status: "ok", applied: 1, created: 0, recorded_study: true, listen_count: 1 };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));

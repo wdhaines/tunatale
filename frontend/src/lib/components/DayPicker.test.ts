@@ -42,6 +42,42 @@ describe("DayPicker", () => {
     expect(buttons[2].textContent).toContain("Day 3");
   });
 
+  it("shows each generated day's due count, and no badge at zero or without a count", () => {
+    const { getAllByRole, queryAllByTestId } = render(DayPicker, {
+      props: {
+        curriculum,
+        onSelectDay: vi.fn(),
+        progress: new Map([
+          [1, "l1"],
+          [2, "l2"],
+          [3, "l3"],
+        ]),
+        dueCounts: new Map([
+          ["l1", 4],
+          ["l2", 0],
+        ]),
+      },
+    });
+    const buttons = getAllByRole("button");
+    const badges = queryAllByTestId("due-badge");
+    expect(badges).toHaveLength(1);
+    expect(buttons[0].contains(badges[0])).toBe(true);
+    expect(badges[0].textContent).toBe("4");
+    expect(badges[0].getAttribute("aria-label")).toBe("4 cards due");
+  });
+
+  it("names a single due card in the singular", () => {
+    const { getByTestId } = render(DayPicker, {
+      props: {
+        curriculum,
+        onSelectDay: vi.fn(),
+        progress: new Map([[1, "l1"]]),
+        dueCounts: new Map([["l1", 1]]),
+      },
+    });
+    expect(getByTestId("due-badge").getAttribute("aria-label")).toBe("1 card due");
+  });
+
   it("numbers buttons by position, so a deleted day leaves no gap", () => {
     // day 3 was deleted: the keys are 1, 2, 4 but the learner sees Day 1-3.
     const gappy: CurriculumSummary = {

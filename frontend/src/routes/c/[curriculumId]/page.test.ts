@@ -16,6 +16,7 @@ vi.mock("#lib/api.js", () => ({
   api: {
     getLessonByDay: vi.fn(),
     getCurriculumProgress: vi.fn().mockResolvedValue([]),
+    getDueCounts: vi.fn().mockResolvedValue({}),
     retryPipelineDay: vi.fn(),
     getStoryPrompt: vi.fn().mockResolvedValue({ system_prompt: "sys", user_prompt: "usr" }),
     importStory: vi.fn(),
@@ -364,6 +365,40 @@ describe("/c/[curriculumId] page", () => {
     await waitFor(() => {
       expect(mockApi.getCurriculumProgress).toHaveBeenCalledWith("cid-1");
     });
+  });
+
+  it("asks for each lesson's due count at the Grade page's remembered range and badges the day", async () => {
+    const { api: mockApi } = await import("#lib/api.js");
+    vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([
+      { day: 1, position: 1, lesson_id: "l1" },
+      { day: 2, position: 2, lesson_id: "l2" },
+    ]);
+    vi.mocked(mockApi.getDueCounts).mockResolvedValueOnce({ l1: 5 });
+
+    const { findByTestId } = render(Page, { props: { data: { curriculum } } });
+
+    expect((await findByTestId("due-badge")).textContent).toBe("5");
+    expect(mockApi.getDueCounts).toHaveBeenCalledWith(["l1", "l2"], 3);
+  });
+
+  it("makes no due-count call when no day has a lesson", async () => {
+    const { api: mockApi } = await import("#lib/api.js");
+    vi.mocked(mockApi.getDueCounts).mockClear();
+    render(Page, { props: { data: { curriculum } } });
+    await waitFor(() => expect(mockApi.getCurriculumProgress).toHaveBeenCalled());
+    expect(mockApi.getDueCounts).not.toHaveBeenCalled();
+  });
+
+  it("a failed due-count call leaves the page up with no badge", async () => {
+    const { api: mockApi } = await import("#lib/api.js");
+    vi.mocked(mockApi.getCurriculumProgress).mockResolvedValueOnce([
+      { day: 1, position: 1, lesson_id: "l1" },
+    ]);
+    vi.mocked(mockApi.getDueCounts).mockRejectedValueOnce(new Error("down"));
+    const { queryByTestId, getByText } = render(Page, { props: { data: { curriculum } } });
+    await waitFor(() => expect(mockApi.getDueCounts).toHaveBeenCalled());
+    expect(getByText("Coffee")).toBeTruthy();
+    expect(queryByTestId("due-badge")).toBeNull();
   });
 
   it("silently ignores getCurriculumProgress failure", async () => {
