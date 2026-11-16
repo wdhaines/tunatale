@@ -1190,3 +1190,40 @@ def test_examples_fold_under_their_rows_in_each_sense(committed):
 )
 def test_a_words_short_gloss_is_its_first_senses_first_alternative(committed, word, gloss):
     assert committed.short_gloss(word) == gloss
+
+
+# ── the owner's flagged cards (2026-11-16): bay and way took the wrong entry ──
+#
+# Wolff has no 'bay' (form of address): the letters reach abay 'move along together',
+# and every 'bay' in his examples is the particle ba + the linker -y. 'way' is walà +
+# -y, but its letters reach only the pointer 'way gid = waray gid'.
+
+
+def test_way_is_wala_plus_the_linker(committed):
+    f = committed.card_fields("way", "there is no (way sapayan: you're welcome)")
+    assert not isinstance(f, Miss)
+    assert "there is no" in f.meaning and "walâ" in f.meaning and "no, not" in f.meaning
+    assert "gid = waray gid" not in f.meaning  # the pointer entry it used to take...
+    confused = f.details.split("Not to be confused with")[1]
+    assert "gid = waray gid" in confused  # ...is now only the homograph it is told apart from
+
+
+def test_bay_takes_no_wolff_entry(committed):
+    assert committed.match("bay", "form of address for a man about your own age") == Miss("not-listed", ())
+    assert committed.card_fields("bay", "form of address for a man about your own age") == Miss("not-listed", ())
+
+
+def test_a_not_listed_word_does_not_hide_its_neighbours(committed):
+    # the control: abay itself still reaches its own entry
+    hit = committed.match("abay", "move along together")
+    assert not isinstance(hit, Miss) and committed.entries[hit.entry]["id"] == "abay"
+
+
+def test_a_not_listed_word_survives_a_variant(committed):
+    assert committed.variant(relations=EnglishRelations.empty()).match("bay", "pal") == Miss("not-listed", ())
+
+
+def test_the_owners_new_glosses_keep_their_entries(committed):
+    # the approved wording (2026-11-16) must still settle the right entry
+    assert committed.entries[committed.match("to", "that (far from both of us)").entry]["id"] == "kadtu"
+    assert committed.entries[committed.match("anha", "there (near you)").entry]["id"] == "anhà"

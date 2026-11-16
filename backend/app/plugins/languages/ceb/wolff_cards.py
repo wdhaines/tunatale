@@ -69,6 +69,7 @@ from app.plugins.languages.ceb.wolff_dictionary import (
 LEXICON_PATH = Path(__file__).parent / "data" / "wolff_lexicon.json.gz"
 RELATIONS_PATH = Path(__file__).parent / "data" / "english_relations.json.gz"
 DECODED_PATH = Path(__file__).parent / "data" / "wolff_decoded.tsv"
+NOT_LISTED_PATH = Path(__file__).parent / "data" / "wolff_not_listed.tsv"
 LABELS_PATH = Path(__file__).parent / "data" / "affix_labels.tsv"
 CITATION = "Wolff, <i>A Dictionary of Cebuano Visayan</i> (1972), in its own spelling"
 FIELD_NAMES = DICTIONARY_FIELDS
@@ -518,6 +519,12 @@ class Decoded(NamedTuple):
     reading: str = ""  # the card word's own meaning, which the Meaning field leads with
 
 
+def load_not_listed(path: Path = NOT_LISTED_PATH) -> list[str]:
+    """Card words Wolff does not list although their letters reach an entry (``wolff_not_listed.tsv``)."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [line.split("\t")[0] for line in lines if line and not line.startswith("#")]
+
+
 def load_decoded(path: Path = DECODED_PATH) -> list[Decoded]:
     lines = path.read_text(encoding="utf-8").splitlines()
     return [Decoded(*line.split("\t")) for line in lines if line and not line.startswith("#")]
@@ -662,9 +669,15 @@ class _Hit(NamedTuple):
 
 class WolffLexicon:
     def __init__(
-        self, entries: Sequence[dict], relations: EnglishRelations | None = None, decoded: Sequence[Decoded] = ()
+        self,
+        entries: Sequence[dict],
+        relations: EnglishRelations | None = None,
+        decoded: Sequence[Decoded] = (),
+        not_listed: Sequence[str] = (),
     ):
         self.entries = list(entries)
+        #: Words whose letters reach only some other word's entry (bay -> abay): no layers at all.
+        self._not_listed = frozenset(letters_key(w) for w in not_listed)
         self.relations = relations if relations is not None else EnglishRelations.empty()
         #: Every head spelling, marks and all: a stress form spelt like another word's head is
         #: that other word, not a variant (sákit 'torture' is also sákit 'socket').
@@ -715,6 +728,7 @@ class WolffLexicon:
         new.entries = self.entries
         new.relations = self.relations if relations is None else relations
         new._spellings = self._spellings
+        new._not_listed = self._not_listed
         new._attested = self._attested
         new._index = self._index
         new._heads = self._heads
@@ -824,7 +838,10 @@ class WolffLexicon:
     def match(self, cebuano: str, english: str) -> _Hit | Attested | Miss:
         # A gloss naming two senses leads with the card's own ('I; my, mine' is
         # ako's subject card, R2), and matched whole the second can outscore it.
-        if (row := self._decoded.get(letters_key(cebuano.split(",")[0].strip()))) is not None:
+        key = letters_key(cebuano.split(",")[0].strip())
+        if key in self._not_listed:
+            return Miss("not-listed", ())
+        if (row := self._decoded.get(key)) is not None:
             return row
         first = english.split(";")[0]
         if first != english:
@@ -1456,4 +1473,4 @@ class WolffLexicon:
 def load_lexicon() -> WolffLexicon:
     """The committed lexicon."""
     with gzip.open(LEXICON_PATH, "rt", encoding="utf-8") as fh:
-        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load(), load_decoded())
+        return WolffLexicon(json.load(fh)["entries"], EnglishRelations.load(), load_decoded(), load_not_listed())

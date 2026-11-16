@@ -1,0 +1,9 @@
+# Card words Wolff does not list, whose letters nonetheless reach an entry that is some other word.
+# Hand-curated. app/plugins/languages/ceb/wolff_cards.py answers Miss("not-listed") for these, so the
+# card shows no Wolff layers rather than a wrong entry's.
+#
+# Why: the owner's bay card (2026-11-16) showed abay 'move along together'. Wolff has no 'bay' as a form
+# of address; every 'bay' in his examples is the particle ba + the linker -y.
+#
+# Columns: the card's word; why it is here.
+bay	form of address for a man (short for kabayan); Wolff's letters reach abay and the pointer 'bay see abay'
