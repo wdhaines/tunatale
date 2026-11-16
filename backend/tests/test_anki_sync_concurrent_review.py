@@ -454,7 +454,12 @@ class TestSecondPushDoesNotReFire:
 
 
 class TestAnkiWinsByTimestampQueueMappings:
-    """Tests for queue→state mappings when Anki wins by timestamp (lines 578-586)."""
+    """Tests for queue→state mappings when Anki wins by timestamp (lines 578-586).
+    Layer 98 (tunatale-47dg): the direction is CLEAN here, as it is whenever the
+    pull runs in a real sync (the push runs first and cleans it). A direction
+    still dirty at the pull was graded mid-sync and is now left untouched for
+    the next sync; test_anki_sync_recency_guards.py pins that.
+    """
 
     def _make_graded_db(self):
         """Create DB with a graded direction."""
@@ -473,7 +478,7 @@ class TestAnkiWinsByTimestampQueueMappings:
                 state=SRSState.REVIEW,
                 last_review=grade_time,
                 last_review_time_ms=3000,
-                dirty_fsrs=True,
+                dirty_fsrs=False,
                 anki_card_id=90010,
                 last_rating=3,
             ),

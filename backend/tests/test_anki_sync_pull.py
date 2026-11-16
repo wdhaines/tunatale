@@ -2100,12 +2100,17 @@ class TestDirtyFsrsBuriedSyncRegression:
 
     Fix: sync_pull now applies Anki's bury/suspend state even when local dirty_fsrs
     wins on FSRS data.
+
+    Layer 98 (tunatale-47dg): the direction is CLEAN here, as it is whenever the
+    pull runs in a real sync (the push runs first and cleans it). A direction
+    still dirty at the pull was graded mid-sync and is now left untouched for
+    the next sync; test_anki_sync_recency_guards.py pins that.
     """
 
     def test_buried_state_mirrored_when_same_direction_dirty_fsrs(self):
         """Most realistic bug scenario: same direction is dirty in TT AND buried in Anki.
 
-        User rated recognition in TunaTale (dirty_fsrs=True), then in Anki rated it
+        User rated recognition in TunaTale (dirty_fsrs=False), then in Anki rated it
         again and Anki buried it (queue=-2). On sync, TT's timestamp wins for FSRS,
         but Anki's bury state must still be applied.
         """
@@ -2122,7 +2127,7 @@ class TestDirtyFsrsBuriedSyncRegression:
             reps=3,
             lapses=0,
             state=SRSState.REVIEW,
-            dirty_fsrs=True,
+            dirty_fsrs=False,
             last_review=recent_review,
             last_review_time_ms=5000,  # TunaTale's review is newer
         )
@@ -2188,7 +2193,7 @@ class TestDirtyFsrsBuriedSyncRegression:
             reps=3,
             lapses=0,
             state=SRSState.REVIEW,
-            dirty_fsrs=True,
+            dirty_fsrs=False,
             last_review=recent_review,
             last_review_time_ms=5000,
         )
@@ -2233,7 +2238,7 @@ class TestDirtyFsrsBuriedSyncRegression:
             reps=3,
             lapses=0,
             state=SRSState.REVIEW,
-            dirty_fsrs=True,
+            dirty_fsrs=False,
             last_review=recent_review,
             last_review_time_ms=5000,
         )

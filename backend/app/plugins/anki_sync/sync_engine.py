@@ -214,12 +214,20 @@ def _tt_memory_newer(local_dir: DirectionState, card_rec: CardRecord) -> bool:
     truncation can overshoot the real grade by up to 24h, so it may postdate
     Anki's lrt — without this check the guard protected a placeholder s/d
     against every future pull (the stuck upogniti card, 2026-06-12).
+
+    Layer 96: compared in WHOLE SECONDS, the resolution ``lrt`` has. The push
+    writes ``lrt = int(last_review.timestamp())`` while TT keeps microseconds,
+    so a full-precision ``>`` stayed true after the grade had round-tripped:
+    the guard was on for good on every card TT graded last, and an Anki
+    recompute (Optimize, a weights change) never reached it and was never
+    logged (tunatale-ta88; 1,422 Norwegian and 371 Cebuano directions held a
+    stale stability when measured 2026-11-16).
     """
     return (
         local_dir.last_review is not None
         and not is_day_level_last_review(local_dir.last_review)
         and card_rec.last_review is not None
-        and local_dir.last_review > card_rec.last_review
+        and int(local_dir.last_review.timestamp()) > int(card_rec.last_review.timestamp())
     )
 
 
@@ -775,6 +783,16 @@ class AnkiSync:
         new_state = _queue_to_state(card_rec.queue, card_rec.card_type, card_rec.reps)
         tt_newer = card_rec.fsrs_known and _tt_memory_newer(local_dir, card_rec)
         keep_local_memory = tt_newer or not card_rec.fsrs_known
+        # Layer 96: a TT grade that has round-tripped is the SAME grade Anki's lrt
+        # names, cut to the second. Its memory state now comes from cards.data
+        # (so a recompute arrives), but its timestamp stays TT's own: replacing
+        # it with the truncated one would rewrite every such row for nothing.
+        keep_local_grade_time = tt_newer or (
+            card_rec.fsrs_known
+            and local_dir.last_review is not None
+            and resolved_last_review is not None
+            and int(local_dir.last_review.timestamp()) == int(resolved_last_review.timestamp())
+        )
         return DirectionState(
             direction=direction,
             due_at=card_rec.due_at,
@@ -798,8 +816,8 @@ class AnkiSync:
             anki_card_id=card_rec.anki_card_id,
             anki_card_mod=card_rec.anki_card_mod,
             anki_due=card_rec.anki_due,
-            last_review=local_dir.last_review if tt_newer else resolved_last_review,
-            last_review_time_ms=local_dir.last_review_time_ms if tt_newer else 0,
+            last_review=local_dir.last_review if keep_local_grade_time else resolved_last_review,
+            last_review_time_ms=local_dir.last_review_time_ms if keep_local_grade_time else 0,
             last_synced_at=datetime.now(UTC).isoformat(),
             last_rating=local_dir.last_rating if tt_newer else None,
             left=card_rec.left,
@@ -1103,11 +1121,18 @@ class AnkiSync:
                 # Pinned by test_anki_sync_merge_equivalence; grep sync.log / stderr.
                 if local_dir.dirty_fsrs and not dry_run:
                     _log.warning(
-                        "DIRTY_AT_PULL cid=%s dir=%s state=%s — sync_push should have cleared this",
+                        "DIRTY_AT_PULL cid=%s dir=%s state=%s — graded after sync_push read its list; "
+                        "left for the next sync",
                         coll_id,
                         direction.value,
                         local_dir.state.value,
                     )
+                    # Layer 98 (tunatale-47dg): the grade landed while this sync was
+                    # running. Merging it as clean gave the row Anki's pre-grade due
+                    # date and reps and marked it clean, so Anki's card never got the
+                    # grade. Leave the row alone: it is still dirty, and the next
+                    # sync's push carries it. Its Anki revlog was ingested above.
+                    continue
 
                 # The card's ord rides on every candidate (Layer 94): a merge write
                 # must not drop it, and a card with nothing else to write learns it
@@ -1244,6 +1269,35 @@ class AnkiSync:
             return self._writer.get_current_card_state(card_id)
         return None
 
+    def _anki_changed_since_pull(self, ds: DirectionState, anki_state: dict | None) -> bool:
+        """True when a graded direction's Anki card changed after TT's last pull of it.
+
+        ``anki_card_mod`` is the ``cards.mod`` the last pull stored, and TT's own
+        push is always followed by a pull, so a different ``mod`` now means
+        another device wrote the card. Only a grade asks: a relabel, a forced
+        write and a restore have their own rules (Layers 86-88).
+        """
+        return (
+            ds.last_rating is not None
+            and ds.last_review is not None
+            and anki_state is not None
+            and anki_state.get("mod") is not None
+            and anki_state["mod"] != ds.anki_card_mod
+        )
+
+    def _anki_reviewed_later(self, ds: DirectionState, anki_state: dict | None) -> bool:
+        """True when Anki holds an answer on this card NEWER than TT's unpushed grade.
+
+        Layer 97 (tunatale-p0rk). The push of a review-state grade stamps
+        ``cards.mod`` with the sync time, so an old TT grade used to overwrite a
+        later review or lapse made on another device. An answer is a revlog row
+        of type 0-3; a manual or rescheduled row is not one.
+        """
+        if not self._anki_changed_since_pull(ds, anki_state) or not hasattr(self._writer, "revlog_ids_for_card"):
+            return False
+        answers = self._writer.revlog_ids_for_card(ds.anki_card_id, reviews_only=True)
+        return max(answers, default=0) > int(ds.last_review.timestamp() * 1000)
+
     def _recompute_anki_studied_today_all_decks(self) -> None:
         """Set every revlog-touched deck's ``new_today`` + ``review_today`` counters
         from revlog reality.
@@ -1295,7 +1349,7 @@ class AnkiSync:
             self._writer.set_deck_studied_today(deck_id, day_index, new_count, review_count)
 
     def _push_revlog_for_direction(
-        self, guid: str, direction: Direction, ds: DirectionState, *, manual: bool = False
+        self, guid: str, direction: Direction, ds: DirectionState, *, manual: bool = False, behind_anki: bool = False
     ) -> bool:
         """Push unpushed tt_revlog rows for *direction* to Anki's revlog.
 
@@ -1324,14 +1378,31 @@ class AnkiSync:
 
         *manual*: nothing was graded, so with no rows to send there is no review
         to derive either. Returns True when a row was written.
+
+        *behind_anki* (Layer 97): Anki reviewed the card after TT's grade. TT's
+        rows are picked by the newest row both sides hold, not by Anki's newest.
         """
         if ds.anki_card_id is None:
             return False
         coll_id = self._db.get_collocation_id_by_guid(guid)
         if coll_id is None:
             return False
-        max_anki_id = self._writer.max_revlog_id_for_card(ds.anki_card_id)
-        rows = self._db.get_unpushed_revlog_rows(coll_id, direction, max_anki_id)
+        if behind_anki:
+            # Anki holds rows NEWER than TT's unpushed grade, so the newest Anki id
+            # is no watermark: it would hide the grade and send the collapsed
+            # fallback row in its place (a grade ahead of due went up as type 1).
+            # The watermark is the newest row both sides hold; TT's rows above it
+            # that Anki lacks are the unpushed ones.
+            anki_ids = self._writer.revlog_ids_for_card(ds.anki_card_id)
+            shared = anki_ids & self._db.get_tt_revlog_ids(coll_id, direction)
+            rows = [
+                r
+                for r in self._db.get_unpushed_revlog_rows(coll_id, direction, max(shared, default=0))
+                if r.id not in anki_ids
+            ]
+        else:
+            max_anki_id = self._writer.max_revlog_id_for_card(ds.anki_card_id)
+            rows = self._db.get_unpushed_revlog_rows(coll_id, direction, max_anki_id)
         if (guid, direction.value) not in self._recovered_directions:
             rows = [r for r in rows if r.review_kind != MANUAL_REVIEW_KIND]
         if rows:
@@ -1710,6 +1781,43 @@ class AnkiSync:
                     and (guid, direction.value) not in recovered
                 )
                 relabel = manual and not row_force_fsrs
+                in_steps = (
+                    ds.state in (SRSState.LEARNING, SRSState.RELEARNING)
+                    and ds.left is not None
+                    and ds.due_at is not None
+                )
+                # Layer 97: Anki answered this card AFTER TT's grade (the phone
+                # reviewed or lapsed it while TT's grade waited for a sync). The
+                # later answer owns the card: TT's grade goes into the revlog at
+                # its own time and the card is left for the pull. The steps branch
+                # below has its own rule for this (Layer 69) and keeps it.
+                if (
+                    not in_steps
+                    and ds.state != SRSState.SUSPENDED
+                    and not row_force_fsrs
+                    and self._anki_reviewed_later(ds, anki_state_before)
+                ):
+                    _log.info(
+                        "PUSH_DEFERRED_TO_LATER_ANKI_REVIEW cid=%s dir=%s tt_grade=%s",
+                        ds.anki_card_id,
+                        direction.value,
+                        ds.last_review.isoformat(),
+                    )
+                    self._push_revlog_for_direction(guid, direction, ds, behind_anki=True)
+                    self._db.mark_direction_clean(guid, direction)
+                    report.directions_pushed += 1
+                    continue
+                # Layer 97, the owner's decision of 2026-11-15: a suspension made in
+                # Anki AFTER TT's grade survives the push. The grade still reaches
+                # the revlog and the schedule; the card stays suspended. A card
+                # suspended BEFORE a grade TT made without knowing is not decided
+                # and is un-suspended, as it always was.
+                keep_suspended = (
+                    ds.state != SRSState.SUSPENDED
+                    and self._anki_changed_since_pull(ds, anki_state_before)
+                    and anki_state_before["queue"] == -1
+                    and anki_state_before["mod"] > ds.last_review.timestamp()
+                )
                 if ds.state == SRSState.SUSPENDED:
                     self._writer.suspend([ds.anki_card_id])
                     # No schedule at all (Layer 85's test): on a new card `due` is
@@ -1717,7 +1825,8 @@ class AnkiSync:
                     # today's day number.
                     queue_only = relabel or (ds.reps == 0 and ds.last_review is None)
                 else:
-                    self._writer.unsuspend([ds.anki_card_id])
+                    if not keep_suspended:
+                        self._writer.unsuspend([ds.anki_card_id])
                     # A relabel to REVIEW has nothing to add to a card Anki holds
                     # suspended (the un-suspension above is the whole change) or
                     # already holds as a review card (no change at all).
@@ -1732,11 +1841,7 @@ class AnkiSync:
                     continue
 
                 # Handle learning/relearning cards differently: update left and due (absolute timestamp)
-                if (
-                    ds.state in (SRSState.LEARNING, SRSState.RELEARNING)
-                    and ds.left is not None
-                    and ds.due_at is not None
-                ):
+                if in_steps:
                     # Fix 3: defer to Anki if Anki is further along. Push runs
                     # before pull in the sync flow, so without this guard a
                     # stale TT view would clobber Anki's correct step state /
@@ -1806,6 +1911,9 @@ class AnkiSync:
                 if manual and ds.reps > 0 and not reviewed:
                     # Last, so the row carries the interval the card ends up with.
                     self._log_manual_change(ds, anki_state_before)
+                if keep_suspended and in_steps:
+                    # set_learning_state put the card back in the learning queue.
+                    self._writer.suspend([ds.anki_card_id])
                 self._db.mark_direction_clean(guid, direction)
             report.directions_pushed += 1
 

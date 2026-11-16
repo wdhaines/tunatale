@@ -1626,7 +1626,7 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 **Tests.** Unit: `test_fsrs.py::TestBuildRevlogRow` factor pins (d=5.5→600, d=1.5→156, d=9.001→non-trivial f32); `test_anki_sync_push.py::TestPerGradeRevlogPush` (two-grades unit, reps/lapses by row count, idempotent re-push, two-grade outcome parity, defensive guards). Oracle: `test_parity_revlog_factor.py` (answer card, assert Anki revlog factor == TT formula on post-answer difficulty). Round-trip: sociable push→pull in `test_anki_sync_pull.py` (no duplicate re-ingest, no reviews_today inflation); peer-sync in `test_anki_peer_sync_selfhost.py` (two grades → peer_sync → exact tt ids preserved, idempotent second sync). All sabotage-drilled.
 
 **Documented residuals.**
-(a) Phone-grade-newer edge: a phone grade above unpushed TT ids empties the candidate set; the fallback pushes one collapsed row (same loss as old behavior). Rule 6 state convergence still applies.
+(a) Phone-grade-newer edge: a phone grade above unpushed TT ids empties the candidate set; the fallback pushes one collapsed row (same loss as old behavior). *Closed by Layer 97 for a review-state grade:* the state used to converge on the OLDER grade (TT's push overwrote the phone's later review), and the collapsed row sent a grade ahead of due as type 1. The push now defers to the later answer and sends TT's own rows verbatim.
 (b) Orphan-recovery re-mint hole: a re-minted cid has watermark 0, so the full tt_revlog history (including pre-Layer-78 rows) would push to the new cid. Accepted and documented; do NOT add an anki_card_id filter to `get_unpushed_revlog_rows` (it would drop legitimate pre-link rows, Layer 71).
 
 ## Layer 81 — PENDING listen grades hidden from the review badge and served main queue — **INTRODUCED 2026-07, RETIRED 2026-08-10 (F-14)**
@@ -1883,3 +1883,48 @@ A secondary fidelity bug: `build_revlog_row` wrote `factor=0` for all TT-native 
 **Diagnostic signature.** A not-due card graded in TT that charges the review badge or Anki's `revToday`: `SELECT review_kind, last_interval, budget_neutral FROM tt_revlog WHERE collocation_id = ?` shows kind 1 for a grade made before the card's `due_at`.
 
 **Files.** `app/api/srs.py`. Tests: `test_feedback_review_ahead.py` (D1-D4), `test_parity_review_ahead_push.py` (oracle, D5), `test_pending_grade_apply.py::test_a_grade_with_no_pending_row_is_review_ahead_too` (flipped from the old behaviour).
+
+
+## Layer 96 — an Anki recompute never reached a card TT graded last
+
+**The report.** No divergence was reported; an adversarial read of the push and pull (tunatale-1l7n, `.beads-tasks/briefs/findings-anki-risk-paths-2026-11.md` § 1) found it, and the 2026-11-11 Optimize on the Norwegian deck is its trace: 182 `RECOMPUTE_DIVERGENCE` lines where about 2,000 cards moved.
+
+**Mechanism.** `_tt_memory_newer` (Layer 70) keeps TT's stability and difficulty while TT's `last_review` is newer than the card's `lrt`. The push writes `lrt = int(last_review.timestamp())`, whole seconds; TT keeps microseconds. So after a TT grade had round-tripped, the guard was still true, and stayed true until the card was next graded in Anki. While it held, the pull kept TT's memory state whatever `cards.data` said, and the recompute detector was skipped, so nothing was logged.
+
+**Measured before the fix, 2026-11-16,** on copies of the laptop instance's TT databases and mirror collection: TT's stability differed from `cards.data` by more than 0.01 on 1,422 of 2,019 linked reviewed Norwegian directions and 371 of 593 Cebuano ones. Every one sat behind the guard with `last_review` and `lrt` in the same second; none of the directions with equal timestamps differed (178 and 19). The Norwegian median gap was 9% (613 with TT more than 10% low, 56 more than 10% high). The Cebuano cohort is wider than an Optimize explains: 261 with TT more than 10% high, 85 where Anki's stability is a whole number near the interval, and 13 cards marked known (TT 36,500, Anki 14 to 44).
+
+**Fix.** `_tt_memory_newer` compares in whole seconds. A round-tripped grade is then "the same grade", and the pull takes `cards.data` for it. TT keeps its own `last_review` (and `last_review_time_ms`) for that grade when the two are in the same second, so the fix does not rewrite every row's timestamp.
+
+**What the first sync after the fix does.** It takes Anki's memory state for every card in the cohorts above and logs one `RECOMPUTE_DIVERGENCE` for each: expect about 1,400 Norwegian and 370 Cebuano lines, once. Due dates do not move (the pull always took `cards.due`). `rules/anki-queue-parity.md`'s "bit-exact after a sync" check was false for these cards until now.
+
+**Files.** `app/plugins/anki_sync/sync_engine.py` (`_tt_memory_newer`, `_pull_merge_direction`). Tests: `test_anki_sync_recency_guards.py::test_an_anki_recompute_reaches_tt`, `::test_a_tt_grade_not_yet_in_anki_still_keeps_its_memory_state`; `test_anki_sync_round_trip.py::test_tt_grade_memory_state_survives_push_pull_round_trip` unchanged and green.
+
+
+## Layer 97 — TT's push of a review-state grade overwrote a later review, lapse or suspension made in Anki
+
+**The report.** Same read, § 2. It leaves no log line, so no live case is known.
+
+**Mechanism.** Peer-sync pulls AnkiWeb into the mirror, then `sync_push` writes every dirty direction. The (re)learning branch defers to Anki when Anki is ahead and not older (Layer 69). The review branch (`set_due_date`, `update_card_memory_state`) had no such rule and stamps `cards.mod` with the sync time, so a TT grade from last night replaced the phone's review of this morning: both revlog rows existed and the later one was applied nowhere. A later Again on the phone was put back into review three weeks out. A later suspension was undone, because every non-suspended push un-suspends.
+
+**Fix.**
+- `_anki_changed_since_pull`: a graded direction whose `cards.mod` is not the `anki_card_mod` the last pull stored was written by another device since.
+- `_anki_reviewed_later`: that, and the card's newest ANSWER in Anki's revlog (type 0 to 3; a manual type 4 or a rescheduled type 5 row is not one) is newer than TT's grade. The push then writes TT's revlog rows and leaves the card for the pull. `PUSH_DEFERRED_TO_LATER_ANKI_REVIEW` is logged at INFO.
+- `_push_revlog_for_direction(behind_anki=True)` picks TT's rows by the newest row both sides hold, since Anki's newest id is above them. They go up verbatim, so a grade ahead of due keeps type 3 (the collapsed fallback sent type 1).
+- `keep_suspended`: the owner's decision of 2026-11-15. A card Anki holds suspended, changed since TT's pull and after TT's grade, is not un-suspended. The grade still reaches the revlog, the schedule and `cards.data`; after a (re)learning write the card is suspended again.
+
+**Not changed.** A card suspended on the phone BEFORE a grade TT made without knowing is un-suspended by the push, as before; the owner has not decided that order (`test_a_card_suspended_before_an_unknowing_tt_grade_is_unsuspended` pins it). The (re)learning branch keeps Layer 69's rule, under which a deferred TT grade sends no revlog row. A forced write (KNOWN, a restore, a recovered card) and a relabel never defer.
+
+**Side effect to expect.** After a deferral the pull's recompute detector replays TT's grade plus the phone's and finds Anki's state lacks TT's: one `RECOMPUTE_DIVERGENCE` for that card. It is true, and it is the only trace that two devices answered the same card.
+
+**Files.** `app/plugins/anki_sync/sync_engine.py`, `app/plugins/anki_sync/sync_writer.py` (`revlog_ids_for_card`). Tests: `test_anki_sync_recency_guards.py` (`test_the_later_review_survives`, `test_a_later_lapse_on_the_phone_survives`, `test_a_reschedule_row_is_not_a_later_review`, `test_a_suspension_made_after_the_tt_grade_survives_the_push`).
+
+
+## Layer 98 — a grade made in TT while a sync runs lost its schedule
+
+**The report.** Same read, § 3; one `DIRTY_AT_PULL` in the laptop instance's `warnings.log` (2026-11-03, cid 1557).
+
+**Mechanism.** `_pull_merge_direction` assumes `sync_push` cleaned every dirty direction. A grade that lands after the push read `list_dirty` and before the pull reaches the card was merged as clean: the row took Anki's pre-grade due date and reps, kept its post-grade stability, and was marked clean, so Anki's card never received the grade.
+
+**Fix.** In `_run_sync_pull`, a direction still dirty on a real sync is left alone after its Anki revlog is ingested: no merge, no write. It stays dirty and the next sync's push carries it. The warning stays, reworded. A dry run still merges (its push cleans nothing).
+
+**Files.** `app/plugins/anki_sync/sync_engine.py`. Tests: `test_anki_sync_recency_guards.py::test_a_grade_made_during_a_sync_is_kept`. Eight direct-pull tests that passed a dirty direction to `sync_pull` alone (`test_anki_sync_pull.py::TestDirtyFsrsBuriedSyncRegression`, `test_anki_sync_concurrent_review.py::TestAnkiWinsByTimestampQueueMappings`) now pass a clean one, which is what the pull sees in a real sync.

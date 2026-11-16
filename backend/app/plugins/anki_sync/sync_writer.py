@@ -635,6 +635,17 @@ class OfflineWriter:
         row = self._conn.execute("SELECT MAX(id) FROM revlog WHERE cid = ?", (card_id,)).fetchone()
         return row[0] if row and row[0] is not None else 0
 
+    def revlog_ids_for_card(self, card_id: int, *, reviews_only: bool = False) -> set[int]:
+        """The ids of *card_id*'s revlog rows; with *reviews_only*, answers only.
+
+        An answer is ``type`` 0-3. Type 4 (manual: Set Due Date, Forget) and
+        type 5 (rescheduled, which an Optimize writes for every card it moves)
+        are not reviews, and the push must not read one as "Anki reviewed this
+        card after TT did" (tunatale-p0rk).
+        """
+        where = " AND type IN (0, 1, 2, 3)" if reviews_only else ""
+        return {r[0] for r in self._conn.execute(f"SELECT id FROM revlog WHERE cid = ?{where}", (card_id,))}
+
     def write_revlog(
         self,
         *,

@@ -3334,11 +3334,13 @@ grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; 
 ```
 
 ```output
-## Layer 92 — a course's card list would have reached the deck backwards
-## Layer 93 — a lesson line's cards are one note's siblings, so TT's sibling identity became the note
-## Layer 94 — a card's Anki ord is not its direction: TT stores it, ranks by it, and numbers a line's cards by
 ## Layer 95 — a grade on a not-due card logged an ordinary review and charged today's review count
+## Layer 96 — an Anki recompute never reached a card TT graded last
+## Layer 97 — TT's push of a review-state grade overwrote a later review, lapse or suspension made in Anki
+## Layer 98 — a grade made in TT while a sync runs lost its schedule
 ```
+
+Layers 96-98 (2026-11-16) are one read of the push and pull. 96: the pull's recency guard compared TT's microsecond grade time with Anki's whole-second `lrt`, so it never released and an Anki Optimize never reached a card TT graded last; it now compares in seconds. 97: the push of a review-state grade defers to a later answer or suspension made in Anki, and still sends TT's own revlog rows. 98: a direction graded while a sync is running is left dirty for the next sync, not merged as clean.
 
 Layer 95 (2026-11-13): a grade on a not-due REVIEW card is Anki's review-ahead (revlog kind 3, not charged to today's review count) from every grade path, not only the listen popup's; Anki's one early path, a rescheduling filtered deck, does exactly that. Layer 93 (2026-11-09) made a lesson line's cards one note's siblings, so TT's sibling identity is now the note (`sibling_group`), not the row. Layers 88 to 91, from 2026-10-01 and 02, share a theme: what TunaTale writes to Anki when nobody pressed a grade button. Layer 88: marking a reviewed card known, restoring it, relabelling it or promoting it to learning took the grade push, which with no `tt_revlog` row to send wrote a "Good" nobody pressed and bumped `cards.reps`; now it writes Anki's own manual row (type 4, ease 0, reps untouched), and only when the due date or interval actually moved. Layer 89: a pushed due date wrote `ivl` as days from today, which is the interval only on the day of the grade. Layer 90: a pushed reset forgot the card without logging Anki's Forget row, so its old reviews still counted. Layer 91: a card with no `lrt` counted its elapsed days from `compute_anki_day_index`, a "today" that runs a day ahead between local midnight and 04:00; `backend/scripts/check_anki_day_index.py` now fails any call in `app/` that asks that function what day it is now (§14.3), and `anki-gates` runs the oracle at 01:xx as well as 04:xx.
 
