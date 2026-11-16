@@ -1662,7 +1662,9 @@ export interface paths {
      *
      *     Same reads and the same row rule as ``get_grade_plan``, so the badge and
      *     the page cannot disagree. An id with no readable lesson is left out.
-     *     Read-only.
+     *     It writes what opening each Grade page would: the day's unbury, and the
+     *     lemma cache of a lesson not analysed before. It reads the whole deck once
+     *     per lesson: 12 lessons measured 0.6-0.8 s (tunatale-5i1p.11).
      */
     get: operations["get_due_counts_api_srs_due_counts_get"];
     put?: never;
