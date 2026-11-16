@@ -2211,6 +2211,12 @@ class GradePlanResponse(BaseModel):
     suggestions: GradeSuggestions
 
 
+class DueCountsResponse(BaseModel):
+    """Response of GET /api/srs/due-counts: per lesson, how many rows its Grade page shows for the range."""
+
+    counts: dict[str, int]
+
+
 class CardGrade(BaseModel):
     item_id: int
     direction: Literal["recognition", "production"]

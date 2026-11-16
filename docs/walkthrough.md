@@ -4079,7 +4079,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-111 operations
+112 operations
   9  (untagged)
   3  admin
   3  anki
@@ -4090,7 +4090,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
   4  llm
   3  pipeline
  15  review-sessions
- 40  srs
+ 41  srs
   5  srs-images
 ```
 
@@ -4119,6 +4119,7 @@ for (t, p), ms in sorted(rows.items()): print(f\"{'/'.join(ms):<12}{p.replace('/
  POST        /content/{content_id}/reviewed
  GET         /content/{content_id}/transcript
  GET         /due
+ GET         /due-counts
  POST/DELETE /ignored-lemmas
  POST        /inflection-clozes
  POST/GET    /items

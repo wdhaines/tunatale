@@ -1649,6 +1649,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/srs/due-counts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Due Counts
+     * @description Per lesson, how many rows its Grade page shows for *range_days* (the lesson list's badge).
+     *
+     *     Same reads and the same row rule as ``get_grade_plan``, so the badge and
+     *     the page cannot disagree. An id with no readable lesson is left out.
+     *     Read-only.
+     */
+    get: operations["get_due_counts_api_srs_due_counts_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/ignored-lemmas": {
     parameters: {
       query?: never;
@@ -2980,6 +3004,16 @@ export interface components {
     DueCollocationsResponse: {
       /** Due */
       due: components["schemas"]["SrsItemResponse"][];
+    };
+    /**
+     * DueCountsResponse
+     * @description Response of GET /api/srs/due-counts: per lesson, how many rows its Grade page shows for the range.
+     */
+    DueCountsResponse: {
+      /** Counts */
+      counts: {
+        [key: string]: number;
+      };
     };
     /** FocusRun */
     FocusRun: {
@@ -7505,6 +7539,38 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["DueCollocationsResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_due_counts_api_srs_due_counts_get: {
+    parameters: {
+      query?: {
+        content_id?: string[] | null;
+        range_days?: number | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DueCountsResponse"];
         };
       };
       /** @description Validation Error */

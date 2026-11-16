@@ -10,12 +10,14 @@
 	import { llmActivityStore } from '#lib/stores/llmActivity.svelte.js';
 	import { rateLimitStore } from '#lib/stores/rateLimit.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { gradeRangePref } from '#lib/stores/gradeRangePref.svelte.js';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
 	let error = $state('');
 	let progress: Map<number, string> = $state(new Map());
+	let dueCounts: Map<string, number> = $state(new Map());
 	let manualStoryDay: number | null = $state(null);
 
 	const isManual = $derived((data.curriculum.generation_mode ?? 'auto') === 'manual');
@@ -61,6 +63,17 @@
 			const days = await api.getCurriculumProgress(data.curriculum.id);
 			progress = new Map(days.map(d => [d.day, d.lesson_id]));
 		} catch { /* non-critical */ }
+		void refreshDueCounts();
+	}
+
+	// Each lesson's badge counts what its Grade page shows at the range the
+	// learner last chose there (tunatale-5i1p.3).
+	async function refreshDueCounts() {
+		const ids = [...progress.values()];
+		if (ids.length === 0) return;
+		try {
+			dueCounts = new Map(Object.entries(await api.getDueCounts(ids, gradeRangePref.value)));
+		} catch { /* non-critical: no badges */ }
 	}
 
 	onMount(async () => {
@@ -121,7 +134,7 @@
 			{t('curriculum.dayCount', { count: data.curriculum.days.length })} · {data.curriculum.language_code.toUpperCase()}
 		</p>
 		<RateLimitWidget />
-		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} pipelineStates={pipelineStates} />
+		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} {dueCounts} pipelineStates={pipelineStates} />
 		{#if manualStoryDay != null}
 			<ManualStoryPanel
 				copyPrompt={async () => {

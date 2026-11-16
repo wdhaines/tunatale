@@ -1,15 +1,29 @@
 <script lang="ts">
 	import type { CurriculumSummary } from '#lib/api.js';
 	import { listenedStore } from '#lib/stores/listened.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	interface Props {
 		curriculum: CurriculumSummary;
 		onSelectDay: (day: number) => void | Promise<void>;
 		progress?: Map<number, string>;
 		pipelineStates?: Map<number, string>;
+		/** Per lesson id, how many cards its Grade page shows for the remembered range. */
+		dueCounts?: Map<string, number>;
 	}
 
-	let { curriculum, onSelectDay, progress = new Map(), pipelineStates = new Map() }: Props = $props();
+	let {
+		curriculum,
+		onSelectDay,
+		progress = new Map(),
+		pipelineStates = new Map(),
+		dueCounts = new Map()
+	}: Props = $props();
+
+	function dueCount(day: number): number {
+		const lessonId = progress.get(day);
+		return lessonId ? (dueCounts.get(lessonId) ?? 0) : 0;
+	}
 
 	let loadingDay: number | null = $state(null);
 
@@ -54,11 +68,31 @@
 				: state === 'listened'
 					? `✓ Day ${d.position} · ${d.title}`
 					: `Day ${d.position} · ${d.title}`}
+			{#if loadingDay !== d.day && dueCount(d.day) > 0}
+				<span
+					class="due-badge"
+					data-testid="due-badge"
+					aria-label={t('curriculum.dueBadge', { count: dueCount(d.day) })}>{dueCount(d.day)}</span
+				>
+			{/if}
 		</button>
 	{/each}
 </div>
 
 <style>
+	.due-badge {
+		display: inline-block;
+		margin-left: 0.5rem;
+		padding: 0 0.45rem;
+		min-width: 1.25rem;
+		border-radius: var(--radius-pill);
+		background: var(--color-surface);
+		color: var(--color-primary);
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-align: center;
+		line-height: 1.25rem;
+	}
 	.days {
 		display: flex;
 		flex-wrap: wrap;
