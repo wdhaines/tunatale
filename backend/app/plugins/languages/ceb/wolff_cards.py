@@ -484,6 +484,13 @@ def _names(word: str, surface: str) -> bool:
     return bool(want) and any(have[i : i + len(want)] == want for i in range(len(have) - len(want) + 1))
 
 
+def _repeats_front(spelling: str, front: str) -> bool:
+    """Whether *spelling* is the front's own forms letter for letter ('to' on 'to', 'oo' on 'oo, salamat')."""
+    mine = [w.strip().casefold() for w in spelling.split(",")]
+    theirs = [w.strip().casefold() for w in front.split(",")]
+    return mine == theirs[: len(mine)]
+
+
 @dataclass(frozen=True)
 class CardFields:
     spelling: str
@@ -1156,6 +1163,10 @@ class WolffLexicon:
 
     def card_fields(self, cebuano: str, english: str) -> CardFields | Miss:
         fields = self._card_fields(cebuano, english)
+        if not isinstance(fields, Miss) and _repeats_front(fields.spelling, cebuano):
+            # The line under the word says something only when Wolff marks it differently:
+            # 'to' under 'to' is noise (the owner, 2026-11-16).
+            fields = replace(fields, spelling="")
         lead, cite = self._parts_fields(cebuano, english)
         if not lead:
             return fields
