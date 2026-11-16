@@ -1,9 +1,13 @@
 import { test, expect } from './fixtures';
-import { backendAvailable, seedCurriculumWithLesson } from './helpers';
+import { backendAvailable, resetSRSItems, seedCurriculumWithLesson } from './helpers';
 
 test('curriculum → day picker → lesson page renders header', async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), 'Backend not available');
 
+	// The story prompt names the deck's learning words, and the prompt's hash is
+	// the cassette key: a card left by an earlier spec on this worker is a
+	// cassette miss (lesson-due-badge did it on main 3437909e).
+	await resetSRSItems(request);
 	const { curriculumId } = await seedCurriculumWithLesson(request, { topic: 'ordering coffee' });
 
 	await page.goto(`/c/${curriculumId}`);

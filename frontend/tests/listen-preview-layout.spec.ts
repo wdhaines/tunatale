@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, resetSRSItems } from "./helpers";
 
 /**
  * Layout guards for the listen-preview modal, in a REAL browser.
@@ -69,6 +69,11 @@ async function curriculumId(
 	request: import("@playwright/test").APIRequestContext,
 ): Promise<string> {
 	if (seededCurriculumId !== null) return seededCurriculumId;
+
+	// These rows are measured in the state a fresh listen gives them. A card an
+	// earlier spec on this worker left in another state draws a different pill
+	// (lesson-due-badge left "learning" where this file lays out "new").
+	await resetSRSItems(request);
 
 	const currRes = await request.post(`${BACKEND}/api/curriculum/import`, {
 		data: {
