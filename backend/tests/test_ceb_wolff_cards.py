@@ -1244,3 +1244,11 @@ def test_the_owners_new_glosses_keep_their_entries(committed):
     # the approved wording (2026-11-16) must still settle the right entry
     assert committed.entries[committed.match("to", "that (far from both of us)").entry]["id"] == "kadtu"
     assert committed.entries[committed.match("anha", "there (near you)").entry]["id"] == "anhà"
+
+
+# ── pronoun/linker hosts and personal names (tunatale-tofg.18) ───────────────────────
+
+
+def test_D2_prefix_none_for_pronoun_linker_words(committed):
+    assert committed.prefix("ilang") is None
+    assert committed.prefix("kaming") is None
