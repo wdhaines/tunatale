@@ -252,7 +252,12 @@ async def test_the_later_review_survives(synthetic_collection: SyntheticCollecti
     card = _anki_card(synthetic_collection.path)
     tt = _tt_dir(db, cid)
     # Both answers are in the revlog either way, TT's at its own time and as the kind it was (3, ahead of due).
-    tt_row = {"id": int(tt_at.timestamp() * 1000), "ease": 3, "ivl": 21, "type": 3}
+    # TT's interval is read from its own row: the grade's fuzz and the day boundary move it (21 or 22).
+    with db._get_conn() as conn:
+        [(tt_ivl,)] = conn.execute(
+            "SELECT interval FROM tt_revlog WHERE id = ?", (int(tt_at.timestamp() * 1000),)
+        ).fetchall()
+    tt_row = {"id": int(tt_at.timestamp() * 1000), "ease": 3, "ivl": tt_ivl, "type": 3}
     phone_row = {"id": int(phone_at.timestamp() * 1000), "ease": 3, "ivl": 30, "type": 1}
     assert card["revlog"] == sorted([tt_row, phone_row], key=lambda r: r["id"])
     assert card["reps"] == REPS + 2 == tt.reps
