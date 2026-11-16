@@ -693,8 +693,12 @@ signal is **`recompute_divergences ≈ 0` per sync**. Where to read it:
 - **Read-only proxy (no sync, safe while Anki is open)** — compare TT's
   authoritative `stability`/`fsrs_difficulty` with Anki's `cards.data` (parse the
   JSON `s`/`d` per `anki_card_id`). Because sync takes Anki verbatim, they should
-  be bit-exact after a sync. This is the strongest correctness check and the one to
-  run for an ad-hoc soak check.
+  agree after a sync (within 0.01 on every direction whose timestamps matched when
+  measured on 2026-11-16). This is the strongest
+  correctness check and the one to run for an ad-hoc soak check. (Until Layer 96
+  it did not hold for a card TT graded last: the recency guard never released, and
+  1,422 Norwegian directions were stale when measured on 2026-11-16.) The one
+  exception left: a direction whose TT grade has not synced yet.
 
 ## Source references
 
