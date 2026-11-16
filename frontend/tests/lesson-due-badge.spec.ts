@@ -12,6 +12,14 @@ test.beforeEach(async ({ request }) => {
 	if (await backendAvailable(request)) await resetSRSItems(request);
 });
 
+// And after: the two learning cards below outlive the test in the worker's
+// backend, and the next spec on it inherits them. On main 3437909e that was
+// lesson-navigation (its story prompt then named kavo and dan, a cassette miss)
+// and listen-preview-layout (a "learning" pill where it laid out "new").
+test.afterEach(async ({ request }) => {
+	if (await backendAvailable(request)) await resetSRSItems(request);
+});
+
 test('lesson list: a day is badged with its Grade page row count, at the remembered range', async ({
 	page,
 	request,
