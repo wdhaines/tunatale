@@ -926,7 +926,7 @@ class WolffLexicon:
 
     @cached_property
     def _decoder(self) -> affixes.Lexicon:
-        return affixes.lexicon(self.entries)
+        return affixes.lexicon(self.entries, hosts=affixes.default_hosts())
 
     def by_rule(self, word: str, english: str = "") -> str | None:
         """*word* with its stress by rule, when the affix decoder's best analysis of it

@@ -878,10 +878,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.source.exists():
         parser.error(f"source extract not found: {args.source}")
-    from app.plugins.languages.ceb.affixes import lexicon
+    from app.plugins.languages.ceb.affixes import default_hosts, lexicon
     from app.plugins.languages.ceb.wolff_cards import load_lexicon
 
-    wolff = lexicon(load_lexicon().entries)
+    wolff = lexicon(load_lexicon().entries, hosts=default_hosts())
     build_from_path(args.source, OUTPUT, BASE_LIST, CLOSED_CLASS, SPELLING_VARIANTS, FREQUENCY, wolff)
     return 0
 

@@ -564,3 +564,115 @@ def test_a_caller_changing_its_result_does_not_change_the_next_one():
     expected = list(first)
     first.clear()
     assert decode("mipalit", roots) == expected
+
+
+# ── pronoun/linker hosts and personal names (tunatale-tofg.18) ───────────────────────
+
+
+@pytest.fixture(scope="module")
+def lex_linker():
+    """The real lexicon with the linker hosts and three lesson names, as a caller that knows them passes them."""
+    from app.plugins.languages.ceb.affixes import default_hosts, lexicon
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon as load
+
+    return lexicon(load().entries, hosts=default_hosts(), names=("Gamelo", "Abaya", "Maria"))
+
+
+def test_the_hosts_are_long_pronouns_and_demonstratives():
+    from app.plugins.languages.ceb.affixes import default_hosts
+
+    hosts = default_hosts()
+    assert {"ila", "kami", "sila", "nako", "kana", "kini", "kadto"} <= hosts
+    assert not {"ko", "ka", "mi", "mo", "ta", "dinhi", "didto", "ato", "imo", "amo"} & hosts
+
+
+def test_a_linker_reading_never_carries_an_affix(lex_linker):
+    """Every host + -ng, swept: none reads as an affixed word. ikaw ends in a consonant and takes no -ng."""
+    from app.plugins.languages.ceb.affixes import default_hosts
+
+    for host in default_hosts():
+        assert all(a.affix == "" for a in analyse(host + "ng", lex_linker)), host
+    assert analyse("nianing", lex_linker) == []  # niani itself decodes as ni- + áni
+    assert analyse("ikawng", lex_linker) == analyse("ikawng", lexicon_without_hosts())
+
+
+def lexicon_without_hosts():
+    from app.plugins.languages.ceb.affixes import lexicon
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon as load
+
+    return lexicon(load().entries)
+
+
+@pytest.mark.parametrize("word", ["Gamelo", "gamelo", "Abaya", "Maria"])
+def test_D3_D4_a_name_passed_in_has_no_affixed_reading(lex_linker, word):
+    assert analyse(word, lex_linker) == []
+
+
+@pytest.mark.parametrize(
+    "word,host",
+    [
+        ("ilang", "ila"),
+        ("kaming", "kami"),
+        ("silang", "sila"),
+        ("nakong", "nako"),
+        ("namong", "namo"),
+        ("natong", "nato"),
+        ("nilang", "nila"),
+        ("kanang", "kana"),
+    ],
+)
+def test_D1_linker_host_reads_as_host(lex_linker, word, host):
+    got = analyse(word, lex_linker)
+    assert got == analyse(host, lex_linker)
+    assert all(a.affix == "" for a in got)
+
+
+@pytest.mark.parametrize("word", ["tawgun", "imnun", "mangaon"])
+def test_G1_chart_forms_unchanged(lex_linker, word):
+    # tawag -> -un, inum -> -un, kaun -> maN-
+    got = analyse(word, lex_linker)
+    if word == "tawgun":
+        assert (got[0].root, got[0].affix) == ("tawag", "-un")
+    elif word == "imnun":
+        assert (got[0].root, got[0].affix) == ("inum", "-un")
+    else:
+        assert (got[0].root, got[0].affix) == ("káun", "maN-")
+
+
+def test_G2_silangan_real_headword_suffix_untouched(lex_linker):
+    got = analyse("silangan", lex_linker)
+    assert (got[0].root, got[0].affix) == ("sílang", "-an")
+
+
+@pytest.mark.parametrize("word,root", [("bulang", "búlang"), ("hilang", "hilang"), ("tulong", "túlung")])
+def test_G3_root_ending_ng_not_a_host(lex_linker, word, root):
+    got = analyse(word, lex_linker)
+    assert got == [Analysis(root, "", ())]
+
+
+def test_G4_two_letter_hosts_unchanged(lex_linker):
+    cases = [
+        ("kang", [("kang", "")]),
+        ("kong", [("kung", ""), ("kúng", "")]),
+        ("ming", [("míng", "")]),
+        ("mong", [("ng", "mu-")]),
+        ("ning", [("ng", "ni-")]),
+    ]
+    for word, expected in cases:
+        assert [(a.root, a.affix) for a in analyse(word, lex_linker)] == expected
+
+
+def test_G5_name_headwords_stay_affixless(lex_linker):
+    assert analyse("Huwan", lex_linker)[0] == Analysis("Huwan", "", ())
+    assert analyse("Pedro", lex_linker)[0] == Analysis("Pidru", "", ())
+
+
+@pytest.mark.parametrize("word,root", [("atong", "atung"), ("imong", "ímung"), ("among", "amung")])
+def test_G6_written_form_pronouns_unchanged(lex_linker, word, root):
+    assert analyse(word, lex_linker) == [Analysis(root, "", ())]
+
+
+def test_G7_no_names_input_still_decodes_abaya(lex):
+    # lex fixture has no hosts/names; decoder alone must not guess names
+    got = analyse("abaya", lex)
+    assert ("abay", "-a") in [(a.root, a.affix) for a in got]
