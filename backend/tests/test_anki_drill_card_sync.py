@@ -810,25 +810,28 @@ class TestFullSyncKeepsDrillAudio:
 
 
 class TestDuplicatedDrillKey:
-    """A corrected model sentence re-minted adds a second row under the drill's key
-    (measured 2026-11-15: every later sync raised ``zip() argument 2 is shorter than
+    """Before tunatale-adxy a corrected model sentence re-minted added a second row under
+    the drill's key (measured 2026-11-15: every later sync raised ``zip() argument 2 is shorter than
     argument 1`` out of ``sync_create_new``, after the note had been written).
     ``_plan_sentence_line`` holds the line instead: nothing written, one loud line,
     the rest of the sync goes on."""
-
-    @staticmethod
-    def _corrected() -> list[dict]:
-        sub = {**DRILLS[0], "model": "Han er her nå."}
-        return [sub, *DRILLS[1:]]
 
     async def test_e4_a_duplicated_drill_key_holds_its_line_and_the_rest_sync(self, no_tts, caplog):
         db = SRSDatabase(":memory:")
         minted = _minted(db)
         anki = _conn()
         await _sync(db, anki)
-        dup = dict(mint_lesson_cards(db, LANG, _cards(), drills=self._corrected()))
-        assert len(dup) == 1  # the measured cause: the corrected drill minted a second row
-        (dup_id,) = dup
+        with db._get_conn() as conn:  # a second row under the key, as a pre-adxy corrected re-mint left one
+            conn.execute("CREATE TEMP TABLE dup AS SELECT * FROM collocations WHERE disambig_key = ?", (SUB,))
+            conn.execute("UPDATE dup SET id = NULL, guid = 'dup', text = 'Han er her nå.', anki_note_id = NULL")
+            dup_id = conn.execute("INSERT INTO collocations SELECT * FROM dup").lastrowid
+            conn.execute(
+                "CREATE TEMP TABLE dup_dir AS SELECT * FROM collocation_directions WHERE collocation_id = ?",
+                (minted[SUB],),
+            )
+            conn.execute("UPDATE dup_dir SET collocation_id = ?, anki_card_id = NULL", (dup_id,))
+            conn.execute("INSERT INTO collocation_directions SELECT * FROM dup_dir")
+            conn.commit()
         before_notes = [dict(r) for r in anki.execute("SELECT * FROM notes ORDER BY id")]
         before_cards = [dict(r) for r in anki.execute("SELECT * FROM cards ORDER BY id")]
         other = minted["sent:test-01:drill-2"]

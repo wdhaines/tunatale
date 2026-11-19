@@ -31,7 +31,7 @@ from app.generation.story import (
 )
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
-from app.srs.lesson_card_mint import attach_lesson_card_audio, day_was_studied, mint_lesson_cards
+from app.srs.lesson_card_mint import attach_lesson_card_audio, day_was_studied, lesson_card_rows, mint_lesson_cards
 from app.storage.lesson_io import export_lesson, validate_story
 from app.storage.user_dbs import pipeline_user_id
 
@@ -187,10 +187,10 @@ async def import_story(body: ImportLessonRequest, request: Request):
     # Otherwise the cards wait for this lesson's own "I listened".
     cards = story.get("cards")
     if cards and srs_db is not None and day_was_studied(srs_db, store, body.curriculum_id, body.day):
-        minted = mint_lesson_cards(srs_db, request.state.language_code, cards, story.get("drills", []))
+        mint_lesson_cards(srs_db, request.state.language_code, cards, story.get("drills", []))
         attach_lesson_card_audio(
             srs_db,
-            minted,
+            lesson_card_rows(srs_db, cards, story.get("drills", [])),
             lesson,
             language.tts_voice_map,
             cache_dir=settings.tts_cache_dir,

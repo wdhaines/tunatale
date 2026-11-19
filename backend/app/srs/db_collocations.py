@@ -321,6 +321,41 @@ class DbCollocationsMixin:
             row = conn.execute("SELECT created_at FROM collocations WHERE guid = ?", (guid,)).fetchone()
             return row["created_at"] if row else None
 
+    def rewrite_lesson_rows(
+        self, updates: list[tuple[int, SyntacticUnit, bool]], drop_media: dict[int, set[str]]
+    ) -> None:
+        """Rewrite lesson rows from their corrected cards, all in ONE transaction (tunatale-adxy).
+
+        Each row's text, translation, sentence, word count, ``card_data`` and key
+        follow its unit; its guid, source, sibling group and review state stay. The
+        guid of a lesson row is TT-internal: it is never recomputed from the text,
+        so it is not moved (``update_collocation_fields`` would move it). A row whose
+        flag is set gets ``card_data`` in ``dirty_fields``, so the next push rebuilds
+        its note. ``drop_media`` deletes those media kinds of each row: a take of a
+        text the card no longer says.
+        """
+        with self._get_conn() as conn:
+            for row_id, unit, flag in updates:
+                conn.execute(
+                    "UPDATE collocations SET text = ?, translation = ?, source_sentence = ?, word_count = ?, "
+                    "card_data = ?, disambig_key = ?, updated_at = datetime('now') WHERE id = ?",
+                    (
+                        unit.text,
+                        unit.translation,
+                        unit.source_sentence,
+                        unit.word_count,
+                        unit.card_data,
+                        unit.disambig_key,
+                        row_id,
+                    ),
+                )
+                if flag:
+                    conn.execute(f"UPDATE collocations SET dirty_fields = {FLAG_CARD_DATA_SQL} WHERE id = ?", (row_id,))
+            for row_id, kinds in drop_media.items():
+                for kind in sorted(kinds):
+                    conn.execute("DELETE FROM media WHERE collocation_id = ? AND kind = ?", (row_id, kind))
+            self._commit(conn)
+
     def get_collocation_by_id(self, row_id: int) -> tuple[int, SRSItem, str] | None:
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM collocations WHERE id = ?", (row_id,)).fetchone()

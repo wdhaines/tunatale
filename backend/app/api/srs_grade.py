@@ -373,7 +373,9 @@ async def grade_lesson(
     made.clozes += contrast
 
     recorded = body.studied or not db.has_listen(content_id)
-    course, affix = _record_study_pass(db, request.state.content_store, lesson, content_id) if recorded else ([], None)
+    course, voiced, affix = (
+        _record_study_pass(db, request.state.content_store, lesson, content_id) if recorded else ([], [], None)
+    )
     made.vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
 
     for lemma in declined["word"]:
@@ -389,7 +391,7 @@ async def grade_lesson(
         vocab=made.vocab,
         clozes=made.clozes,
         reglosses=made.reglosses,
-        course=course,
+        course=voiced,
         affix=affix,
     )
     return {
