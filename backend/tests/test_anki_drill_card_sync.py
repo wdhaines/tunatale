@@ -802,3 +802,59 @@ class TestFullSyncKeepsDrillAudio:
                 assert db.list_media_kinds_for_collocation(cid) == set(kinds)
 
         assert f"DRILL_CARD_NO_AUDIO key={SUB} " not in caplog.text
+
+
+# --------------------------------------------------------------------------
+# tunatale-adxy E4 / A5: two rows under one drill key hold the line, never raise
+# --------------------------------------------------------------------------
+
+
+class TestDuplicatedDrillKey:
+    """A corrected model sentence re-minted adds a second row under the drill's key
+    (measured 2026-11-15: every later sync raised ``zip() argument 2 is shorter than
+    argument 1`` out of ``sync_create_new``, after the note had been written).
+    ``_plan_sentence_line`` holds the line instead: nothing written, one loud line,
+    the rest of the sync goes on."""
+
+    @staticmethod
+    def _corrected() -> list[dict]:
+        sub = {**DRILLS[0], "model": "Han er her nå."}
+        return [sub, *DRILLS[1:]]
+
+    async def test_e4_a_duplicated_drill_key_holds_its_line_and_the_rest_sync(self, no_tts, caplog):
+        db = SRSDatabase(":memory:")
+        minted = _minted(db)
+        anki = _conn()
+        await _sync(db, anki)
+        dup = dict(mint_lesson_cards(db, LANG, _cards(), drills=self._corrected()))
+        assert len(dup) == 1  # the measured cause: the corrected drill minted a second row
+        (dup_id,) = dup
+        before_notes = [dict(r) for r in anki.execute("SELECT * FROM notes ORDER BY id")]
+        before_cards = [dict(r) for r in anki.execute("SELECT * FROM cards ORDER BY id")]
+        other = minted["sent:test-01:drill-2"]
+        anki.execute("UPDATE notes SET flds = 'x' || flds WHERE id = ?", (_row(db, other).anki_note_id,))
+        anki.commit()
+
+        with caplog.at_level(logging.INFO):
+            rotated = await _sync(db, anki)
+
+        assert caplog.text.count(f"DRILL_KEY_DUPLICATED key={SUB}") == 1
+        assert _row(db, dup_id).anki_note_id is None
+        # the duplicated key's note is byte-identical: nothing written before the hold
+        sub_nid = _row(db, minted[SUB]).anki_note_id
+        assert [
+            n for n in (dict(r) for r in anki.execute("SELECT * FROM notes ORDER BY id")) if n["id"] == sub_nid
+        ] == [n for n in before_notes if n["id"] == sub_nid]
+        assert [dict(r) for r in anki.execute("SELECT * FROM cards ORDER BY id")] == before_cards
+        # control: another drill note in the same sync still rotates
+        assert rotated == 1
+        assert _note(anki, db, other)["flds"] == _expected(db, other)
+
+    async def test_e4_control_a_drill_key_with_one_row_mints(self, no_tts, caplog):
+        db = SRSDatabase(":memory:")
+        _minted(db)
+        anki = _conn()
+        with caplog.at_level(logging.INFO):
+            await _sync(db, anki)
+        assert "DRILL_KEY_DUPLICATED" not in caplog.text
+        assert _notes_by_notetype(anki) == {"TT Sentence": len(EXPECTED_KEYS)}

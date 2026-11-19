@@ -2031,7 +2031,19 @@ class AnkiSync:
         on: its cards cannot be told apart (``_sentence_line_ords``), or its rows
         do not make a note (overlapping blanks, cloze syntax in the text). Those
         used to raise out of the whole sync, after the lines ahead had been written.
+
+        A drill note has one card, so a drill line with more than one row (a
+        corrected lesson re-minted beside the old row, tunatale-adxy) is held here,
+        before anything is written: planning from one row wrote the note and then
+        raised out of the sync when the rows were linked to its one card.
         """
+        if is_drill_key(line) and len(rows) > 1:
+            _log.warning(
+                "DRILL_KEY_DUPLICATED key=%s rows=%s — a drill note has one card; held, nothing written",
+                line,
+                sorted(c for _, _, c in rows),
+            )
+            return None
         drill = drill_card(rows[0][1].syntactic_unit) if rows else None
         if drill is None and is_drill_key(line):
             # Held, never raised: mint, push and rotation all meet here (audit F1).
