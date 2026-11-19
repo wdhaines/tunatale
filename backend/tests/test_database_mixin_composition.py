@@ -132,4 +132,6 @@ def test_public_method_count_pinned() -> None:
     #  line already holds — h0q3.52)
     # +count_answers_into_review (a drill card's step counts the answers that left it
     #  in review, read from tt_revlog — 5i1p.10)
-    assert count == 154
+    # +rewrite_lesson_rows (a card the lesson corrected is updated in place, its whole
+    #  line in one transaction, its guid kept — adxy)
+    assert count == 155

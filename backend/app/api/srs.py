@@ -122,7 +122,7 @@ from app.srs.gloss_definiteness import align_gloss_definiteness
 from app.srs.gloss_verb_form import align_gloss_verb_form
 from app.srs.grade_undo import UndoNotAvailable, record_grade_snapshot, undo_last_grade
 from app.srs.lemmatizer import analyze_sentence_cached, get_lemmatizer, lemmatize_surfaces_in_context, model_version_for
-from app.srs.lesson_card_mint import attach_lesson_card_audio, mint_lesson_cards
+from app.srs.lesson_card_mint import attach_lesson_card_audio, lesson_card_rows, mint_lesson_cards
 from app.srs.mastery import is_well_known
 from app.srs.multiword import is_trapped_occurrence
 from app.srs.sense_match import names_same_sense, sense_label
@@ -1613,10 +1613,13 @@ def _create_ranked_words(
     return made
 
 
-def _record_study_pass(db, store, lesson, content_id: str) -> tuple[list, tuple[int, DrillCard] | None]:
+def _record_study_pass(db, store, lesson, content_id: str) -> tuple[list, list, tuple[int, DrillCard] | None]:
     """Mark *lesson* studied: mint its own card list and its pattern's affix drill card, then record one listen.
 
-    Returns the minted course rows and the affix drill card, if one was minted.
+    Returns the minted course rows, every row of the card list (whose takes the
+    listen attaches: a card minted before the lesson was rendered, or whose take
+    a correction dropped, gets its sound at the next listen; tunatale-adxy), and
+    the affix drill card, if one was minted.
     The list mints all of it, NEW, outside the listen budget: the deck's
     new-card limit paces it, and the Anki writer's course region keeps the
     list's order (tunatale-h0q3.43). The affix drill card (tunatale-5i1p.6) is
@@ -1625,10 +1628,12 @@ def _record_study_pass(db, store, lesson, content_id: str) -> tuple[list, tuple[
     """
     story = lesson.generation_metadata.get("story") or {}
     course_list = story.get("cards")
-    course = mint_lesson_cards(db, lesson.language_code, course_list, story.get("drills", [])) if course_list else []
+    drills = story.get("drills", [])
+    course = mint_lesson_cards(db, lesson.language_code, course_list, drills) if course_list else []
+    voiced = lesson_card_rows(db, course_list, drills) if course_list else []
     affix = mint_affix_drill_card(db, store, lesson)
     db.record_listen(content_id)
-    return course, affix
+    return course, voiced, affix
 
 
 def _schedule_listen_media(
@@ -2098,7 +2103,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
     pending_cloze += contrast
     created_count += len(contrast)
 
-    course, affix = _record_study_pass(db, store, lesson, body.content_id)
+    course, voiced, affix = _record_study_pass(db, store, lesson, body.content_id)
     created_count += len(course) + (affix is not None)
     pending_vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
 
@@ -2115,7 +2120,7 @@ async def mark_lesson_listened(body: ListenRequest, request: Request, background
         vocab=pending_vocab,
         clozes=pending_cloze,
         reglosses=pending_regloss,
-        course=course,
+        course=voiced,
         affix=affix,
     )
 

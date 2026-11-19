@@ -21,8 +21,10 @@ scheduler spaces the PATTERN, not one sentence:
 The row (``card_type = "cloze"``, PRODUCTION only) is keyed
 ``sent:<set>:drill-<n>``: the ``sent:`` prefix keeps it in the sentence-card
 plumbing, and its sibling group is its own key (one note, one card). Its
-``text`` never changes, since the guid is ``compute_guid(text, language, key)``:
-the model for a substitution drill, else the first step's cue.
+``text`` is the model for a substitution drill, else the first step's cue. The
+key is the card's identity: a drill the lesson corrects is updated in place,
+its text following the card while its guid stays as minted (tunatale-adxy,
+``lesson_card_mint``).
 
 Its JSON is a shape of its own, ``{"drill": {...}}``, beside
 ``SentenceCard``'s: ``SentenceCard.from_json`` reads it as ``None`` and this
@@ -125,7 +127,8 @@ class DrillCard:
 
     @property
     def text(self) -> str:
-        """The row's text, fixed for the life of the card (the guid is built from it)."""
+        """The row's text: the model, the first cue, or this step's cue. The guid is minted from it once
+        and never recomputed, so a correction moves the text and not the guid (tunatale-adxy)."""
         if self.step is not None:
             return self.steps[self.step].cue
         return self.model if self.kind == "substitution" else self.steps[0].cue
