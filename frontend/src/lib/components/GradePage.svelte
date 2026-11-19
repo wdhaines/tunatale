@@ -285,6 +285,7 @@
 					</div>
 				{:else}
 					{@const line = sayLine(card, transcript)}
+					{@const englishShown = opened[key] || opened[`${key}:en`]}
 					<div class="row say-row" data-row-text={card.text}>
 						<div class="row-main">
 							{#if card.drill}
@@ -301,7 +302,12 @@
 									onclick={() => open(key)}>{line.hidden}</button
 								>{line.after}</span
 							>
-							<span class="english">{line.english}</span>
+							<button
+								class="english"
+								class:blurred={!englishShown}
+								aria-label={englishShown ? line.english : t('gradePage.showEnglish')}
+								onclick={() => open(`${key}:en`)}>{line.english}</button
+							>
 						</div>
 						<span class="due" class:over={due.over}>{due.label}</span>
 						{#if opened[key]}
@@ -513,8 +519,19 @@
 		font-weight: 650;
 	}
 	.english {
+		display: block;
+		margin: 0;
+		font: inherit;
 		font-size: 0.8rem;
 		color: var(--color-muted);
+		background: none;
+		border: 0;
+		padding: 0.1rem 0;
+		text-align: left;
+		cursor: pointer;
+	}
+	.english.blurred {
+		filter: blur(5px);
 	}
 	.group h2 {
 		font-size: 0.85rem;

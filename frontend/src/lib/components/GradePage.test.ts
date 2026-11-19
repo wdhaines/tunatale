@@ -200,6 +200,30 @@ describe("GradePage — Say it", () => {
     expect(row.textContent).toContain("is here");
   });
 
+  it("blurs the English until it is tapped, without revealing the word", async () => {
+    const view = await ready();
+    await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
+    const row = rowOf("Nia");
+    const english = within(row).getByRole("button", { name: "Show the English" });
+    expect(english.classList.contains("blurred")).toBe(true);
+    await fireEvent.click(english);
+    expect(english.classList.contains("blurred")).toBe(false);
+    expect(
+      within(row).getByRole("button", { name: "Show the hidden word" }).classList.contains("shown"),
+    ).toBe(false);
+    expect(within(row).queryByRole("group", { name: "Grade" })).toBeNull();
+  });
+
+  it("revealing the hidden word also shows the English", async () => {
+    const view = await ready();
+    await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
+    const row = rowOf("Nia");
+    const english = within(row).queryByRole("button", { name: "Show the English" });
+    expect(english?.classList.contains("blurred")).toBe(true);
+    await fireEvent.click(within(row).getByRole("button", { name: "Show the hidden word" }));
+    expect(english?.classList.contains("blurred")).toBe(false);
+  });
+
   it("shows a drill card's prompt above its hidden answer", async () => {
     const drill = {
       kind: "substitution" as const,
@@ -237,6 +261,8 @@ describe("GradePage — Say it", () => {
       "sila",
     ]);
     expect(row.querySelector(".step")?.textContent).toBe("step 1 of 16");
+    expect(row.querySelector(".english")?.textContent).toBe("They are here.");
+    expect(row.querySelector(".english")?.classList.contains("blurred")).toBe(true);
   });
 
   it("a word in no transcript line is hidden under its meaning", async () => {
