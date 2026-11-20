@@ -32,7 +32,8 @@
 
 	/**
 	 * The parts of the pace gate beside what each needs (bd tunatale-ve4p.30).
-	 * A review-only pattern needs its drill days alone. A part is drawn short
+	 * A pattern whose gate asks for no cards (a word pattern, or a review-only
+	 * one; bd tunatale-ve4p.36) shows its drill days alone. A part is drawn short
 	 * (amber) only once the pattern is stuck: before then it is just not there yet.
 	 */
 	const meters = $derived.by(() => {
@@ -47,7 +48,7 @@
 				met: p.drill_days >= p.drill_days_needed
 			}
 		];
-		if (!p.review_only) {
+		if (p.first_passes_needed > 0) {
 			parts.push(
 				{
 					label: t('drillForms.firstPasses'),

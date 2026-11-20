@@ -1630,12 +1630,11 @@ class LessonDrillRoot(BaseModel):
 class LessonDrillProgress(BaseModel):
     """LessonDrill.progress: how far the learner is with the pattern, beside what the pace gate needs.
 
-    ``pattern_gate.Progress.summary``. A review-only pattern needs drill days
-    alone, so its card targets are 0. ``stuck`` is a pattern still short of
-    the gate after five drill days.
+    ``pattern_gate.Progress.summary``. A word pattern or a review-only one
+    needs drill days alone, so its card targets are 0. ``stuck`` is a pattern
+    still short of the gate after five drill days.
     """
 
-    review_only: bool
     drill_days: int
     drill_days_needed: int
     first_passes: int
