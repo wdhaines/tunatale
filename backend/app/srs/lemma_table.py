@@ -215,7 +215,17 @@ class TableLemmatizer:
     def __init__(self, language_code: str, extract_path: Path) -> None:
         self._language_code = language_code
         self._table = LemmaTable(ensure_lemma_table_db(extract_path))
+        # A marker that is also a short form (Cebuano ni, short for kini): read by
+        # context in analyze_sentence_with_tags. Local import: function_words
+        # imports the lemmatizer module that builds this class.
+        from app.srs.function_words import name_marker_short_forms
+
+        self._short_forms = name_marker_short_forms(language_code)
         self._cache_version = f"table-{self._table.source_version}-{self._table.source_id}"
+        if self._short_forms:
+            # Sentences cached before a rule existed read the marker everywhere.
+            rule = ",".join(f"{w}={long}" for w, long in sorted(self._short_forms.items()))
+            self._cache_version += f"+{rule}"
         # Rows the real model cached under the version this table was built from.
         self.compatible_cache_versions: tuple[str, ...] = (f"{self._table.source_version}+{_ANALYSIS_SCHEMA_REV}",)
 
@@ -247,7 +257,25 @@ class TableLemmatizer:
         tokens = tokenize(sentence)
         if language_code != self._language_code:
             return [TokenAnalysis(surface=t, lemma=t.lower()) for t in tokens]
-        return [_analyze_token(t, self._table.readings(t), upos_by_index.get(i)) for i, t in enumerate(tokens)]
+        return [self._analyze_in_context(tokens, i, upos_by_index.get(i)) for i in range(len(tokens))]
+
+    def _analyze_in_context(self, tokens: list[str], i: int, upos: str | None) -> TokenAnalysis:
+        """Token *i*; a name marker that is also a short form is read by the next token.
+
+        IMMEDIATELY before a capitalised word it is the marker ('ni Maria');
+        anywhere else it is the long word, with the long word's own default
+        reading ('Pila man ni?' → kini). The curated rule wins over a caller's tag
+        (tunatale-qjjc, the owner 2026-11-20).
+        """
+        token = tokens[i]
+        long = self._short_forms.get(token.casefold())
+        if long is not None:
+            following = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if not following[:1].isupper():
+                reading = _analyze_token(long, self._table.readings(long), None)
+                return TokenAnalysis(surface=token, lemma=reading.lemma, upos=reading.upos)
+            upos = None
+        return _analyze_token(token, self._table.readings(token), upos)
 
 
 def main(argv: list[str]) -> int:

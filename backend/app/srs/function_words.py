@@ -55,6 +55,26 @@ def _load_fixed_glosses(language_code: str) -> dict[str, str]:
     return {w.casefold(): g for w, g in data.get("glosses", {}).items()}
 
 
+@cache
+def _load_name_marker_short_forms(language_code: str) -> tuple[tuple[str, str], ...]:
+    path = get_function_words_path(language_code)
+    if path is None or not path.exists():
+        return ()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return tuple((w.casefold(), long.casefold()) for w, long in data.get("name_marker_short_forms", {}).items())
+
+
+def name_marker_short_forms(language_code: str) -> dict[str, str]:
+    """Name markers that are also a short form: ``{marker: the long word it shortens}``.
+
+    Cebuano ``ni`` is the personal-name marker ('ni Maria') and short for ``kini``
+    'this' ('Pila man ni?') (tunatale-qjjc). Before a capitalised word it is the
+    marker; anywhere else, the long word (:class:`app.srs.lemma_table.TableLemmatizer`).
+    Empty for a language with no such word.
+    """
+    return dict(_load_name_marker_short_forms(language_code))
+
+
 def fixed_gloss(token: str, language_code: str) -> str | None:
     """Return the curated gloss for *token*, or ``None`` when it has none.
 
@@ -123,7 +143,14 @@ def is_function_word_for(
     if is_function_word(lemma, language_code):
         return True
     upos_map = surface_to_upos or {}
-    return any(is_function_word(s, language_code, upos=upos_map.get(s.casefold())) for s in surfaces)
+    # A marker that is also a long word's short form (Cebuano ni, kini's) is that
+    # word's surface here, not evidence that the long word is a function word.
+    short_of = name_marker_short_forms(language_code)
+    return any(
+        is_function_word(s, language_code, upos=upos_map.get(s.casefold()))
+        for s in surfaces
+        if short_of.get(s.casefold()) != lemma.casefold()
+    )
 
 
 def is_clozes_only_verb(lemma: str, language_code: str) -> bool:
