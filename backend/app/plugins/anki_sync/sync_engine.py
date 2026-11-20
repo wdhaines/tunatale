@@ -761,11 +761,9 @@ class AnkiSync:
         One take-Anki resolution with two keep-TT guards (the Layer-70 recency
         guard and fsrs_unknown), plus suspend/bury via ``_queue_to_state`` /
         ``_bury_kind_from_queue``. The former ``dirty_fsrs`` branches were
-        deleted once proven unreachable in a real sync: ``sync_push`` runs
-        before pull in ``run_full_sync`` and clears ``dirty_fsrs`` for every
-        Anki-linked direction, so pull only ever sees clean state (the
-        DIRTY_AT_PULL guard in the caller enforces the invariant; the dead
-        branches lived only for dry-run and direct-pull tests). The caller owns
+        deleted: on a real sync the caller skips a direction still dirty
+        (DIRTY_AT_PULL, Layers 98-99: changed while the sync ran, left for the
+        next push), so a merge only ever sees clean state, except on a dry run. The caller owns
         BURY_TRACE, bury_stats, ``_direction_differs``, and the DB write.
         """
         # One take-Anki resolution with two keep-TT guards (suspend/bury fall out
@@ -1111,14 +1109,14 @@ class AnkiSync:
                 if anki_last_ms > max_revlog_ms:
                     max_revlog_ms = anki_last_ms
 
-                # Invariant guard: sync_push runs before sync_pull in run_full_sync
-                # and clears dirty_fsrs for every Anki-linked direction (the three
-                # mark_direction_clean paths in sync_push). So a real, non-dry-run
-                # sync never reaches _pull_merge_direction's dirty branches — they
-                # survive only for dry-run (push doesn't mutate) and direct-pull
-                # tests. Make any production violation loud: if DIRTY_AT_PULL ever
-                # fires in a real sync, the dirty branches are NOT safe to delete.
-                # Pinned by test_anki_sync_merge_equivalence; grep sync.log / stderr.
+                # A direction still dirty here on a real sync changed after sync_push
+                # read its lists (a grade, undo, reset or (un)suspension made while the
+                # sync ran): Layer 98 for one that was clean at the read, Layer 99
+                # (GRADED_DURING_PUSH, logged by the push) for one already in them.
+                # It is expected and handled: the row is left for the next push, never
+                # merged (_pull_merge_direction has no dirty branches). A dry run still
+                # merges, because its push cleans nothing. Pinned by
+                # test_anki_sync_recency_guards; grep sync.log / stderr.
                 if local_dir.dirty_fsrs and not dry_run:
                     _log.warning(
                         "DIRTY_AT_PULL cid=%s dir=%s state=%s — graded after sync_push read its list; "
@@ -1439,6 +1437,10 @@ class AnkiSync:
         difficulty_shifted = (ds.difficulty - 1.0) / 9.0 + 0.1
         factor = round(difficulty_shifted * 1000)
         preferred_id = int(ds.last_review.timestamp() * 1000) if ds.last_review else None
+        if preferred_id is not None and preferred_id in self._writer.revlog_ids_for_card(ds.anki_card_id):
+            # The grade is already in Anki under its own id: an earlier push sent its tt_revlog row (a grade
+            # made during that push, Layer 99). Deriving another row would log the review twice.
+            return False
         is_lapse = ds.prior_state == SRSState.REVIEW and ds.last_rating == Rating.AGAIN.value
         self._writer.write_revlog(
             cid=ds.anki_card_id,
@@ -1510,6 +1512,20 @@ class AnkiSync:
             self._db.set_anki_ids(guid, note_id, {Direction.PRODUCTION: card_ids[anki_ord]})
             self._db.set_dirty_fields(guid, "")
         report.notes_pushed += 1
+
+    def _clean_pushed(self, guid: str, direction: Direction, ds: DirectionState) -> None:
+        """Mark a pushed direction clean, unless it changed after the push read it (Layer 99).
+
+        ``sync_push`` reads its lists once. A grade, undo, reset or (un)suspension made after that read is
+        newer than what the push wrote; clearing the flag on it lost the change in both apps. The row is
+        left dirty instead, the same sync's pull skips it (DIRTY_AT_PULL), and the next push carries it.
+        """
+        if not self._db.mark_direction_clean(guid, direction, read=ds):
+            _log.warning(
+                "GRADED_DURING_PUSH cid=%s dir=%s — the row changed after sync_push read it; left dirty for the next sync",
+                ds.anki_card_id,
+                direction.value,
+            )
 
     def sync_push(self, dry_run: bool = False, force_fsrs: bool = False) -> PushReport:
         # Deferred: lives in app.plugins.anki_sync.sync so it reads the patched _MEDIA_DIR.
@@ -1725,7 +1741,7 @@ class AnkiSync:
                             self._writer.forget_card(ds.anki_card_id)
                         elif anki_state_before["queue"] == -1:
                             self._writer.unsuspend([ds.anki_card_id])
-                    self._db.mark_direction_clean(guid, direction)
+                    self._clean_pushed(guid, direction, ds)
                 report.directions_pushed += 1
                 continue
             # Recovery: when detect_and_reset_orphans cleared this direction's
@@ -1804,7 +1820,7 @@ class AnkiSync:
                         ds.last_review.isoformat(),
                     )
                     self._push_revlog_for_direction(guid, direction, ds, behind_anki=True)
-                    self._db.mark_direction_clean(guid, direction)
+                    self._clean_pushed(guid, direction, ds)
                     report.directions_pushed += 1
                     continue
                 # Layer 97, the owner's decision of 2026-11-15: a suspension made in
@@ -1836,7 +1852,7 @@ class AnkiSync:
                         and (anki_state_before["queue"] == -1 or anki_state_before["type"] == 2)
                     )
                 if queue_only:
-                    self._db.mark_direction_clean(guid, direction)
+                    self._clean_pushed(guid, direction, ds)
                     report.directions_pushed += 1
                     continue
 
@@ -1875,7 +1891,7 @@ class AnkiSync:
                         # is being discarded in favour of Anki's. mark_direction_clean
                         # at end of loop drops the dirty flag so we don't keep
                         # retrying.
-                        self._db.mark_direction_clean(guid, direction)
+                        self._clean_pushed(guid, direction, ds)
                         report.directions_pushed += 1
                         continue
                 else:
@@ -1914,7 +1930,7 @@ class AnkiSync:
                 if keep_suspended and in_steps:
                     # set_learning_state put the card back in the learning queue.
                     self._writer.suspend([ds.anki_card_id])
-                self._db.mark_direction_clean(guid, direction)
+                self._clean_pushed(guid, direction, ds)
             report.directions_pushed += 1
 
         # Second loop: clean directions that need revlog (Anki won earlier by timestamp)
@@ -1925,7 +1941,7 @@ class AnkiSync:
                 if ds.reps > 0:
                     self._push_revlog_for_direction(guid, direction, ds)
                 # Clear last_rating so it doesn't re-fire next sync
-                self._db.mark_direction_clean(guid, direction)
+                self._clean_pushed(guid, direction, ds)
             report.directions_pushed += 1
 
         # Layer 47: backfill sibling-bury for every today-graded direction.

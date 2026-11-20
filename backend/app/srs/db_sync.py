@@ -529,14 +529,51 @@ class DbSyncMixin:
                 result.append((row["guid"], d, ds))
         return result
 
-    def mark_direction_clean(self, guid: str, direction: Direction) -> None:
-        """Clear dirty_fsrs and set last_synced_at to now for one direction."""
+    # What a push read and acted on (Layer 99): a grade, an undo, a reset or a (un)suspension made after the
+    # read changes at least one of these.
+    _PUSHED_COLUMNS = ("last_review", "reps", "state", "due_at", "left")
+
+    def mark_direction_clean(self, guid: str, direction: Direction, read: DirectionState | None = None) -> bool:
+        """Clear dirty_fsrs and the grade marker, and stamp last_synced_at, for one direction.
+
+        With ``read`` (the state ``sync_push`` listed and pushed), clear only while the row still holds it
+        — a compare-and-swap on the stored values, so a write landing between the check and the clear
+        also fails it. When the row has moved on (Layer 99: graded, undone, reset or (un)suspended after
+        the push read its list), set it dirty instead and return False; the next push carries the newer
+        state. An undo restores a clean pre-grade row, so leaving the flag alone would let the next pull
+        take the undone grade back from Anki. Returns True when the row was cleared or no longer exists.
+        """
         with self._get_conn() as conn:
             row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
             if row is None:
-                return
-            conn.execute(
-                """
+                return True
+            coll_id = row["id"]
+            where, params = "collocation_id = ? AND direction = ?", [coll_id, direction.value]
+            if read is not None:
+                stored = conn.execute(
+                    f"SELECT {', '.join(self._PUSHED_COLUMNS)} FROM collocation_directions WHERE {where}", params
+                ).fetchone()
+                now = self._load_directions(conn, coll_id).get(direction)
+                if now is None:
+                    return True
+                if (now.last_review, now.reps, now.state, now.due_at, now.left) != (
+                    read.last_review,
+                    read.reps,
+                    read.state,
+                    read.due_at,
+                    read.left,
+                ):
+                    # A row that changed AND is clean was restored behind the push's back: an undo puts back
+                    # the verbatim pre-grade row, dirty_fsrs=0 and no grade marker. Anki now holds the undone
+                    # grade, so the next push must write the restored schedule over it, not relabel it.
+                    force = "" if now.dirty_fsrs else ", fsrs_force_next = 1"
+                    conn.execute(f"UPDATE collocation_directions SET dirty_fsrs = 1{force} WHERE {where}", params)
+                    self._commit(conn)
+                    return False
+                where += "".join(f" AND {col} IS ?" for col in self._PUSHED_COLUMNS)
+                params += [stored[col] for col in self._PUSHED_COLUMNS]
+            cur = conn.execute(
+                f"""
                 UPDATE collocation_directions SET
                     dirty_fsrs = 0,
                     fsrs_force_next = 0,
@@ -545,11 +582,19 @@ class DbSyncMixin:
                     prior_state = NULL,
                     prior_left = NULL,
                     prior_stability = NULL
-                WHERE collocation_id = ? AND direction = ?
+                WHERE {where}
                 """,
-                (datetime.now(UTC).isoformat(), row["id"], direction.value),
+                (datetime.now(UTC).isoformat(), *params),
             )
+            if cur.rowcount == 0:  # pragma: no cover - a write between the compare above and this UPDATE
+                conn.execute(
+                    "UPDATE collocation_directions SET dirty_fsrs = 1 WHERE collocation_id = ? AND direction = ?",
+                    (coll_id, direction.value),
+                )
+                self._commit(conn)
+                return False
             self._commit(conn)
+            return True
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

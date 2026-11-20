@@ -13,6 +13,8 @@ HTTP route. Nothing here opens a user's collection.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
 import logging
 import sqlite3
@@ -441,3 +443,277 @@ async def test_a_grade_made_during_a_sync_is_kept(
     today = anki_today_col_day(synthetic_collection.col_crt, datetime.now(UTC))
     assert card["due"] == today + (graded.due_at.date() - anki_today()).days
     assert final.due_at.date() >= graded.due_at.date() and _dirty(db, cid) == 0
+
+
+# ── Layer 99: a grade made DURING the push, on a direction already in its list ─────────────────────────────────
+# sync_push reads list_dirty() once; the clean at the end of each direction used to be unconditional, so a grade
+# landing between the read and the clean was wiped (the push wrote the OLD grade, the pull took Anki's due date).
+
+
+def _sync(db: SRSDatabase, conn: sqlite3.Connection, coll: SyntheticCollection) -> AnkiSync:
+    return AnkiSync(
+        db=db,
+        _reader=OfflineReader(conn, coll.deck_name, language_code="no"),
+        _writer=OfflineWriter(conn),
+        _anki_col_crt=coll.col_crt,
+        language_code="no",
+    )
+
+
+def _now_from_another_thread(action) -> None:
+    """Run *action* (sync or async) the way a request handler would, while the push is mid-flight."""
+
+    def run():
+        out = action()
+        if asyncio.iscoroutine(out):
+            asyncio.run(out)
+
+    with concurrent.futures.ThreadPoolExecutor(1) as ex:
+        ex.submit(run).result()
+
+
+async def _tt_undo(cid: int) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/api/srs/items/{cid}/direction/recognition/undo")
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.parametrize("when", ["during_push", "control_after_push"])
+async def test_a_lapse_made_during_the_push_is_kept(synthetic_collection: SyntheticCollection, when, caplog) -> None:
+    """The review probe of 2026-11-20 (findings F1): Good before the sync, Again while the push runs."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await _tt_grade(cid)  # grade 1: the direction is dirty and in the push's list
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        if when == "during_push":
+            real = sync._writer.set_due_date
+
+            def graded_meanwhile(*a, **k):
+                out = real(*a, **k)
+                _now_from_another_thread(lambda: _tt_grade(cid, "again"))
+                return out
+
+            sync._writer.set_due_date = graded_meanwhile
+        with caplog.at_level(logging.WARNING):
+            sync.sync_push()
+        if when == "control_after_push":
+            await _tt_grade(cid, "again")
+        lapsed = _tt_dir(db, cid)
+        assert lapsed.state == SRSState.RELEARNING
+        assert ("GRADED_DURING_PUSH" in caplog.text) is (when == "during_push")
+        assert _dirty(db, cid) == 1  # the push did not clear the lapse
+        sync.sync_pull()
+    assert _tt_dir(db, cid) == lapsed  # the pull left it alone (DIRTY_AT_PULL)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        _full_sync(db, synthetic_collection)  # the next sync carries it
+
+    card = _anki_card(synthetic_collection.path)
+    assert (card["type"], card["queue"]) == (3, 1)
+    assert [r["ease"] for r in card["revlog"]] == [3, 1]
+    assert _tt_dir(db, cid).state == SRSState.RELEARNING and _dirty(db, cid) == 0
+    assert "GRADED_DURING_PUSH" not in caplog.text
+
+
+def _setup_main(db, coll, cid):
+    return _tt_grade(cid)
+
+
+async def _setup_forget(db, coll, cid):
+    db.reset_collocation(cid, REC)  # TT's "Forget": NEW, reps 0, dirty
+
+
+async def _setup_suspend(db, coll, cid):
+    db.set_suspended(cid, True, REC)  # queue_only: a suspension is the whole change
+
+
+async def _setup_deferred(db, coll, cid):
+    # Layer 97: the phone reviewed the card after TT's grade, so the push defers to it.
+    await _tt_grade(cid)
+    _backdate_tt_grade(db, cid, timedelta(hours=12))
+    now = datetime.now(UTC)
+    today = anki_today_col_day(coll.col_crt, now)
+    _phone_review(coll.path, at=now - timedelta(hours=1), stability=33.0, due_col_day=today + 30, ivl=30)
+
+
+async def _setup_anki_ahead(db, coll, cid):
+    # Layer 69: TT's lapse is older than the phone's later graduation, so the steps branch defers to Anki.
+    await _tt_grade(cid, "again")
+    _backdate_tt_grade(db, cid, timedelta(hours=12))
+    now = datetime.now(UTC)
+    today = anki_today_col_day(coll.col_crt, now)
+    _phone_review(coll.path, at=now - timedelta(hours=1), stability=33.0, due_col_day=today + 30, ivl=30)
+
+
+@pytest.mark.parametrize(
+    ("setup", "meanwhile"),
+    [
+        (_setup_main, lambda db, cid: _tt_grade(cid, "again")),
+        (_setup_forget, lambda db, cid: _tt_grade(cid, "good")),
+        (_setup_suspend, lambda db, cid: db.set_suspended(cid, False, REC)),
+        (_setup_deferred, lambda db, cid: _tt_grade(cid, "again")),
+        (_setup_anki_ahead, lambda db, cid: _tt_grade(cid, "good")),
+    ],
+    ids=["main_path", "forget_branch", "queue_only", "layer97_deferral", "anki_ahead"],
+)
+async def test_every_clean_in_the_push_keeps_a_change_made_after_its_list_was_read(
+    synthetic_collection: SyntheticCollection, setup, meanwhile, caplog
+) -> None:
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await setup(db, synthetic_collection, cid)
+    assert _dirty(db, cid) == 1
+    real_list = db.list_dirty
+
+    def listed_then_changed(*a, **k):
+        listed = real_list(*a, **k)
+        _now_from_another_thread(lambda: meanwhile(db, cid))
+        return listed
+
+    db.list_dirty = listed_then_changed
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        with caplog.at_level(logging.WARNING):
+            _sync(db, conn, synthetic_collection).sync_push()
+    del db.list_dirty
+    changed = _tt_dir(db, cid)
+    assert "GRADED_DURING_PUSH" in caplog.text
+    assert _dirty(db, cid) == 1 and changed.dirty_fsrs
+
+
+async def test_the_recently_graded_clean_loop_keeps_a_grade_made_after_its_list_was_read(
+    synthetic_collection: SyntheticCollection, caplog
+) -> None:
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await _tt_grade(cid)
+    with db._get_conn() as conn:  # Anki won the schedule earlier; only the revlog row is owed
+        conn.execute("UPDATE collocation_directions SET dirty_fsrs = 0 WHERE collocation_id = ?", (cid,))
+        conn.commit()
+    real_list = db.list_recently_graded_clean
+
+    def listed_then_graded(*a, **k):
+        listed = real_list(*a, **k)
+        _now_from_another_thread(lambda: _tt_grade(cid, "again"))
+        return listed
+
+    db.list_recently_graded_clean = listed_then_graded
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        with caplog.at_level(logging.WARNING):
+            _sync(db, conn, synthetic_collection).sync_push()
+    assert "GRADED_DURING_PUSH" in caplog.text
+    assert _dirty(db, cid) == 1 and _tt_dir(db, cid).state == SRSState.RELEARNING
+
+
+async def test_an_undo_made_during_the_push_is_pushed_next_sync(
+    synthetic_collection: SyntheticCollection, caplog
+) -> None:
+    """The undo restores the pre-grade row verbatim, dirty_fsrs=0 included. The push has already written the
+    grade, so the restored row must stay dirty and the next push must write it back over the grade."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    before = _tt_dir(db, cid)
+    await _tt_grade(cid)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        real = sync._writer.set_due_date
+
+        def undone_meanwhile(*a, **k):
+            out = real(*a, **k)
+            _now_from_another_thread(lambda: _tt_undo(cid))
+            return out
+
+        sync._writer.set_due_date = undone_meanwhile
+        with caplog.at_level(logging.WARNING):
+            sync.sync_push()
+        assert "GRADED_DURING_PUSH" in caplog.text
+        assert _dirty(db, cid) == 1
+        sync.sync_pull()
+    restored = _tt_dir(db, cid)
+    assert (restored.reps, restored.last_review, restored.due_at) == (before.reps, before.last_review, before.due_at)
+
+    _full_sync(db, synthetic_collection)
+
+    card = _anki_card(synthetic_collection.path)
+    final = _tt_dir(db, cid)
+    today = anki_today_col_day(synthetic_collection.col_crt, datetime.now(UTC))
+    assert card["due"] == today  # the restored due date (due today), not the undone grade's
+    # The restored memory state wins in both apps. The undone review stays in Anki's revlog (a pushed review
+    # cannot be retracted), so reps keeps it, and the restored schedule follows it as a manual (type 4) row.
+    assert (card["data"]["s"], card["data"]["d"], card["data"]["lrt"]) == (
+        10.0,
+        5.0,
+        int(before.last_review.timestamp()),
+    )
+    assert [(r["ease"], r["type"]) for r in card["revlog"]] == [(3, 1), (0, 4)]
+    assert (final.stability, final.difficulty, final.last_review) == (10.0, 5.0, before.last_review)
+    assert final.anki_due == today and final.reps == card["reps"] == REPS + 1
+    assert _dirty(db, cid) == 0
+
+
+def test_a_clean_matches_a_row_stored_in_an_older_last_review_format() -> None:
+    """The compare-and-swap compares parsed values: a date-only or naive last_review (rows from before
+    isoformat-with-zone) must still clean, or the row would stay dirty and warn on every sync."""
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="hus", translation="house", word_count=1, difficulty=1, source="test")
+    db.add_collocation(unit, language_code="no")
+    item = db.get_collocation("hus")
+    cid = db.get_collocation_id_by_guid(item.guid)
+    for stored in ("2026-11-15", "2026-11-15T09:30:00"):
+        with db._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET last_review = ?, reps = 3, dirty_fsrs = 1 WHERE collocation_id = ?",
+                (stored, cid),
+            )
+            conn.commit()
+        read = _tt_dir(db, cid)
+        assert db.mark_direction_clean(item.guid, REC, read=read) is True
+        assert _dirty(db, cid) == 0
+
+
+def test_a_clean_without_a_read_is_unconditional() -> None:
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="hus", translation="house", word_count=1, difficulty=1, source="test")
+    db.add_collocation(unit, language_code="no")
+    item = db.get_collocation("hus")
+    cid = db.get_collocation_id_by_guid(item.guid)
+    with db._get_conn() as conn:
+        conn.execute("UPDATE collocation_directions SET dirty_fsrs = 1 WHERE collocation_id = ?", (cid,))
+        conn.commit()
+    assert db.mark_direction_clean(item.guid, REC) is True
+    assert _dirty(db, cid) == 0
+    assert db.mark_direction_clean("no-such-guid", REC) is True
+
+
+@pytest.mark.parametrize("stored", ["2026-07-01", "2026-07-01T10:00:00"], ids=["date_only", "naive"])
+async def test_a_suspension_over_a_legacy_last_review_cleans_in_one_sync(
+    synthetic_collection: SyntheticCollection, stored: str, caplog
+) -> None:
+    """The reviewer's control (ruog comment): a suspension does not rewrite last_review, so a row still holding
+    an old-format value must clean on the first push and log nothing, or it would be re-pushed every sync."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    with db._get_conn() as conn:
+        conn.execute("UPDATE collocation_directions SET last_review = ? WHERE collocation_id = ?", (stored, cid))
+        conn.commit()
+    db.set_suspended(cid, True, REC)
+    with caplog.at_level(logging.WARNING):
+        _full_sync(db, synthetic_collection)
+    assert _dirty(db, cid) == 0
+    assert "GRADED_DURING_PUSH" not in caplog.text
+    assert _anki_card(synthetic_collection.path)["queue"] == -1
+
+
+def test_a_clean_of_a_direction_deleted_after_the_read_has_nothing_to_keep() -> None:
+    db = SRSDatabase(":memory:")
+    unit = SyntacticUnit(text="hus", translation="house", word_count=1, difficulty=1, source="test")
+    db.add_collocation(unit, language_code="no")
+    item = db.get_collocation("hus")
+    cid = db.get_collocation_id_by_guid(item.guid)
+    read = _tt_dir(db, cid)
+    with db._get_conn() as conn:
+        conn.execute(
+            "DELETE FROM collocation_directions WHERE collocation_id = ? AND direction = 'recognition'", (cid,)
+        )
+        conn.commit()
+    assert db.mark_direction_clean(item.guid, REC, read=read) is True
