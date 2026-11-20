@@ -9,7 +9,7 @@ Supports ":memory:" for in-memory test databases.
 Since the god-module split (stages 3–5, 2026-07), the method bodies live in
 per-concern mixin modules (db_base infra + db_collocations, db_directions,
 db_queue, db_counts, db_revlog, db_sync, db_media, db_kv_cache,
-db_histogram, db_lemma_cache, db_ignored_lemmas, db_sync_conflicts).
+db_histogram, db_lemma_cache, db_ignored_lemmas, db_sentence_marks, db_sync_conflicts).
 This module composes them into `SRSDatabase` and re-exports the legacy
 module-level names (`X as X` so ruff keeps them) — import and patch
 through `app.srs.database` as before.
@@ -37,6 +37,7 @@ from app.srs.db_pending_grades import DbPendingGradesMixin as DbPendingGradesMix
 from app.srs.db_queue import DbQueueMixin as DbQueueMixin
 from app.srs.db_reviews import DbReviewsMixin as DbReviewsMixin
 from app.srs.db_revlog import DbRevlogMixin as DbRevlogMixin
+from app.srs.db_sentence_marks import DbSentenceMarksMixin as DbSentenceMarksMixin
 from app.srs.db_sync import DbSyncMixin as DbSyncMixin
 from app.srs.db_sync_conflicts import DbSyncConflictsMixin as DbSyncConflictsMixin
 
@@ -56,6 +57,7 @@ class SRSDatabase(
     DbPendingGradesMixin,
     DbReviewsMixin,
     DbIgnoredLemmasMixin,
+    DbSentenceMarksMixin,
     DbSyncConflictsMixin,
     SRSDatabaseBase,
 ):

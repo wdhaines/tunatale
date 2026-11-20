@@ -1,70 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AddSentenceBlankRequest": {
-        "description": "POST /api/srs/sentence-blanks: blank the words ``[start, end)`` of a line's text (tunatale-h0q3.52).\n\n``line_key`` is the line's ``sent:<lesson>:<line>``. ``gloss`` is optional:\nwithout it the line's own word gloss is used, else the model's.",
-        "properties": {
-          "end": {
-            "title": "End",
-            "type": "integer"
-          },
-          "gloss": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gloss"
-          },
-          "line_key": {
-            "title": "Line Key",
-            "type": "string"
-          },
-          "start": {
-            "title": "Start",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "line_key",
-          "start",
-          "end"
-        ],
-        "title": "AddSentenceBlankRequest",
-        "type": "object"
-      },
-      "AddSentenceBlankResponse": {
-        "description": "The blank's row; ``created`` is False when the line already had this blank.",
-        "properties": {
-          "collocation_id": {
-            "title": "Collocation Id",
-            "type": "integer"
-          },
-          "created": {
-            "title": "Created",
-            "type": "boolean"
-          },
-          "gloss": {
-            "title": "Gloss",
-            "type": "string"
-          },
-          "key": {
-            "title": "Key",
-            "type": "string"
-          }
-        },
-        "required": [
-          "collocation_id",
-          "key",
-          "gloss",
-          "created"
-        ],
-        "title": "AddSentenceBlankResponse",
-        "type": "object"
-      },
       "AffixCardPreview": {
         "description": "One card a listen would add for its affix drill.\n\nA contrast card (one root, one form of an affix pair left to say) or, for a\npattern taught as sentences, a focus card (one whole sentence to say).",
         "properties": {
@@ -1524,6 +1460,14 @@
             "title": "Restored",
             "type": "array"
           },
+          "sentence_edits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SentenceEdit"
+            },
+            "title": "Sentence Edits",
+            "type": "array"
+          },
           "studied": {
             "default": false,
             "title": "Studied",
@@ -1547,6 +1491,14 @@
           "listen_count": {
             "title": "Listen Count",
             "type": "integer"
+          },
+          "not_made": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/NotMadeBlank"
+            },
+            "title": "Not Made",
+            "type": "array"
           },
           "recorded_study": {
             "title": "Recorded Study",
@@ -1576,6 +1528,13 @@
             "title": "Contrast",
             "type": "array"
           },
+          "sentences": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceLine"
+            },
+            "title": "Sentences",
+            "type": "array"
+          },
           "words": {
             "items": {
               "$ref": "#/components/schemas/GradeWordSuggestion"
@@ -1586,7 +1545,8 @@
         },
         "required": [
           "words",
-          "contrast"
+          "contrast",
+          "sentences"
         ],
         "title": "GradeSuggestions",
         "type": "object"
@@ -3814,6 +3774,35 @@
         "title": "NewCollocationsResponse",
         "type": "object"
       },
+      "NotMadeBlank": {
+        "description": "A blank a Save turned on and could not make: no gloss from the line or the model.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "line_key": {
+            "title": "Line Key",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          },
+          "word": {
+            "title": "Word",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_key",
+          "start",
+          "end",
+          "word"
+        ],
+        "title": "NotMadeBlank",
+        "type": "object"
+      },
       "ParadigmCell": {
         "properties": {
           "blank": {
@@ -5538,6 +5527,77 @@
         "title": "SentenceCueModel",
         "type": "object"
       },
+      "SentenceEdit": {
+        "description": "One line's changes in a Save (``sentence_mining.plan_line_edits``): spans as ``[start, end]``, or ``\"whole\"``.\n\n``confirm`` lets a reviewed card go (its history goes at the next sync).",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "line_key": {
+            "title": "Line Key",
+            "type": "string"
+          },
+          "off": {
+            "default": [],
+            "items": {
+              "anyOf": [
+                {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "const": "whole",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "Off",
+            "type": "array"
+          },
+          "on": {
+            "default": [],
+            "items": {
+              "anyOf": [
+                {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "const": "whole",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "On",
+            "type": "array"
+          }
+        },
+        "required": [
+          "line_key"
+        ],
+        "title": "SentenceEdit",
+        "type": "object"
+      },
       "SentenceGloss": {
         "properties": {
           "gloss_html": {
@@ -5554,6 +5614,122 @@
           "gloss_html"
         ],
         "title": "SentenceGloss",
+        "type": "object"
+      },
+      "SentenceLine": {
+        "description": "A lesson line the Grade page's New cards may mine (``app.srs.sentence_lines``).",
+        "properties": {
+          "english": {
+            "title": "English",
+            "type": "string"
+          },
+          "line_key": {
+            "title": "Line Key",
+            "type": "string"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "speaker": {
+            "title": "Speaker",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceLineToken"
+            },
+            "title": "Tokens",
+            "type": "array"
+          },
+          "whole": {
+            "$ref": "#/components/schemas/SentenceLineToken"
+          }
+        },
+        "required": [
+          "line_key",
+          "speaker",
+          "text",
+          "english",
+          "linked",
+          "tokens",
+          "whole"
+        ],
+        "title": "SentenceLine",
+        "type": "object"
+      },
+      "SentenceLineToken": {
+        "description": "One card of a lesson line: a written word's blank, or the whole line (tunatale-h0q3.66).\n\n``start``/``end``: the word in the line's ``text``. ``part``: the span the\nlesson blanks inside the word (a linker suffix), which a tap toggles.\n``state``: ``on`` (a card exists or the list mints it at study), ``off``, or\n``declined`` (a list card turned off). ``origin``: ``lesson`` or ``mine``.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "integer"
+          },
+          "gloss": {
+            "title": "Gloss",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "lesson",
+              "mine"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Part"
+          },
+          "reviewed": {
+            "title": "Reviewed",
+            "type": "boolean"
+          },
+          "start": {
+            "title": "Start",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "on",
+              "off",
+              "declined"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "part",
+          "state",
+          "origin",
+          "reviewed",
+          "gloss"
+        ],
+        "title": "SentenceLineToken",
         "type": "object"
       },
       "SetClozeSentenceRequest": {
@@ -11359,117 +11535,6 @@
           }
         },
         "summary": "Get Review Queue",
-        "tags": [
-          "srs"
-        ]
-      }
-    },
-    "/api/srs/sentence-blanks": {
-      "delete": {
-        "description": "Un-mark a blank: delete its row; the next push drops its cloze and graves its card.\n\nFree while the card is new; a reviewed card answers 409 unless ``confirm``,\nbecause its review history goes with it (owner, 2026-11-10).",
-        "operationId": "remove_sentence_blank_api_srs_sentence_blanks_delete",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "line_key",
-            "required": true,
-            "schema": {
-              "title": "Line Key",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "start",
-            "required": true,
-            "schema": {
-              "title": "Start",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "end",
-            "required": true,
-            "schema": {
-              "title": "End",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "confirm",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Confirm",
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StatusResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Remove Sentence Blank",
-        "tags": [
-          "srs"
-        ]
-      },
-      "post": {
-        "description": "Mine a word: blank ``[start, end)`` on a line that has cards, as one more card of its note (tunatale-h0q3.52).\n\nThe row is NEW with no Anki ids (the card-adding contract); the next sync adds\nits card to the line's note, at the front of the new queue. A blank the line\nalready has answers 200 with its row and calls no model.",
-        "operationId": "add_sentence_blank_api_srs_sentence_blanks_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddSentenceBlankRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AddSentenceBlankResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Add Sentence Blank",
         "tags": [
           "srs"
         ]

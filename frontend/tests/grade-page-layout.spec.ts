@@ -44,7 +44,7 @@ async function mockPlan(page: Page) {
 				cards,
 				later: { recognition: 3, production: 0 },
 				waiting_new: 0,
-				suggestions: { words: [], contrast: [] },
+				suggestions: { words: [], contrast: [], sentences: [] },
 			},
 		}),
 	);

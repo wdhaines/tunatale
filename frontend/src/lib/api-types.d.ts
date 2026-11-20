@@ -2251,37 +2251,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/srs/sentence-blanks": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Add Sentence Blank
-     * @description Mine a word: blank ``[start, end)`` on a line that has cards, as one more card of its note (tunatale-h0q3.52).
-     *
-     *     The row is NEW with no Anki ids (the card-adding contract); the next sync adds
-     *     its card to the line's note, at the front of the new queue. A blank the line
-     *     already has answers 200 with its row and calls no model.
-     */
-    post: operations["add_sentence_blank_api_srs_sentence_blanks_post"];
-    /**
-     * Remove Sentence Blank
-     * @description Un-mark a blank: delete its row; the next push drops its cloze and graves its card.
-     *
-     *     Free while the card is new; a reviewed card answers 409 unless ``confirm``,
-     *     because its review history goes with it (owner, 2026-11-10).
-     */
-    delete: operations["remove_sentence_blank_api_srs_sentence_blanks_delete"];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/srs/stats": {
     parameters: {
       query?: never;
@@ -2468,37 +2437,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    /**
-     * AddSentenceBlankRequest
-     * @description POST /api/srs/sentence-blanks: blank the words ``[start, end)`` of a line's text (tunatale-h0q3.52).
-     *
-     *     ``line_key`` is the line's ``sent:<lesson>:<line>``. ``gloss`` is optional:
-     *     without it the line's own word gloss is used, else the model's.
-     */
-    AddSentenceBlankRequest: {
-      /** End */
-      end: number;
-      /** Gloss */
-      gloss?: string | null;
-      /** Line Key */
-      line_key: string;
-      /** Start */
-      start: number;
-    };
-    /**
-     * AddSentenceBlankResponse
-     * @description The blank's row; ``created`` is False when the line already had this blank.
-     */
-    AddSentenceBlankResponse: {
-      /** Collocation Id */
-      collocation_id: number;
-      /** Created */
-      created: boolean;
-      /** Gloss */
-      gloss: string;
-      /** Key */
-      key: string;
-    };
     /**
      * AffixCardPreview
      * @description One card a listen would add for its affix drill.
@@ -3217,6 +3155,11 @@ export interface components {
        */
       restored: components["schemas"]["RestoredKey"][];
       /**
+       * Sentence Edits
+       * @default []
+       */
+      sentence_edits: components["schemas"]["SentenceEdit"][];
+      /**
        * Studied
        * @default false
        */
@@ -3233,6 +3176,11 @@ export interface components {
       created: number;
       /** Listen Count */
       listen_count: number;
+      /**
+       * Not Made
+       * @default []
+       */
+      not_made: components["schemas"]["NotMadeBlank"][];
       /** Recorded Study */
       recorded_study: boolean;
       /** Status */
@@ -3242,6 +3190,8 @@ export interface components {
     GradeSuggestions: {
       /** Contrast */
       contrast: components["schemas"]["AffixCardPreview"][];
+      /** Sentences */
+      sentences: components["schemas"]["SentenceLine"][];
       /** Words */
       words: components["schemas"]["GradeWordSuggestion"][];
     };
@@ -4232,6 +4182,20 @@ export interface components {
       /** New */
       new: components["schemas"]["SrsItemResponse"][];
     };
+    /**
+     * NotMadeBlank
+     * @description A blank a Save turned on and could not make: no gloss from the line or the model.
+     */
+    NotMadeBlank: {
+      /** End */
+      end: number;
+      /** Line Key */
+      line_key: string;
+      /** Start */
+      start: number;
+      /** Word */
+      word: string;
+    };
     /** ParadigmCell */
     ParadigmCell: {
       /** Blank */
@@ -4926,12 +4890,87 @@ export interface components {
       /** Text */
       text: string;
     };
+    /**
+     * SentenceEdit
+     * @description One line's changes in a Save (``sentence_mining.plan_line_edits``): spans as ``[start, end]``, or ``"whole"``.
+     *
+     *     ``confirm`` lets a reviewed card go (its history goes at the next sync).
+     */
+    SentenceEdit: {
+      /**
+       * Confirm
+       * @default false
+       */
+      confirm: boolean;
+      /** Line Key */
+      line_key: string;
+      /**
+       * Off
+       * @default []
+       */
+      off: ([number, number] | "whole")[];
+      /**
+       * On
+       * @default []
+       */
+      on: ([number, number] | "whole")[];
+    };
     /** SentenceGloss */
     SentenceGloss: {
       /** Gloss Html */
       gloss_html: string;
       /** Word */
       word: string;
+    };
+    /**
+     * SentenceLine
+     * @description A lesson line the Grade page's New cards may mine (``app.srs.sentence_lines``).
+     */
+    SentenceLine: {
+      /** English */
+      english: string;
+      /** Line Key */
+      line_key: string;
+      /** Linked */
+      linked: boolean;
+      /** Speaker */
+      speaker: string;
+      /** Text */
+      text: string;
+      /** Tokens */
+      tokens: components["schemas"]["SentenceLineToken"][];
+      whole: components["schemas"]["SentenceLineToken"];
+    };
+    /**
+     * SentenceLineToken
+     * @description One card of a lesson line: a written word's blank, or the whole line (tunatale-h0q3.66).
+     *
+     *     ``start``/``end``: the word in the line's ``text``. ``part``: the span the
+     *     lesson blanks inside the word (a linker suffix), which a tap toggles.
+     *     ``state``: ``on`` (a card exists or the list mints it at study), ``off``, or
+     *     ``declined`` (a list card turned off). ``origin``: ``lesson`` or ``mine``.
+     */
+    SentenceLineToken: {
+      /** End */
+      end: number;
+      /** Gloss */
+      gloss: string;
+      /**
+       * Origin
+       * @enum {string}
+       */
+      origin: "lesson" | "mine";
+      /** Part */
+      part: [number, number] | null;
+      /** Reviewed */
+      reviewed: boolean;
+      /** Start */
+      start: number;
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "on" | "off" | "declined";
     };
     /**
      * SetClozeSentenceRequest
@@ -8581,73 +8620,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ReviewQueueResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  add_sentence_blank_api_srs_sentence_blanks_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["AddSentenceBlankRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["AddSentenceBlankResponse"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  remove_sentence_blank_api_srs_sentence_blanks_delete: {
-    parameters: {
-      query: {
-        line_key: string;
-        start: number;
-        end: number;
-        confirm?: boolean;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["StatusResponse"];
         };
       };
       /** @description Validation Error */

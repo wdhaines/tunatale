@@ -21,10 +21,8 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 from app.common.guid import compute_guid
-from app.main import app
 from app.models.srs_item import Direction, SRSState
 from app.plugins.anki_sync.sync_writer import COURSE_REGION_GAP, COURSE_TAG
 from app.srs import sentence_mining as mining
@@ -214,50 +212,6 @@ def _reviewed(db: SRSDatabase, row_id: int, *, due_at: str = "2026-11-02T04:00:0
         conn.commit()
 
 
-class TestRemoveBlank:
-    def test_a_new_blank_goes_without_a_confirm(self):
-        db = SRSDatabase(":memory:")
-        _line(db)
-        row_id = mining.add_blank(db, LANG, LINE, BA, "q")
-
-        assert mining.remove_blank(db, LINE, BA, confirm=False) == row_id
-        assert _row(db, BA) is None
-        assert len(db.list_sibling_rows(LINE)) == 2
-
-    def test_a_reviewed_blank_needs_the_confirm(self):
-        db = SRSDatabase(":memory:")
-        _line(db)
-        row_id = _row(db, NAA)
-        _reviewed(db, row_id)
-
-        with pytest.raises(mining.BlankHasHistory):
-            mining.remove_blank(db, LINE, NAA, confirm=False)
-        assert _row(db, NAA) == row_id
-
-        assert mining.remove_blank(db, LINE, NAA, confirm=True) == row_id
-        assert _row(db, NAA) is None
-
-    def test_a_blank_the_line_does_not_have_is_not_found(self):
-        db = SRSDatabase(":memory:")
-        _line(db)
-        with pytest.raises(mining.BlankNotFound):
-            mining.remove_blank(db, LINE, BA, confirm=True)
-
-    def test_an_unknown_line_is_not_found(self):
-        db = SRSDatabase(":memory:")
-        with pytest.raises(mining.LineNotFound):
-            mining.remove_blank(db, LINE, BA, confirm=True)
-
-    def test_the_lines_last_card_stays(self):
-        """Deleting a line's only row would leave its note in Anki (nothing flags it); that is
-        deleting the card, not un-marking a blank."""
-        db = SRSDatabase(":memory:")
-        db.add_collocation(_course(_BASE.with_blank(NAA, "there")), LANG)
-        with pytest.raises(mining.LastCardOfLine):
-            mining.remove_blank(db, LINE, NAA, confirm=True)
-        assert _row(db, NAA) is not None
-
-
 def _due(anki_conn, db, row_id) -> int:
     item = db.get_collocation_by_id(row_id)[1]
     cid = item.directions[Direction.PRODUCTION].anki_card_id
@@ -318,7 +272,7 @@ class TestMinedCardPlacement:
         assert "tt-mined-c3" in _note_tags(anki_conn)
         gone = db.get_collocation_by_id(row_id)[1].directions[Direction.PRODUCTION].anki_card_id
 
-        mining.remove_blank(db, LINE, BA, confirm=False)
+        db.delete_collocation(row_id)
         _push(db, anki_conn)
 
         assert set(_cards(anki_conn)) == {0, 1}
@@ -375,161 +329,3 @@ def no_tts(monkeypatch):
         raise AssertionError(f"sentence card mint synthesized {text!r}")
 
     monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _boom)
-
-
-# --- the routes -------------------------------------------------------------------------
-
-
-@pytest.fixture
-def ceb_db(api_app_state):
-    """The API's db, as the Cebuano deck (the routes take the request's language)."""
-    from app.languages import get_language
-
-    app.state.language = get_language(LANG)
-    return api_app_state
-
-
-def _client():
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"x-tt-language": LANG})
-
-
-def _llm(reply: str):
-    from unittest.mock import AsyncMock
-
-    llm = AsyncMock()
-    llm.complete.return_value = reply
-    app.state.llm = llm
-    return llm
-
-
-class TestAddRoute:
-    async def test_adds_the_blank_with_the_lines_own_gloss(self, ceb_db):
-        _line(ceb_db)
-        llm = _llm("unused")
-        async with _client() as client:
-            resp = await client.post("/api/srs/sentence-blanks", json={"line_key": LINE, "start": BA[0], "end": BA[1]})
-        assert resp.status_code == 201, resp.text
-        body = resp.json()
-        assert body == {
-            "collocation_id": _row(ceb_db, BA),
-            "key": _BASE.with_blank(BA, "").key,
-            "gloss": "question particle",
-            "created": True,
-        }
-        llm.complete.assert_not_called()
-
-    async def test_a_word_the_line_does_not_gloss_is_glossed_by_the_model(self, ceb_db):
-        _line(ceb_db)
-        llm = _llm("name particle")
-        async with _client() as client:
-            resp = await client.post("/api/srs/sentence-blanks", json={"line_key": LINE, "start": SI[0], "end": SI[1]})
-        assert resp.status_code == 201
-        assert resp.json()["gloss"] == "name particle"
-        prompt = llm.complete.call_args
-        assert "si" in str(prompt) and _BASE.text in str(prompt)
-
-    async def test_a_gloss_the_caller_gives_wins(self, ceb_db):
-        _line(ceb_db)
-        llm = _llm("unused")
-        async with _client() as client:
-            resp = await client.post(
-                "/api/srs/sentence-blanks", json={"line_key": LINE, "start": BA[0], "end": BA[1], "gloss": "yes/no?"}
-            )
-        assert resp.json()["gloss"] == "yes/no?"
-        llm.complete.assert_not_called()
-
-    async def test_no_gloss_from_anywhere_is_refused_and_writes_nothing(self, ceb_db):
-        _line(ceb_db)
-        _llm("")
-        async with _client() as client:
-            resp = await client.post("/api/srs/sentence-blanks", json={"line_key": LINE, "start": SI[0], "end": SI[1]})
-        assert resp.status_code == 503
-        assert _row(ceb_db, SI) is None
-
-    async def test_no_model_and_no_gloss_is_refused(self, ceb_db):
-        _line(ceb_db)
-        async with _client() as client:
-            resp = await client.post("/api/srs/sentence-blanks", json={"line_key": LINE, "start": SI[0], "end": SI[1]})
-        assert resp.status_code == 503
-        assert _row(ceb_db, SI) is None
-
-    async def test_a_second_post_is_the_same_row_and_no_model_call(self, ceb_db):
-        _line(ceb_db)
-        llm = _llm("unused")
-        async with _client() as client:
-            first = await client.post("/api/srs/sentence-blanks", json={"line_key": LINE, "start": BA[0], "end": BA[1]})
-            again = await client.post("/api/srs/sentence-blanks", json={"line_key": LINE, "start": BA[0], "end": BA[1]})
-        assert again.status_code == 200
-        assert again.json()["collocation_id"] == first.json()["collocation_id"]
-        assert again.json()["created"] is False
-        assert again.json()["gloss"] == "question particle"
-        llm.complete.assert_not_called()
-
-    @pytest.mark.parametrize(
-        ("line_key", "span", "status"),
-        [
-            ("sent:nowhere:1", BA, 404),
-            (LINE, (1, 3), 422),
-            (LINE, (NAA[0], BA[1]), 409),
-        ],
-    )
-    async def test_refusals(self, ceb_db, line_key, span, status):
-        _line(ceb_db)
-        _llm("x")
-        async with _client() as client:
-            resp = await client.post(
-                "/api/srs/sentence-blanks", json={"line_key": line_key, "start": span[0], "end": span[1]}
-            )
-        assert resp.status_code == status, resp.text
-        assert len(ceb_db.list_sibling_rows(LINE)) == 2
-
-    async def test_the_new_card_is_served_today_without_a_sync(self, ceb_db):
-        """The card-adding contract: a NEW latecomer is tail-appended to the frozen queue.
-
-        The line's other cards are reviewed and due later: a NEW sibling would bury
-        the mined card for the day, as Anki does (decision d: bury only)."""
-        _line(ceb_db)
-        for span in (NAA, None):
-            _reviewed(ceb_db, _row(ceb_db, span), due_at="2099-01-01T04:00:00+00:00")
-        async with _client() as client:
-            frozen = await client.get("/api/srs/review-queue?session_start=1")
-            assert frozen.json()["queue"] == []
-            resp = await client.post(
-                "/api/srs/sentence-blanks", json={"line_key": LINE, "start": BA[0], "end": BA[1], "gloss": "q"}
-            )
-            queue = await client.get("/api/srs/review-queue")
-        assert [i["id"] for i in queue.json()["queue"]] == [resp.json()["collocation_id"]]
-
-
-class TestRemoveRoute:
-    async def test_removes_a_new_blank(self, ceb_db):
-        _line(ceb_db)
-        async with _client() as client:
-            resp = await client.delete(
-                "/api/srs/sentence-blanks", params={"line_key": LINE, "start": NAA[0], "end": NAA[1]}
-            )
-        assert resp.status_code == 200, resp.text
-        assert resp.json() == {"status": "deleted"}
-        assert _row(ceb_db, NAA) is None
-
-    async def test_a_reviewed_blank_is_refused_without_confirm_then_removed_with_it(self, ceb_db):
-        _line(ceb_db)
-        _reviewed(ceb_db, _row(ceb_db, NAA))
-        params = {"line_key": LINE, "start": NAA[0], "end": NAA[1]}
-        async with _client() as client:
-            refused = await client.delete("/api/srs/sentence-blanks", params=params)
-            assert refused.status_code == 409
-            assert "history" in refused.json()["detail"]
-            assert _row(ceb_db, NAA) is not None
-            done = await client.delete("/api/srs/sentence-blanks", params={**params, "confirm": "true"})
-        assert done.status_code == 200
-        assert _row(ceb_db, NAA) is None
-
-    @pytest.mark.parametrize(("line_key", "span", "status"), [("sent:nowhere:1", NAA, 404), (LINE, BA, 404)])
-    async def test_not_found(self, ceb_db, line_key, span, status):
-        _line(ceb_db)
-        async with _client() as client:
-            resp = await client.delete(
-                "/api/srs/sentence-blanks", params={"line_key": line_key, "start": span[0], "end": span[1]}
-            )
-        assert resp.status_code == status

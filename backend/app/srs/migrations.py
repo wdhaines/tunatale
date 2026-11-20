@@ -19,7 +19,7 @@ from app.storage.db_backup import snapshot_before_migration
 
 _logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 51
+CURRENT_VERSION = 52
 
 
 class SchemaTooNewError(RuntimeError):
@@ -1538,6 +1538,20 @@ def migrate_v50_to_v51(conn: sqlite3.Connection) -> None:
     _set_version(conn, 51)
 
 
+def migrate_v51_to_v52(conn: sqlite3.Connection) -> None:
+    """Add ``sentence_card_marks``: the lesson cards the learner turned off (tunatale-h0q3.66).
+
+    A row is a card key (``sent:<set>:<line>[:<s>-<e>]``) that ``mint_lesson_cards``
+    skips, so a list card turned off stays off at every mint. TT-only: nothing is
+    written to Anki, and nothing syncs.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sentence_card_marks ("
+        "card_key TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    _set_version(conn, 52)
+
+
 def migrate_v43_to_v44(conn: sqlite3.Connection) -> None:
     """Record that a word's image search came back empty (``image_unavailable_at``).
 
@@ -1619,6 +1633,7 @@ _MIGRATIONS = {
     48: migrate_v48_to_v49,
     49: migrate_v49_to_v50,
     50: migrate_v50_to_v51,
+    51: migrate_v51_to_v52,
 }
 
 

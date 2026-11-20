@@ -26,6 +26,13 @@ from tests.test_lesson_card_list import _cards as _sentence_cards
 from tests.test_lesson_drill_cards import EXPECTED_KEYS, _keys
 from tests.test_lesson_drill_cards import _story as _drill_story
 
+_GRADE = "/api/srs/content/lesson-1/grade"
+
+
+def _mine(line_key: str) -> dict:
+    """A Grade Save that blanks the line's first word ("Hei", glossed "hi" by the line itself)."""
+    return {"sentence_edits": [{"line_key": line_key, "on": [[0, 3]], "off": []}]}
+
 
 def _client() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
@@ -222,16 +229,11 @@ class TestMining:
         _mint_mixed(db)
         before = _keys(db)
         async with _client() as c:
-            r = await c.post(
-                "/api/srs/sentence-blanks",
-                json={"line_key": "sent:test-01:drill-1", "start": 0, "end": 3, "gloss": "he"},
-            )
+            r = await c.post(_GRADE, json=_mine("sent:test-01:drill-1"))
             # control: the same request on the plain sentence line is accepted
-            ok = await c.post(
-                "/api/srs/sentence-blanks", json={"line_key": "sent:test-01:1", "start": 0, "end": 3, "gloss": "hi"}
-            )
+            ok = await c.post(_GRADE, json=_mine("sent:test-01:1"))
         assert r.status_code == 404
-        assert ok.status_code == 201
+        assert ok.status_code == 200, ok.text
         assert _keys(db) == [*before, "sent:test-01:1:0-3"]
 
 
@@ -319,11 +321,9 @@ class TestRowEdit:
         db = _install(_mixed_story())
         _mint_mixed(db)
         async with _client() as c:
-            mined = await c.post(
-                "/api/srs/sentence-blanks", json={"line_key": "sent:test-01:1", "start": 0, "end": 3, "gloss": "hi"}
-            )
-            assert mined.status_code == 201
-            cid = mined.json()["collocation_id"]
+            mined = await c.post(_GRADE, json=_mine("sent:test-01:1"))
+            assert mined.status_code == 200, mined.text
+            cid = db.get_collocation_ids_by_disambig_key("sent:test-01:1:0-3")[0]
             stored = db.get_collocation_by_id(cid)[1].syntactic_unit
             assert stored.disambig_key == "sent:test-01:1:0-3"
             r = await c.patch(f"/api/srs/items/{cid}", json={"text": "Endret tekst.", "translation": "changed"})

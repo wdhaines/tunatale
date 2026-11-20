@@ -492,27 +492,6 @@ class StatusResponse(BaseModel):
     status: str
 
 
-class AddSentenceBlankRequest(BaseModel):
-    """POST /api/srs/sentence-blanks: blank the words ``[start, end)`` of a line's text (tunatale-h0q3.52).
-
-    ``line_key`` is the line's ``sent:<lesson>:<line>``. ``gloss`` is optional:
-    without it the line's own word gloss is used, else the model's."""
-
-    line_key: str
-    start: int
-    end: int
-    gloss: str | None = None
-
-
-class AddSentenceBlankResponse(BaseModel):
-    """The blank's row; ``created`` is False when the line already had this blank."""
-
-    collocation_id: int
-    key: str
-    gloss: str
-    created: bool
-
-
 class ClozeSentenceVerdict(BaseModel):
     """One cloze sentence and the blind judge's verdict on it (tunatale-keb0).
 
@@ -2201,9 +2180,41 @@ class GradeWordSuggestion(BaseModel):
     will_create: bool
 
 
+class SentenceLineToken(BaseModel):
+    """One card of a lesson line: a written word's blank, or the whole line (tunatale-h0q3.66).
+
+    ``start``/``end``: the word in the line's ``text``. ``part``: the span the
+    lesson blanks inside the word (a linker suffix), which a tap toggles.
+    ``state``: ``on`` (a card exists or the list mints it at study), ``off``, or
+    ``declined`` (a list card turned off). ``origin``: ``lesson`` or ``mine``.
+    """
+
+    start: int
+    end: int
+    part: tuple[int, int] | None
+    state: Literal["on", "off", "declined"]
+    origin: Literal["lesson", "mine"]
+    reviewed: bool
+    gloss: str
+
+
+class SentenceLine(BaseModel):
+    """A lesson line the Grade page's New cards may mine (``app.srs.sentence_lines``)."""
+
+    line_key: str
+    speaker: str
+    text: str
+    english: str
+    # Its note is in Anki: the line keeps at least one card.
+    linked: bool
+    tokens: list[SentenceLineToken]
+    whole: SentenceLineToken
+
+
 class GradeSuggestions(BaseModel):
     words: list[GradeWordSuggestion]
     contrast: list[AffixCardPreview]
+    sentences: list[SentenceLine]
 
 
 class GradePlanResponse(BaseModel):
@@ -2244,6 +2255,18 @@ class RestoredKey(BaseModel):
     key: str
 
 
+class SentenceEdit(BaseModel):
+    """One line's changes in a Save (``sentence_mining.plan_line_edits``): spans as ``[start, end]``, or ``"whole"``.
+
+    ``confirm`` lets a reviewed card go (its history goes at the next sync).
+    """
+
+    line_key: str
+    on: list[tuple[int, int] | Literal["whole"]] = []
+    off: list[tuple[int, int] | Literal["whole"]] = []
+    confirm: bool = False
+
+
 class GradeRequest(BaseModel):
     """Body of POST /api/srs/content/{id}/grade. Explicit only: nothing absent is graded."""
 
@@ -2254,6 +2277,16 @@ class GradeRequest(BaseModel):
     # The first Save of a lesson marks it studied whatever is sent; a later
     # Save records another study pass only when this is true.
     studied: bool = False
+    sentence_edits: list[SentenceEdit] = []
+
+
+class NotMadeBlank(BaseModel):
+    """A blank a Save turned on and could not make: no gloss from the line or the model."""
+
+    line_key: str
+    start: int
+    end: int
+    word: str
 
 
 class GradeResponse(BaseModel):
@@ -2264,3 +2297,5 @@ class GradeResponse(BaseModel):
     created: int
     recorded_study: bool
     listen_count: int
+    # A blank turned on that could not be made; the page names each one.
+    not_made: list[NotMadeBlank] = []

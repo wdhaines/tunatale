@@ -213,7 +213,7 @@ export function makeGradePlan(overrides: Partial<GradePlan> = {}): GradePlan {
     cards: [],
     later: { recognition: 0, production: 0 },
     waiting_new: 0,
-    suggestions: { words: [], contrast: [] },
+    suggestions: { words: [], contrast: [], sentences: [] },
     ...overrides,
   };
 }

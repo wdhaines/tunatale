@@ -2924,8 +2924,8 @@ with SRSDatabase(':memory:') as db:
 ```
 
 ```output
-MRO: SRSDatabase > DbCollocationsMixin > DbDirectionsMixin > DbQueueMixin > DbCountsMixin > DbRevlogMixin > DbSyncMixin > DbMediaMixin > DbKvCacheMixin > DbHistogramMixin > DbLemmaCacheMixin > DbListensMixin > DbPendingGradesMixin > DbReviewsMixin > DbIgnoredLemmasMixin > DbSyncConflictsMixin > SRSDatabaseBase
-tables: anki_state_cache, cloze_sentence_cache, collocation_directions, collocation_tags, collocations, ignored_lemmas, image_query_cache, lemma_analysis_cache, lesson_listens, lesson_reviews, media, pending_listen_grades, sync_conflicts, tt_revlog, violations
+MRO: SRSDatabase > DbCollocationsMixin > DbDirectionsMixin > DbQueueMixin > DbCountsMixin > DbRevlogMixin > DbSyncMixin > DbMediaMixin > DbKvCacheMixin > DbHistogramMixin > DbLemmaCacheMixin > DbListensMixin > DbPendingGradesMixin > DbReviewsMixin > DbIgnoredLemmasMixin > DbSentenceMarksMixin > DbSyncConflictsMixin > SRSDatabaseBase
+tables: anki_state_cache, cloze_sentence_cache, collocation_directions, collocation_tags, collocations, ignored_lemmas, image_query_cache, lemma_analysis_cache, lesson_listens, lesson_reviews, media, pending_listen_grades, sentence_card_marks, sync_conflicts, tt_revlog, violations
 ```
 
 The package boundary matters more than the mixin split. `app/srs/anki_mirror/__init__.py` states it outright: if the "mirror Anki" strategy were ever dropped, that package and the `test_parity_*` goldens would go together. Each of its modules has exactly one import path (`app.srs.anki_mirror.<name>`); the older `app.srs.*` aliases were deleted so a second path cannot grow back unnoticed.
@@ -3375,7 +3375,7 @@ for n in range(43, 50):
 ```
 
 ```output
-22:CURRENT_VERSION = 51
+22:CURRENT_VERSION = 52
 migrate_v43_to_v44: Record that a word's image search came back empty (``image_unavailable_at``).
 migrate_v44_to_v45: LLM-written cloze sentences, cached per word (``cloze_sentence_cache``).
 migrate_v45_to_v46: Delete media rows whose collocation no longer exists.
@@ -3631,7 +3631,7 @@ def _next_production_position
 ```
 
 - **`_next_front_position(slots)`** is for TT's own additions (listen adds, clozes), which should surface immediately: `MAX(due)+1` under HighestPosition gather, `MIN(due)-slots` under DECK gather, written at `base + ord` so a note's templates stay contiguous.
-- **`_next_course_position(slots)`** is for a course's card list (Layer 92, notes tagged `tt-course`), whose order is the point: first-in-first-out after the highest course card still new, or a fresh region `COURSE_REGION_GAP` ahead of every new card; later front adds still land ahead of it. On a course line's "TT Sentence" note, a row that is not the course's (a blank the learner mined, `app/srs/sentence_mining.py`) goes to the front anyway (`front_ords`, `sync_engine._line_placement`). The writer tags such a note `tt-mined-c<N>` for that card (N = its cloze number), and the course anchor skips it, so a mined card the learner has not studied yet never becomes the position the next course card follows.
+- **`_next_course_position(slots)`** is for a course's card list (Layer 92, notes tagged `tt-course`), whose order is the point: first-in-first-out after the highest course card still new, or a fresh region `COURSE_REGION_GAP` ahead of every new card; later front adds still land ahead of it. On a course line's "TT Sentence" note, a row that is not the course's (a blank the learner mined, `app/srs/sentence_mining.py`) goes to the front anyway (`front_ords`, `sync_engine._line_placement`). The writer tags such a note `tt-mined-c<N>` for that card (N = its cloze number), and the course anchor skips it, so a mined card the learner has not studied yet never becomes the position the next course card follows. When a blank mined before the lesson was studied made the note, the course's own cards joining it at study make it a course note: the writer adds `tt-course` then, and tags every front card the note already holds (finding M3, tunatale-h0q3.66).
 - **`_next_production_position()`** is for production cards minted by `promote`. Under DECK gather they fill the reserved band `[-1_000_000, 0)` upward, so the first card minted is the first served and mint order survives across syncs. Under HighestPosition there is no band (`MAX(due)+1` is already the front), which is documented residual behaviour.
 
 Negative positions are load-bearing, not a hack. `cards.due` is an i32 and no Anki UI offers a negative start, so `tests/test_parity_front_positions.py` pins against the Anki binary that the scheduler gathers `[-1_000_000, -999_999, -5, 0, 7, 1518]` in that order. The assumption that `MAX(due)+1` was "the front" had been true for Slovene and was wrong for Norwegian, where it placed every fresh add behind 1,400 imported words; the diagnosis and the one-shot repair (`reposition_production_cards`, which refuses a second run keyed on the band) are recorded as Layers 83 and 84 in `docs/anki-parity-layers.md`.
@@ -3968,7 +3968,7 @@ print('RESET   :', ', '.join(sorted(u.TRANSFORM_TABLES)))
 ```
 
 ```output
-CLEARED : audio_files, curricula, lesson_listens, lesson_reviews, lessons, pending_listen_grades, review_sessions, sync_conflicts, tt_revlog, violations
+CLEARED : audio_files, curricula, lesson_listens, lesson_reviews, lessons, pending_listen_grades, review_sessions, sentence_card_marks, sync_conflicts, tt_revlog, violations
 KEPT    : cloze_sentence_cache, collocation_tags, ignored_lemmas, image_query_cache, lemma_analysis_cache, media, sqlite_sequence
 RESET   : anki_state_cache, collocation_directions, collocations
 ```
@@ -4083,7 +4083,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-112 operations
+110 operations
   9  (untagged)
   3  admin
   3  anki
@@ -4094,7 +4094,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
   4  llm
   3  pipeline
  15  review-sessions
- 41  srs
+ 39  srs
   5  srs-images
 ```
 
@@ -4147,7 +4147,6 @@ for (t, p), ms in sorted(rows.items()): print(f\"{'/'.join(ms):<12}{p.replace('/
  GET         /new
  GET         /queue-stats
  GET         /review-queue
- POST/DELETE /sentence-blanks
  GET         /stats
  POST        /translate
  POST        /translate-missing
@@ -5093,7 +5092,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grade-page-layout.spec.ts grade-say-english-blur.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grade-page-layout.spec.ts grade-say-english-blur.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;

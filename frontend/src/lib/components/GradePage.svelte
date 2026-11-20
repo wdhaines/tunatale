@@ -25,6 +25,15 @@
 		type GradeRange
 	} from '#lib/grading/grade.js';
 	import GradeButtons from './GradeButtons.svelte';
+	import SentenceLineEditor from './SentenceLineEditor.svelte';
+	import {
+		countOn,
+		initStage,
+		lineEdit,
+		newCards,
+		turnedOff as lineTurnedOff,
+		type LineStage
+	} from '#lib/grading/sentenceStage.js';
 
 	interface Props {
 		contentId: string;
@@ -51,6 +60,11 @@
 	/** Suggestions flipped from their default, by `kind:key`. */
 	let flipped = $state<Record<string, boolean>>({});
 	let studiedAgain = $state(false);
+	/** Each lesson line's cards as the learner has staged them, by line key; kept across a range change. */
+	let stages = $state<Record<string, LineStage>>({});
+	let showAllLines = $state(false);
+	/** Blanks the last Save could not make: named loudly (the owner wants loud failures). */
+	let notMade = $state('');
 
 	const now = new Date();
 
@@ -58,7 +72,11 @@
 		try {
 			const next = await api.getGradePlan(contentId, r);
 			// A slower response for a range since replaced must not win.
-			if (r === range) plan = next;
+			if (r !== range) return;
+			plan = next;
+			for (const line of next.suggestions.sentences) {
+				stages[line.line_key] ??= initStage(line);
+			}
 			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
@@ -112,7 +130,18 @@
 		flipped[sugKey(s)] = !flipped[sugKey(s)];
 		notice = '';
 	}
-	const newOn = $derived(suggestions.filter(isOn).length);
+	// ── Sentences ──
+	const sentences = $derived(plan?.suggestions.sentences ?? []);
+	const stageOf = (line: (typeof sentences)[number]) => stages[line.line_key] ?? initStage(line);
+	// A line with cards is open; the rest fold behind one button (owner, 2026-11-20).
+	const openLines = $derived(sentences.filter((l) => showAllLines || countOn(initStage(l)) > 0 || countOn(stageOf(l)) > 0));
+	const foldedLines = $derived(sentences.length - openLines.length);
+	const sentenceEdits = $derived(sentences.flatMap((l) => lineEdit(l, stageOf(l)) ?? []));
+	const sentencesNew = $derived(sentences.reduce((n, l) => n + newCards(l, stageOf(l), plan?.studied ?? false), 0));
+	const sentencesOff = $derived(sentences.reduce((n, l) => n + lineTurnedOff(l, stageOf(l)), 0));
+	const sentenceCards = $derived(sentences.reduce((n, l) => n + countOn(stageOf(l)), 0));
+
+	const newOn = $derived(suggestions.filter(isOn).length + sentencesNew);
 	const declined = $derived(suggestions.filter((s) => s.fits && !isOn(s)).map((s) => ({ kind: s.kind, key: s.key })));
 	const overCap = $derived(suggestions.filter((s) => !s.fits && isOn(s)).map((s) => ({ kind: s.kind, key: s.key })));
 
@@ -133,7 +162,12 @@
 	const canSave = $derived(
 		plan !== null &&
 			!saving &&
-			(!plan.studied || cardGrades.length > 0 || newOn > 0 || declined.length > 0 || studiedAgain)
+			(!plan.studied ||
+				cardGrades.length > 0 ||
+				newOn > 0 ||
+				declined.length > 0 ||
+				sentenceEdits.length > 0 ||
+				studiedAgain)
 	);
 
 	function savedText(r: GradeResponse, turnedOff: number): string {
@@ -150,19 +184,25 @@
 		saving = true;
 		notice = '';
 		error = '';
-		const turnedOff = declined.length;
+		notMade = '';
+		const turnedOff = declined.length + sentencesOff;
 		try {
 			const result = await api.saveGrades(contentId, {
 				card_grades: cardGrades,
 				declined,
 				over_cap: overCap,
-				studied: studiedAgain
+				studied: studiedAgain,
+				sentence_edits: sentenceEdits
 			});
 			grades = {};
 			opened = {};
 			flipped = {};
+			stages = {};
 			studiedAgain = false;
 			notice = savedText(result, turnedOff);
+			if (result.not_made.length > 0) {
+				notMade = t('gradePage.notMade', { words: result.not_made.map((b) => b.word).join(', ') });
+			}
 			await load(range);
 			void listenedStore.refresh();
 			queueStatsStore.refresh();
@@ -240,7 +280,7 @@
 		{#if plan === null}
 			{#if !error}<p class="muted">{t('gradePage.loading')}</p>{/if}
 		{:else if tab === 'new'}
-			{#if suggestions.length === 0}
+			{#if suggestions.length === 0 && sentences.length === 0}
 				<p class="muted">{t('gradePage.newNone')}</p>
 			{/if}
 			{#each [['word', 'gradePage.newWords'], ['contrast', 'gradePage.newContrast']] as const as [kind, heading] (kind)}
@@ -262,6 +302,37 @@
 					</section>
 				{/if}
 			{/each}
+			{#if sentences.length > 0}
+				<section class="group sentences">
+					<div class="group-head">
+						<h2>{t('gradePage.newSentences')}</h2>
+						<span class="group-count"
+							>{t('gradePage.sentencesCount', {
+								count: sentences.length,
+								cards: t('sentenceLine.cards', { count: sentenceCards })
+							})}</span
+						>
+					</div>
+					<p class="hint">{t('gradePage.sentencesHint')}</p>
+					{#each openLines as line (line.line_key)}
+						<SentenceLineEditor
+							{line}
+							stage={stageOf(line)}
+							onchange={() => {
+								stages[line.line_key] ??= stageOf(line);
+								notice = '';
+							}}
+						/>
+					{/each}
+					{#if foldedLines > 0}
+						<button class="disclose" onclick={() => (showAllLines = true)}
+							>{foldedLines === sentences.length
+								? t('gradePage.showLines', { count: foldedLines })
+								: t('gradePage.showMoreLines', { count: foldedLines })}</button
+						>
+					{/if}
+				</section>
+			{/if}
 			{#if plan.waiting_new > 0}
 				<p class="muted">{t('gradePage.waitingNew', { count: plan.waiting_new })}</p>
 			{/if}
@@ -326,6 +397,7 @@
 
 	<footer class="foot">
 		{#if notice}<p class="notice" role="status">{notice}</p>{/if}
+		{#if notMade}<p class="not-made" role="alert">{notMade}</p>{/if}
 		{#if plan && !plan.studied}
 			<p class="hint">{t('gradePage.firstSaveStudies')}</p>
 		{/if}
@@ -578,6 +650,41 @@
 		margin: 0;
 		color: var(--color-success);
 		font-size: 0.85rem;
+	}
+	.not-made {
+		margin: 0;
+		color: var(--color-danger);
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+	.group-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+	.group-count {
+		font-size: 0.75rem;
+		color: var(--color-muted);
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+	.sentences .hint {
+		font-size: 0.75rem;
+	}
+	.sentences :global(.line + .line) {
+		border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+	}
+	.disclose {
+		font: inherit;
+		font-size: 0.85rem;
+		color: var(--color-primary);
+		background: none;
+		border: 0;
+		padding: 0.55rem 0;
+		cursor: pointer;
+		text-align: left;
+		font-weight: 600;
 	}
 	.hint {
 		margin: 0;

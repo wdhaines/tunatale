@@ -357,3 +357,94 @@ class TestSyncCreateNewCourse:
         )
         (note,) = conn.execute("SELECT tags FROM notes").fetchall()
         assert COURSE_TAG not in note["tags"].split()
+
+
+# --- a blank mined on a list line before its lesson is studied (tunatale-h0q3.66, finding M3) ---
+#
+# The mined blank makes the line's note first, untagged and at the front. At study the list's
+# cards join it in a fresh course region. The note must then carry ``tt-course``, or
+# ``_next_course_position`` cannot see those cards and the next lesson opens another region
+# 100,000 positions ahead of them. It must also tag the mined card ``tt-mined-c<N>``: with the
+# course tag alone, the mined card (due 4) counts as a course card and the next lesson lands
+# behind it, tied with the frequency deck. Probed 2026-11-20 (briefs/findings-sentence-mining-
+# m3-probe-2026-11-20.py), each candidate fix emulated by hand.
+
+_LINE = SentenceCard(
+    lesson_id="test-01",
+    line_index=2,
+    speaker="Per",
+    text="Jeg tar en kaffe, takk.",
+    spoken="Jeg tar en kaffe, takk.",
+    english="I'll have a coffee, thanks.",
+    glosses=(),
+)
+_MINED = _LINE.with_blank((4, 7), "take(s)")  # "tar"; unit() source is "user"
+_LIST_BLANK = _LINE.with_blank((11, 16), "coffee")  # "kaffe"
+_NEXT_LESSON = SentenceCard(
+    lesson_id="test-02",
+    line_index=1,
+    speaker="Kari",
+    text="Hva koster det?",
+    spoken="Hva koster det?",
+    english="What does it cost?",
+    glosses=(),
+)
+
+
+def _as_course(card: SentenceCard):
+    return replace(card.unit(), source="course")
+
+
+class TestMinedBeforeStudy:
+    @staticmethod
+    async def _run(*, mined_first: bool) -> dict:
+        from app.common.guid import compute_guid
+        from app.models.srs_item import Direction
+
+        db = _make_db()
+        conn = _make_dual_collection_conn()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS graves (oid INTEGER NOT NULL, type INTEGER NOT NULL, "
+            "usn INTEGER NOT NULL, PRIMARY KEY (oid, type))"
+        )
+        add_sentence_notetype(conn)
+        _seed_new_card(conn, 1, 5)
+
+        async def sync():
+            await AnkiSync(
+                db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="no"
+            ).sync_create_new(deck_name="0. Slovene", model_name="Slovene Vocabulary")
+
+        def row(unit):
+            return db.get_collocation_by_guid(compute_guid(unit.text, "no", unit.disambig_key))
+
+        def due(unit):
+            cid = row(unit).directions[Direction.PRODUCTION].anki_card_id
+            return conn.execute("SELECT due, ord FROM cards WHERE id = ?", (cid,)).fetchone()
+
+        study = [_as_course(_LIST_BLANK), _as_course(_LINE)]
+        for units in [[_MINED.unit()], study] if mined_first else [study, [_MINED.unit()]]:
+            for unit in units:
+                assert db.add_collocation(unit, "no")
+            await sync()
+        assert db.add_collocation(_as_course(_NEXT_LESSON), "no")
+        await sync()
+        return {
+            "tags": _tags(conn, row(_MINED.unit()).anki_note_id).split(),
+            "line_notes": {row(u).anki_note_id for u in [_MINED.unit(), *study]},
+            "mined_ord": due(_MINED.unit())["ord"],
+            "lesson1": [due(u)["due"] for u in study],
+            "lesson2": due(_as_course(_NEXT_LESSON))["due"],
+        }
+
+    @pytest.mark.parametrize("mined_first", [False, True], ids=["control_study_first", "mined_first"])
+    async def test_the_line_note_is_a_course_note_with_its_mined_card_tagged(self, mined_first):
+        got = await self._run(mined_first=mined_first)
+        assert len(got["line_notes"]) == 1 and None not in got["line_notes"]  # M2: one note, nothing held
+        assert COURSE_TAG in got["tags"]
+        assert f"{MINED_TAG_PREFIX}{got['mined_ord'] + 1}" in got["tags"]
+
+    @pytest.mark.parametrize("mined_first", [False, True], ids=["control_study_first", "mined_first"])
+    async def test_the_next_lesson_lands_right_behind_this_lessons_course_cards(self, mined_first):
+        got = await self._run(mined_first=mined_first)
+        assert got["lesson2"] == max(got["lesson1"]) + 1, got
