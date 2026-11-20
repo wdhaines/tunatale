@@ -124,7 +124,7 @@ Mechanics and history: `.claude/rules/gate-and-ci.md`.
 ## Critical Rules
 
 1. **Strict TDD**: red-green-refactor (`.claude/rules/tdd.md`). Run `./test.sh` BEFORE declaring victory — never commit with failing tests or coverage failures.
-2. **Ask for help when stuck**: 3+ failed attempts on the same problem → stop spinning, report what you tried, and ask the user for guidance (or escalation to a stronger model / more thinking).
+2. **Ask for help when stuck**: 3+ failed attempts on the same problem → stop spinning, report what you tried, and ask the user for guidance (or escalation to an Opus xhigh window, § Models and review).
 
 ## Delivering
 
@@ -145,6 +145,16 @@ Drill cards shipped "in TT" (#421) with a `drill` field that no component read. 
 - **Gate.** `scripts/check_response_fields_read.py` fails a schema field no frontend code names; comments, CSS and type declarations do not count (allowlist with a reason in `backend/tests/response_fields_unread_allowlist.txt`). It matches by name, so it misses a field read for another schema. A new card kind adds its card to `frontend/tests/review-drill-card.spec.ts`, the Review page journey.
 - **Report.** The screenshot in item 4 comes from the app running against a real row of the new kind. A component test built from a hand-written object does not stand in for it: the Grade page's test pinned "step 2 of 16" on step 1.
 
+## Models and review — Opus medium builds, Opus xhigh reviews
+
+The owner's split (2026-11-20; Fable 5.2 held the reviewer's seat until then): **Opus 5.5 at medium effort is the daily driver**. It builds, Anki/SRS/sync included, writes the BP briefs, runs the gate, and opens the PRs. **Opus 5.5 at xhigh is the reviewer.** BP and the other executors take mechanical work under § Delegation.
+
+- **Reviewed before the owner merges:** every PR (the substantial class in § Committing), once CI is green and not only the local gate. Direct-to-`main` commits are reviewed in a batch at the next review window, from the end of the last reviewed range.
+- **Who reviews:** a window that neither built nor corrected the change, at xhigh (`/model opus`, `/effort xhigh`). A medium builder reading its own diff is not a review. Code Fable wrote counts as reviewed (owner, 2026-11-20).
+- **What a review is:** adversarial. For each change, name what would break it, then try it. A defect is reported only after a probe and a control (`tdd.md` § Run a control), and is labelled confirmed (probed) or plausible (read only). Read the Anki rule files before an Anki/SRS/sync diff. Learner-facing work gets § Work the learner sees.
+- **Where the review lands:** findings go in `.beads-tasks/briefs/findings-review-<date>.md`, headed by the range reviewed (`<from>..<to>`). A finding worth building becomes a bead, or a comment on the nearest one. The window's handoff mail is titled `REVIEW` and names the range's end, which is where the next batch starts.
+- **The reviewer also does:** oracle design, Anki/SRS semantics questions, designs and briefs that need judgment, and the escalation in Critical Rule 2. It does not build; "Continue." in a review window reviews and never runs a builder's handoff list.
+
 ## Delegation — BP is the default executor
 
 Orchestrator tokens are the scarce resource; Big Pickle's (the free executor, via the `bp-delegate` skill) are not. Delegating mechanical work is the default, and doing a multi-file mechanical edit inline should have a reason you could state.
@@ -159,7 +169,7 @@ Orchestrator tokens are the scarce resource; Big Pickle's (the free executor, vi
 Committing and pushing are standing-authorized; merging into `main` is the checkpoint the user watches. The repo is public, so the merge is the irreversible, world-visible step.
 
 - **Small and self-contained** (docs, a settings field, a one-module fix, a test addition): commit to `main` and push without asking.
-- **Substantial** (anything touching Anki/SRS/sync, spanning several modules, or whose blast radius you would have to think about): branch and open a PR, then stop. The user approves the merge. A run of direct-to-`main` commits on work that should have been branched means this checkpoint has silently stopped existing.
+- **Substantial** (anything touching Anki/SRS/sync, spanning several modules, or whose blast radius you would have to think about): branch and open a PR, then stop. An Opus xhigh window reviews it (§ Models and review), then the user approves the merge. A run of direct-to-`main` commits on work that should have been branched means this checkpoint has silently stopped existing.
 - **If it feels risky for any reason you can name, ask**, even when it is small.
 - **Don't stack a PR on another open PR's branch.** Merging the parent deletes the base branch, and GitHub closes the child PR for good (#103 → #104). Base the second PR on `main` and state the merge order in its body, or keep going on the same branch.
 - Executors (BP et al.) leave their work uncommitted by default (`.beads-tasks/DISPATCH-PREAMBLE.md`). The orchestrator may let one commit on its own branch for mechanical work — never for Anki/SRS/sync.
