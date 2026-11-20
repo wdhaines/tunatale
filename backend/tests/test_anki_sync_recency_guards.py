@@ -18,6 +18,7 @@ import concurrent.futures
 import json
 import logging
 import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -717,3 +718,180 @@ def test_a_clean_of_a_direction_deleted_after_the_read_has_nothing_to_keep() -> 
         )
         conn.commit()
     assert db.mark_direction_clean(item.guid, REC, read=read) is True
+
+
+# ── Layer 99, review R1-R4: the change left dirty must also survive the NEXT sync ──────────────────────────────
+# cards.mod is whole seconds. Push 1 writes the card after the grade; when a second passes in between, sync 2 read
+# TT's own write as "Anki changed after the grade" (Layer 69's recency guard) and dropped the change. The tests
+# cross the second inside the hook so the timing is deterministic, not a 0.3% flake.
+
+
+def _to_next_second() -> None:
+    time.sleep(1.0 - (time.time() % 1.0) + 0.05)
+
+
+def _hook_after_list_dirty(db, action, *, cross_second: bool):
+    real_list = db.list_dirty
+
+    def listed_then_changed(*a, **k):
+        listed = real_list(*a, **k)
+        _now_from_another_thread(action)
+        if cross_second:
+            _to_next_second()
+        return listed
+
+    db.list_dirty = listed_then_changed
+
+
+def _hook_in_set_due_date(sync, action, *, cross_second: bool):
+    real = sync._writer.set_due_date
+
+    def changed_meanwhile(*a, **k):
+        out = real(*a, **k)
+        _now_from_another_thread(action)
+        if cross_second:
+            _to_next_second()
+        return out
+
+    sync._writer.set_due_date = changed_meanwhile
+
+
+@pytest.mark.parametrize("hook", ["in_set_due_date", "after_list_dirty"])
+@pytest.mark.parametrize("cross_second", [False, True], ids=["same_second", "next_second"])
+async def test_a_lapse_made_during_the_push_survives_the_next_sync(
+    synthetic_collection: SyntheticCollection, hook, cross_second
+) -> None:
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await _tt_grade(cid)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        action = lambda: _tt_grade(cid, "again")  # noqa: E731
+        if hook == "in_set_due_date":
+            _hook_in_set_due_date(sync, action, cross_second=cross_second)
+        else:
+            _hook_after_list_dirty(db, action, cross_second=cross_second)
+        sync.sync_push()
+        db.__dict__.pop("list_dirty", None)
+        sync.sync_pull()
+    _full_sync(db, synthetic_collection)
+    card = _anki_card(synthetic_collection.path)
+    assert (card["type"], card["queue"]) == (3, 1)
+    assert _tt_dir(db, cid).state == SRSState.RELEARNING and _dirty(db, cid) == 0
+
+
+async def test_control_a_phone_graduation_after_a_lapse_left_dirty_still_wins(
+    synthetic_collection: SyntheticCollection,
+) -> None:
+    """Recording TT's own write must not blind the push to a real later change: the phone graduates the card
+    between the two syncs (a different cards.mod, later than the lapse), and Layer 69 still defers to it."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await _tt_grade(cid)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        _hook_after_list_dirty(db, lambda: _tt_grade(cid, "again"), cross_second=True)
+        sync.sync_push()
+        db.__dict__.pop("list_dirty", None)
+        sync.sync_pull()
+    assert _dirty(db, cid) == 1
+    _to_next_second()
+    now = datetime.now(UTC)
+    today = anki_today_col_day(synthetic_collection.col_crt, now)
+    _phone_review(
+        synthetic_collection.path, at=now + timedelta(seconds=2), stability=33.0, due_col_day=today + 30, ivl=30
+    )
+    _full_sync(db, synthetic_collection)
+    card = _anki_card(synthetic_collection.path)
+    assert (card["type"], card["queue"], card["due"]) == (2, 2, today + 30) and card["data"]["s"] == 33.0
+    assert _tt_dir(db, cid).state == SRSState.REVIEW
+
+
+@pytest.mark.parametrize("cross_second", [False, True], ids=["same_second", "next_second"])
+@pytest.mark.parametrize("start", ["review", "relearning"])
+async def test_an_undo_made_during_the_push_survives_the_next_sync(
+    synthetic_collection: SyntheticCollection, start, cross_second
+) -> None:
+    """R3: when the undone Good graduated a RELEARNING card, the restored row is in steps and takes the steps
+    branch's anki_ahead check, which read TT's own push-1 write as Anki being ahead."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    if start == "relearning":
+        await _tt_grade(cid, "again")
+        _full_sync(db, synthetic_collection)  # both RELEARNING, clean
+    before = _tt_dir(db, cid)
+    await _tt_grade(cid)  # Good
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        _hook_in_set_due_date(sync, lambda: _tt_undo(cid), cross_second=cross_second)
+        sync.sync_push()
+        sync.sync_pull()
+    _full_sync(db, synthetic_collection)
+    card = _anki_card(synthetic_collection.path)
+    assert _tt_dir(db, cid).state == before.state
+    assert (card["type"], card["queue"]) == ((3, 1) if start == "relearning" else (2, 2))
+
+
+@pytest.mark.parametrize("undo", [False, True], ids=["control_plain_grade", "undo_during_push"])
+async def test_a_phone_review_after_an_undo_during_the_push_still_wins(
+    synthetic_collection: SyntheticCollection, undo
+) -> None:
+    """R2: the undo's forced write must not override a phone review made between the two syncs (Layer 97).
+    Control: a plain TT grade the phone reviews over, Layer 97's own case."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await _tt_grade(cid)
+    if undo:
+        with sqlite3.connect(synthetic_collection.path) as conn:
+            conn.row_factory = sqlite3.Row
+            sync = _sync(db, conn, synthetic_collection)
+            _hook_in_set_due_date(sync, lambda: _tt_undo(cid), cross_second=False)
+            sync.sync_push()
+            sync.sync_pull()
+        assert _dirty(db, cid) == 1
+    _to_next_second()
+    now = datetime.now(UTC)
+    today = anki_today_col_day(synthetic_collection.col_crt, now)
+    _phone_review(
+        synthetic_collection.path, at=now + timedelta(seconds=2), stability=33.0, due_col_day=today + 30, ivl=30
+    )
+    _full_sync(db, synthetic_collection)
+    card = _anki_card(synthetic_collection.path)
+    assert card["due"] == today + 30 and card["data"]["s"] == 33.0
+    assert _tt_dir(db, cid).stability == 33.0
+
+
+async def _undo_status(cid: int) -> int:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(f"/api/srs/items/{cid}/direction/recognition/undo")
+    return resp.status_code
+
+
+@pytest.mark.parametrize("when", ["control_after_sync", "during_push"])
+async def test_undo_refuses_a_grade_the_push_already_sent(
+    synthetic_collection: SyntheticCollection, when, caplog
+) -> None:
+    """R4: undo reads dirty_fsrs as "not yet in Anki". A grade made during the push has its revlog row sent in
+    that push yet stays dirty (Layer 99), so the push drops the undo snapshot when it sends that row."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    await _tt_grade(cid)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        if when == "during_push":
+            _hook_in_set_due_date(sync, lambda: _tt_grade(cid, "again"), cross_second=False)
+        sync.sync_push()
+        sync.sync_pull()
+    if when == "control_after_sync":
+        await _tt_grade(cid, "again")  # never pushed: undo is allowed
+    status = await _undo_status(cid)
+    assert status == (200 if when == "control_after_sync" else 409)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        _full_sync(db, synthetic_collection)
+    with db._get_conn() as c:
+        tt_rev = [
+            r[0] for r in c.execute("SELECT button_chosen FROM tt_revlog WHERE collocation_id = ? ORDER BY id", (cid,))
+        ]
+    card = _anki_card(synthetic_collection.path)
+    assert [r["ease"] for r in card["revlog"]] == tt_rev
+    assert "PUSH_DEFERRED_TO_LATER_ANKI_REVIEW" not in caplog.text

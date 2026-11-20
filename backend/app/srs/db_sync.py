@@ -11,8 +11,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NamedTuple
 
-from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
-from app.srs.db_base import _DIR_COLUMNS, FLAG_CARD_DATA_SQL, _parse_last_review
+from app.models.srs_item import Direction, DirectionState, SRSItem
+from app.srs.db_base import _DIR_COLUMNS, FLAG_CARD_DATA_SQL, direction_state_from_row
 
 if TYPE_CHECKING:
     from app.srs.sentence_card import SentenceCard
@@ -428,34 +428,8 @@ class DbSyncMixin:
                 ).fetchall()
             result = []
             for row in rows:
-                d = Direction(row["direction"])
-                due_at = datetime.fromisoformat(row["due_at"])
-                prior_state_raw = row["prior_state"]
-                ds = DirectionState(
-                    direction=d,
-                    due_at=due_at,
-                    stability=row["stability"],
-                    difficulty=row["fsrs_difficulty"],
-                    reps=row["reps"],
-                    lapses=row["lapses"],
-                    state=SRSState(row["state"]),
-                    last_review=_parse_last_review(row["last_review"]),
-                    last_review_time_ms=row["last_review_time_ms"] or 0,
-                    anki_card_id=row["anki_card_id"],
-                    dirty_fsrs=bool(row["dirty_fsrs"]),
-                    last_synced_at=row["last_synced_at"],
-                    last_rating=row["last_rating"],
-                    left=row["left"],
-                    prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
-                    prior_left=row["prior_left"],
-                    prior_stability=row["prior_stability"],
-                    bury_kind=row["bury_kind"],
-                    # Load-bearing for the push loop's row_force_fsrs decision —
-                    # without it a restored direction never force-writes its
-                    # stability to Anki (the same silent-False trap as bury_kind).
-                    fsrs_force_next=bool(row["fsrs_force_next"]),
-                )
-                result.append((row["guid"], d, ds))
+                ds = direction_state_from_row(row)
+                result.append((row["guid"], ds.direction, ds))
         return result
 
     def list_recently_graded_clean(
@@ -494,39 +468,9 @@ class DbSyncMixin:
                 ).fetchall()
             result = []
             for row in rows:
-                d = Direction(row["direction"])
                 # SQL already filters: dirty_fsrs = 0 AND last_rating IS NOT NULL
-                # No need for last_review > last_synced_at check since last_rating
-                # being non-NULL indicates a pending revlog write.
-                last_review_dt = _parse_last_review(row["last_review"])
-                last_synced_at = row["last_synced_at"]
-                due_at = datetime.fromisoformat(row["due_at"])
-                prior_state_raw = row["prior_state"]
-                ds = DirectionState(
-                    direction=d,
-                    due_at=due_at,
-                    stability=row["stability"],
-                    difficulty=row["fsrs_difficulty"],
-                    reps=row["reps"],
-                    lapses=row["lapses"],
-                    state=SRSState(row["state"]),
-                    last_review=last_review_dt,
-                    last_review_time_ms=row["last_review_time_ms"] or 0,
-                    anki_card_id=row["anki_card_id"],
-                    dirty_fsrs=bool(row["dirty_fsrs"]),
-                    last_synced_at=last_synced_at,
-                    last_rating=row["last_rating"],
-                    left=row["left"],
-                    prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
-                    prior_left=row["prior_left"],
-                    prior_stability=row["prior_stability"],
-                    bury_kind=row["bury_kind"],
-                    # fsrs_force_next is load-bearing here: the push loop reads it
-                    # off the list_recently_graded_clean DirectionState for the
-                    # row_force_fsrs decision. Same silent-False trap as bury_kind.
-                    fsrs_force_next=bool(row["fsrs_force_next"]),
-                )
-                result.append((row["guid"], d, ds))
+                ds = direction_state_from_row(row)
+                result.append((row["guid"], ds.direction, ds))
         return result
 
     # What a push read and acted on (Layer 99): a grade, an undo, a reset or a (un)suspension made after the
@@ -542,6 +486,9 @@ class DbSyncMixin:
         the push read its list), set it dirty instead and return False; the next push carries the newer
         state. An undo restores a clean pre-grade row, so leaving the flag alone would let the next pull
         take the undone grade back from Anki. Returns True when the row was cleared or no longer exists.
+
+        Without ``read`` the clear is unconditional. ``sync_push`` always passes ``read``; the bare form is
+        for tests that set a row up as already pushed.
         """
         with self._get_conn() as conn:
             row = conn.execute("SELECT id FROM collocations WHERE guid = ?", (guid,)).fetchone()
@@ -595,6 +542,16 @@ class DbSyncMixin:
                 return False
             self._commit(conn)
             return True
+
+    def set_anki_card_mod(self, guid: str, direction: Direction, mod: int) -> None:
+        """Store Anki's current ``cards.mod`` for one direction without touching anything else (Layer 99)."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE collocation_directions SET anki_card_mod = ?"
+                " WHERE direction = ? AND collocation_id = (SELECT id FROM collocations WHERE guid = ?)",
+                (mod, direction.value, guid),
+            )
+            self._commit(conn)
 
     def set_dirty_fields(self, guid: str, fields_str: str) -> None:
         """Set dirty_fields for the collocation identified by guid."""

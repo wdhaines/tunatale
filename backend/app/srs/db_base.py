@@ -30,6 +30,44 @@ def _parse_last_review(value: str | None) -> datetime | None:
     return dt
 
 
+def direction_state_from_row(row: sqlite3.Row) -> DirectionState:
+    """One ``collocation_directions`` row (its ``direction`` plus every ``_DIR_COLUMNS`` column) as a
+    DirectionState. The one builder every reader shares: hand-built copies in ``list_dirty`` and
+    ``list_recently_graded_clean`` silently dropped fields (``bury_kind``, ``fsrs_force_next``, then
+    ``anki_card_mod``, which made the push read every card as changed since the pull; Layer 99)."""
+    d = Direction(row["direction"])
+    due_at = (
+        datetime.fromisoformat(row["due_at"]) if row["due_at"] else datetime.fromisoformat("2026-01-01T04:00:00+00:00")
+    )
+    prior_state_raw = row["prior_state"]
+    introduced_at_raw = row["introduced_at"]
+    return DirectionState(
+        direction=d,
+        due_at=due_at,
+        stability=row["stability"],
+        difficulty=row["fsrs_difficulty"],
+        reps=row["reps"],
+        lapses=row["lapses"],
+        state=SRSState(row["state"]),
+        last_review=_parse_last_review(row["last_review"]),
+        last_review_time_ms=row["last_review_time_ms"] or 0,
+        anki_card_id=row["anki_card_id"],
+        anki_card_mod=row["anki_card_mod"],
+        anki_due=row["anki_due"],
+        anki_ord=row["anki_ord"],
+        dirty_fsrs=bool(row["dirty_fsrs"]),
+        last_synced_at=row["last_synced_at"],
+        last_rating=row["last_rating"],
+        left=row["left"],
+        prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
+        prior_left=row["prior_left"],
+        prior_stability=row["prior_stability"],
+        introduced_at=datetime.fromisoformat(introduced_at_raw) if introduced_at_raw else None,
+        bury_kind=row["bury_kind"] if "bury_kind" in row.keys() else None,  # noqa: SIM118
+        fsrs_force_next=bool(row["fsrs_force_next"]),
+    )
+
+
 # Single-sourced in app.srs.anki_mirror.rollover; the legacy name stays importable here
 # for existing call sites and tests.
 _anki_day_bounds_utc = anki_day_bounds_utc
@@ -328,39 +366,8 @@ class SRSDatabaseBase:
         ).fetchall()
         directions: dict[Direction, DirectionState] = {}
         for row in rows:
-            d = Direction(row["direction"])
-            due_at = (
-                datetime.fromisoformat(row["due_at"])
-                if row["due_at"]
-                else datetime.fromisoformat("2026-01-01T04:00:00+00:00")
-            )
-            prior_state_raw = row["prior_state"]
-            introduced_at_raw = row["introduced_at"]
-            directions[d] = DirectionState(
-                direction=d,
-                due_at=due_at,
-                stability=row["stability"],
-                difficulty=row["fsrs_difficulty"],
-                reps=row["reps"],
-                lapses=row["lapses"],
-                state=SRSState(row["state"]),
-                last_review=_parse_last_review(row["last_review"]),
-                last_review_time_ms=row["last_review_time_ms"] or 0,
-                anki_card_id=row["anki_card_id"],
-                anki_card_mod=row["anki_card_mod"],
-                anki_due=row["anki_due"],
-                anki_ord=row["anki_ord"],
-                dirty_fsrs=bool(row["dirty_fsrs"]),
-                last_synced_at=row["last_synced_at"],
-                last_rating=row["last_rating"],
-                left=row["left"],
-                prior_state=SRSState(prior_state_raw) if prior_state_raw else None,
-                prior_left=row["prior_left"],
-                prior_stability=row["prior_stability"],
-                introduced_at=datetime.fromisoformat(introduced_at_raw) if introduced_at_raw else None,
-                bury_kind=row["bury_kind"] if "bury_kind" in row.keys() else None,  # noqa: SIM118
-                fsrs_force_next=bool(row["fsrs_force_next"]),
-            )
+            ds = direction_state_from_row(row)
+            directions[ds.direction] = ds
         return directions
 
     def _row_to_item(self, conn: sqlite3.Connection, row: sqlite3.Row) -> SRSItem:

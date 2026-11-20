@@ -134,4 +134,6 @@ def test_public_method_count_pinned() -> None:
     #  in review, read from tt_revlog — 5i1p.10)
     # +rewrite_lesson_rows (a card the lesson corrected is updated in place, its whole
     #  line in one transaction, its guid kept — adxy)
-    assert count == 155
+    # +set_anki_card_mod (a push that leaves a row dirty records its own card write as
+    #  the mod TT last saw, so the next push does not read it as Anki's — Layer 99)
+    assert count == 156
