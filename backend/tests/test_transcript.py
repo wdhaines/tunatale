@@ -2960,6 +2960,35 @@ class TestPartsLine:
         word = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0]
         assert word.parts is None
 
+    def _named(self, text: str, glosses: list[dict]) -> Lesson:
+        lesson = _make_lesson([("female-1", text)], lang="ceb")
+        lesson.generation_metadata = {"story": {"dialogue_glosses": glosses}}
+        return lesson
+
+    def test_a_word_the_lesson_marks_as_a_name_carries_none(self):
+        """Abaya is a surname in Wolff's lesson, not abáy + -a 'do it to it!'
+        (tunatale-tofg.18). The lesson's ``kind: name`` gloss says so; the verb
+        beside it keeps its parts, and case does not decide."""
+        lesson = self._named(
+            "Moadto si abaya.",
+            [
+                {"word": "Abaya", "translation": "a surname", "kind": "name"},
+                {"word": "moadto", "translation": "will go"},
+            ],
+        )
+        words = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words
+        assert [(w.surface, w.parts is None) for w in words] == [("Moadto", False), ("si", True), ("abaya", True)]
+
+    def test_a_loanword_is_not_a_name(self):
+        """Only ``kind: name`` holds the decoder back; a loan's gloss leaves it reading."""
+        lesson = self._named("Abaya.", [{"word": "Abaya", "translation": "x", "kind": "loan"}])
+        assert extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0].parts is not None
+
+    def test_without_the_lesson_saying_so_the_decoder_does_not_guess_names(self):
+        """The control: the same word, unmarked, still reads as abáy + -a (brief G7)."""
+        lesson = _make_lesson([("female-1", "Abaya.")], lang="ceb")
+        assert extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0].parts is not None
+
     def test_a_language_with_no_dictionary_carries_none(self):
         lesson = _make_lesson([("female-1", "en gang til")], lang="no")
         assert [w.parts for w in extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words] == [

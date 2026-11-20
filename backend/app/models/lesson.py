@@ -108,6 +108,18 @@ class Section:
             raise ValueError(f"section_type must be a SectionType enum, got {type(self.section_type)}")
 
 
+def story_gloss_words(story: dict, kinds: Iterable[str]) -> frozenset[str]:
+    """The words a Story JSON's dialogue glosses mark as one of *kinds* (``name``, ``loan``;
+    tunatale-lat6), folded as the drill compares words: no case, hyphens or end punctuation."""
+    wanted = frozenset(kinds)
+    words = (
+        str(g.get("word") or g.get("lemma") or "").casefold().replace("-", "").strip(".,!?;:")
+        for g in story.get("dialogue_glosses", [])
+        if isinstance(g, dict) and g.get("kind") in wanted
+    )
+    return frozenset(words) - {""}
+
+
 @dataclass
 class Lesson:
     """A complete TunaTale audio lesson."""

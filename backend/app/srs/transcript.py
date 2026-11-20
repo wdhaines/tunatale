@@ -9,7 +9,7 @@ from typing import NamedTuple
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels, upos_for_disambig
 from app.languages import card_surface_variants, get_phrase_match_exact_form, get_variant_separator, parts_line
-from app.models.lesson import KeyPhraseInfo, Lesson, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, SectionType, story_gloss_words
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import deserialize_extras
 from app.srs.anki_mirror.rollover import anki_today
@@ -588,6 +588,9 @@ def extract_transcript(
     # sources the last-write-wins. Collocation matching uses the lemmatizer which may
     # disambiguate homographs via sentence context.
     gloss_map: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
+    # A word the lesson marks as a name (Gamelo, Abaya) is no affixed word: the
+    # dictionary is not asked for its parts (tunatale-tofg.18).
+    names = story_gloss_words((lesson.generation_metadata or {}).get("story") or {}, {"name"})
 
     # Pre-load multi-word collocations for span detection
     collocation_index, exact_form_phrases = build_phrase_index(db, lemmatizer, lesson.language_code)
@@ -869,7 +872,9 @@ def extract_transcript(
                         srs_item_id=resolved_item_id,
                         translation=translation,
                         gloss=gloss,
-                        parts=parts_line(lesson.language_code, surface, gloss or translation or ""),
+                        parts=None
+                        if surface.casefold().replace("-", "") in names
+                        else parts_line(lesson.language_code, surface, gloss or translation or ""),
                         card_type=card_type,
                         active_state=active_state_val,
                         active_direction=active_direction_str,

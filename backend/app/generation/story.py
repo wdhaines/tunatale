@@ -10,7 +10,6 @@ from typing import NamedTuple
 
 from app.cards.pronoun_picture import has_second_sense, pronoun_gloss
 from app.generation.buildup_rules import BuildupRules
-from app.generation.drill_lines import fold
 from app.generation.glossing import dialogue_surface_lemmas, ensure_dialogue_glosses, uncovered_surfaces
 from app.generation.json_parsing import parse_json_object
 from app.generation.prompts import (
@@ -35,7 +34,7 @@ from app.languages import get_story_text_normalizer
 from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
-from app.models.lesson import KeyPhraseInfo, Lesson, Section, SectionType
+from app.models.lesson import KeyPhraseInfo, Lesson, Section, SectionType, story_gloss_words
 from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.database import SRSDatabase
 from app.srs.function_words import fixed_gloss
@@ -509,12 +508,9 @@ def story_buildup_rules(data: dict) -> BuildupRules:
     found by their capitals.
     """
     buildup = data.get("buildup") or {}
-    skip = frozenset(
-        fold(str(g.get("word") or g.get("lemma") or "")).strip(".,!?;:")
-        for g in data.get("dialogue_glosses", [])
-        if isinstance(g, dict) and g.get("kind") in _NEVER_BROKEN
+    return BuildupRules(
+        min_syllables=int(buildup.get("min_syllables", 2)), skip_words=story_gloss_words(data, _NEVER_BROKEN)
     )
-    return BuildupRules(min_syllables=int(buildup.get("min_syllables", 2)), skip_words=skip - {""})
 
 
 def build_lesson_from_story(data: dict, language: Language, *, review_words: Sequence[str] = ()) -> Lesson:
