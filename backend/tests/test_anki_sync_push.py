@@ -1697,14 +1697,78 @@ class TestSyncPushGuardsAgainstAnkiAhead:
             "left": 0,
             "mod": int(_dt.now(UTC).timestamp()),  # Anki changed after TT's grade
         }
+        writer.anki_answers[rec_cid] = [int(_dt.now(UTC).timestamp() * 1000)]  # by answering it (Layer 100)
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
 
         assert not any(c[0] == "set_learning_state" for c in writer.calls)
         assert not any(c[0] == "write_revlog" for c in writer.calls)
 
+    def test_push_relearning_when_anki_changed_after_tt_without_an_answer(self):
+        """Layer 100 (tunatale-t6zu): Anki's mod moved past TT's lapse, but by a write that is not an answer (a
+        flag, a deck move, an Optimize). Anki's graduated queue is the stale one, so the lapse pushes."""
+        from datetime import datetime as _dt
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        tt_grade = _dt.now(UTC) - timedelta(hours=2)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            left=1001,
+            due_at=tt_grade + timedelta(minutes=10),
+            reps=12,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=1,
+            last_review=tt_grade,
+            prior_state=SRSState.REVIEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = FakeWriter()
+        writer.current_states[rec_cid] = {"queue": 2, "type": 2, "left": 0, "mod": int(_dt.now(UTC).timestamp())}
+        writer.anki_answers[rec_cid] = [int((tt_grade - timedelta(days=3)).timestamp() * 1000)]  # older answers only
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert any(c[0] == "set_learning_state" for c in writer.calls)
+        assert any(c[0] == "write_revlog" for c in writer.calls)
+
+    def test_push_defers_when_the_revlog_cannot_be_read(self):
+        """Layer 100's answer test needs Anki's revlog. A writer that cannot read it keeps the conservative
+        Fix-3 default: Anki's graduation, newer than TT's grade by mod, wins."""
+        from datetime import datetime as _dt
+
+        class _NoRevlogWriter(FakeWriter):
+            @property
+            def revlog_ids_for_card(self):
+                raise AttributeError("revlog_ids_for_card")
+
+        db = _make_tt_db()
+        guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+        tt_grade = _dt.now(UTC) - timedelta(hours=2)
+        ds = DirectionState(
+            direction=Direction.RECOGNITION,
+            state=SRSState.RELEARNING,
+            left=1001,
+            due_at=tt_grade + timedelta(minutes=10),
+            reps=12,
+            anki_card_id=rec_cid,
+            dirty_fsrs=True,
+            last_rating=1,
+            last_review=tt_grade,
+            prior_state=SRSState.REVIEW,
+        )
+        db.update_direction(guid, Direction.RECOGNITION, ds)
+
+        writer = _NoRevlogWriter()
+        writer.current_states[rec_cid] = {"queue": 2, "type": 2, "left": 0, "mod": int(_dt.now(UTC).timestamp())}
+        AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+
+        assert not any(c[0] == "set_learning_state" for c in writer.calls)
+
     def test_push_defers_when_anki_graduated_and_mod_unknown(self):
-        """If Anki's `mod` isn't available, recency can't be established → keep the
-        conservative Fix-3 default (defer to Anki's graduation)."""
+        """With Anki's `mod` unavailable, an answer newer than TT's grade still defers
+        (Layer 100: the revlog, not `mod`, says who answered last)."""
         from datetime import datetime as _dt
 
         db = _make_tt_db()
@@ -1726,6 +1790,7 @@ class TestSyncPushGuardsAgainstAnkiAhead:
 
         writer = FakeWriter()
         writer.current_states[rec_cid] = {"queue": 2, "type": 2, "left": 0}  # no mod
+        writer.anki_answers[rec_cid] = [int(tt_grade.timestamp() * 1000) + 5000]  # Anki answered after TT
         AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
 
         assert not any(c[0] == "set_learning_state" for c in writer.calls)

@@ -7,6 +7,9 @@ each with the control that already held:
 - Layer 97 (tunatale-p0rk): the push defers to a LATER Anki answer or suspension.
 - Layer 98 (tunatale-47dg): a grade made while a sync runs waits for the next sync.
 
+Later rows: Layer 99 (tunatale-ruog), a change made while the push runs; Layer 100 (tunatale-t6zu), a TT lapse
+and an Anki write that is not an answer.
+
 Real OfflineWriter and OfflineReader over a synthetic collection file; the grade goes through the
 HTTP route. Nothing here opens a user's collection.
 """
@@ -944,3 +947,43 @@ async def test_an_undo_during_the_push_survives_an_anki_touch_without_an_answer(
     today = anki_today_col_day(synthetic_collection.col_crt, datetime.now(UTC))
     assert card["due"] == today and final.last_review == before.last_review
     assert "PUSH_DEFERRED_TO_LATER_ANKI_REVIEW" not in caplog.text
+
+
+# ── Layer 100: a TT lapse and an Anki write that is not an answer ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("touch", ["control_none", "mod_bump", "optimize", "phone_graduation"])
+async def test_a_tt_lapse_survives_an_anki_write_that_is_not_an_answer(
+    synthetic_collection: SyntheticCollection, touch
+) -> None:
+    """Layer 100 (tunatale-t6zu). A synced card is lapsed in TT; before TT syncs, Anki writes the card without
+    answering it (a flag, a deck move, an Optimize, housekeeping), so cards.mod moves past the lapse. Layer 69's
+    steps branch read queue 2 as "graduated, Anki is ahead" and its recency guard read only cards.mod, so the push
+    deferred and the lapse was lost in both apps. Only an answer newer than TT's grade is "ahead". A real phone
+    graduation after the lapse still wins."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    _full_sync(db, synthetic_collection)  # a synced start: anki_card_mod is the pulled mod
+    assert _tt_dir(db, cid).anki_card_mod is not None
+    await _tt_grade(cid, "again")
+    assert _tt_dir(db, cid).state == SRSState.RELEARNING
+    _to_next_second()
+    now = datetime.now(UTC)
+    today = anki_today_col_day(synthetic_collection.col_crt, now)
+    if touch == "phone_graduation":
+        _phone_review(
+            synthetic_collection.path, at=now + timedelta(seconds=2), stability=33.0, due_col_day=today + 30, ivl=30
+        )
+    elif touch != "control_none":
+        _anki_touch(synthetic_collection.path, at=now + timedelta(seconds=2), optimize=touch == "optimize")
+
+    _full_sync(db, synthetic_collection)
+
+    card = _anki_card(synthetic_collection.path)
+    final = _tt_dir(db, cid)
+    if touch == "phone_graduation":
+        assert (card["type"], card["queue"], card["due"]) == (2, 2, today + 30) and card["data"]["s"] == 33.0
+        assert final.state == SRSState.REVIEW
+    else:
+        assert (card["type"], card["queue"]) == (3, 1)
+        assert final.state == SRSState.RELEARNING
+    assert _dirty(db, cid) == 0

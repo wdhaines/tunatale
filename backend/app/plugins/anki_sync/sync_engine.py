@@ -1301,10 +1301,20 @@ class AnkiSync:
             changed = ds.last_review is not None and _anki_moved(ds, anki_state)
         else:
             changed = self._anki_changed_since_pull(ds, anki_state)
-        if not changed or not hasattr(self._writer, "revlog_ids_for_card"):
+        if not changed:
             return False
-        answers = self._writer.revlog_ids_for_card(ds.anki_card_id, reviews_only=True)
-        return max(answers, default=0) > int(ds.last_review.timestamp() * 1000)
+        latest = self._latest_anki_answer_ms(ds)
+        return latest is not None and latest > int(ds.last_review.timestamp() * 1000)
+
+    def _latest_anki_answer_ms(self, ds: DirectionState) -> int | None:
+        """The id (epoch ms) of Anki's newest answer (revlog type 0-3) on this card; 0 when it has none.
+
+        None when the writer cannot read the revlog. A write that is not an answer (a flag, a deck move, an
+        Optimize's type-5 row, housekeeping) moves ``cards.mod`` but adds no answer here (Layers 97, 100).
+        """
+        if not hasattr(self._writer, "revlog_ids_for_card"):
+            return None
+        return max(self._writer.revlog_ids_for_card(ds.anki_card_id, reviews_only=True), default=0)
 
     def _recompute_anki_studied_today_all_decks(self) -> None:
         """Set every revlog-touched deck's ``new_today`` + ``review_today`` counters
@@ -1932,6 +1942,16 @@ class AnkiSync:
                         # during it, failed the recency test above.
                         if anki_ahead and anki_now.get("mod") is not None and not _anki_moved(ds, anki_now):
                             anki_ahead = False
+                        # Layer 100 (tunatale-t6zu): only an ANSWER puts Anki ahead. A flag, a deck move,
+                        # an Optimize or housekeeping moves cards.mod past a TT lapse without one, and the
+                        # recency guard above then read the stale graduated queue as ahead: the lapse was
+                        # lost in both apps. A step can only advance by an answer, so this holds for both
+                        # triggers. A revlog TT cannot read, or no TT grade time, keeps the
+                        # conservative default above.
+                        if anki_ahead and ds.last_review is not None:
+                            latest = self._latest_anki_answer_ms(ds)
+                            if latest is not None and latest <= int(ds.last_review.timestamp() * 1000):
+                                anki_ahead = False
 
                     if not anki_ahead:
                         # queue=1 for both; type=1 for LEARNING, type=3 for RELEARNING (lapse)
