@@ -611,7 +611,6 @@ class Lexicon(NamedTuple):
     size: Mapping[str, tuple[int, int]]  # root -> (sub-entries, characters of gloss and example)
     root_pos: Mapping[str, frozenset[str]]  # root -> the parts of speech of its root block ('v', 'a', 'n')
     hosts: frozenset[str] = frozenset()  # pronoun/demonstrative hosts of the linker -ng
-    names: frozenset[str] = frozenset()  # personal names the caller passed in: no affixed reading
 
 
 # The demonstratives that take the linker as the pronouns do (spatial.json lists them
@@ -643,7 +642,6 @@ def default_hosts() -> frozenset[str]:
 def lexicon(
     entries: Iterable[Mapping[str, Any]],
     hosts: Iterable[str] = (),
-    names: Iterable[str] = (),
 ) -> Lexicon:
     """The decoder's view of Wolff's lexicon (``wolff_lexicon.json``'s entries)."""
     from app.plugins.languages.ceb.wolff_dictionary import is_affix_label
@@ -686,7 +684,6 @@ def lexicon(
         gloss[head] |= gloss.get(target, set())
         root_pos[head] |= root_pos.get(target, set())
     host_set = frozenset(wolff_letters(h) for h in hosts)
-    name_set = frozenset(strip_marks(n).lower() for n in names)
     return Lexicon(
         roots,
         {k: tuple(sorted(set(v))) for k, v in written.items()},
@@ -695,7 +692,6 @@ def lexicon(
         size,
         {k: frozenset(v) for k, v in root_pos.items()},
         host_set,
-        name_set,
     )
 
 
@@ -728,14 +724,13 @@ def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
     """*surface*'s analyses, best first.
 
     A headword is itself; a form Wolff writes out (§5.1) is its entry's root, by
-    lookup. A personal name keeps only its affix-less analyses. A closed-class host
+    lookup. A closed-class host
     plus the linker -ng reads as the host. *surface* may be in today's spelling
     (:func:`wolff_letters`). Otherwise :func:`decode`, ranked by the meaning (*english*, the
     sentence or gloss the word came with, against each root's glosses), then by
     whether the root's entry takes the affix (its class formula and sub-entry
     labels), then by the size of the entry.
     """
-    name_key = strip_marks(surface).lower()
     surface = wolff_letters(surface)
     written = lex.written.get(surface)
     if written:
@@ -758,6 +753,4 @@ def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
         )
 
     ranked = sorted(_nasal_is_prefix(decode(surface, lex.roots)), key=rank)
-    if name_key in lex.names:
-        return [a for a in ranked if not a.affix]
     return ranked

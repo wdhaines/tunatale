@@ -566,20 +566,19 @@ def test_a_caller_changing_its_result_does_not_change_the_next_one():
     assert decode("mipalit", roots) == expected
 
 
-# ── pronoun/linker hosts and personal names (tunatale-tofg.18) ───────────────────────
+# ── pronoun/linker hosts (tunatale-tofg.18) ───────────────────────
 
 
 @pytest.fixture(scope="module")
 def lex_linker(lex):
-    """The real lexicon with the linker hosts and three lesson names, as a caller that knows them passes them.
+    """The real lexicon with the linker hosts, as a caller that knows them passes them.
 
     Derived from the module's ``lex`` rather than rebuilt: a second full build cost 0.7 s of setup and pushed
-    the first test using it over the CPU budget (tunatale-flqc). ``lexicon([])`` normalises hosts and names
+    the first test using it over the CPU budget (tunatale-flqc). ``lexicon([])`` normalises the hosts
     exactly as the full build does."""
     from app.plugins.languages.ceb.affixes import default_hosts
 
-    extra = lexicon([], hosts=default_hosts(), names=("Gamelo", "Abaya", "Maria"))
-    return lex._replace(hosts=extra.hosts, names=extra.names)
+    return lex._replace(hosts=lexicon([], hosts=default_hosts()).hosts)
 
 
 def test_the_hosts_are_long_pronouns_and_demonstratives():
@@ -605,11 +604,6 @@ def lexicon_without_hosts():
     from app.plugins.languages.ceb.wolff_cards import load_lexicon as load
 
     return lexicon(load().entries)
-
-
-@pytest.mark.parametrize("word", ["Gamelo", "gamelo", "Abaya", "Maria"])
-def test_D3_D4_a_name_passed_in_has_no_affixed_reading(lex_linker, word):
-    assert analyse(word, lex_linker) == []
 
 
 @pytest.mark.parametrize(
@@ -677,6 +671,6 @@ def test_G6_written_form_pronouns_unchanged(lex_linker, word, root):
 
 
 def test_G7_no_names_input_still_decodes_abaya(lex):
-    # lex fixture has no hosts/names; decoder alone must not guess names
+    # The decoder does not guess names (G7): abaya decodes as abay + -a
     got = analyse("abaya", lex)
     assert ("abay", "-a") in [(a.root, a.affix) for a in got]

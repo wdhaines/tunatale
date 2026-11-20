@@ -755,3 +755,30 @@ class TestCardsList:
         row = next(i for i in items if i["id"] == cid)
         assert row["text"] == "Hei du, hvordan går det?"
         assert not any(i["text"] == "Hei, hvordan går det?" for i in items)
+
+
+# ── tunatale-flqc item 2: _relocate holds the line instead of raising ──────────────────────────────────────────
+
+
+def _blank_card(text: str, blank: tuple[int, int]):
+    from app.srs.sentence_card import SentenceCard
+
+    return SentenceCard(
+        lesson_id="L", line_index=0, speaker="A", text=text, spoken=text, english="", glosses=(), blank=blank
+    )
+
+
+def test_relocate_returns_none_when_an_overlapping_match_hides_the_blank():
+    """'xabababa' with blank (3, 6) = 'bab': finditer is non-overlapping, so the match at 1 swallows the one at 3
+    and the blank's own occurrence is never listed. .index() raised ValueError (a 500 on the listen, the Grade
+    save or the import); None holds the line with LESSON_LINE_UPDATE_HELD like any other unmatched row."""
+    from app.srs.lesson_card_mint import _relocate
+
+    assert _relocate(_blank_card("xabababa", (3, 6)), "xabababa") is None
+
+
+def test_relocate_control_finds_the_same_occurrence_in_the_corrected_text():
+    from app.srs.lesson_card_mint import _relocate
+
+    # The second 'bab' (non-overlapping) is at 5 in the old text and moves to 6 in the corrected one.
+    assert _relocate(_blank_card("xbabxbab", (5, 8)), "xbabxxbab") == (6, 9)

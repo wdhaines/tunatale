@@ -277,7 +277,10 @@ def _relocate(card: SentenceCard, text: str) -> tuple[int, int] | None:
     left = r"(?<=\w)" if s > 0 and re.match(r"\w", old[s - 1]) else r"(?<!\w)"
     right = r"(?=\w)" if e < len(old) and re.match(r"\w", old[e]) else r"(?!\w)"
     pattern = re.compile(left + re.escape(old[s:e]) + right, re.IGNORECASE)
-    occurrence = [m.start() for m in pattern.finditer(old)].index(s)
+    starts = [m.start() for m in pattern.finditer(old)]
+    if s not in starts:  # an earlier overlapping match hid the blank's own one ('xabababa', (3, 6)): hold the line
+        return None
+    occurrence = starts.index(s)
     found = list(pattern.finditer(text))
     return found[occurrence].span() if occurrence < len(found) else None
 
