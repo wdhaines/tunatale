@@ -12,7 +12,8 @@ fortnight first proposed:
 * :data:`FIRST_PASSES` of its cards passed their first review, and at least
   :data:`PASS_RATE` of all their reviews passed. Learning steps are not
   reviews: passing them shows the card was read the day it was added, not
-  that the form came back on a later day.
+  that the form came back on a later day. A review graded before it was due
+  (the Grade page grades ahead) is a review like any other.
 
 Which cards are a pattern's evidence (the owner, 2026-11-20, tunatale-ve4p.36):
 a pattern taught as sentences (on-gi) counts its focus cards. A word pattern
@@ -65,7 +66,9 @@ FIRST_PASSES = 4
 PASS_RATE = 0.8
 STUCK_AFTER = 5
 
-_REVIEW = 1  # revlog review_kind of a review: not a learning step, a relearn, a cram or a manual row
+# revlog review_kinds of a review: due (1) or graded ahead (3, the Grade page; the owner,
+# 2026-11-20, tunatale-ve4p.38). Not a learning step (0), a relearn (2) or a manual row.
+_REVIEWS = frozenset({1, 3})
 _AGAIN = 1
 
 
@@ -181,7 +184,7 @@ class _Deck:
         for collocation_id in [] if review_only else self.evidence(pattern):
             # Every row of the card: no id is at or below 0, so "unpushed after 0" is all of them.
             rows = self.srs_db.get_unpushed_revlog_rows(collocation_id, Direction.PRODUCTION, 0)
-            graded = [row.button_chosen > _AGAIN for row in rows if row.review_kind == _REVIEW]
+            graded = [row.button_chosen > _AGAIN for row in rows if row.review_kind in _REVIEWS]
             first_passes += bool(graded) and graded[0]
             reviews += len(graded)
             passes += sum(graded)

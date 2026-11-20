@@ -279,6 +279,46 @@ def test_a_first_review_failed_and_then_passed_is_not_a_first_pass(srs_db, store
     assert _key(srs_db, store) == "mo-mi"
 
 
+# A grade on a review card before it is due is logged review_kind 3 (the Grade page grades
+# ahead, since 2026-11-13). The owner, 2026-11-20 (tunatale-ve4p.38): early grades count.
+_EARLY = 3
+
+
+def test_reviews_graded_early_pass_a_word_pattern(srs_db, store):
+    _heard(srs_db, store, "mo-mi", _at(9), _at(13))
+    _passed_sentences(srs_db, "mo-mi", grades=((_LEARN, _GOOD), (_EARLY, _GOOD)))
+    measured = _progress(srs_db, store, "mo-mi")
+    assert (measured.first_passes, measured.reviews, measured.passes) == (4, 4, 4)
+    assert _key(srs_db, store) == "mag-nag"
+
+
+def test_an_early_grade_counts_where_a_learning_step_does_not(srs_db, store):
+    """The control for the test above: the same four cards, their one pass a learning step."""
+    _heard(srs_db, store, "mo-mi", _at(9), _at(13))
+    _passed_sentences(srs_db, "mo-mi", grades=((_LEARN, _GOOD), (_LEARN, _GOOD)))
+    measured = _progress(srs_db, store, "mo-mi")
+    assert (measured.first_passes, measured.reviews, measured.passes) == (0, 0, 0)
+    assert _key(srs_db, store) == "mo-mi"
+
+
+def test_a_first_review_failed_early_and_then_passed_on_time_is_not_a_first_pass(srs_db, store):
+    _heard(srs_db, store, "mo-mi", _at(9), _at(13))
+    _passed_sentences(srs_db, "mo-mi", 3)
+    _sentence(srs_db, "Miinom ko.", grades=((_LEARN, _GOOD), (_EARLY, _AGAIN), (2, _GOOD), (_REVIEW, _GOOD)))
+    measured = _progress(srs_db, store, "mo-mi")
+    assert (measured.first_passes, measured.reviews, measured.passes) == (3, 5, 4)
+    assert _key(srs_db, store) == "mo-mi"
+
+
+def test_early_grades_failed_count_against_the_pass_rate(srs_db, store):
+    _heard(srs_db, store, "mo-mi", _at(9), _at(13))
+    _passed_sentences(srs_db, "mo-mi")
+    _sentence(srs_db, "Milakaw sila.", grades=((_LEARN, _GOOD), (_EARLY, _AGAIN), (_EARLY, _AGAIN)))
+    measured = _progress(srs_db, store, "mo-mi")
+    assert (measured.reviews, measured.passes) == (6, 4)  # 67%
+    assert _key(srs_db, store) == "mo-mi"
+
+
 def test_four_first_passes_under_80_percent_of_reviews_passed_hold_the_pattern(srs_db, store):
     _heard(srs_db, store, "mo-mi", _at(9), _at(13))
     _passed_sentences(srs_db, "mo-mi")
