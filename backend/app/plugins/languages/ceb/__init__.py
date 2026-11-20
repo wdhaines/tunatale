@@ -49,6 +49,20 @@ def _wolff_parts(word: str, english: str) -> str | None:
     return load_lexicon().parts_line(word, english)
 
 
+@lru_cache(maxsize=20_000)
+def _chart_link(word: str, english: str) -> tuple[str, tuple[str, ...], str] | None:
+    """*word*'s place in the verb chart (tunatale-h0q3.47), or None. Cached like the parts line."""
+    from app.plugins.languages.ceb.chart_links import word_link
+
+    return word_link(word, english)
+
+
+def _chart_card_html(text: str) -> str:
+    from app.plugins.languages.ceb.chart_links import card_html
+
+    return card_html(text)
+
+
 def _wolff_prefix(word: str) -> str | None:
     """*word*'s prefix when it comes off leaving the root (tunatale-lat6), or None."""
     from app.plugins.languages.ceb.wolff_cards import load_lexicon
@@ -185,6 +199,9 @@ register(
         dictionary_gloss_fn=_wolff_gloss,
         # A lesson word glossed by its parts, for the reader's popup (tunatale-h0q3.26).
         parts_fn=_wolff_parts,
+        # The reader's and the card's links into the verb chart (tunatale-h0q3.47).
+        chart_link_fn=_chart_link,
+        chart_card_html_fn=_chart_card_html,
         prefix_fn=_wolff_prefix,
         # The style guide's first job is keeping Tagalog OUT: close kin, and
         # dominant in training data (tunatale-u8nz.4). All three data files are

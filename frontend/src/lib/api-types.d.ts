@@ -5120,6 +5120,19 @@ export interface components {
       suspended: boolean;
     };
     /**
+     * TranscriptChartLink
+     * @description Where a reader word opens the verb chart (tunatale-h0q3.47): the chart row, the
+     *     affixes to mark in it, and where the form stands in the chart's own words.
+     */
+    TranscriptChartLink: {
+      /** Affixes */
+      affixes: string[];
+      /** Label */
+      label: string;
+      /** Row */
+      row: string;
+    };
+    /**
      * TranscriptDialogueLine
      * @description One element of LessonTranscriptResponse.dialogue_lines.
      */
@@ -5157,6 +5170,7 @@ export interface components {
       active_state: string;
       /** Card Type */
       card_type: string | null;
+      chart?: components["schemas"]["TranscriptChartLink"] | null;
       /** Collocation Lemma */
       collocation_lemma: string | null;
       /** Collocation Produce Band */

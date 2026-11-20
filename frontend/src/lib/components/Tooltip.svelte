@@ -4,6 +4,7 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { untrack } from 'svelte';
 	import GradeButtons from './GradeButtons.svelte';
+	import { chartHref } from '#lib/verbChartLink.js';
 
 	export interface TooltipActions {
 		onCreateInflection?: (word: WordToken, sentence: string) => Promise<void>;
@@ -459,6 +460,12 @@
 			{#if dueLabel}<span class="tt-state tt-state-{word?.is_due ? 'due' : 'not-due'}">{dueLabel}</span>{/if}
 			{#if cardTranslation}<span class="tt-card-translation">{t('tooltip.cardTranslation', { translation: cardTranslation })}</span>{/if}
 			{#if word?.parts}<span class="tt-parts">{word.parts}</span>{/if}
+			{#if word?.chart}<span class="tt-chart"
+					><span class="tt-chart-place">{word.chart.label}</span><a
+						class="tt-chart-link"
+						href={chartHref(word.chart)}>{t('tooltip.verbChart')}</a
+					></span
+				>{/if}
 			{#if masterySides}<span class="tt-sides">{#each masterySides as line (line)}<span class="tt-side">{line}</span>{/each}</span>{/if}
 			{#if ratings}
 				<GradeButtons variant="popover" onRate={ratings.onRate} />
@@ -683,6 +690,29 @@
 		margin-top: 2px;
 		font-size: 11px;
 		opacity: 0.85;
+	}
+	/* Where the word stands in the verb chart, and the way there (tunatale-h0q3.47). */
+	.tt-chart {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		margin-top: 6px;
+		padding-top: 6px;
+		border-top: 1px solid rgba(255, 255, 255, 0.2);
+		font-size: 12.5px;
+	}
+	.tt-chart-place {
+		font-weight: 600;
+	}
+	.tt-chart-link {
+		font-size: 14px;
+		padding: 8px 12px;
+		background: #e0a12c;
+		color: #111827;
+		border-radius: 3px;
+		text-decoration: none;
+		font-weight: 700;
 	}
 	.tt-card-translation {
 		display: block;

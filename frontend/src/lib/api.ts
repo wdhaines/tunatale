@@ -351,6 +351,9 @@ export interface WordToken {
   // The word glossed by its parts, from the language's dictionary ("mo- will + ádto
   // there · go"; tunatale-h0q3.26). Optional: older cached transcripts lack it.
   parts?: string | null;
+  // Where the word opens the verb chart (tunatale-h0q3.47): set only beside `parts`, so
+  // a name never links. Optional: older cached transcripts lack it.
+  chart?: { row: string; affixes: string[]; label: string } | null;
   collocation_span_id: number | null;
   collocation_start: boolean;
   collocation_srs_state: string | null;

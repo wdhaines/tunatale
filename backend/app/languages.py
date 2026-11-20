@@ -15,7 +15,7 @@ import importlib
 import pkgutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 import app.plugins.languages as _plugins_pkg
 from app.audio.preprocessing.base import TextPreprocessor
@@ -311,6 +311,12 @@ class LanguageConfig:
     # the word and the English it came with, or None when the dictionary does not read
     # it as one verb (tunatale-h0q3.26). ``None`` (the default): the language has none.
     parts_fn: Callable[[str, str], str | None] | None = None
+    # A word's place in the verb chart, from the word and its English: (chart row, the
+    # affixes to mark, where it stands in words), or None (tunatale-h0q3.47). And a
+    # card's back with a chart link on each row of its verb forms, written as TT serves
+    # the card, never into the note. ``None`` (the default): the language has no chart.
+    chart_link_fn: Callable[[str, str], tuple[str, tuple[str, ...], str] | None] | None = None
+    chart_card_html_fn: Callable[[str], str] | None = None
     # A word's prefix when it comes off cleanly, leaving the root as the rest of
     # the word (Cebuano mag + lisod), or None. A key phrase's long word is then
     # built root first (``app.generation.buildup_rules``). ``None`` for a
@@ -834,6 +840,28 @@ def parts_line(code: str, word: str, english: str = "") -> str | None:
     """*word* glossed by its parts in *code*'s dictionary, or None (no dictionary, or not one verb)."""
     fn = _facet(code, "parts_fn", None)
     return fn(word, english) if fn is not None else None
+
+
+class ChartLink(NamedTuple):
+    """Where a word opens the verb chart: the row, the affixes to mark in it, and where the
+    form stands in the chart's own words ('Agent · Perfective · Realis')."""
+
+    row: str
+    affixes: tuple[str, ...]
+    label: str
+
+
+def chart_link(code: str, word: str, english: str = "") -> ChartLink | None:
+    """*word*'s place in *code*'s verb chart, or None (no chart, or no one place for it)."""
+    fn = _facet(code, "chart_link_fn", None)
+    found = fn(word, english) if fn is not None else None
+    return ChartLink(*found) if found is not None else None
+
+
+def chart_card_html(code: str, text: str) -> str:
+    """A card field's HTML with links into *code*'s verb chart, or *text* unchanged."""
+    fn = _facet(code, "chart_card_html_fn", None)
+    return fn(text) if fn is not None else text
 
 
 def get_l2_css_class(code: str) -> str:

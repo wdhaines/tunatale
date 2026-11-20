@@ -46,8 +46,10 @@ class TestForegroundGoesFirst:
             sent.append(_prompt_of(request))
             return _ok("ok")
 
-        # A pacing deadline in the near future, so everything issued now queues.
-        client._next_call_at = time.monotonic() + 0.3
+        # A pacing deadline in the near future, so everything issued now queues. Two
+        # seconds of margin: a 0.3 s deadline ran out under the local gate's own load
+        # (loadavg ~30) before the foreground call had queued, 2026-11-19.
+        client._next_call_at = time.monotonic() + 2.0
 
         async def background(i: int) -> None:
             await client.complete(f"bg{i}", call_site="media_choose")
@@ -55,7 +57,9 @@ class TestForegroundGoesFirst:
         with respx.mock:
             respx.post(GROQ_API_URL).mock(side_effect=_record)
             tasks = [asyncio.create_task(work.track("prestage_images", background)(i)) for i in range(3)]
-            await asyncio.sleep(0.05)  # let all three reach the gate
+            # Wait until all three are queued at the gate, not for a fixed time.
+            while client._admission_gate().waiting() < 3:
+                await asyncio.sleep(0.01)
             fg = asyncio.create_task(client.complete("fg", call_site="glossing"))
             await asyncio.gather(*tasks, fg)
 

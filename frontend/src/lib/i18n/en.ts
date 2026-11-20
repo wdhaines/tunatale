@@ -86,6 +86,7 @@ export const en = {
 
   // Tooltip.svelte
   "tooltip.cardTranslation": "card: {translation}",
+  "tooltip.verbChart": "Verb chart ›",
   "tooltip.due": "Due",
   "tooltip.notDue": "Not Due",
   "tooltip.words": "Words…",

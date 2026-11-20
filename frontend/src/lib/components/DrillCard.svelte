@@ -743,6 +743,15 @@
 		font-size: 0.82rem;
 		color: var(--color-muted);
 	}
+	/* A verb-forms row's way into the chart, added as TT serves the card (tunatale-h0q3.47). */
+	.extra-value :global(a.chart-link) {
+		color: var(--color-primary);
+		margin-left: 2px;
+		font-size: 0.8em;
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+	}
 	.extra-value :global(.wolff-here td) {
 		background: var(--color-highlight);
 	}

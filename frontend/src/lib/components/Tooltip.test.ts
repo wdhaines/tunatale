@@ -54,6 +54,37 @@ describe("Tooltip", () => {
     );
   });
 
+  // tunatale-h0q3.47: the form's place in the verb chart, and a link that opens it there.
+  it("names the form's place in the chart and links there", () => {
+    const word = makeWordToken({
+      surface: "miabot",
+      parts: "mi- did + abót arrive",
+      chart: { row: "agent-mo", affixes: ["mi-"], label: "Agent · Perfective · Realis" },
+    });
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: "arrived", word, childText: "miabot" },
+    });
+    const tooltip = getByRole("tooltip");
+    expect(tooltip.querySelector(".tt-chart-place")!.textContent).toBe(
+      "Agent · Perfective · Realis",
+    );
+    const link = tooltip.querySelector<HTMLAnchorElement>("a.tt-chart-link")!;
+    expect(link.getAttribute("href")).toBe("/reference/verb-chart?row=agent-mo&affix=mi-");
+    expect(link.textContent).toBe("Verb chart ›");
+  });
+
+  it("has no chart link for a word with no place in the chart", () => {
+    const word = makeWordToken({
+      surface: "moadto",
+      parts: "mo- will + ádto there · go",
+      chart: null,
+    });
+    const { getByRole } = render(TooltipTest, {
+      props: { translation: "will go", word, childText: "moadto" },
+    });
+    expect(getByRole("tooltip").querySelector(".tt-chart")).toBeNull();
+  });
+
   it("renders no parts line for a word without one", () => {
     const word = makeWordToken({ surface: "gang", parts: null });
     const { getByRole } = render(TooltipTest, {
