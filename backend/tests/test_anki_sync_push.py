@@ -4709,3 +4709,26 @@ def test_a_row_left_dirty_whose_card_cannot_be_read_keeps_its_stored_mod(caplog)
     [(_, _, ds)] = [r for r in db.list_dirty() if r[2].anki_card_id == rec_cid]
     assert "GRADED_DURING_PUSH" in caplog.text
     assert ds.dirty_fsrs and ds.anki_card_mod is None
+
+
+def test_no_revlog_row_is_derived_for_a_collocation_deleted_during_the_push():
+    """Layer 99, review R7: the derived fallback row is written only while the row still holds what the push
+    read. A collocation deleted mid-push has no row to hold it, so nothing is derived."""
+    db = _make_tt_db()
+    guid, _, rec_cid, _ = _add_banka_with_anki_ids(db)
+    _mark_dirty_graded(db, guid, anki_card_id=rec_cid)
+    real_id = db.get_collocation_id_by_guid
+
+    def found_then_deleted(g):
+        coll_id = real_id(g)
+        if coll_id is not None:
+            with db._get_conn() as conn:
+                conn.execute("DELETE FROM collocation_directions WHERE collocation_id = ?", (coll_id,))
+                conn.execute("DELETE FROM collocations WHERE id = ?", (coll_id,))
+                conn.commit()
+        return coll_id
+
+    db.get_collocation_id_by_guid = found_then_deleted
+    writer = FakeWriter()
+    AnkiSync(db=db, _reader=FakeReader(), _writer=writer).sync_push()
+    assert "write_revlog" not in writer.action_names()

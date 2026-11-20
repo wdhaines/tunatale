@@ -56,6 +56,7 @@ from app.srs.anki_mirror.queue_stats import (
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today
 from app.srs.contrast_card import cloze_note_text
 from app.srs.database import SRSDatabase
+from app.srs.db_sync import pushed_view
 from app.srs.direction_fields import SYNC_COMPARABLE_MODEL_FIELDS
 from app.srs.drill_card import DrillCard, drill_card, is_drill_key
 from app.srs.fsrs import (
@@ -1435,6 +1436,12 @@ class AnkiSync:
             drop_snapshot_if_pushed(self._db, item_id=coll_id, direction=direction, revlog_ids={r.id for r in rows})
             return True
         if manual:
+            return False
+        item = self._db.get_collocation_by_id(coll_id)
+        if item is None or pushed_view(item[1].directions[direction]) != pushed_view(ds):
+            # Layer 99, review R7: the row changed after the push read it. An undo deleted the grade's tt_revlog
+            # row, so deriving one here would log a review the learner took back, and the next push would read
+            # it as Anki answering later. The next push sends the row as it is now.
             return False
         learn_steps, _ = resolve_learning_steps(self._db)
         relearn_steps, _ = resolve_relearning_steps(self._db)

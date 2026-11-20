@@ -640,16 +640,17 @@ async def test_an_undo_made_during_the_push_is_pushed_next_sync(
     final = _tt_dir(db, cid)
     today = anki_today_col_day(synthetic_collection.col_crt, datetime.now(UTC))
     assert card["due"] == today  # the restored due date (due today), not the undone grade's
-    # The restored memory state wins in both apps. The undone review stays in Anki's revlog (a pushed review
-    # cannot be retracted), so reps keeps it, and the restored schedule follows it as a manual (type 4) row.
+    # The restored memory state wins in both apps. The undo deleted its tt_revlog row before the push sent it,
+    # and the push derives no row for a direction that changed after its read (review R7), so Anki's revlog
+    # holds only the manual (type 4) row that moved the schedule back, and reps never counted the undone grade.
     assert (card["data"]["s"], card["data"]["d"], card["data"]["lrt"]) == (
         10.0,
         5.0,
         int(before.last_review.timestamp()),
     )
-    assert [(r["ease"], r["type"]) for r in card["revlog"]] == [(3, 1), (0, 4)]
+    assert [(r["ease"], r["type"]) for r in card["revlog"]] == [(0, 4)]
     assert (final.stability, final.difficulty, final.last_review) == (10.0, 5.0, before.last_review)
-    assert final.anki_due == today and final.reps == card["reps"] == REPS + 1
+    assert final.anki_due == today and final.reps == card["reps"] == REPS
     assert _dirty(db, cid) == 0
 
 
@@ -894,4 +895,52 @@ async def test_undo_refuses_a_grade_the_push_already_sent(
         ]
     card = _anki_card(synthetic_collection.path)
     assert [r["ease"] for r in card["revlog"]] == tt_rev
+    assert "PUSH_DEFERRED_TO_LATER_ANKI_REVIEW" not in caplog.text
+
+
+def _anki_touch(path, *, at: datetime, optimize: bool) -> None:
+    """Anki writes the card without an answer: a housekeeping mod bump, or an Optimize (new s/d, a type-5 row)."""
+    with sqlite3.connect(path) as conn:
+        if optimize:
+            [(raw,)] = conn.execute("SELECT data FROM cards WHERE id = ?", (CARD_ID,)).fetchall()
+            data = json.loads(raw)
+            data["s"] = data["s"] * 1.1
+            conn.execute("UPDATE cards SET data = ? WHERE id = ?", (json.dumps(data), CARD_ID))
+            conn.execute(
+                "INSERT INTO revlog (id, cid, usn, ease, ivl, lastIvl, factor, time, type) VALUES (?, ?, 9, 0, 0, 0, 0, 0, 5)",
+                (int(at.timestamp() * 1000), CARD_ID),
+            )
+        conn.execute("UPDATE cards SET mod = ?, usn = 9 WHERE id = ?", (int(at.timestamp()), CARD_ID))
+        conn.commit()
+
+
+@pytest.mark.parametrize("touch", ["control_none", "mod_bump", "optimize"])
+async def test_an_undo_during_the_push_survives_an_anki_touch_without_an_answer(
+    synthetic_collection: SyntheticCollection, touch, caplog
+) -> None:
+    """Review R7. The undo deleted its tt_revlog row before the push sent it, and the push used to derive a row
+    for the undone grade from the stale state: a review nobody kept. Once anything moved Anki's mod without an
+    answer, the undo's force read that invented row as "Anki answered later" and deferred, losing the undo.
+    The push no longer derives a row for a direction that changed after it read the list."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    before = _tt_dir(db, cid)
+    await _tt_grade(cid)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        _hook_in_set_due_date(sync, lambda: _tt_undo(cid), cross_second=False)
+        sync.sync_push()
+        sync.sync_pull()
+    assert _anki_card(synthetic_collection.path)["revlog"] == []  # no review invented for the undone grade
+    _to_next_second()
+    if touch != "control_none":
+        _anki_touch(
+            synthetic_collection.path, at=datetime.now(UTC) + timedelta(seconds=2), optimize=touch == "optimize"
+        )
+    with caplog.at_level(logging.INFO):
+        _full_sync(db, synthetic_collection)
+    card = _anki_card(synthetic_collection.path)
+    final = _tt_dir(db, cid)
+    today = anki_today_col_day(synthetic_collection.col_crt, datetime.now(UTC))
+    assert card["due"] == today and final.last_review == before.last_review
     assert "PUSH_DEFERRED_TO_LATER_ANKI_REVIEW" not in caplog.text

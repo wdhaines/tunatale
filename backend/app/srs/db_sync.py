@@ -14,6 +14,13 @@ from typing import TYPE_CHECKING, NamedTuple
 from app.models.srs_item import Direction, DirectionState, SRSItem
 from app.srs.db_base import _DIR_COLUMNS, FLAG_CARD_DATA_SQL, direction_state_from_row
 
+
+def pushed_view(ds: DirectionState) -> tuple:
+    """What a push reads and acts on for one direction (Layer 99): a grade, an undo, a reset or an
+    (un)suspension made after the read changes at least one of these."""
+    return (ds.last_review, ds.reps, ds.state, ds.due_at, ds.left)
+
+
 if TYPE_CHECKING:
     from app.srs.sentence_card import SentenceCard
 
@@ -473,8 +480,7 @@ class DbSyncMixin:
                 result.append((row["guid"], ds.direction, ds))
         return result
 
-    # What a push read and acted on (Layer 99): a grade, an undo, a reset or a (un)suspension made after the
-    # read changes at least one of these.
+    # The columns behind pushed_view, pinned by their raw text in the compare-and-swap.
     _PUSHED_COLUMNS = ("last_review", "reps", "state", "due_at", "left")
 
     def mark_direction_clean(self, guid: str, direction: Direction, read: DirectionState | None = None) -> bool:
@@ -503,13 +509,7 @@ class DbSyncMixin:
                 now = self._load_directions(conn, coll_id).get(direction)
                 if now is None:
                     return True
-                if (now.last_review, now.reps, now.state, now.due_at, now.left) != (
-                    read.last_review,
-                    read.reps,
-                    read.state,
-                    read.due_at,
-                    read.left,
-                ):
+                if pushed_view(now) != pushed_view(read):
                     # A row that changed AND is clean was restored behind the push's back: an undo puts back
                     # the verbatim pre-grade row, dirty_fsrs=0 and no grade marker. Anki now holds the undone
                     # grade, so the next push must write the restored schedule over it, not relabel it.
