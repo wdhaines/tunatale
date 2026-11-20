@@ -133,3 +133,32 @@ def test_the_reader_links_ni_this_to_the_kini_card_and_the_marker_to_its_cloze(c
     (marker_ni,) = [w for w in marker if w.surface == "ni"]
     assert (this_ni.lemma, this_ni.srs_item_id, this_ni.card_type) == ("kini", kini_id, "vocab")
     assert (marker_ni.lemma, marker_ni.srs_item_id, marker_ni.card_type) == ("ni", ni_id, "cloze")
+
+
+# ── the reader's gloss follows the reading, not the spelling ──────────────────
+
+
+def _glossed(text: str, glosses: dict[str, str]):
+    lesson = _lesson(text)
+    lesson.generation_metadata = {"token_glosses": glosses}
+    return lesson
+
+
+@pytest.mark.parametrize(
+    ("glosses", "expected"),
+    [({"ni": "of", "kini": "this"}, "this"), ({"ni": "of"}, None)],
+)
+def test_ni_this_shows_kinis_lesson_gloss_never_the_markers(ceb, glosses, expected):
+    """The live lesson glossed the spelling ni 'of' (one gloss per spelling), so the
+    popup said 'of' over the kini card. Read as kini, ni takes kini's gloss or none."""
+    db = SRSDatabase(":memory:")
+    words = extract_transcript(_glossed("Pila man ni?", glosses), db, ceb).dialogue_lines[0].words
+    (ni,) = [w for w in words if w.surface == "ni"]
+    assert ni.gloss == expected
+
+
+def test_the_marker_keeps_the_spellings_gloss(ceb):
+    db = SRSDatabase(":memory:")
+    lesson = _glossed("Ang balay ni Maria.", {"ni": "of", "kini": "this"})
+    (ni,) = [w for w in extract_transcript(lesson, db, ceb).dialogue_lines[0].words if w.surface == "ni"]
+    assert ni.gloss == "of"
