@@ -103,6 +103,25 @@ def record_grade_snapshot(
     )
 
 
+def drop_snapshot_if_pushed(db: SRSDatabase, *, item_id: int, direction: Direction, revlog_ids: set[int]) -> None:
+    """Forget the undo snapshot once ``sync_push`` has sent its grade's revlog row to Anki (Layer 99, review R4).
+
+    Undo refuses a grade whose row has ``dirty_fsrs=0``, reading "clean" as "already in Anki". A grade made
+    while a push runs is sent by that push yet stays dirty, so the snapshot is dropped here instead and the
+    undo refuses as it did before. Undoing it then would only bring the Again back on the next pull.
+    """
+    cached = db.get_anki_state_cache(UNDO_CACHE_KEY)
+    if cached is None:
+        return
+    snapshot = json.loads(cached[0])
+    if (
+        snapshot["collocation_id"] == item_id
+        and snapshot["direction"] == direction.value
+        and snapshot["revlog_id"] in revlog_ids
+    ):
+        db.delete_anki_state_cache(UNDO_CACHE_KEY)
+
+
 def undo_last_grade(db: SRSDatabase, *, item_id: int, direction: Direction) -> DirectionState:
     """Restore the pre-grade state for (item, direction), or raise UndoNotAvailable."""
     cached = db.get_anki_state_cache(UNDO_CACHE_KEY)

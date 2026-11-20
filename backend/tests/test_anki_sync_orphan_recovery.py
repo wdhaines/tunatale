@@ -95,6 +95,9 @@ class FakeWriter:
     def max_revlog_id_for_card(self, card_id: int) -> int:
         return 0
 
+    def revlog_ids_for_card(self, card_id: int) -> set[int]:
+        return set()
+
     def bury_siblings(
         self,
         *,

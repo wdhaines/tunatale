@@ -129,6 +129,9 @@ class FakeWriter:
     def max_revlog_id_for_card(self, card_id: int) -> int:
         return 0
 
+    def revlog_ids_for_card(self, card_id: int) -> set[int]:
+        return set()
+
     def set_deck_studied_today(self, deck_id: int, today_day_index: int, new_today: int, review_today: int) -> None:
         self.calls.append(("set_deck_studied_today", deck_id, today_day_index, new_today, review_today))
 

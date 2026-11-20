@@ -3334,10 +3334,10 @@ grep "^## Layer" docs/anki-parity-layers.md | tail -4 | python3 -c 'import sys; 
 ```
 
 ```output
-## Layer 95 — a grade on a not-due card logged an ordinary review and charged today's review count
 ## Layer 96 — an Anki recompute never reached a card TT graded last
 ## Layer 97 — TT's push of a review-state grade overwrote a later review, lapse or suspension made in Anki
 ## Layer 98 — a grade made in TT while a sync runs lost its schedule
+## Layer 99 — a change made in TT while the push runs, on a direction already in its list, was wiped
 ```
 
 Layers 96-98 (2026-11-16) are one read of the push and pull. 96: the pull's recency guard compared TT's microsecond grade time with Anki's whole-second `lrt`, so it never released and an Anki Optimize never reached a card TT graded last; it now compares in seconds. 97: the push of a review-state grade defers to a later answer or suspension made in Anki, and still sends TT's own revlog rows. 98: a direction graded while a sync is running is left dirty for the next sync, not merged as clean.
