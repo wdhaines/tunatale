@@ -20,6 +20,8 @@ class FakeWriter:
         # Maps card_id → {"queue": int, "type": int, "left": int}. Returning None
         # for an absent key tells push "no current state; proceed normally."
         self.current_states: dict[int, dict] = {}
+        # card_id → revlog ids (epoch ms) of answers Anki holds on it.
+        self.anki_answers: dict[int, list[int]] = {}
 
     #: Mirrors OfflineWriter: a write to a note absent from the collection
     #: being written reports that it wrote nothing. Set False to simulate that.
@@ -129,8 +131,9 @@ class FakeWriter:
     def max_revlog_id_for_card(self, card_id: int) -> int:
         return 0
 
-    def revlog_ids_for_card(self, card_id: int) -> set[int]:
-        return set()
+    def revlog_ids_for_card(self, card_id: int, *, reviews_only: bool = False) -> set[int]:
+        """Anki's answers on the card (Layer 100: only an answer puts Anki ahead of a TT grade)."""
+        return set(self.anki_answers.get(card_id, ()))
 
     def set_deck_studied_today(self, deck_id: int, today_day_index: int, new_today: int, review_today: int) -> None:
         self.calls.append(("set_deck_studied_today", deck_id, today_day_index, new_today, review_today))
