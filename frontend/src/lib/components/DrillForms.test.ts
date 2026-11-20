@@ -151,7 +151,6 @@ describe("DrillForms", () => {
 describe("DrillForms progress", () => {
   type Progress = NonNullable<LessonDrill["progress"]>;
   const onTrack: Progress = {
-    review_only: false,
     drill_days: 1,
     drill_days_needed: 2,
     first_passes: 0,
@@ -229,19 +228,18 @@ describe("DrillForms progress", () => {
     expect(container.querySelector(".chip")?.textContent).toBe("Passed");
   });
 
-  it("shows a review-only pattern its drill days alone", () => {
-    const reviewOnly = {
+  it("shows a pattern whose gate asks for no cards its drill days alone", () => {
+    // A word pattern (mo-/mi-, maka-/naka-) or a review-only one (bd tunatale-ve4p.36).
+    const noCards = {
       ...onTrack,
-      review_only: true,
-      drill_days_needed: 1,
       first_passes_needed: 0,
       pass_rate_needed: 0,
     };
     const { container } = render(DrillForms, {
-      props: { drill: { ...drill, progress: reviewOnly } },
+      props: { drill: { ...drill, progress: noCards } },
     });
     expect(meters(container)).toEqual([
-      { label: "Days you heard the drill", value: "1 / 1", width: "100%", short: false },
+      { label: "Days you heard the drill", value: "1 / 2", width: "50%", short: false },
     ]);
   });
 });

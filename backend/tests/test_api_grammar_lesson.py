@@ -27,6 +27,7 @@ from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import Lesson, Phrase, Section, SectionType
 from app.models.srs_item import Direction, DirectionState, SRSState
 from app.models.syntactic_unit import SyntacticUnit
+from app.srs.contrast_card import contrast_card
 from app.storage.store import ContentStore
 from tests._helpers.api_app_state import _clean_app_state  # noqa: F401
 from tests._helpers.lemmatizer import StubLemmatizer
@@ -292,16 +293,16 @@ async def test_the_lesson_is_served_with_the_table_of_what_it_drills(deck, srs_d
             },
         ],
         # How far the learner is with the pattern, for the meters under the
-        # table (tunatale-ve4p.30). Nothing heard or reviewed yet.
+        # table (tunatale-ve4p.30). Nothing heard yet; a word pattern needs
+        # its drill days and no cards (tunatale-ve4p.36).
         "progress": {
-            "review_only": False,
             "drill_days": 0,
             "drill_days_needed": 2,
             "first_passes": 0,
-            "first_passes_needed": 4,
+            "first_passes_needed": 0,
             "reviews": 0,
             "passes": 0,
-            "pass_rate_needed": 0.8,
+            "pass_rate_needed": 0.0,
             "met": False,
             "stuck": False,
         },
@@ -348,45 +349,35 @@ async def test_a_grammar_lesson_can_be_previewed_read_and_marked_listened(deck, 
     assert srs_db.count_listens(lesson_id) == 1
 
 
-async def test_marking_a_grammar_lesson_listened_adds_its_contrast_cards(deck, srs_db):
-    """One card per understood root, in the shape ``sync_create_new`` expects of a card TT originated.
+async def test_marking_a_word_pattern_lesson_listened_adds_no_pair_cards(deck, srs_db):
+    """mo-/mi- adds no contrast cards (tunatale-ve4p.36), and its preview lists none.
 
-    The story says ``mouban`` and nothing else in this pattern, so uban is
-    asked for the form it has not been heard in and the other two for the last.
+    The English of a pair card's blank made the only decision, so the owner
+    found them easy. The pattern's affix drill card is still minted.
     """
     store, pipeline, _ = deck
     pipeline.start()
     async with _client() as client:
         lesson_id = await _drill_lesson(store, srs_db, pipeline)
+        preview = await client.get(f"/api/srs/content/{lesson_id}/listen-preview")
         cards_before = _cards(srs_db)
         listened = await client.post("/api/srs/listen", json={"content_id": lesson_id})
-        queue = await client.get("/api/srs/review-queue")
     await pipeline.shutdown()
 
-    rows = _contrast_rows(srs_db)
-    assert sorted(row["text"] for row in rows) == ["miadto", "miinom", "miuban"]
-    assert _cards(srs_db) == cards_before + 3 + AFFIX_CARD
-    assert listened.json()["created"] == 3 + AFFIX_CARD
-    # Added, not graded: NEW, production only, nothing for the sync to mistake
-    # for a linked or reviewed card (.claude/rules/anki-sync.md, card-adding contract).
-    for row in rows:
-        assert (row["card_type"], row["direction"], row["state"]) == ("cloze", "production", "new")
-        assert (row["anki_note_id"], row["anki_card_id"], row["last_review"], row["introduced_at"]) == (None,) * 4
-        assert row["dirty_fsrs"] == 0
-        assert row["source_sentence"] == f"{{{{c1::{row['text']}}}}}"
-    # ...and it is in today's queue with no sync in between.
-    assert {"miadto", "miinom", "miuban"} <= {entry["text"] for entry in queue.json()["queue"]}
+    assert preview.json()["affix_cards"] == []
+    assert _contrast_rows(srs_db) == []
+    assert listened.json()["created"] == AFFIX_CARD
+    assert _cards(srs_db) == cards_before + AFFIX_CARD
 
 
 async def test_the_review_queue_serves_the_grid_with_a_contrast_card(deck, srs_db):
-    """The grid is not stored, so the queue has to hand the review screen its cells."""
-    store, pipeline, _ = deck
-    pipeline.start()
+    """A pair card already in the deck ages out, so it is still drawn with its grid.
+
+    The grid is not stored, so the queue has to hand the review screen its cells.
+    """
+    srs_db.add_collocation(contrast_card("ceb", find_pattern("ceb", "mo-mi"), "uban", 1).unit(), language_code="ceb")
     async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        await client.post("/api/srs/listen", json={"content_id": lesson_id})
         queue = (await client.get("/api/srs/review-queue")).json()["queue"]
-    await pipeline.shutdown()
 
     served = {entry["text"]: entry for entry in queue}
     assert served["miuban"]["paradigm"] == {
@@ -398,83 +389,16 @@ async def test_the_review_queue_serves_the_grid_with_a_contrast_card(deck, srs_d
         ],
     }
     # Every other card says it has none, the fixture's own root cards included.
-    assert {entry["paradigm"] for entry in queue if entry["text"] not in ("miuban", "miinom", "miadto")} <= {None}
-    assert served["inom"]["paradigm"] is None
+    assert {entry["paradigm"] for entry in queue if entry["text"] != "miuban"} == {None}
 
 
-async def test_listening_again_the_same_day_adds_nothing_more(deck, srs_db):
-    store, pipeline, _ = deck
-    pipeline.start()
-    async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        await client.post("/api/srs/listen", json={"content_id": lesson_id})
-        again = await client.post("/api/srs/listen", json={"content_id": lesson_id})
-    await pipeline.shutdown()
-
-    assert again.json()["created"] == 0
-    assert len(_contrast_rows(srs_db)) == 3
-
-
-async def test_contrast_cards_stop_at_the_days_new_card_budget(deck, srs_db):
-    """Two left in the day means two cards, the drill's first two roots.
-
-    A cap of five leaves two: the fixture's three root cards were created
-    today and are still new on the production side, and a card created today
-    holds its slot until it is introduced (``count_new_created_today``).
-    """
-    store, pipeline, _ = deck
-    srs_db.set_anki_state_cache("daily_new_cap", "5")
-    pipeline.start()
-    async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        listened = await client.post("/api/srs/listen", json={"content_id": lesson_id})
-    await pipeline.shutdown()
-
-    assert listened.json()["created"] == 2 + AFFIX_CARD
-    assert [row["text"] for row in _contrast_rows(srs_db)] == ["miuban", "miinom"]
-
-
-async def test_a_story_lesson_adds_no_contrast_cards(deck, srs_db):
+async def test_a_story_lesson_adds_no_affix_cards(deck, srs_db):
     """Only a lesson with an affix drill does: the story says mouban and that is not a drill."""
     async with _client() as client:
         listened = await client.post("/api/srs/listen", json={"content_id": "wake-1"})
 
     assert listened.status_code == 200
-    assert _contrast_rows(srs_db) == []
-
-
-async def test_the_preview_lists_the_cards_the_listen_will_add(deck, srs_db):
-    """Each row says what the card asks for and which form it shows as the model. Read-only."""
-    store, pipeline, _ = deck
-    pipeline.start()
-    async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        preview = await client.get(f"/api/srs/content/{lesson_id}/listen-preview")
-    await pipeline.shutdown()
-
-    assert preview.json()["affix_cards"] == [
-        {"form": "miuban", "english": "went along", "root": "uban", "model": ["mouban"], "will_create": True},
-        {"form": "miinom", "english": "drank", "root": "inom", "model": ["moinom"], "will_create": True},
-        {"form": "miadto", "english": "went", "root": "adto", "model": ["moadto"], "will_create": True},
-    ]
-    assert _contrast_rows(srs_db) == []
-
-
-async def test_the_preview_marks_the_cards_past_the_budget(deck, srs_db):
-    """The same cut the listen makes: two left in the day, so the third row is for a later listen."""
-    store, pipeline, _ = deck
-    srs_db.set_anki_state_cache("daily_new_cap", "5")  # the fixture's three root cards hold three slots
-    pipeline.start()
-    async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        preview = await client.get(f"/api/srs/content/{lesson_id}/listen-preview")
-    await pipeline.shutdown()
-
-    assert [(row["form"], row["will_create"]) for row in preview.json()["affix_cards"]] == [
-        ("miuban", True),
-        ("miinom", True),
-        ("miadto", False),
-    ]
+    assert _contrast_rows(srs_db) == _focus_rows(srs_db) == []
 
 
 async def test_a_story_lesson_previews_no_affix_cards(deck):
@@ -484,37 +408,7 @@ async def test_a_story_lesson_previews_no_affix_cards(deck):
     assert preview.json()["affix_cards"] == []
 
 
-@pytest.mark.parametrize(
-    ("cap", "body", "added"),
-    [
-        # A skipped card is left out, and offered again by the next listen.
-        ("20", {"skipped_affix_cards": ["miinom"]}, ["miuban", "miadto"]),
-        # A skip keeps its slot: the card past the budget is not promoted into it.
-        ("5", {"skipped_affix_cards": ["miuban"]}, ["miinom"]),
-        # One deliberate tap takes a card past the day's limit.
-        ("5", {"over_cap_affix_cards": ["miadto"]}, ["miuban", "miinom", "miadto"]),
-        # Skipped wins over opted in; neither names a card this listen does not offer.
-        (
-            "5",
-            {"skipped_affix_cards": ["miadto", "nope"], "over_cap_affix_cards": ["miadto", "nope"]},
-            ["miuban", "miinom"],
-        ),
-    ],
-)
-async def test_the_listen_honours_what_the_preview_rows_were_set_to(deck, srs_db, cap, body, added):
-    store, pipeline, _ = deck
-    srs_db.set_anki_state_cache("daily_new_cap", cap)
-    pipeline.start()
-    async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        listened = await client.post("/api/srs/listen", json={"content_id": lesson_id, **body})
-    await pipeline.shutdown()
-
-    assert [row["text"] for row in _contrast_rows(srs_db)] == added
-    assert listened.json()["created"] == len(added) + AFFIX_CARD
-
-
-async def test_a_review_session_adds_no_contrast_cards(deck, srs_db):
+async def test_a_review_session_adds_no_affix_cards(deck, srs_db):
     """A review session is listened through the same route and belongs to no curriculum.
 
     The cards' lesson lines are read from a curriculum's stories, so there is
@@ -527,28 +421,7 @@ async def test_a_review_session_adds_no_contrast_cards(deck, srs_db):
 
     assert listened.status_code == 200
     assert srs_db.count_listens("review-1") == 1
-    assert _contrast_rows(srs_db) == []
-
-
-async def test_the_cards_audio_is_made_after_the_response_and_is_the_form(deck, srs_db, monkeypatch):
-    """The form is voiced, never a table. Faked at the TTS vendor boundary."""
-    import app.audio.cloze_tts as cloze_tts_mod
-
-    said: list[str] = []
-
-    async def _tts(text, voice=None):
-        said.append(text)
-        return b"fake-mp3"
-
-    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _tts)
-    store, pipeline, _ = deck
-    pipeline.start()
-    async with _client() as client:
-        lesson_id = await _drill_lesson(store, srs_db, pipeline)
-        await client.post("/api/srs/listen", json={"content_id": lesson_id})
-    await pipeline.shutdown()
-
-    assert sorted(set(said)) == ["miadto", "miinom", "miuban"]
+    assert _contrast_rows(srs_db) == _focus_rows(srs_db) == []
 
 
 async def test_the_new_day_is_served_with_its_kind_and_pattern(deck, srs_db):
@@ -691,3 +564,105 @@ async def test_a_skipped_focus_card_is_named_by_its_sentence(deck, srs_db):
     await pipeline.shutdown()
 
     assert [row["text"] for row in _focus_rows(srs_db)] == ["Giinom ko ang tubig.", "Gidala ko ang pagkaon."]
+
+
+_GIINOM, _GIKAON, _GIDALA = "Giinom ko ang tubig.", "Gikaon ko ang pan.", "Gidala ko ang pagkaon."
+# The focus fixture's five root cards were created today and are still new on
+# the production side, so each holds a slot of the day's new-card budget
+# (``count_new_created_today``): a cap of seven leaves two.
+_TWO_LEFT = "7"
+
+
+async def test_listening_again_the_same_day_adds_nothing_more(deck, srs_db):
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        await client.post("/api/srs/listen", json={"content_id": lesson_id})
+        again = await client.post("/api/srs/listen", json={"content_id": lesson_id})
+    await pipeline.shutdown()
+
+    assert again.json()["created"] == 0
+    assert len(_focus_rows(srs_db)) == 3
+
+
+async def test_focus_cards_stop_at_the_days_new_card_budget(deck, srs_db):
+    """Two left in the day means two cards, the drill's first two roots."""
+    store, pipeline, _ = deck
+    srs_db.set_anki_state_cache("daily_new_cap", _TWO_LEFT)
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        listened = await client.post("/api/srs/listen", json={"content_id": lesson_id})
+    await pipeline.shutdown()
+
+    assert listened.json()["created"] == 2
+    assert [row["text"] for row in _focus_rows(srs_db)] == [_GIINOM, _GIKAON]
+
+
+async def test_the_preview_marks_the_cards_past_the_budget(deck, srs_db):
+    """The same cut the listen makes: two left in the day, so the third row is for a later listen."""
+    store, pipeline, _ = deck
+    srs_db.set_anki_state_cache("daily_new_cap", _TWO_LEFT)
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        preview = await client.get(f"/api/srs/content/{lesson_id}/listen-preview")
+    await pipeline.shutdown()
+
+    assert [(row["form"], row["will_create"]) for row in preview.json()["affix_cards"]] == [
+        (_GIINOM, True),
+        (_GIKAON, True),
+        (_GIDALA, False),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cap", "body", "added"),
+    [
+        # A skipped card is left out, and offered again by the next listen.
+        ("20", {"skipped_affix_cards": [_GIKAON]}, [_GIINOM, _GIDALA]),
+        # A skip keeps its slot: the card past the budget is not promoted into it.
+        (_TWO_LEFT, {"skipped_affix_cards": [_GIINOM]}, [_GIKAON]),
+        # One deliberate tap takes a card past the day's limit.
+        (_TWO_LEFT, {"over_cap_affix_cards": [_GIDALA]}, [_GIINOM, _GIKAON, _GIDALA]),
+        # Skipped wins over opted in; neither names a card this listen does not offer.
+        (
+            _TWO_LEFT,
+            {"skipped_affix_cards": [_GIDALA, "nope"], "over_cap_affix_cards": [_GIDALA, "nope"]},
+            [_GIINOM, _GIKAON],
+        ),
+    ],
+)
+async def test_the_listen_honours_what_the_preview_rows_were_set_to(deck, srs_db, cap, body, added):
+    store, pipeline, _ = deck
+    srs_db.set_anki_state_cache("daily_new_cap", cap)
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        listened = await client.post("/api/srs/listen", json={"content_id": lesson_id, **body})
+    await pipeline.shutdown()
+
+    assert [row["text"] for row in _focus_rows(srs_db)] == added
+    assert listened.json()["created"] == len(added)
+
+
+async def test_the_cards_audio_is_made_after_the_response_and_is_the_sentence(deck, srs_db, monkeypatch):
+    """The sentence is voiced, never the English. Faked at the TTS vendor boundary."""
+    import app.audio.cloze_tts as cloze_tts_mod
+
+    said: list[str] = []
+
+    async def _tts(text, voice=None):
+        said.append(text)
+        return b"fake-mp3"
+
+    monkeypatch.setattr(cloze_tts_mod, "generate_tts_audio", _tts)
+    store, pipeline, _ = deck
+    pipeline.start()
+    async with _client() as client:
+        lesson_id = await _focus_lesson(store, srs_db, pipeline)
+        await client.post("/api/srs/listen", json={"content_id": lesson_id})
+    await pipeline.shutdown()
+
+    assert sorted(set(said)) == sorted([_GIDALA, _GIINOM, _GIKAON])

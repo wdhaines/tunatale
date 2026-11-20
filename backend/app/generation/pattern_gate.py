@@ -9,11 +9,16 @@ fortnight first proposed:
 * its drill was heard on :data:`DRILL_DAYS` different study days, a lesson
   marked listened whose ``affix_drill`` is this pattern, a grammar lesson or a
   story's closing drill alike. Two listens on one day are one drill;
-* :data:`FIRST_PASSES` of its cards passed their first review, and at least
-  :data:`PASS_RATE` of all its card reviews passed: its contrast cards, or for
-  a pattern taught as sentences its focus cards. Learning
-  steps are not reviews: passing them shows the card was read the day it was
-  added, not that the form came back on a later day.
+* for a pattern taught as sentences, :data:`FIRST_PASSES` of its focus cards
+  passed their first review, and at least :data:`PASS_RATE` of all their
+  reviews passed. Learning steps are not reviews: passing them shows the card
+  was read the day it was added, not that the form came back on a later day.
+
+A word pattern (mo-/mi-, maka-/naka-) needs its drill days and no cards. Its
+pair cards were easy, since the English of the blank made the only decision,
+and are no longer made; the owner chose drill days alone until the Wolff
+sentence cards exist, when they become its evidence (tunatale-ve4p.36,
+2026-11-20). The pair cards already in a deck age out and count for nothing.
 
 A ``review_only`` pattern needs one drill and no cards, on the OWNER's deck:
 the flag marks what the owner already knows. Another learner is taught it like
@@ -42,7 +47,6 @@ from app.languages import get_a1_morphology
 from app.models.srs_item import Direction
 from app.srs.a1_morphology import AffixPattern
 from app.srs.anki_mirror.rollover import anki_today
-from app.srs.contrast_card import pair_key
 from app.srs.focus_card import focus_key
 from app.storage.store import ContentStore
 
@@ -65,20 +69,26 @@ class Progress:
     pattern: AffixPattern
     review_only: bool  # the pattern's flag, on the owner's deck only
     drill_days: int
-    first_passes: int  # contrast cards whose first review passed
-    reviews: int  # every review of its contrast cards
+    first_passes: int  # focus cards whose first review passed
+    reviews: int  # every review of its focus cards
     passes: int
     last_heard: date | None = None
 
     @property
+    def drill_days_needed(self) -> int:
+        return REVIEW_ONLY_DRILL_DAYS if self.review_only else DRILL_DAYS
+
+    @property
+    def needs_cards(self) -> bool:
+        """Only a pattern taught as sentences, and not one the learner already has, asks for cards."""
+        return self.pattern.sentences and not self.review_only
+
+    @property
     def met(self) -> bool:
-        if self.review_only:
-            return self.drill_days >= REVIEW_ONLY_DRILL_DAYS
-        return (
-            self.drill_days >= DRILL_DAYS
-            and self.first_passes >= FIRST_PASSES
-            and self.passes >= PASS_RATE * self.reviews
-        )
+        drilled = self.drill_days >= self.drill_days_needed
+        if not self.needs_cards:
+            return drilled
+        return drilled and self.first_passes >= FIRST_PASSES and self.passes >= PASS_RATE * self.reviews
 
     @property
     def stuck(self) -> bool:
@@ -87,19 +97,17 @@ class Progress:
     def summary(self) -> dict:
         """Each part of the gate beside what it needs, for the meters under a lesson's drill (ve4p.30).
 
-        A review-only pattern needs its drill days and nothing else, so its
-        card targets are 0.
+        A pattern that needs its drill days and nothing else has card targets of 0.
         """
-        review_only = self.review_only
+        cards = self.needs_cards
         return {
-            "review_only": review_only,
             "drill_days": self.drill_days,
-            "drill_days_needed": REVIEW_ONLY_DRILL_DAYS if review_only else DRILL_DAYS,
+            "drill_days_needed": self.drill_days_needed,
             "first_passes": self.first_passes,
-            "first_passes_needed": 0 if review_only else FIRST_PASSES,
+            "first_passes_needed": FIRST_PASSES if cards else 0,
             "reviews": self.reviews,
             "passes": self.passes,
-            "pass_rate_needed": 0.0 if review_only else PASS_RATE,
+            "pass_rate_needed": PASS_RATE if cards else 0.0,
             "met": self.met,
             "stuck": self.stuck,
         }
@@ -123,11 +131,9 @@ def _card_keys(pattern: AffixPattern) -> list[str]:
     """The keys of the cards that are *pattern*'s evidence.
 
     A sentence pattern's are its focus cards, actor and object focus alike:
-    both test the choice (tunatale-ve4p.9). A word pattern's are its contrast cards.
+    both test the choice (tunatale-ve4p.9). A word pattern has none.
     """
-    if pattern.sentences:
-        return [focus_key(feature) for feature in pattern.card_features]
-    return [pair_key(feature) for feature in pattern.features]
+    return [focus_key(feature) for feature in pattern.card_features] if pattern.sentences else []
 
 
 def _progress(pattern: AffixPattern, heard: list[date], srs_db, *, owner: bool) -> Progress:
@@ -152,7 +158,7 @@ def _progress(pattern: AffixPattern, heard: list[date], srs_db, *, owner: bool) 
 
 
 def progress(pattern: AffixPattern, *, srs_db, store: ContentStore, owner: bool) -> Progress:
-    """The learner's progress with *pattern*, read from their listens and their contrast cards.
+    """The learner's progress with *pattern*, read from their listens and its focus cards.
 
     *owner*: whether *srs_db* is the owner's deck, where a ``review_only`` pattern is reviewed, not taught.
     """

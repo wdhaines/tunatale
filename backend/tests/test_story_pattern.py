@@ -746,19 +746,14 @@ def test_authored_drills_are_given_the_affix_drill_once():
     assert sum(s.section_type is SectionType.AFFIX_DRILL for s in lesson.sections) == 1
 
 
-def test_the_story_lesson_then_adds_contrast_cards_like_a_grammar_lesson(owner):  # noqa: F811
-    """The listen path reads ``affix_drill`` and nothing else, so a story lesson needs no code of its own."""
+def test_a_storys_closing_drill_on_a_word_pattern_adds_no_cards(owner):  # noqa: F811
+    """The listen path reads ``affix_drill`` and nothing else, and a word pattern adds no pair cards (ve4p.36)."""
     srs_db, store = owner
     lesson = _story_lesson("An Evening Wake", _WAKE)
     add_closing_drill(lesson, get_language("ceb"), _PATTERNS["mo-mi"], srs_db=None, lemmatizer=None)
+    assert lesson.generation_metadata["affix_drill"]["roots"]  # the control: a drill with roots
 
-    cards = contrast_cards(lesson, srs_db=srs_db, store=store, curriculum_id="funeral")
-
-    assert [(card.root, card.form) for card in cards] == [
-        ("adto", "miadto"),
-        ("anhi", "moanhi"),
-        ("uban", "miuban"),
-    ]
+    assert contrast_cards(lesson, srs_db=srs_db, store=store, curriculum_id="funeral") == []
 
 
 # --- the one call a writer makes ------------------------------------------------

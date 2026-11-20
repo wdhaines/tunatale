@@ -2614,7 +2614,7 @@
         "type": "object"
       },
       "LessonDrillProgress": {
-        "description": "LessonDrill.progress: how far the learner is with the pattern, beside what the pace gate needs.\n\n``pattern_gate.Progress.summary``. A review-only pattern needs drill days\nalone, so its card targets are 0. ``stuck`` is a pattern still short of\nthe gate after five drill days.",
+        "description": "LessonDrill.progress: how far the learner is with the pattern, beside what the pace gate needs.\n\n``pattern_gate.Progress.summary``. A word pattern or a review-only one\nneeds drill days alone, so its card targets are 0. ``stuck`` is a pattern\nstill short of the gate after five drill days.",
         "properties": {
           "drill_days": {
             "title": "Drill Days",
@@ -2644,10 +2644,6 @@
             "title": "Passes",
             "type": "integer"
           },
-          "review_only": {
-            "title": "Review Only",
-            "type": "boolean"
-          },
           "reviews": {
             "title": "Reviews",
             "type": "integer"
@@ -2658,7 +2654,6 @@
           }
         },
         "required": [
-          "review_only",
           "drill_days",
           "drill_days_needed",
           "first_passes",

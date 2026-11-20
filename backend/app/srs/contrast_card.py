@@ -1,5 +1,11 @@
 """The contrast card: one root across an affix pattern, one form blank (tunatale-ve4p.6).
 
+**No longer made** (tunatale-ve4p.36): the English of the blank made the only
+decision, so the owner found these easy (2026-11-05). The cards already in a
+deck age out, and this module still draws them (:func:`paradigm`) and writes
+their Anki notes (:func:`cloze_note_text`). :func:`contrast_card` builds the
+card such a deck holds.
+
 A cloze over a small paradigm instead of over a sentence. For Cebuano
 ``lakaw`` in ``mo-`` / ``mi-``::
 
@@ -68,11 +74,6 @@ class ContrastCard:
     def prompt(self) -> str:
         """The English the learner is asked to say."""
         return self.cells[self.blank][1]
-
-    @property
-    def model(self) -> tuple[str, ...]:
-        """The root's other forms, shown beside the blank."""
-        return tuple(form for i, (form, _) in enumerate(self.cells) if i != self.blank)
 
     def unit(self) -> SyntacticUnit:
         """The card as TT stores it: a production-only cloze on the form."""

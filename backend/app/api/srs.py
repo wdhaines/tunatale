@@ -105,7 +105,7 @@ from app.srs.anki_mirror.queue_stats import (
 )
 from app.srs.anki_mirror.rollover import anki_day_bounds_utc_dt, anki_today, due_at_rollover_utc
 from app.srs.collocation_matcher import match_spans
-from app.srs.contrast_card import ContrastCard, paradigm
+from app.srs.contrast_card import paradigm
 from app.srs.drill_card import DrillCard, drill_card
 from app.srs.feedback import rating_from_input
 from app.srs.focus_card import FocusCard, focus
@@ -585,8 +585,10 @@ async def undo_grade(item_id: int, direction: str, request: Request):
 
 def _due_contrast_cards(
     db, store, lesson, content_id: str, *, intro_budget: int, new_state_rows: list, live_new: list, live_creates: list
-) -> list[tuple[ContrastCard | FocusCard, bool]]:
-    """The contrast or focus cards a listen of *lesson* offers, each with whether the budget reaches it.
+) -> list[tuple[FocusCard, bool]]:
+    """The focus cards a listen of *lesson* offers, each with whether the budget reaches it.
+
+    A word pattern offers none (``grammar_lesson.contrast_cards``; tunatale-ve4p.36).
 
     Called with the same arguments by the preview and by the commit, which is
     what keeps a row's ``will_create`` and what the listen then does in step
@@ -610,12 +612,12 @@ def _due_contrast_cards(
 def _add_contrast_cards(
     db,
     language_code: str,
-    offered: list[tuple[ContrastCard | FocusCard, bool]],
+    offered: list[tuple[FocusCard, bool]],
     *,
     skipped: set[str],
     over_cap: set[str],
 ) -> list[tuple[int, str, str, str]]:
-    """Add the *offered* contrast or focus cards the learner left on.
+    """Add the *offered* focus cards the learner left on.
 
     A card the budget reaches is added unless its row was skipped; a skip
     keeps its slot, so the next card is not promoted into it. A card past the
