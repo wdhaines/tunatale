@@ -8,7 +8,14 @@ from typing import NamedTuple
 
 from app.cards.cloze_source import parse_inflection_forms
 from app.cards.field_map import inflection_labels, upos_for_disambig
-from app.languages import card_surface_variants, get_phrase_match_exact_form, get_variant_separator, parts_line
+from app.languages import (
+    ChartLink,
+    card_surface_variants,
+    chart_link,
+    get_phrase_match_exact_form,
+    get_variant_separator,
+    parts_line,
+)
 from app.models.lesson import KeyPhraseInfo, Lesson, SectionType, story_gloss_words
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import deserialize_extras
@@ -41,6 +48,9 @@ class WordToken:
     # The word glossed by its parts, from the language's dictionary (tunatale-h0q3.26):
     # "mo- will + ádto there · go". None when it has none or does not read it as one verb.
     parts: str | None = None
+    # Where the word opens the verb chart (tunatale-h0q3.47). Set only beside a parts
+    # line, so a word the lesson marks as a name never links.
+    chart: ChartLink | None = None
     collocation_span_id: int | None = None  # DB id of multi-word collocation this token belongs to
     collocation_start: bool = False  # True if this is the first token in its collocation span
     collocation_srs_state: str | None = None  # SRS state of the enclosing collocation
@@ -861,6 +871,11 @@ def extract_transcript(
                 translation = db_translation if db_translation else gloss
 
                 known_marked_flag = resolved_item_id is not None and db.is_known_marked(resolved_item_id)
+                word_parts = (
+                    None
+                    if surface.casefold().replace("-", "") in names
+                    else parts_line(lesson.language_code, surface, gloss or translation or "")
+                )
 
                 words.append(
                     WordToken(
@@ -872,9 +887,10 @@ def extract_transcript(
                         srs_item_id=resolved_item_id,
                         translation=translation,
                         gloss=gloss,
-                        parts=None
-                        if surface.casefold().replace("-", "") in names
-                        else parts_line(lesson.language_code, surface, gloss or translation or ""),
+                        parts=word_parts,
+                        chart=chart_link(lesson.language_code, surface, gloss or translation or "")
+                        if word_parts is not None
+                        else None,
                         card_type=card_type,
                         active_state=active_state_val,
                         active_direction=active_direction_str,

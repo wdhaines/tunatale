@@ -10,7 +10,16 @@
 	import Marks from '#lib/components/Marks.svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 
-	let { chart, targetRow = null }: { chart: VerbChart; targetRow?: string | null } = $props();
+	let {
+		chart,
+		targetRow = null,
+		targetAffixes = [],
+	}: { chart: VerbChart; targetRow?: string | null; targetAffixes?: string[] } = $props();
+
+	/** An affix a link marks: in the row it opened, the chips that carry the form (tunatale-h0q3.47). */
+	function marked(rowId: string, part: string): boolean {
+		return rowId === targetRow && targetAffixes.includes(part);
+	}
 
 	let showLiterary = $state(false);
 	// The phone cards a tap has opened; the row a link targets starts open.
@@ -29,10 +38,12 @@
 	}
 </script>
 
-{#snippet affixChip(label: string, kind: string)}
+{#snippet affixChip(label: string, kind: string, rowId: string)}
 	<!-- A chip breaks only between alternatives ("mi-, ni-"), never inside an affix. -->
 	<span class="chip {kind}"
-		>{#each label.split(', ') as part, i (i)}{i > 0 ? ', ' : ''}<span class="nb">{part}</span>{/each}</span
+		>{#each label.split(', ') as part, i (i)}{i > 0 ? ', ' : ''}<span class="nb" class:marked={marked(rowId, part)}
+				>{part}</span
+			>{/each}</span
 	>
 {/snippet}
 
@@ -123,7 +134,7 @@
 								<td class="gloss" class:pstart={cell.pstart}><Marks text={cell.text} /></td>
 							{:else if cell.kind === 'chips'}
 								<td class="chips" class:pstart={cell.pstart} colspan={cell.colspan}
-									>{#each cell.affixes as a, ai (ai)}{@render affixChip(a.label, a.kind)}{/each}</td
+									>{#each cell.affixes as a, ai (ai)}{@render affixChip(a.label, a.kind, row.rowId)}{/each}</td
 								>
 							{:else if cell.kind === 'examples'}
 								<td class="examples" class:pstart={cell.pstart}
@@ -155,7 +166,7 @@
 						<span aria-hidden="true">{isOpen(row.id) ? '▾' : '▸'}</span>
 					</button>
 					<div class="summary">
-						{#each rowSummary(row, showLiterary) as a (a.label)}{@render affixChip(a.label, a.kind)}{/each}
+						{#each rowSummary(row, showLiterary) as a (a.label)}{@render affixChip(a.label, a.kind, row.id)}{/each}
 					</div>
 					{#if isOpen(row.id)}
 						{#each [{ side: 'volitional' as const, mode: volitional }, { side: 'potential' as const, mode: potential }] as part (part.side)}
@@ -168,7 +179,7 @@
 									<div class="entry">
 										<div class="entry-label">{entry.label}</div>
 										<div class="entry-body">
-											<div>{#each entry.affixes as a, ai (ai)}{@render affixChip(a.label, a.kind)}{/each}</div>
+											<div>{#each entry.affixes as a, ai (ai)}{@render affixChip(a.label, a.kind, row.id)}{/each}</div>
 											{#each entry.examples as ex, ei (ei)}{@render example(ex)}{/each}
 										</div>
 									</div>
@@ -183,7 +194,7 @@
 
 	<ul class="legend">
 		{#each chart.legend as item (item.kind)}
-			<li>{@render affixChip(item.example, item.kind)} {item.label}{@render fn(item.footnote)}</li>
+			<li>{@render affixChip(item.example, item.kind, "")} {item.label}{@render fn(item.footnote)}</li>
 		{/each}
 	</ul>
 
@@ -290,6 +301,13 @@
 		border: 1px solid var(--color-border);
 		color: var(--color-muted);
 		font-weight: 500;
+	}
+	/* The form a link opened the chart at (tunatale-h0q3.47). */
+	.chip .marked {
+		outline: 2px solid #e0a12c;
+		outline-offset: 1px;
+		border-radius: 2px;
+		background: color-mix(in srgb, #e0a12c 25%, transparent);
 	}
 	.chip.literary {
 		opacity: 0.7;

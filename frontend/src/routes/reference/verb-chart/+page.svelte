@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
 	 * The verb chart page. `?row=<row id>` (e.g. `patient-on`) highlights that row, opens
-	 * its phone card, and scrolls to whichever of the two is on screen: the way a card or
-	 * the reader opens the chart at a form (tunatale-h0q3.47, links in a later slice).
+	 * its phone card, and scrolls to whichever of the two is on screen; each `&affix=` marks
+	 * that affix's chips in the row. The way a card's verb forms or a reader word opens the
+	 * chart at a form (tunatale-h0q3.47).
 	 */
 	import { tick } from 'svelte';
 	import { page } from '$app/state';
@@ -14,6 +15,8 @@
 	let chart = $state<Chart | null>(null);
 	let failed = $state(false);
 	const targetRow = $derived(page.url.searchParams.get('row'));
+	// The affixes to mark in that row: the form a card or a reader word opened it at.
+	const targetAffixes = $derived(page.url.searchParams.getAll('affix'));
 
 	async function load(): Promise<void> {
 		failed = false;
@@ -46,7 +49,7 @@
 	<div class="crumbs"><a href="/reference">{t('reference.title')}</a> ›</div>
 	{#if chart}
 		<h1>{chart.title}</h1>
-		<VerbChart {chart} {targetRow} />
+		<VerbChart {chart} {targetRow} {targetAffixes} />
 	{:else if failed}
 		<p class="empty">{t('reference.noChart')}</p>
 	{:else}

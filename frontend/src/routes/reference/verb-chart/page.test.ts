@@ -56,6 +56,16 @@ describe("/reference/verb-chart", () => {
     expect(scrolled[0].matches('section.card[data-row="patient-on"]')).toBe(true);
   });
 
+  it("marks the affixes the address names, as a card's verb forms write it", async () => {
+    // backend ceb/chart_links.py::href for the -an/gi-an row (tests/test_ceb_chart_links.py)
+    nav.search = "?row=circumstance-an&affix=-an&affix=gi-%E2%80%A6-an";
+    mockChart.mockResolvedValue(chart);
+    const { container, findByRole } = render(ChartPage);
+    await findByRole("heading", { level: 1 });
+    const marks = [...container.querySelectorAll("tr .marked")].map((m) => m.textContent);
+    expect(new Set(marks)).toEqual(new Set(["-an", "gi-…-an"]));
+  });
+
   it("scrolls nowhere for a row the chart does not have", async () => {
     nav.search = "?row=nope";
     mockChart.mockResolvedValue(chart);

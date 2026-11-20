@@ -85,6 +85,33 @@ describe("VerbChart", () => {
     expect(has("naga-")).toBe(true);
   });
 
+  it("marks the affix a link opened it at, only in that row, in the grid and the card", () => {
+    const { container } = render(VerbChart, {
+      props: { chart, targetRow: "agent-mo", targetAffixes: ["ka-"] },
+    });
+    const gridMarks = [...container.querySelectorAll("tr .marked")];
+    // ka- stands in both potential cells of agent-mo ("naka-, ka-", "maka-, ka-")
+    expect(
+      gridMarks.map((m) => [m.closest("tr")!.getAttribute("data-row"), m.textContent]),
+    ).toEqual([
+      ["agent-mo", "ka-"],
+      ["agent-mo", "ka-"],
+    ]);
+    // stative-mag also shows ka-, and is not the row the link opened
+    expect(card(container, "stative-mag").querySelector(".marked")).toBeNull();
+    expect(
+      [...card(container, "agent-mo").querySelectorAll(".marked")].every(
+        (m) => m.textContent === "ka-",
+      ),
+    ).toBe(true);
+    expect(card(container, "agent-mo").querySelector(".marked")).not.toBeNull();
+  });
+
+  it("marks nothing when the link names no affix", () => {
+    const { container } = render(VerbChart, { props: { chart, targetRow: "agent-mo" } });
+    expect(container.querySelector(".marked")).toBeNull();
+  });
+
   it("highlights the row a link targets, and opens its phone card", () => {
     const { container } = render(VerbChart, { props: { chart, targetRow: "patient-on" } });
     const target = [...container.querySelectorAll("tr.target")].map((tr) =>

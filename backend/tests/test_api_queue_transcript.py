@@ -210,6 +210,7 @@ class TestTranscriptEndpoint:
             "translation",
             "gloss",
             "parts",
+            "chart",
             "collocation_span_id",
             "collocation_start",
             "collocation_srs_state",

@@ -978,6 +978,15 @@ class TranscriptKeyPhrase(BaseModel):
     translation: str
 
 
+class TranscriptChartLink(BaseModel):
+    """Where a reader word opens the verb chart (tunatale-h0q3.47): the chart row, the
+    affixes to mark in it, and where the form stands in the chart's own words."""
+
+    row: str
+    affixes: list[str]
+    label: str
+
+
 class TranscriptWord(BaseModel):
     """One element of TranscriptDialogueLine.words.
 
@@ -996,6 +1005,7 @@ class TranscriptWord(BaseModel):
     translation: str | None
     gloss: str | None
     parts: str | None = None  # the word glossed by its parts (tunatale-h0q3.26)
+    chart: TranscriptChartLink | None = None  # where the word opens the verb chart (tunatale-h0q3.47)
     collocation_span_id: int | None
     collocation_start: bool
     collocation_srs_state: str | None

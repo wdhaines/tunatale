@@ -973,6 +973,55 @@ class WolffLexicon:
         """*word* as its affixes and root, each glossed, in the word's order; None when the
         decoder finds no affix, a piece has no approved label, or the readings differ.
         *root_rows* False reads with the (piece, root kind) labels alone."""
+        settled = self._settled(word, english, root_rows=root_rows)
+        if settled is None:
+            return None
+        found, pieces, inflections, (form, sense, shown, labels) = settled
+        affix = found[0].affix
+        by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
+        head = shown["hb"] or shown["wolff"]
+        # The card's word is the course spelling, and its i where the Handbook chose a loan's e
+        # wins: the root of ibílin is bílin, not bélen (the Handbook spelling of bilin's other
+        # entry). A card that spells a different consonant (kinahánglan for kinahángan) or drops
+        # one (manánghid, maN- in place of sánghid's s) is not evidence about the vowel.
+        letters = _card_letters(word, found[0].root, affix)
+        if not (letters and _card_keeps_i(letters, head)):
+            letters = None
+        root = Part(onto_card(letters, head) if letters else head, self._root_gloss(form, sense), False)
+        before = [p for p in pieces if p.endswith("-")]
+        after = [p for p in pieces if not p.endswith("-")]
+        label = by_piece | ({"pa-": labels[-1]} if "pa-" in pieces else {})
+        return [
+            *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in before),
+            root,
+            *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in after),
+        ]
+
+    def chart_place(self, word: str, english: str = "") -> tuple[str, frozenset[tuple[str, str]]] | None:
+        """*word*'s inflection as the card's verb table names it: the decoder's piece, and
+        the (chart pair, subject) places Wolff's class code gives it; None when the parts
+        line is silent or the word is a causative. The caller decides whether the places
+        agree. Wolff's general i- is never among them: it labels nothing, so the parts line
+        never reads it (gitugnaw is tugnaw's 'who is affected', not the general i-)."""
+        settled = self._settled(word, english)
+        if settled is None:
+            return None
+        _, pieces, inflections, (_, sense, _, labels) = settled
+        if "pa-" in pieces or not (sense and sense["cls"]):
+            return None  # the chart has no causative rows; a root with no verb sense has no code
+        piece = inflections[0]
+        places = {
+            (pair, subject)
+            for pair, subject in _licenses(sense["cls"])
+            if pair in _PIECE_PAIRS.get(piece, ()) and (pair, subject) != ("i-/gi-", USED)
+        }
+        # The label the parts line chose says which subject it read, when it is a row by
+        # subject (a row for one root names the root, not the subject).
+        return piece, frozenset({p for p in places if _labels().get((piece, p[1])) == labels[0]} or places)
+
+    def _settled(self, word: str, english: str, *, root_rows: bool = True) -> tuple | None:
+        """The decoder's one settled reading of *word*: (its analyses, the pieces, the
+        inflections, (form, licensing sense, form as spelled, labels)), or None."""
         found = affixes.analyse(word, self._decoder, english)
         if not found or not found[0].affix:
             return None
@@ -996,25 +1045,7 @@ class WolffLexicon:
             return None
         if "ma-" in pieces and self._first_pos(found[0].root) == "a":
             return None  # Wolff's ma-_2: on an adjective root, ma- makes the adjective (mainit 'hot')
-        (_, (form, sense, shown, labels)) = next(iter(readings.items()))
-        by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
-        head = shown["hb"] or shown["wolff"]
-        # The card's word is the course spelling, and its i where the Handbook chose a loan's e
-        # wins: the root of ibílin is bílin, not bélen (the Handbook spelling of bilin's other
-        # entry). A card that spells a different consonant (kinahánglan for kinahángan) or drops
-        # one (manánghid, maN- in place of sánghid's s) is not evidence about the vowel.
-        letters = _card_letters(word, found[0].root, affix)
-        if not (letters and _card_keeps_i(letters, head)):
-            letters = None
-        root = Part(onto_card(letters, head) if letters else head, self._root_gloss(form, sense), False)
-        before = [p for p in pieces if p.endswith("-")]
-        after = [p for p in pieces if not p.endswith("-")]
-        label = by_piece | ({"pa-": labels[-1]} if "pa-" in pieces else {})
-        return [
-            *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in before),
-            root,
-            *(Part(_PIECE_TEXT.get(p, p), label[p], True, _cites()[(p, label[p])]) for p in after),
-        ]
+        return found, pieces, inflections, next(iter(readings.values()))
 
     def _first_pos(self, root: str) -> str | None:
         """The part of speech *root*'s main entry opens with (ínit 'hot, warm': a)."""

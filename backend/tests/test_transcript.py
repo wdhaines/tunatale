@@ -2989,6 +2989,30 @@ class TestPartsLine:
         lesson = _make_lesson([("female-1", "Abaya.")], lang="ceb")
         assert extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0].parts is not None
 
+    def test_a_verb_carries_its_place_in_the_chart_and_a_name_none(self):
+        """The reader's 'Verb chart ›' link (tunatale-h0q3.47): keyed off the parts line,
+        so a word the lesson marks as a name never links."""
+        from app.languages import ChartLink
+
+        lesson = self._named(
+            "Moadto si abaya.",
+            [
+                {"word": "Abaya", "translation": "a surname", "kind": "name"},
+                {"word": "moadto", "translation": "will go"},
+            ],
+        )
+        words = extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words
+        assert [(w.surface, w.chart) for w in words] == [
+            ("Moadto", ChartLink("agent-mo", ("mo-",), "Agent · Perfective · Irrealis")),
+            ("si", None),
+            ("abaya", None),
+        ]
+
+    def test_without_the_name_mark_the_same_word_would_link(self):
+        """The control for the test above: unmarked, abaya reads as a verb and links."""
+        lesson = _make_lesson([("female-1", "Abaya.")], lang="ceb")
+        assert extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words[0].chart is not None
+
     def test_a_language_with_no_dictionary_carries_none(self):
         lesson = _make_lesson([("female-1", "en gang til")], lang="no")
         assert [w.parts for w in extract_transcript(lesson, self.db, self.lemmatizer).dialogue_lines[0].words] == [

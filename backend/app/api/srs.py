@@ -71,6 +71,7 @@ from app.config import settings
 from app.generation.grammar_lesson import contrast_cards
 from app.languages import (
     card_surface_variants,
+    chart_card_html,
     dictionary_gloss,
     format_vocab_headword,
     get_gender_article,
@@ -341,7 +342,12 @@ def _item_to_dict(
         # tagged with where it renders: summary (always visible), details
         # (collapsed disclosure), or deep (its own nested disclosure). Empty list
         # for cards without any.
-        "extras": [{"label": e.label, "html": e.html, "tier": e.tier} for e in item.syntactic_unit.extras],
+        # The verb forms gain links into the chart as they are served (tunatale-h0q3.47);
+        # the stored fields, which are the Anki note's, keep none.
+        "extras": [
+            {"label": e.label, "html": chart_card_html(language_code, e.html), "tier": e.tier}
+            for e in item.syntactic_unit.extras
+        ],
         # Part of speech, shown ONLY when the surface is ambiguous across POS
         # (e.g. "fange" noun vs verb). Empty otherwise, so unambiguous cards
         # stay uncluttered. ``ambiguous_surfaces`` is None on endpoints that
@@ -2908,6 +2914,9 @@ async def build_transcript_payload(content_id: str, lesson, request: Request) ->
                         "translation": w.translation,
                         "gloss": w.gloss,
                         "parts": w.parts,
+                        "chart": None
+                        if w.chart is None
+                        else {"row": w.chart.row, "affixes": list(w.chart.affixes), "label": w.chart.label},
                         "collocation_span_id": w.collocation_span_id,
                         "collocation_start": w.collocation_start,
                         "collocation_srs_state": w.collocation_srs_state,

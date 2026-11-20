@@ -6007,6 +6007,33 @@
         "title": "SuspendRequest",
         "type": "object"
       },
+      "TranscriptChartLink": {
+        "description": "Where a reader word opens the verb chart (tunatale-h0q3.47): the chart row, the\naffixes to mark in it, and where the form stands in the chart's own words.",
+        "properties": {
+          "affixes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affixes",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          }
+        },
+        "required": [
+          "row",
+          "affixes",
+          "label"
+        ],
+        "title": "TranscriptChartLink",
+        "type": "object"
+      },
       "TranscriptDialogueLine": {
         "description": "One element of LessonTranscriptResponse.dialogue_lines.",
         "properties": {
@@ -6081,6 +6108,16 @@
               }
             ],
             "title": "Card Type"
+          },
+          "chart": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranscriptChartLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "collocation_lemma": {
             "anyOf": [
