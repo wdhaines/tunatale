@@ -22,7 +22,12 @@ from app.models.syntactic_unit import deserialize_extras
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.collocation_matcher import match_spans
 from app.srs.database import SRSDatabase
-from app.srs.function_words import is_a1_morphology_feature, is_clozes_only_verb, ud_feats_to_tt_feature
+from app.srs.function_words import (
+    is_a1_morphology_feature,
+    is_clozes_only_verb,
+    name_marker_short_forms,
+    ud_feats_to_tt_feature,
+)
 from app.srs.lemmatizer import Lemmatizer, analyze_sentence_cached, lemmatize_surfaces_in_context, model_version_for
 from app.srs.mastery import band_stability, compute_mastery_progress, direction_band, is_well_known, side_progress
 from app.srs.sense_match import sense_overlap
@@ -601,6 +606,8 @@ def extract_transcript(
     # A word the lesson marks as a name (Gamelo, Abaya) is no affixed word: the
     # dictionary is not asked for its parts (tunatale-tofg.18).
     names = story_gloss_words((lesson.generation_metadata or {}).get("story") or {}, {"name"})
+    # A name marker that is also a short form (Cebuano ni, kini's) — its gloss below.
+    short_forms = name_marker_short_forms(lesson.language_code)
 
     # Pre-load multi-word collocations for span detection
     collocation_index, exact_form_phrases = build_phrase_index(db, lemmatizer, lesson.language_code)
@@ -662,6 +669,11 @@ def extract_transcript(
                 # "you will") over lemma-generic (e.g. "biti" → "am"). Read BEFORE
                 # the card is resolved: it is what picks among a spelling's senses.
                 gloss = gloss_map.get(surface.lower()) or gloss_map.get(lemma) or None
+                if short_forms.get(surface.casefold()) == lemma:
+                    # ni read as kini (tunatale-qjjc): the lesson glosses a SPELLING
+                    # once, and ni's gloss is the marker's ('of'). Only kini's own
+                    # gloss speaks for this reading.
+                    gloss = gloss_map.get(lemma) or None
                 # Resolution order: 1) exact-surface inflection cloze, 2) base, 3) unknown
                 resolved_item: object = None
                 resolved_item_id: int | None = None
