@@ -987,3 +987,71 @@ async def test_a_tt_lapse_survives_an_anki_write_that_is_not_an_answer(
         assert (card["type"], card["queue"]) == (3, 1)
         assert final.state == SRSState.RELEARNING
     assert _dirty(db, cid) == 0
+
+
+@pytest.mark.parametrize(
+    ("phone_ms", "touch"),
+    [(123, False), (0, True), (123, True)],
+    ids=["control_no_touch", "control_whole_second_answer", "ms_answer_and_touch"],
+)
+async def test_un_marking_known_survives_an_anki_touch_after_a_phone_answer(
+    synthetic_collection: SyntheticCollection, phone_ms, touch
+) -> None:
+    """Layer 100, whole seconds (the #443 review, Q3; a regression from Layer 99 review R2). The card's last
+    answer came from the phone, so TT holds it as a pulled ``last_review`` in WHOLE seconds (``cards.data.lrt``),
+    while Anki's revlog id for the same answer carries milliseconds. After an un-mark of KNOWN (a force), an Anki
+    write that is not an answer let Layer 97 read TT's own copy of the phone's answer as "Anki answered ~123 ms
+    later": the restore deferred and the KNOWN schedule (s 400) came back in both apps."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    now = datetime.now(UTC)
+    today = anki_today_col_day(synthetic_collection.col_crt, now)
+    at = (now - timedelta(hours=1)).replace(microsecond=phone_ms * 1000)
+    _phone_review(synthetic_collection.path, at=at, stability=33.0, due_col_day=today + 30, ivl=30)
+    _full_sync(db, synthetic_collection)  # TT takes the phone's answer
+    assert _tt_dir(db, cid).last_review.microsecond == 0  # the premise: whole seconds, from lrt
+    db.mark_known(cid, due_at=now + timedelta(days=400), stability=400.0, direction=REC)
+    _full_sync(db, synthetic_collection)  # pushes KNOWN
+    db.restore_known(cid, REC)
+    assert _dirty(db, cid) == 1 and _tt_dir(db, cid).fsrs_force_next
+    _to_next_second()
+    if touch:
+        _anki_touch(synthetic_collection.path, at=datetime.now(UTC) + timedelta(seconds=2), optimize=False)
+
+    _full_sync(db, synthetic_collection)
+
+    card = _anki_card(synthetic_collection.path)
+    final = _tt_dir(db, cid)
+    # The restored due lands at +30 or +31 (a pre-existing UTC-date rounding of the pushed due); KNOWN is +400.
+    assert card["due"] - today < 60 and card["data"]["s"] == pytest.approx(33.0)
+    assert final.state == SRSState.REVIEW and final.stability == pytest.approx(33.0)
+
+
+async def test_an_undo_during_the_push_after_a_phone_answer_survives_an_anki_touch(
+    synthetic_collection: SyntheticCollection,
+) -> None:
+    """The same whole-seconds compare for the undo's force (Layer 99 review R2/R7): the undo restores a
+    ``last_review`` that TT pulled from a phone answer at a millisecond offset, and an Anki write that is not
+    an answer must not read that answer as "Anki answered later"."""
+    db, cid = _fresh(synthetic_collection, due_in=0)
+    now = datetime.now(UTC)
+    today = anki_today_col_day(synthetic_collection.col_crt, now)
+    at = (now - timedelta(hours=1)).replace(microsecond=123_000)
+    _phone_review(synthetic_collection.path, at=at, stability=33.0, due_col_day=today + 30, ivl=30)
+    _full_sync(db, synthetic_collection)  # TT takes the phone's answer, in whole seconds
+    before = _tt_dir(db, cid)
+    await _tt_grade(cid)
+    with sqlite3.connect(synthetic_collection.path) as conn:
+        conn.row_factory = sqlite3.Row
+        sync = _sync(db, conn, synthetic_collection)
+        _hook_in_set_due_date(sync, lambda: _tt_undo(cid), cross_second=False)
+        sync.sync_push()
+        sync.sync_pull()
+    assert _dirty(db, cid) == 1 and _tt_dir(db, cid).fsrs_force_next
+    _to_next_second()
+    _anki_touch(synthetic_collection.path, at=datetime.now(UTC) + timedelta(seconds=2), optimize=False)
+
+    _full_sync(db, synthetic_collection)
+
+    final = _tt_dir(db, cid)
+    assert final.last_review == before.last_review and final.state == SRSState.REVIEW
+    assert final.stability == pytest.approx(33.0) and _anki_card(synthetic_collection.path)["queue"] == 2

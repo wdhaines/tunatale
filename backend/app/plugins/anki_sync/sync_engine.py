@@ -1303,18 +1303,24 @@ class AnkiSync:
             changed = self._anki_changed_since_pull(ds, anki_state)
         if not changed:
             return False
-        latest = self._latest_anki_answer_ms(ds)
-        return latest is not None and latest > int(ds.last_review.timestamp() * 1000)
+        latest = self._latest_anki_answer_secs(ds)
+        return latest is not None and latest > int(ds.last_review.timestamp())
 
-    def _latest_anki_answer_ms(self, ds: DirectionState) -> int | None:
-        """The id (epoch ms) of Anki's newest answer (revlog type 0-3) on this card; 0 when it has none.
+    def _latest_anki_answer_secs(self, ds: DirectionState) -> int | None:
+        """The time (epoch WHOLE seconds) of Anki's newest answer (revlog type 0-3) on this card; 0 when none.
 
         None when the writer cannot read the revlog. A write that is not an answer (a flag, a deck move, an
         Optimize's type-5 row, housekeeping) moves ``cards.mod`` but adds no answer here (Layers 97, 100).
+
+        Whole seconds, compared with ``int(last_review.timestamp())``, as Layer 96 compares: a ``last_review``
+        TT pulled from Anki comes from ``cards.data.lrt`` in whole seconds, while the revlog id of that same
+        answer carries milliseconds, so a millisecond compare read TT's own copy of a phone answer as a later
+        Anki answer (Layer 100, the #443 review's Q3). An Anki answer in the same second after a TT grade counts
+        as not later.
         """
         if not hasattr(self._writer, "revlog_ids_for_card"):
             return None
-        return max(self._writer.revlog_ids_for_card(ds.anki_card_id, reviews_only=True), default=0)
+        return max(self._writer.revlog_ids_for_card(ds.anki_card_id, reviews_only=True), default=0) // 1000
 
     def _recompute_anki_studied_today_all_decks(self) -> None:
         """Set every revlog-touched deck's ``new_today`` + ``review_today`` counters
@@ -1949,8 +1955,8 @@ class AnkiSync:
                         # triggers. A revlog TT cannot read, or no TT grade time, keeps the
                         # conservative default above.
                         if anki_ahead and ds.last_review is not None:
-                            latest = self._latest_anki_answer_ms(ds)
-                            if latest is not None and latest <= int(ds.last_review.timestamp() * 1000):
+                            latest = self._latest_anki_answer_secs(ds)
+                            if latest is not None and latest <= int(ds.last_review.timestamp()):
                                 anki_ahead = False
 
                     if not anki_ahead:
