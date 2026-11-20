@@ -70,4 +70,18 @@ def short_form_line(word: str, english: str, disambig: str = "") -> str | None:
     for pair in short_form_pairs():
         if not pair.shares_card and (pair.short, pair.short_key) == (text, key):
             return f"short for {_marked(pair, english)[0]}"
-    return None
+    if any(text in (pair.short, pair.long) for pair in short_form_pairs()):
+        return None  # the tables settle this word: a shared card's short form says nothing
+    return _wolff_pointer(text, english)
+
+
+def _wolff_pointer(text: str, english: str) -> str | None:
+    """Wolff's own 'short for' pointer for a word the tables do not pair (tunatale-iiwm.11).
+
+    Only the short side: Wolff lists a short form under its full word for hundreds of
+    entries, and naming them back is a separate call for the owner.
+    """
+    from app.plugins.languages.ceb.wolff_cards import load_lexicon
+
+    full = load_lexicon().full_form(text, english)
+    return f"short for {full}" if full else None

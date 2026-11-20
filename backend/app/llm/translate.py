@@ -60,6 +60,13 @@ _MAX_GLOSS_WORDS = 6
 #: Backstop for a single absurd token; the word cap does the real work.
 _MAX_GLOSS_CHARS = 80
 
+#: A model's claim about what the word shortens ('that one (short for kato)', tunatale-iiwm.11).
+#: Bracketed, or after a separator: a gloss that merely starts 'short for' is a meaning.
+_DERIVATION = r"(?:short\s+(?:for|form\s+of)|contraction\s+of|abbreviation\s+of)\b"
+_DERIVATION_RE = re.compile(
+    rf"\s*(?:[(\[]\s*{_DERIVATION}[^)\]]*[)\]]|(?:[;,]|\s[-–—])\s*{_DERIVATION}.*$)", re.IGNORECASE
+)
+
 _GLOSS_LABEL_RE = re.compile(r"^(?:english|meaning|gloss|translation)\s*[:\-]\s*", re.IGNORECASE)
 
 
@@ -79,6 +86,8 @@ def parse_gloss_response(raw: str) -> str:
     first = _GLOSS_LABEL_RE.sub("", first).strip().strip("\"'`").strip()
     # A one-word reply often arrives with a full stop; that alone is not prose.
     first = first[:-1].strip() if first.endswith(".") else first
+    # The card's Short form line says what a word shortens, from Wolff; the model invents it.
+    first = _DERIVATION_RE.sub("", first).strip()
     if not first or first.upper() == "NONE":
         return ""
     if len(first) > _MAX_GLOSS_CHARS or len(first.split()) > _MAX_GLOSS_WORDS:
@@ -128,6 +137,7 @@ async def generate_word_gloss(
             "Give ONLY a concise dictionary gloss (one to three words) for the given "
             f"{source_lang} word. For verbs, use the bare form WITHOUT a leading 'to' "
             "(e.g. 'show', not 'to show'). Give nouns in the singular. "
+            "Never say what the word is short for or derived from. "
             "No quotes, no explanation, no trailing period."
         )
         # Include the part of speech so an ambiguous lemma is glossed in the

@@ -27,6 +27,8 @@ mock boundaries).
 
 from __future__ import annotations
 
+import pytest
+
 from app.llm.translate import generate_word_gloss, parse_gloss_response, translate_term
 
 
@@ -74,6 +76,29 @@ class TestParseResponse:
         assert parse_gloss_response("NONE") == ""
         assert parse_gloss_response("none") == ""
 
+    @pytest.mark.parametrize(
+        ("raw", "gloss"),
+        [
+            ("that one (short for kato)", "that one"),
+            ("that one [short form of kadto]", "that one"),
+            ("that one; short for kadto", "that one"),
+            ("not, short for dili", "not"),
+            ("this - contraction of kini", "this"),
+            ("(short for kadto)", ""),
+        ],
+    )
+    def test_drops_a_claim_about_what_the_word_shortens(self, raw, gloss):
+        """tunatale-iiwm.11: card 919 'to' came back 'that one (short for kato)'; Wolff
+        says kádto. The model invents derivations, so the gloss never carries one: the
+        card's Short form line, from Wolff, says it instead."""
+        assert parse_gloss_response(raw) == gloss
+
+    def test_keeps_a_gloss_that_only_mentions_short(self):
+        """The control: 'short' as the meaning is not a derivation claim, and neither is
+        a gloss that starts with it (a bare reply has no separator to mark a claim)."""
+        assert parse_gloss_response("short (in height)") == "short (in height)"
+        assert parse_gloss_response("short for a while") == "short for a while"
+
     def test_strips_a_trailing_full_stop(self):
         """A one-word reply often arrives punctuated; that alone is not prose."""
         assert parse_gloss_response("fresh.") == "fresh"
@@ -120,6 +145,13 @@ class TestGenerateWordGloss:
             llm, surface="ferskt", lemma="fersk", source_lang="no", feature="adj", sentence="Sporet er helt ferskt."
         )
         assert "Sporet er helt ferskt." in llm.prompts[0]
+
+    async def test_a_base_card_gloss_is_told_not_to_say_what_the_word_shortens(self):
+        """tunatale-iiwm.11: the instruction, beside the parser's guarantee above."""
+        llm = _FakeLLM("that one")
+        await generate_word_gloss(llm, surface="to", lemma="to", source_lang="ceb")
+        assert "short for" in llm.system_prompts[0].lower()
+        assert "never say what" in llm.system_prompts[0].lower()
 
 
 class TestTranslateTermIsNotGlossSanitised:

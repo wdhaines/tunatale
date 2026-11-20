@@ -38,21 +38,21 @@
       "provider": "groq"
     },
     {
-      "prompt_hash": "sha256:1dfe42aaf073a797",
+      "prompt_hash": "sha256:ee98dc47ab16bfd5",
       "prompt_preview": "in \u2014 in: Dober dan, prosim kavo in enain\u0161tirideset evrov, hvala lepa, nasvidenje",
       "max_tokens": 50,
-      "response": "and",
+      "response": "in",
       "provider": "groq"
     },
     {
-      "prompt_hash": "sha256:bb148fbd35aab995",
+      "prompt_hash": "sha256:c50a96757496ef01",
       "prompt_preview": "dan \u2014 in: Dober dan, prosim kavo in enain\u0161tirideset evrov, hvala lepa, nasvidenj",
       "max_tokens": 50,
-      "response": "",
+      "response": "day",
       "provider": "groq"
     },
     {
-      "prompt_hash": "sha256:c5b97002ab98377f",
+      "prompt_hash": "sha256:c17cdec8405b6ba2",
       "prompt_preview": "dober \u2014 in: Dober dan, prosim kavo in enain\u0161tirideset evrov, hvala lepa, nasvide",
       "max_tokens": 50,
       "response": "good",

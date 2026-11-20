@@ -93,6 +93,57 @@ def test_a_word_in_no_short_pair_has_no_line(word, disambig, english):
     assert _line(word, english, disambig) is None
 
 
+@pytest.mark.parametrize(
+    ("word", "english", "line"),
+    [
+        ("to", "that one", "short for kádto"),  # card 919: the model said 'kato'
+        ("bay", "friend; buddy", "short for abáy"),
+        ("naa", "there is; is at (a place)", "short for anâa"),
+        ("nia", "is here (near you and me)", "short for anîa"),
+        ("sakto", "correct, right", "short for eksákto"),  # 'saktu short for iksaktu'
+    ],
+)
+def test_a_short_form_in_no_table_takes_wolffs_pointer(word, english, line):
+    """tunatale-iiwm.11: where the tables say nothing, Wolff's own 'short for' pointer
+    is the line, so the card, not the model's gloss, says what the word shortens. It
+    is the same pointer the Details layer already calls 'Short form of'."""
+    assert _line(word, english) == line
+
+
+@pytest.mark.parametrize(
+    ("word", "english"),
+    [
+        ("maayo", "good"),  # 'maáyu see áyu' lands on a sub-entry spelled the same
+        ("palihug", "please"),  # 'see *líhug' points at a root, not a fuller word
+        ("kadto", "that one"),  # the long word: Wolff's 'short form: tu' is not named back
+        ("kawhaan", "twenty"),  # 'see duha' points at the root, not a fuller word
+        ("gilayon", "immediately"),  # 'see dáyun', the same
+        ("lalawigan", "province"),  # 'see lawig'
+        ("pwede", "can"),  # 'pwídi = puydi' is another spelling
+        ("xyzzy", "nothing at all"),  # not in Wolff
+    ],
+)
+def test_wolff_gives_no_line_for_a_word_that_shortens_nothing(word, english):
+    assert _line(word, english) is None
+
+
+def test_another_spelling_is_not_called_a_short_form_anywhere_on_the_card():
+    """'pwídi = puydi' is a spelling pointer: neither the line nor the Details layer may
+    call puwede a short form of púydi. The control is naa, whose '=' pointer anáa
+    confirms by listing náa as its short form."""
+    puwede = dictionary_note_fields("ceb", "puwede", "can")
+    assert "Short form" not in puwede
+    assert "Short form of" not in puwede["Details"]
+    assert "Short form of <b>anâa</b>" in dictionary_note_fields("ceb", "naa", "there is")["Details"]
+
+
+def test_a_root_pointer_is_not_called_a_short_form_in_the_details():
+    """The Details layer and the line read one rule: kawhaan 'see duha' showed
+    'Short form of duhá' before tunatale-iiwm.11."""
+    assert "Short form of" not in dictionary_note_fields("ceb", "kawhaan", "twenty")["Details"]
+    assert "Short form of <b>kádto</b>" in dictionary_note_fields("ceb", "to", "that one")["Details"]
+
+
 def test_a_form_wolff_does_not_settle_is_written_as_the_table_spells_it():
     """The marks are Wolff's when he settles the pair; the line never waits on him.
     The control is the same word with a gloss he settles."""

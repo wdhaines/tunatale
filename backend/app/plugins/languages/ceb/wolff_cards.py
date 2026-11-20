@@ -668,6 +668,12 @@ def _meanings(form: dict) -> list[dict]:
     return [s for s in form["senses"] if not is_affix_label(s["gloss"].removeprefix("= "))]
 
 
+def _in_order(short: str, full: str) -> bool:
+    """Every letter of *short* appears in *full*, in order ('ta' in 'kita', 'tu' in 'kadtu')."""
+    rest = iter(full)
+    return all(c in rest for c in short)
+
+
 class _Hit(NamedTuple):
     entry: int
     form: int
@@ -1441,6 +1447,44 @@ class WolffLexicon:
             )
         return out
 
+    def _points_at_root(self, hit: _Hit) -> bool:
+        """'palíhug see *líhug': the pointer lands on a root never said bare."""
+        pointer = self.entries[hit.via[0]]["forms"][hit.via[1]]["xref"] if hit.via is not None else None
+        return pointer is not None and pointer[1].startswith("*")  # a short-form list has no pointer
+
+    def _full_form(self, hit: _Hit) -> str | None:
+        """The word *hit* is Wolff's short form of, or None.
+
+        A pointer is a short form ('náa = anáa') only when what it points at
+        is spelled differently. 'maáyu see áyu' lands on the sub-entry màáyo,
+        the card's own spelling, which the root line already shows.
+        'palíhug see *líhug' lands on a root never said bare: that is where the
+        word comes from, not what it is short for ('ta see kita' is short for).
+        """
+        form = self.entries[hit.entry]["forms"][hit.form]
+        if hit.via is None or form["hb"] == hit.surface or self._points_at_root(hit) or not form["hb"]:
+            return None
+        # Wolff says so ('ka short for ikaw'), or the full word lists it among its short
+        # forms (anáa 'short form: náa'), or a 'see' pointer lands on a word it is a
+        # shortening of ('ta see kita': fewer letters, in order). Every other pointer is a
+        # spelling ('pwídi = puydi', 'saysinta' too) or a root the word is built on
+        # ('kawhaan see duha', 'gilayun see dáyun'); tunatale-iiwm.11 found cards calling
+        # those short forms.
+        via = self.entries[hit.via[0]]["forms"][hit.via[1]]
+        short = letters_key(via["wolff"] or hit.surface)
+        full = letters_key(form["wolff"] or form["hb"])
+        kind = via["xref"][0] if via["xref"] else None
+        listed = {letters_key(w) for w, _ in form["short"]} & {short, letters_key(hit.surface)}
+        if kind == "short for" or listed or (kind == "see" and len(short) < len(full) and _in_order(short, full)):
+            return form["hb"]
+        return None
+
+    def full_form(self, cebuano: str, english: str) -> str | None:
+        """The word Wolff says the card *cebuano* (glossed *english*) is short for, or None
+        (tunatale-iiwm.11): the card's Short form line where the tables say nothing."""
+        hit = self.match(cebuano, english)
+        return self._full_form(hit) if isinstance(hit, _Hit) else None
+
     def _details(self, hit: _Hit, cebuano: str, *, subjects: bool = True) -> str:
         rec = self.entries[hit.entry]
         form = rec["forms"][hit.form]
@@ -1452,15 +1496,10 @@ class WolffLexicon:
                 f"{_built(hit.decoded.affix, rec['forms'][0]['hb'] or '', bold=True)}. He gives the meaning under "
                 f"<b>{html.escape(form['hb'] or '')}</b>.{note}</div>"
             )
-        # A pointer is a short form ('náa = anáa') only when what it points at
-        # is spelled differently. 'maáyu see áyu' lands on the sub-entry màáyo,
-        # the card's own spelling, which the root line below already shows.
-        # 'palíhug see *líhug' lands on a root never said bare: that is where the
-        # word comes from, not what it is short for ('ta see kita' is short for).
-        pointer = self.entries[hit.via[0]]["forms"][hit.via[1]]["xref"] if hit.via is not None else None
-        to_root = pointer is not None and pointer[1].startswith("*")  # a short-form list has no pointer
-        if hit.via is not None and form["hb"] != hit.surface and not to_root:
-            out.append(f"<div>Short form of <b>{html.escape(form['hb'] or '')}</b></div>")
+        to_root = self._points_at_root(hit)
+        full = self._full_form(hit)
+        if full is not None:
+            out.append(f"<div>Short form of <b>{html.escape(full)}</b></div>")
         if (hit.form != 0 or to_root) and rec["forms"][0]["hb"]:
             root = rec["forms"][0]
             gloss = next((s["gloss"] for s in _meanings(root) if s["gloss"]), "")
