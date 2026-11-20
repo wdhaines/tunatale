@@ -38,7 +38,7 @@ from app.plugins.languages.ceb.affix_patterns import (
     pattern_roots,
     pattern_sentences,
 )
-from app.plugins.languages.ceb.affixes import decode, wolff_letters
+from app.plugins.languages.ceb.affixes import decode, strip_marks, wolff_letters
 from app.plugins.languages.ceb.focus_sentences import irregular_forms
 from app.srs.a1_morphology import A1Morphology
 from app.srs.function_words import _default_format_morphology_hint
@@ -140,4 +140,6 @@ CEBUANO_A1_MORPHOLOGY = A1Morphology(
     pattern_sentences=pattern_sentences,
     pattern_cards=pattern_cards,
     pattern_chain=pattern_chain,
+    # Wolff prints his lines with stress and glottal marks; the lemma table has none.
+    plain_text=strip_marks,
 )

@@ -136,4 +136,6 @@ def test_public_method_count_pinned() -> None:
     #  line in one transaction, its guid kept — adxy)
     # +set_anki_card_mod (a push that leaves a row dirty records its own card write as
     #  the mod TT last saw, so the next push does not read it as Anki's — Layer 99)
-    assert count == 156
+    # +get_cloze_sentences_by_key_prefix (the pace gate reads a word pattern's
+    #  evidence from the sentence cards' blanks — tunatale-ve4p.36)
+    assert count == 157

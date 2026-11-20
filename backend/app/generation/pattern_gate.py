@@ -9,16 +9,19 @@ fortnight first proposed:
 * its drill was heard on :data:`DRILL_DAYS` different study days, a lesson
   marked listened whose ``affix_drill`` is this pattern, a grammar lesson or a
   story's closing drill alike. Two listens on one day are one drill;
-* for a pattern taught as sentences, :data:`FIRST_PASSES` of its focus cards
-  passed their first review, and at least :data:`PASS_RATE` of all their
-  reviews passed. Learning steps are not reviews: passing them shows the card
-  was read the day it was added, not that the form came back on a later day.
+* :data:`FIRST_PASSES` of its cards passed their first review, and at least
+  :data:`PASS_RATE` of all their reviews passed. Learning steps are not
+  reviews: passing them shows the card was read the day it was added, not
+  that the form came back on a later day.
 
-A word pattern (mo-/mi-, maka-/naka-) needs its drill days and no cards. Its
-pair cards were easy, since the English of the blank made the only decision,
-and are no longer made; the owner chose drill days alone until the Wolff
-sentence cards exist, when they become its evidence (tunatale-ve4p.36,
-2026-11-20). The pair cards already in a deck age out and count for nothing.
+Which cards are a pattern's evidence (the owner, 2026-11-20, tunatale-ve4p.36):
+a pattern taught as sentences (on-gi) counts its focus cards. A word pattern
+(mo-/mi-, maka-/naka-) counts the sentence cards (``sent:*``: a Wolff line, a
+drill card, the affix drill card) whose blank says one of its forms, read by
+the language's lemmatizer and A1 features. A card whose blank is another word
+of the line does not test the form and does not count. The pair cards
+(``morph:pair-*``) count for nothing: the English of their blank made the only
+decision, so they are no longer made, and the ones in a deck age out.
 
 A ``review_only`` pattern needs one drill and no cards, on the OWNER's deck:
 the flag marks what the owner already knows. Another learner is taught it like
@@ -40,6 +43,7 @@ Reads only.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -48,6 +52,9 @@ from app.models.srs_item import Direction
 from app.srs.a1_morphology import AffixPattern
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.focus_card import focus_key
+from app.srs.function_words import cloze_answers
+from app.srs.lemmatizer import get_lemmatizer
+from app.srs.sentence_card import SENTENCE_KEY_PREFIX
 from app.storage.store import ContentStore
 
 logger = logging.getLogger(__name__)
@@ -69,8 +76,8 @@ class Progress:
     pattern: AffixPattern
     review_only: bool  # the pattern's flag, on the owner's deck only
     drill_days: int
-    first_passes: int  # focus cards whose first review passed
-    reviews: int  # every review of its focus cards
+    first_passes: int  # evidence cards whose first review passed
+    reviews: int  # every review of its evidence cards
     passes: int
     last_heard: date | None = None
 
@@ -79,14 +86,9 @@ class Progress:
         return REVIEW_ONLY_DRILL_DAYS if self.review_only else DRILL_DAYS
 
     @property
-    def needs_cards(self) -> bool:
-        """Only a pattern taught as sentences, and not one the learner already has, asks for cards."""
-        return self.pattern.sentences and not self.review_only
-
-    @property
     def met(self) -> bool:
         drilled = self.drill_days >= self.drill_days_needed
-        if not self.needs_cards:
+        if self.review_only:
             return drilled
         return drilled and self.first_passes >= FIRST_PASSES and self.passes >= PASS_RATE * self.reviews
 
@@ -97,9 +99,9 @@ class Progress:
     def summary(self) -> dict:
         """Each part of the gate beside what it needs, for the meters under a lesson's drill (ve4p.30).
 
-        A pattern that needs its drill days and nothing else has card targets of 0.
+        A review-only pattern needs its drill days and nothing else, so its card targets are 0.
         """
-        cards = self.needs_cards
+        cards = not self.review_only
         return {
             "drill_days": self.drill_days,
             "drill_days_needed": self.drill_days_needed,
@@ -127,42 +129,79 @@ def _drill_days(store: ContentStore, srs_db) -> dict[str, list[date]]:
     return {key: sorted(heard) for key, heard in days.items()}
 
 
-def _card_keys(pattern: AffixPattern) -> list[str]:
-    """The keys of the cards that are *pattern*'s evidence.
+def _sentence_cards_saying(language_code: str, srs_db) -> dict[str, frozenset[int]]:
+    """Per A1 feature, the sentence cards whose blank says a word of it.
 
-    A sentence pattern's are its focus cards, actor and object focus alike:
-    both test the choice (tunatale-ve4p.9). A word pattern has none.
+    The blank is what the card asks the learner to say: the whole line on a
+    line's own card, one word on its word cards. It is read in the language's
+    plain spelling (``A1Morphology.plain_text``) by its lemmatizer.
     """
-    return [focus_key(feature) for feature in pattern.card_features] if pattern.sentences else []
+    bundle = get_a1_morphology(language_code)
+    plain: Callable[[str], str] = bundle.plain_text or str
+    lemmatizer = get_lemmatizer(language_code)
+    said: dict[str, set[int]] = {}
+    for collocation_id, sentence in srs_db.get_cloze_sentences_by_key_prefix(SENTENCE_KEY_PREFIX):
+        for answer in cloze_answers(sentence):
+            for token in lemmatizer.analyze_sentence(plain(answer), language_code):
+                if (feature := bundle.to_feature(token)) is not None:
+                    said.setdefault(feature, set()).add(collocation_id)
+    return {feature: frozenset(ids) for feature, ids in said.items()}
 
 
-def _progress(pattern: AffixPattern, heard: list[date], srs_db, *, owner: bool) -> Progress:
-    first_passes = reviews = passes = 0
-    for key in _card_keys(pattern):
-        for collocation_id in srs_db.get_collocation_ids_by_disambig_key(key):
+class _Deck:
+    """What the gate reads from one learner's deck, each part read once and only when asked for."""
+
+    def __init__(self, language_code: str, srs_db, store: ContentStore) -> None:
+        self.language_code = language_code
+        self.srs_db = srs_db
+        self.days = _drill_days(store, srs_db)
+        self._said: dict[str, frozenset[int]] | None = None
+
+    def evidence(self, pattern: AffixPattern) -> list[int]:
+        """The ids of the cards that are *pattern*'s evidence.
+
+        A sentence pattern's are its focus cards, actor and object focus alike:
+        both test the choice (tunatale-ve4p.9). A word pattern's are the
+        sentence cards that say one of its forms, each once.
+        """
+        if pattern.sentences:
+            return [
+                collocation_id
+                for feature in pattern.card_features
+                for collocation_id in self.srs_db.get_collocation_ids_by_disambig_key(focus_key(feature))
+            ]
+        if self._said is None:
+            self._said = _sentence_cards_saying(self.language_code, self.srs_db)
+        return sorted(frozenset().union(*(self._said.get(feature, frozenset()) for feature in pattern.features)))
+
+    def progress(self, pattern: AffixPattern, *, owner: bool) -> Progress:
+        review_only = pattern.review_only and owner
+        heard = self.days.get(pattern.key, [])
+        first_passes = reviews = passes = 0
+        for collocation_id in [] if review_only else self.evidence(pattern):
             # Every row of the card: no id is at or below 0, so "unpushed after 0" is all of them.
-            rows = srs_db.get_unpushed_revlog_rows(collocation_id, Direction.PRODUCTION, 0)
+            rows = self.srs_db.get_unpushed_revlog_rows(collocation_id, Direction.PRODUCTION, 0)
             graded = [row.button_chosen > _AGAIN for row in rows if row.review_kind == _REVIEW]
             first_passes += bool(graded) and graded[0]
             reviews += len(graded)
             passes += sum(graded)
-    return Progress(
-        pattern=pattern,
-        review_only=pattern.review_only and owner,
-        drill_days=len(heard),
-        first_passes=first_passes,
-        reviews=reviews,
-        passes=passes,
-        last_heard=heard[-1] if heard else None,
-    )
+        return Progress(
+            pattern=pattern,
+            review_only=review_only,
+            drill_days=len(heard),
+            first_passes=first_passes,
+            reviews=reviews,
+            passes=passes,
+            last_heard=heard[-1] if heard else None,
+        )
 
 
-def progress(pattern: AffixPattern, *, srs_db, store: ContentStore, owner: bool) -> Progress:
-    """The learner's progress with *pattern*, read from their listens and its focus cards.
+def progress(language_code: str, pattern: AffixPattern, *, srs_db, store: ContentStore, owner: bool) -> Progress:
+    """The learner's progress with *pattern*, read from their listens and its evidence cards.
 
     *owner*: whether *srs_db* is the owner's deck, where a ``review_only`` pattern is reviewed, not taught.
     """
-    return _progress(pattern, _drill_days(store, srs_db).get(pattern.key, []), srs_db, owner=owner)
+    return _Deck(language_code, srs_db, store).progress(pattern, owner=owner)
 
 
 def taught_prefixes(language_code: str, *, srs_db, store: ContentStore, owner: bool) -> frozenset[str]:
@@ -174,10 +213,10 @@ def taught_prefixes(language_code: str, *, srs_db, store: ContentStore, owner: b
     bundle = get_a1_morphology(language_code)
     if bundle is None:
         return frozenset()
-    days = _drill_days(store, srs_db)
+    deck = _Deck(language_code, srs_db, store)
     found: set[str] = set()
     for pattern in bundle.patterns:
-        each = _progress(pattern, days.get(pattern.key, []), srs_db, owner=owner)
+        each = deck.progress(pattern, owner=owner)
         if each.review_only or each.met:
             found |= {feature.split(":", 1)[-1] for feature in pattern.features}
     return frozenset(found)
@@ -188,8 +227,8 @@ def next_pattern(language_code: str, *, srs_db, store: ContentStore, owner: bool
     bundle = get_a1_morphology(language_code)
     if bundle is None or not bundle.patterns:
         return None
-    days = _drill_days(store, srs_db)
-    every = [_progress(pattern, days.get(pattern.key, []), srs_db, owner=owner) for pattern in bundle.patterns]
+    deck = _Deck(language_code, srs_db, store)
+    every = [deck.progress(pattern, owner=owner) for pattern in bundle.patterns]
     current = next((each for each in every if not each.met), None)
     if current is None:
         return min(every, key=lambda each: each.last_heard).pattern  # met means heard at least once

@@ -229,7 +229,7 @@ describe("DrillForms progress", () => {
   });
 
   it("shows a pattern whose gate asks for no cards its drill days alone", () => {
-    // A word pattern (mo-/mi-, maka-/naka-) or a review-only one (bd tunatale-ve4p.36).
+    // A review-only pattern: the learner already has it.
     const noCards = {
       ...onTrack,
       first_passes_needed: 0,

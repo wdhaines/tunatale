@@ -157,3 +157,8 @@ class A1Morphology:
     # lesson's drill voiced and whether the learner understands a root; ``None``
     # for a pattern nobody has checked a chain for (tunatale-5i1p.6).
     pattern_chain: Callable[[AffixPattern, Sequence[str], Callable[[str], bool]], PatternChain | None] | None = None
+    # A card's text as the lemmatizer reads it, for a language whose printed
+    # lines carry marks its lemma table does not (Wolff's stress and glottal
+    # marks in Cebuano: ``nagdalî``). ``None``: the text as it is. The pace gate
+    # reads a sentence card's blank through it (tunatale-ve4p.36).
+    plain_text: Callable[[str], str] | None = None

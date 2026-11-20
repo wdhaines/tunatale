@@ -30,7 +30,8 @@ from app.srs.database import SRSDatabase
 from app.storage.store import ContentStore
 from tests._helpers.lemmatizer import StubLemmatizer
 from tests._helpers.localtz import local_timezone
-from tests.test_pattern_gate import _MO_MI_FOUR, _at, _heard, _passed_first_review
+from tests._helpers.pattern_gate import install_gate_lemmatizer, pass_word_pattern
+from tests.test_pattern_gate import _at, _heard
 
 _NARRATOR = "en-US-DavisMultilingualNeural"
 _CHARON = "ceb-PH-CharonGemini"
@@ -138,10 +139,12 @@ def test_another_learner_has_none_until_a_pattern_passes(db, store):
     assert taught_prefixes("ceb", srs_db=db, store=store, owner=False) == frozenset()
 
 
-def test_a_passed_pattern_adds_its_prefixes(db, store):
+def test_a_passed_pattern_adds_its_prefixes(db, store, monkeypatch):
+    install_gate_lemmatizer(monkeypatch)
     with local_timezone("Asia/Manila"):
         _heard(db, store, "mo-mi", _at(9), _at(13))
-        _passed_first_review(db, "mo-mi", _MO_MI_FOUR)
+        assert taught_prefixes("ceb", srs_db=db, store=store, owner=False) == frozenset()  # drills, no cards yet
+        pass_word_pattern(db, "mo-mi")
         assert taught_prefixes("ceb", srs_db=db, store=store, owner=False) == frozenset({"mo", "mi"})
 
 

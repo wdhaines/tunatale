@@ -98,6 +98,15 @@ class DbLemmaCacheMixin:
             ).fetchall()
         return [row["id"] for row in rows]
 
+    def get_cloze_sentences_by_key_prefix(self, prefix: str) -> list[tuple[int, str]]:
+        """``(id, source_sentence)`` of every row whose ``disambig_key`` starts with *prefix*, lowest id first."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, source_sentence FROM collocations WHERE substr(disambig_key, 1, ?) = ? ORDER BY id",
+                (len(prefix), prefix),
+            ).fetchall()
+        return [(row["id"], row["source_sentence"] or "") for row in rows]
+
     def get_collocations_with_lemma_key(
         self,
         language_code: str,
