@@ -1977,12 +1977,12 @@ answer ceb mokaon
 
 **Cards.** A word pattern (`mo-`/`mi-`, `maka-`/`naka-`) adds no cards. It used to offer one *contrast card* per drilled root (`app/srs/contrast_card.py`, keyed `morph:pair-<feature>`): a cloze over the root's small paradigm with one form blank (`lakaw · walk / will walk: molakaw / walked: [...]`). The English of the blank made the only decision, so the owner found them easy (2026-11-05), and they stopped being made (tunatale-ve4p.36). The ones already in a deck age out. They are still drawn with their grid, which is rebuilt from the language's table when the card is drawn and when its Anki note is written. A sentence pattern (`on-gi`, below) offers focus cards, through the listen preview's own new-card budget, one per root at a time.
 
-**The pace gate** (`app/generation/pattern_gate.py`, `13437b9`) replaced a fixed rotation through the patterns. A day's pattern is the first in teaching order the learner has not passed, so a pattern stays until it passes, and one that passed comes back once it stops passing. Passing, as the owner set it on 2026-10-14 and narrowed on 2026-11-20, needs:
+**The pace gate** (`app/generation/pattern_gate.py`, `13437b9`) replaced a fixed rotation through the patterns. A day's pattern is the first in teaching order the learner has not passed, so a pattern stays until it passes, and one that passed comes back once it stops passing. Passing, as the owner set it on 2026-10-14, needs both:
 
 - its drill heard on `DRILL_DAYS` (2) different study days, counted from lessons marked listened whose drill is that pattern (two listens on one day are one drill); and
-- for a pattern taught as sentences only, `FIRST_PASSES` (4) of its focus cards passing their first review, with at least `PASS_RATE` (80%) of all their reviews passing. Learning steps are not reviews: passing them shows the card was read the day it was added.
+- `FIRST_PASSES` (4) of its cards passing their first review, with at least `PASS_RATE` (80%) of all their reviews passing. Learning steps are not reviews: passing them shows the card was read the day it was added.
 
-A word pattern needs its drill days alone. Its pair cards measured something easy, and the owner chose drill days alone until the Wolff sentence cards exist, when sentence cards using the pattern's forms become its evidence (tunatale-ve4p.36).
+Which cards (the owner, 2026-11-20, tunatale-ve4p.36): a sentence pattern counts its focus cards. A word pattern counts the sentence cards (`sent:*`: a Wolff line, a drill card, the affix drill card) whose blank says one of its forms, read in the language's plain spelling (`A1Morphology.plain_text`, which drops Wolff's marks) by its lemmatizer and A1 features. A word card that blanks another word of the line does not count. The pair cards count for nothing.
 
 A `review_only` pattern (`ma-`/`na-` and, since 2026-11-09, `mag-`/`nag-`, which the owner knows from Tagalog) needs one drill and no cards, but only on the owner's deck; a second learner is taught it like any other, so every caller says whose deck it is reading (`692f73b`). With every pattern passed, the one heard longest ago comes round. A pattern still unpassed after `STUCK_AFTER` (5) drill days logs `PATTERN_STUCK` and stays, because something other than another drill has to change. The evidence for two drills was the owner's transfer probe: 5 of 10 after one `mo-`/`mi-` drill, 10 of 10 after two, with an undrilled root among the ten.
 
@@ -4946,6 +4946,7 @@ cpu_budget.py
 lemmatizer.py
 llm_rate_limit_shape.py
 localtz.py
+pattern_gate.py
 protobuf.py
 srs_image_shape.py
 srs_item_shape.py

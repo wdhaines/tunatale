@@ -293,16 +293,16 @@ async def test_the_lesson_is_served_with_the_table_of_what_it_drills(deck, srs_d
             },
         ],
         # How far the learner is with the pattern, for the meters under the
-        # table (tunatale-ve4p.30). Nothing heard yet; a word pattern needs
-        # its drill days and no cards (tunatale-ve4p.36).
+        # table (tunatale-ve4p.30). Nothing heard or reviewed yet; a word
+        # pattern's cards are the sentence cards that say its forms (ve4p.36).
         "progress": {
             "drill_days": 0,
             "drill_days_needed": 2,
             "first_passes": 0,
-            "first_passes_needed": 0,
+            "first_passes_needed": 4,
             "reviews": 0,
             "passes": 0,
-            "pass_rate_needed": 0.0,
+            "pass_rate_needed": 0.8,
             "met": False,
             "stuck": False,
         },

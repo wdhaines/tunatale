@@ -156,6 +156,14 @@ def uncloze_text(text: str) -> str:
     return _UNCLOZE_RE.sub(r"\1", text)
 
 
+def cloze_answers(text: str) -> list[str]:
+    """The answer of each cloze deletion in *text*, in order: what the card asks the learner to say.
+
+    ``Kay {{c1::nagdalî}} man ko.`` → ``["nagdalî"]``; a whole-line blank gives the line.
+    """
+    return _UNCLOZE_RE.findall(text or "")
+
+
 _NON_WORD_RE = re.compile(r"[^\w\s]", re.UNICODE)
 _WHITESPACE_RE = re.compile(r"\s+")
 

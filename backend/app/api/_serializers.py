@@ -53,6 +53,8 @@ def serialize_lesson(
     if drill is not None:
         if srs_db is not None and store is not None:
             pattern = find_pattern(lesson.language_code, drill["pattern"])
-            drill["progress"] = progress(pattern, srs_db=srs_db, store=store, owner=owner).summary()
+            drill["progress"] = progress(
+                lesson.language_code, pattern, srs_db=srs_db, store=store, owner=owner
+            ).summary()
         result["drill"] = drill
     return result

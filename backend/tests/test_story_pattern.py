@@ -33,14 +33,20 @@ from app.generation.story_pattern import add_closing_drill, add_day_drill, named
 from app.languages import get_a1_morphology, get_language
 from app.models.curriculum import Curriculum, CurriculumDay
 from app.models.lesson import KeyPhraseInfo, Lesson, Phrase, Section, SectionType
-from app.models.srs_item import Direction, RevlogRow, SRSState
+from app.models.srs_item import SRSState
 from app.models.strategy import ContentStrategy
-from app.srs.contrast_card import contrast_card
 from app.storage.store import ContentStore
 from tests._helpers.lemmatizer import StubLemmatizer
+from tests._helpers.pattern_gate import install_gate_lemmatizer, pass_word_pattern
 from tests.test_grammar_lesson import _BURIAL, _WAKE, _bury, _card, _story_lesson, owner  # noqa: F401
 
 _PATTERNS = {p.key: p for p in get_a1_morphology("ceb").patterns}
+
+
+@pytest.fixture(autouse=True)
+def _gate_lemmatizer(monkeypatch):
+    """The gate reads a word pattern's sentence cards with the language's lemmatizer: the stub here."""
+    install_gate_lemmatizer(monkeypatch)
 
 
 def _day(n: int, *, kind: str = "thematic", pattern: str = "") -> CurriculumDay:
@@ -100,28 +106,13 @@ def test_a_language_with_no_patterns_plans_none():
 
 
 def _mo_mi_passed(srs_db, store) -> None:
-    """mo- / mi- heard on two days, four of its cards past a first review."""
+    """mo- / mi- heard on two days, four sentence cards saying its forms past a first review."""
     passed = _story_lesson("Affix drill", [])
     passed.generation_metadata["affix_drill"] = {"pattern": "mo-mi", "roots": [], "new_roots": []}
     store.save_lesson("drill-mo-mi", "elsewhere", 1, passed)
     srs_db.record_listen("drill-mo-mi", at=datetime(2026, 10, 9, 12, tzinfo=UTC))
     srs_db.record_listen("drill-mo-mi", at=datetime(2026, 10, 13, 12, tzinfo=UTC))
-    for n, (root, blank) in enumerate((("uban", 1), ("inom", 0), ("adto", 1), ("anhi", 0))):
-        unit = contrast_card("ceb", _PATTERNS["mo-mi"], root, blank).unit()
-        srs_db.add_collocation(unit, language_code="ceb")
-        srs_db.append_revlog(
-            RevlogRow(
-                id=1_791_600_000_000 + n * 60_000,
-                collocation_id=srs_db.get_collocation_id_by_guid(srs_db.get_collocation(unit.text).guid),
-                direction=Direction.PRODUCTION,
-                button_chosen=3,
-                interval=5,
-                last_interval=1,
-                factor=2500,
-                taken_millis=5000,
-                review_kind=1,
-            )
-        )
+    pass_word_pattern(srs_db, "mo-mi")
 
 
 def test_a_day_with_a_deck_takes_the_gates_pattern(srs_db):
