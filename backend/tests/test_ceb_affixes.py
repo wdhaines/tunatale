@@ -570,12 +570,16 @@ def test_a_caller_changing_its_result_does_not_change_the_next_one():
 
 
 @pytest.fixture(scope="module")
-def lex_linker():
-    """The real lexicon with the linker hosts and three lesson names, as a caller that knows them passes them."""
-    from app.plugins.languages.ceb.affixes import default_hosts, lexicon
-    from app.plugins.languages.ceb.wolff_cards import load_lexicon as load
+def lex_linker(lex):
+    """The real lexicon with the linker hosts and three lesson names, as a caller that knows them passes them.
 
-    return lexicon(load().entries, hosts=default_hosts(), names=("Gamelo", "Abaya", "Maria"))
+    Derived from the module's ``lex`` rather than rebuilt: a second full build cost 0.7 s of setup and pushed
+    the first test using it over the CPU budget (tunatale-flqc). ``lexicon([])`` normalises hosts and names
+    exactly as the full build does."""
+    from app.plugins.languages.ceb.affixes import default_hosts
+
+    extra = lexicon([], hosts=default_hosts(), names=("Gamelo", "Abaya", "Maria"))
+    return lex._replace(hosts=extra.hosts, names=extra.names)
 
 
 def test_the_hosts_are_long_pronouns_and_demonstratives():
