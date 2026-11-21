@@ -76,13 +76,18 @@ def _with_list(card_set: str = "test-01") -> dict:
     return story
 
 
-async def _import(story: dict):
+async def _import(story: dict, replaces: str | None = None):
+    """POST the import. *replaces*: the lesson an edit of its source corrects (LessonSourcePanel);
+    None for a new story (the curriculum page's manual story)."""
+    body = {"curriculum_id": "c1", "day": 2, "story": story}
+    if replaces is not None:
+        body["replaces"] = replaces
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        return await client.post("/api/story/import", json={"curriculum_id": "c1", "day": 2, "story": story})
+        return await client.post("/api/story/import", json=body)
 
 
-async def _imported(store: ContentStore, story: dict) -> tuple[str, Lesson]:
-    resp = await _import(story)
+async def _imported(store: ContentStore, story: dict, replaces: str | None = None) -> tuple[str, Lesson]:
+    resp = await _import(story, replaces)
     assert resp.status_code == 201, resp.text
     lesson_id = resp.json()["id"]
     return lesson_id, store.get_lesson(lesson_id)
@@ -135,12 +140,12 @@ class TestCarryTheKey:
         db, store = _setup()
         a, lesson_a = await _imported(store, _no_list())
         (row,) = _mine(db, lesson_a, a, 3, OG, "and").made
-        b, lesson_b = await _imported(store, _no_list())
+        b, lesson_b = await _imported(store, _no_list(), replaces=a)
         assert lesson_b.generation_metadata["line_set"] == a
         og = _token(_line(db, lesson_b, b, 3), OG)
         assert (og.state, og.origin, og.in_deck) == ("on", "mine", True)
         assert _mine(db, lesson_b, b, 3, OG, "and").made == []  # tapping it again adds nothing
-        c, lesson_c = await _imported(store, _no_list())  # and the carry chains
+        c, lesson_c = await _imported(store, _no_list(), replaces=b)  # and the carry chains
         assert lesson_c.generation_metadata["line_set"] == a
         assert db.list_sibling_rows(f"sent:{a}:3")[0][2] == row
 
@@ -148,7 +153,7 @@ class TestCarryTheKey:
         db, store = _setup()
         a, lesson_a = await _imported(store, _no_list())
         _mine(db, lesson_a, a, 3, OG, "and")
-        resp = await _import(_with_list("test-01"))
+        resp = await _import(_with_list("test-01"), replaces=a)
         assert resp.status_code == 422, resp.text
         assert f"cards.set must be {a!r}" in resp.json()["detail"]
         assert store.get_latest_lesson_by_day("c1", 2)[0] == a  # nothing was written
@@ -158,25 +163,25 @@ class TestCarryTheKey:
         a, lesson_a = await _imported(store, _no_list())
         _mine(db, lesson_a, a, 3, OG, "and")
         db.record_listen(a)  # the day is studied: the list mints at import
-        b, lesson_b = await _imported(store, _with_list(a))
+        b, lesson_b = await _imported(store, _with_list(a), replaces=a)
         keys = sorted(i.syntactic_unit.disambig_key for _, i, _ in db.list_sibling_rows(f"sent:{a}:3"))
         assert keys == sorted(f"sent:{a}:3:{s}-{e}" for s, e in [(5, 9), OG, (14, 16)])  # one line: one note
         assert _token(_line(db, lesson_b, b, 3), OG).state == "on"
 
     async def test_control_a_day_with_no_mined_lines_takes_any_set(self):
         _db, store = _setup()
-        await _imported(store, _no_list())
-        _b, lesson_b = await _imported(store, _with_list("test-01"))
+        a, _ = await _imported(store, _no_list())
+        _b, lesson_b = await _imported(store, _with_list("test-01"), replaces=a)
         assert line_set(lesson_b, _b) == "test-01"
 
     async def test_control_a_course_row_under_the_days_set_does_not_refuse_a_new_set(self):
         """Only mined rows are a reason to refuse: a renamed list's course cards are the author's call."""
         db, store = _setup()
-        await _imported(store, _with_list("test-01"))
+        a, _ = await _imported(store, _with_list("test-01"))
         from app.srs.lesson_card_mint import mint_lesson_cards
 
         mint_lesson_cards(db, "no", _with_list("test-01")["cards"])
-        assert (await _import(_with_list("test-02"))).status_code == 201
+        assert (await _import(_with_list("test-02"), replaces=a)).status_code == 201
 
 
 # --- F2: an import updates the mined lines no list names ----------------------------------------------
@@ -196,7 +201,7 @@ class TestCorrectionReImport:
         db, store = _setup()
         a, lesson_a = await _imported(store, _with_line4(OLD4))
         _mine(db, lesson_a, a, 4, MORGEN_OLD, "tomorrow")
-        b, lesson_b = await _imported(store, _with_line4(NEW4))
+        b, lesson_b = await _imported(store, _with_line4(NEW4), replaces=a)
         ((_g, item, _r),) = db.list_sibling_rows("sent:test-01:4")
         card = sentence_card(item.syntactic_unit)
         assert (card.text, card.blank, card.blank_gloss) == (NEW4, MORGEN_NEW, "tomorrow")
@@ -208,7 +213,7 @@ class TestCorrectionReImport:
         db, store = _setup()
         a, lesson_a = await _imported(store, _no_list())
         _mine(db, lesson_a, a, 3, OG, "and")
-        await _imported(store, _no_list("Bra takk, og du?"))
+        await _imported(store, _no_list("Bra takk, og du?"), replaces=a)
         ((_g, item, _r),) = db.list_sibling_rows(f"sent:{a}:3")
         assert sentence_card(item.syntactic_unit).blank == (10, 12)
 
@@ -217,7 +222,7 @@ class TestCorrectionReImport:
         a, lesson_a = await _imported(store, _no_list())
         _mine(db, lesson_a, a, 3, OG, "and")
         with caplog.at_level("INFO"):
-            await _imported(store, _no_list())
+            await _imported(store, _no_list(), replaces=a)
         assert "LESSON_CARD_UPDATED" not in caplog.text
 
     async def test_a_line_whose_blank_has_no_place_is_held_and_logged(self, caplog):
@@ -225,10 +230,142 @@ class TestCorrectionReImport:
         a, lesson_a = await _imported(store, _no_list())
         _mine(db, lesson_a, a, 3, OG, "and")
         with caplog.at_level("WARNING"):
-            await _imported(store, _no_list("Bra, takk, du?"))  # "og" is gone
+            await _imported(store, _no_list("Bra, takk, du?"), replaces=a)  # "og" is gone
         ((_g, item, _r),) = db.list_sibling_rows(f"sent:{a}:3")
         assert sentence_card(item.syntactic_unit).text == "Bra, takk, og du?"
         assert "LESSON_LINE_UPDATE_HELD" in caplog.text
+
+
+# --- round 2 G1: only an edit of a named lesson carries ----------------------------------------------
+
+
+def _other_story() -> dict:
+    """A different story for the same day (the manual-story flow): no line is a line of _story's."""
+    story = _no_list()
+    story["scenes"][0]["lines"] = [
+        {"speaker": "female-1", "text": "God kveld!", "translation": "Good evening!"},
+        {"speaker": "male-1", "text": "Den står ute.", "translation": "It is outside."},
+        {"speaker": "female-1", "text": "Takk, og god natt!", "translation": "Thanks, and good night!"},
+    ]
+    return story
+
+
+class TestNewStoryCarriesNothing:
+    async def test_g1_a_new_story_neither_carries_nor_rewrites_the_days_mined_cards(self, caplog):
+        db, store = _setup()
+        a, lesson_a = await _imported(store, _no_list())
+        _mine(db, lesson_a, a, 3, OG, "and")
+        plan = mining.plan_line_edits(db, lesson_a, a, [{"line_key": f"sent:{a}:2", "on": ["whole"], "off": []}])
+        mining.apply_rows(db, "no", lesson_a, plan, {}, studied=True)
+        with caplog.at_level("INFO"):
+            b, lesson_b = await _imported(store, _other_story())
+        assert "line_set" not in lesson_b.generation_metadata
+        assert line_set(lesson_b, b) == b
+        texts = {i.syntactic_unit.text for g in (f"sent:{a}:2", f"sent:{a}:3") for _, i, _ in db.list_sibling_rows(g)}
+        assert texts == {"Hei, hvordan gar det?", "Bra, takk, og du?"}
+        assert "LESSON_CARD_UPDATED" not in caplog.text
+        assert {t.state for t in _line(db, lesson_b, b, 3).tokens} == {"off"}
+
+    async def test_g1_a_new_story_with_any_list_is_accepted(self):
+        db, store = _setup()
+        a, lesson_a = await _imported(store, _no_list())
+        _mine(db, lesson_a, a, 3, OG, "and")
+        assert (await _import(_with_list("test-01"))).status_code == 201
+
+    async def test_replaces_must_name_a_lesson_of_this_day(self):
+        _db, store = _setup()
+        await _imported(store, _no_list())
+        resp = await _import(_no_list(), replaces="nowhere-1")
+        assert resp.status_code == 422, resp.text
+        assert "replaces" in resp.json()["detail"]
+
+    async def test_an_edit_carries_from_the_lesson_it_names_not_the_days_latest(self):
+        db, store = _setup()
+        a, _ = await _imported(store, _no_list())
+        await _imported(store, _with_list("test-09"))  # a later, different story on the same day
+        _c, lesson_c = await _imported(store, _no_list(), replaces=a)  # the learner edits the older one
+        assert lesson_c.generation_metadata["line_set"] == a
+
+
+# --- round 2 G2: course rows of a line the list stops naming stay the list's ----------------------------
+
+
+class TestCourseRowsAreNotRewrittenFromTheScene:
+    async def test_g2_a_line_the_list_stops_naming_keeps_its_course_card_and_is_held(self, caplog):
+        from app.srs.lesson_card_mint import mint_lesson_cards
+
+        db, store = _setup()
+        a, _ = await _imported(store, _with_list("test-01"))
+        mint_lesson_cards(db, "no", _with_list("test-01")["cards"])
+        dropped = _with_list("test-01")
+        dropped["cards"]["items"] = [i for i in dropped["cards"]["items"] if i.get("line") != 1]
+        with caplog.at_level("WARNING"):
+            await _imported(store, dropped, replaces=a)
+        ((_g, item, _r),) = db.list_sibling_rows("sent:test-01:1")
+        card = sentence_card(item.syntactic_unit)
+        assert (card.speaker, card.picture) == ("Kari", "door.svg")
+        assert "LESSON_LINE_UPDATE_HELD line=sent:test-01:1" in caplog.text
+
+    async def test_g2_control_a_line_the_list_still_names_is_left_to_the_list(self, caplog):
+        from app.srs.lesson_card_mint import mint_lesson_cards
+
+        db, store = _setup()
+        a, _ = await _imported(store, _with_list("test-01"))
+        mint_lesson_cards(db, "no", _with_list("test-01")["cards"])
+        with caplog.at_level("WARNING"):
+            await _imported(store, _with_list("test-01"), replaces=a)
+        assert "LESSON_LINE_UPDATE_HELD" not in caplog.text
+
+
+# --- round 2 G3: the screen's text is the one a blank is made on -------------------------------------
+
+
+def test_g3_a_tap_on_a_line_whose_row_holds_other_text_is_refused():
+    """A review session replaced in place, or any path that changes a line under its key."""
+    db = SRSDatabase(":memory:")
+    old = Lesson(title="t", language_code="no", generation_metadata={"story": _no_list()})
+    _mine(db, old, "rs-1", 3, OG, "and")
+    new = Lesson(title="t", language_code="no", generation_metadata={"story": _no_list("Takk, og god natt!")})
+    with pytest.raises(mining.LineChanged) as exc:
+        mining.plan_line_edits(db, new, "rs-1", [{"line_key": "sent:rs-1:3", "on": [[0, 4]], "off": []}])
+    assert exc.value.status == 409
+    assert "Bra, takk, og du?" in str(exc.value) and "Takk, og god natt!" in str(exc.value)
+
+
+def test_g3_a_review_session_gets_a_fresh_line_set_every_write():
+    from app.generation.publishing import ReviewSessionTarget
+
+    store = ContentStore(":memory:")
+    target = ReviewSessionTarget(
+        store=store,
+        language_code="no",
+        session_id="review-2026-11-21-ab12cd34",
+        session_date="2026-11-21",
+        renderer=None,
+        audio_dir=None,
+        renders_in_flight=set(),
+        render_failures={},
+        owner=True,
+    )
+    sets = []
+    for _ in range(2):
+        lesson = Lesson(title="t", language_code="no", generation_metadata={"story": _no_list()})
+        target.write(lesson)
+        sets.append(line_set(store.get_review_session("review-2026-11-21-ab12cd34"), "review-2026-11-21-ab12cd34"))
+    assert sets[0] != sets[1]
+    assert all(s.startswith("review-2026-11-21-ab12cd34-") for s in sets)
+
+
+# --- round 2 G4: a minted id is a valid set -----------------------------------------------------------
+
+
+def test_g4_a_minted_id_never_holds_a_double_hyphen():
+    from app.generation.ids import mint_id
+    from app.srs.drill_card import SET_SLUG
+
+    title = "a" * 49 + " b"  # the slug's 50th character is the hyphen
+    minted = mint_id(title)
+    assert "--" not in minted and SET_SLUG.fullmatch(minted)
 
 
 # --- N1: a speaker's case does not change its voice -------------------------------------------------

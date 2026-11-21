@@ -154,7 +154,12 @@ def update_unlisted_lines(db, lesson: Lesson, content_id: str) -> set[str]:
         if listed.blanks or listed.whole:
             continue
         line = listed.card.line_key
-        if db.list_sibling_rows(line) and not _update_line(db, line, [listed.card]):
+        rows = db.list_sibling_rows(line)
+        if any(item.syntactic_unit.source == COURSE_SOURCE for _, item, _ in rows):
+            # The list stopped naming it: its course cards are the list's, never rebuilt from the scene (G2).
+            _hold(line, "it holds a course card the card list no longer names")
+            held.add(line)
+        elif rows and not _update_line(db, line, [listed.card]):
             held.add(line)
     return held
 

@@ -175,7 +175,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
 
     # The day's mined sentence lines keep their keys across the import (PR #449 review F1):
     # every import is a new lesson id, and a lesson with no card list keys its lines by it.
-    _carry_line_set(store, srs_db, body.curriculum_id, body.day, story, lesson)
+    _carry_line_set(store, srs_db, body, story, lesson)
 
     lesson_id = await publish_lesson(
         lesson,
@@ -195,7 +195,7 @@ async def import_story(body: ImportLessonRequest, request: Request):
 
     # A corrected scene line moves the blanks mined on it, as the study pass does for the
     # list's own lines (review F2). Only an import changes a line's text.
-    if srs_db is not None:
+    if srs_db is not None and body.replaces is not None:
         update_unlisted_lines(srs_db, lesson, lesson_id)
 
     # A card list for a day already studied mints now (tunatale-h0q3.43): the
@@ -221,17 +221,21 @@ async def import_story(body: ImportLessonRequest, request: Request):
     }
 
 
-def _carry_line_set(store, srs_db, curriculum_id: str, day: int, story: dict, lesson: Lesson) -> None:
-    """Key the new lesson's lines as the day's current lesson keys them (``sentence_lines.line_set``).
+def _carry_line_set(store, srs_db, body: ImportLessonRequest, story: dict, lesson: Lesson) -> None:
+    """Key an edited lesson's lines as the lesson it corrects (``body.replaces``) keys them.
 
-    With no card list, the lesson carries that line set. A list must use it as its
-    ``set`` when lines under it hold mined rows: any other set would make those lines
-    a second "TT Sentence" note in Anki. Refused loudly (422), naming the set to use.
+    Only an edit carries (PR #449 review G1): a new story for the day has other lines,
+    and keeping their keys would move mined cards onto unrelated sentences. With no
+    card list, the lesson carries that line set. A list must use it as its ``set`` when
+    lines under it hold mined rows: any other set would make those lines a second
+    "TT Sentence" note in Anki. Refused loudly (422), naming the set to use.
     """
-    current = store.get_latest_lesson_by_day(curriculum_id, day)
-    if current is None:
+    if body.replaces is None:
         return
-    current_set = line_set(current[1], current[0])
+    row = store.get_lesson_row(body.replaces)
+    if row is None or row["curriculum_id"] != body.curriculum_id or row["day"] != body.day:
+        raise HTTPException(status_code=422, detail=f"replaces: {body.replaces!r} is not a lesson of this day")
+    current_set = line_set(Lesson.from_json(row["data_json"]), body.replaces)
     cards = story.get("cards")
     if not cards:
         lesson.generation_metadata["line_set"] = current_set

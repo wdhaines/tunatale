@@ -1850,6 +1850,17 @@
             ],
             "title": "Raw"
           },
+          "replaces": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces"
+          },
           "story": {
             "anyOf": [
               {

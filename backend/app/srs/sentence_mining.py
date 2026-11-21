@@ -54,6 +54,12 @@ class LastCardOfLine(MiningError):
     status = 409
 
 
+class LineChanged(MiningError):
+    """The line's rows hold another text than the screen shows: a blank would be made on the wrong words."""
+
+    status = 409
+
+
 class NeedsConfirm(MiningError):
     """Cards with review history the edit would delete; nothing is applied until the learner confirms."""
 
@@ -222,6 +228,12 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
             for _, item, row_id in db.list_sibling_rows(line_key)
             if (card := sentence_card(item.syntactic_unit)) is not None
         }
+        stored = {sentence_card(item.syntactic_unit).text for _, item in rows.values()}
+        if stored - {read.text}:
+            raise LineChanged(
+                f"{line_key!r} holds cards of {sorted(stored)[0]!r}, not of {read.text!r}: "
+                "the lesson's text changed under it"
+            )
         after = len(rows)
         for span in off:
             key = listed.key(span)

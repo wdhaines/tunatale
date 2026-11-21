@@ -222,6 +222,10 @@ class ImportLessonRequest(BaseModel):
     day: int
     story: dict | None = None
     raw: str | None = None
+    #: The lesson this import corrects (an edit of its source). Only then does the new lesson keep
+    #: that lesson's sentence-line keys and move the blanks mined on its corrected lines. A new
+    #: story for the day (the manual-story paste) sends none, like regenerate (PR #449 review G1).
+    replaces: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one_story_or_raw(self):

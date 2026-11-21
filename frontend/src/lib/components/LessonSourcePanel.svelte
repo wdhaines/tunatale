@@ -72,10 +72,12 @@
 
 		importLoading = true;
 		try {
+			// An edit corrects this lesson: the import keeps its mined sentence lines (PR #449 G1).
 			const result = await api.importStory({
 				curriculum_id: curriculumId,
 				day,
 				story: parsed,
+				replaces: lessonId,
 			});
 			onImported(result.id);
 		} catch (e) {

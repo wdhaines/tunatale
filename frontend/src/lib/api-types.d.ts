@@ -3333,6 +3333,8 @@ export interface components {
       day: number;
       /** Raw */
       raw?: string | null;
+      /** Replaces */
+      replaces?: string | null;
       /** Story */
       story?: {
         [key: string]: unknown;
