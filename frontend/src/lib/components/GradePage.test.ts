@@ -181,12 +181,18 @@ describe("GradePage — Understand", () => {
     expect(view.getByRole("tab", { name: "Say it · 1" })).toBeTruthy();
   });
 
-  it("blurs the meaning until it is tapped", async () => {
+  it("hides the meaning behind the same short placeholder until it is tapped", async () => {
+    // Owner, 2026-11-21: a blur of the real text gives away its length; every hidden
+    // answer is the one placeholder, whatever its length, and the text is not in the page.
     await ready();
-    const gloss = within(rowOf("búntag")).getByText("morning");
-    expect(gloss.classList.contains("blurred")).toBe(true);
+    const gloss = within(rowOf("búntag")).getByRole("button", { name: "Show the meaning" });
+    expect(gloss.textContent).toBe("…");
+    expect(rowOf("búntag").textContent).not.toContain("morning");
+    expect(
+      within(rowOf("dínhi")).getByRole("button", { name: "Show the meaning" }).textContent,
+    ).toBe("…");
     await fireEvent.click(gloss);
-    expect(gloss.classList.contains("blurred")).toBe(false);
+    expect(gloss.textContent).toBe("morning");
   });
 
   it("nothing is graded until tapped, and tapping the chosen grade clears it", async () => {
@@ -211,8 +217,10 @@ describe("GradePage — Say it", () => {
     expect(within(row).queryByRole("group", { name: "Grade" })).toBeNull();
     const hidden = within(row).getByRole("button", { name: "Show the hidden word" });
     expect(hidden.classList.contains("shown")).toBe(false);
+    expect(hidden.textContent).toBe("…");
     await fireEvent.click(hidden);
     expect(hidden.classList.contains("shown")).toBe(true);
+    expect(hidden.textContent).not.toBe("…");
     await fireEvent.click(within(row).getByRole("button", { name: "Hard" }));
     expect(within(row).getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe(
       "true",
@@ -225,9 +233,10 @@ describe("GradePage — Say it", () => {
     await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
     const row = rowOf("Nia");
     const english = within(row).getByRole("button", { name: "Show the English" });
-    expect(english.classList.contains("blurred")).toBe(true);
+    expect(english.textContent).toBe("…");
+    expect(row.textContent).not.toContain("is here");
     await fireEvent.click(english);
-    expect(english.classList.contains("blurred")).toBe(false);
+    expect(english.textContent).toContain("is here");
     expect(
       within(row).getByRole("button", { name: "Show the hidden word" }).classList.contains("shown"),
     ).toBe(false);
@@ -239,9 +248,9 @@ describe("GradePage — Say it", () => {
     await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
     const row = rowOf("Nia");
     const english = within(row).queryByRole("button", { name: "Show the English" });
-    expect(english?.classList.contains("blurred")).toBe(true);
+    expect(english?.textContent).toBe("…");
     await fireEvent.click(within(row).getByRole("button", { name: "Show the hidden word" }));
-    expect(english?.classList.contains("blurred")).toBe(false);
+    expect(english?.textContent).toContain("is here");
   });
 
   it("shows a drill card's prompt above its hidden answer", async () => {
@@ -278,17 +287,55 @@ describe("GradePage — Say it", () => {
     const row = rowOf("Nia sila dinhi.");
     expect([...row.querySelectorAll(".prompt")].map((p) => p.textContent)).toEqual([
       "Nia siya dinhi.",
-      "sila",
+      "+ sila",
     ]);
     expect(row.querySelector(".step")?.textContent).toBe("step 1 of 16");
+    expect(row.querySelector(".english")?.textContent).toBe("…");
+    await fireEvent.click(within(row).getByRole("button", { name: "Show the English" }));
     expect(row.querySelector(".english")?.textContent).toBe("They are here.");
-    expect(row.querySelector(".english")?.classList.contains("blurred")).toBe(true);
+  });
+
+  it("a whole line hidden shows its cue above it, and with no cue its English openly", async () => {
+    // Owner, 2026-11-21: "Full sentences need a cue or they're impossible."
+    getPlan.mockResolvedValue(
+      plan({
+        cards: [
+          word,
+          makeGradePlanCard({
+            item_id: 20,
+            kind: "sentence",
+            direction: "production",
+            text: "Maáyong búntag.",
+            gloss: "Good morning.",
+            cue: { speaker: "Inday", text: "Maáyo." },
+          }),
+          makeGradePlanCard({
+            item_id: 21,
+            kind: "sentence",
+            direction: "production",
+            text: "Maáyo.",
+            gloss: "Hello!",
+          }),
+        ],
+      }),
+    );
+    const view = await ready();
+    await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
+    const cued = rowOf("Maáyong búntag.");
+    expect(cued.querySelector(".prompt")?.textContent).toBe("Inday: Maáyo.");
+    expect(within(cued).getByRole("button", { name: "Show the English" }).textContent).toBe("…");
+    const opener = rowOf("Maáyo.");
+    expect(opener.querySelector(".english")?.textContent).toBe("Hello!");
+    expect(within(opener).getByRole("button", { name: "Show the hidden word" }).textContent).toBe(
+      "…",
+    );
   });
 
   it("a word in no transcript line is hidden under its meaning", async () => {
     getTranscript.mockResolvedValueOnce({ ...transcript, dialogue_lines: [] });
     const view = await ready();
     await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
+    // Nothing else of a line is shown, so its English is the cue, in the open.
     expect(rowOf("Nia").textContent).toContain("is here");
   });
 });

@@ -201,6 +201,7 @@ export function makeGradePlanCard(overrides: Partial<GradePlanCard> = {}): Grade
     blank_start: null,
     blank_end: null,
     drill: null,
+    cue: null,
     ...overrides,
   };
 }

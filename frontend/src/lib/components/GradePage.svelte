@@ -18,6 +18,7 @@
 	import { gradeRangePref } from '#lib/stores/gradeRangePref.svelte.js';
 	import {
 		dueTag,
+		englishIsTheCue,
 		gradeKey,
 		RANGE_PRESETS,
 		sayLine,
@@ -109,6 +110,10 @@
 		else grades[key] = rating;
 		notice = '';
 	}
+
+	/** What stands in for a hidden answer: the same for every answer, so neither its
+	 * length nor its letters are a cue (owner, 2026-11-21; a blur kept both). */
+	const VEIL = '…';
 
 	function open(key: string) {
 		opened[key] = true;
@@ -366,7 +371,12 @@
 					<div class="row" data-row-text={card.text}>
 						<div class="row-main">
 							<span class="word">{card.text}</span>
-							<button class="gloss" class:blurred={!opened[key]} onclick={() => open(key)}>{card.gloss}</button>
+							<button
+								class="gloss"
+								class:veiled={!opened[key]}
+								aria-label={opened[key] ? card.gloss : t('gradePage.showMeaning')}
+								onclick={() => open(key)}>{opened[key] ? card.gloss : VEIL}</button
+							>
 						</div>
 						<span class="due" class:over={due.over}>{due.label}</span>
 						<div class="row-grades">
@@ -375,7 +385,7 @@
 					</div>
 				{:else}
 					{@const line = sayLine(card, transcript)}
-					{@const englishShown = opened[key] || opened[`${key}:en`]}
+					{@const englishShown = opened[key] || opened[`${key}:en`] || englishIsTheCue(line)}
 					<div class="row say-row" data-row-text={card.text}>
 						<div class="row-main">
 							{#if card.drill}
@@ -389,14 +399,14 @@
 									class="hidden-word"
 									class:shown={opened[key]}
 									aria-label={opened[key] ? line.hidden : t('gradePage.showHidden')}
-									onclick={() => open(key)}>{line.hidden}</button
+									onclick={() => open(key)}>{opened[key] ? line.hidden : VEIL}</button
 								>{line.after}</span
 							>
 							<button
 								class="english"
-								class:blurred={!englishShown}
+								class:veiled={!englishShown}
 								aria-label={englishShown ? line.english : t('gradePage.showEnglish')}
-								onclick={() => open(`${key}:en`)}>{line.english}</button
+								onclick={() => open(`${key}:en`)}>{englishShown ? line.english : VEIL}</button
 							>
 						</div>
 						<span class="due" class:over={due.over}>{due.label}</span>
@@ -566,8 +576,16 @@
 		text-align: left;
 		cursor: pointer;
 	}
-	.gloss.blurred {
-		filter: blur(5px);
+	/* A hidden answer: one fixed chip, whatever the answer's length. */
+	.gloss.veiled,
+	.english.veiled {
+		align-self: flex-start;
+		min-width: 3.5rem;
+		padding: 0 0.6rem;
+		border-radius: 999px;
+		text-align: center;
+		letter-spacing: 0.1em;
+		background: color-mix(in srgb, var(--color-muted) 16%, transparent);
 	}
 	.due {
 		justify-self: end;
@@ -590,7 +608,7 @@
 		font-size: 1.05rem;
 		line-height: 2.1;
 	}
-	/* The reader's production blur: the word is there, unreadable, until tapped. */
+	/* The hidden word: a fixed-width chip until tapped, so its length is no cue. */
 	.hidden-word {
 		margin: 0;
 		font: inherit;
@@ -598,13 +616,16 @@
 		border-radius: 6px;
 		padding: 0.15rem 0.3rem;
 		cursor: pointer;
+		display: inline-block;
+		min-width: 4rem;
+		text-align: center;
+		letter-spacing: 0.1em;
 		background: color-mix(in srgb, var(--color-primary) 18%, transparent);
-		color: transparent;
-		text-shadow: 0 0 9px var(--color-primary);
+		color: var(--color-primary);
 	}
 	.hidden-word.shown {
-		color: var(--color-primary);
-		text-shadow: none;
+		min-width: 0;
+		letter-spacing: normal;
 		font-weight: 650;
 	}
 	.english {
@@ -618,9 +639,6 @@
 		padding: 0.1rem 0;
 		text-align: left;
 		cursor: pointer;
-	}
-	.english.blurred {
-		filter: blur(5px);
 	}
 	.group h2 {
 		font-size: 0.85rem;

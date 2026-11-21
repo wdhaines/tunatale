@@ -127,10 +127,26 @@ function lineFor(card: GradePlanCard, transcript: TranscriptData | null): SayLin
 }
 
 /** How Say it shows one production card. */
+type Drill = NonNullable<GradePlanCard["drill"]>;
+
+/** A drill's front as words, the one framing Review's card and the Grade page share: the
+ * sentence before (a transformation's worked pair as "cue → answer"), then the new cue as
+ * its instruction: "+ cue" to put it into the sentence, "cue → ?" to transform it, the bare
+ * cue when there is no sentence before (a question to answer, a statement to judge). */
+export function drillFront(d: Drill): { before: string | null; cue: string } {
+  const before =
+    d.before == null ? null : d.before_cue == null ? d.before : `${d.before_cue} → ${d.before}`;
+  let cue = d.cue;
+  if (d.kind === "transformation") cue = `${d.cue} → ?`;
+  else if (d.kind === "substitution" && d.before != null) cue = `+ ${d.cue}`;
+  return { before, cue };
+}
+
 export function sayLine(card: GradePlanCard, transcript: TranscriptData | null): SayLine {
   if (card.drill) {
     const d = card.drill;
-    const prompt = [d.before_cue, d.before, d.cue].filter((p): p is string => Boolean(p));
+    const front = drillFront(d);
+    const prompt = front.before == null ? [front.cue] : [front.before, front.cue];
     return { role: null, before: "", hidden: d.answer, after: "", english: d.english, prompt };
   }
   if (card.kind === "sentence") {
@@ -142,7 +158,7 @@ export function sayLine(card: GradePlanCard, transcript: TranscriptData | null):
       hidden: card.text.slice(start, end),
       after: card.text.slice(end),
       english: card.gloss,
-      prompt: [],
+      prompt: card.cue ? [`${card.cue.speaker}: ${card.cue.text}`] : [],
     };
   }
   return (
@@ -155,6 +171,13 @@ export function sayLine(card: GradePlanCard, transcript: TranscriptData | null):
       prompt: [],
     }
   );
+}
+
+/** Whether a Say it row has nothing to recall from but its English: no part of the line and
+ * no prompt shows (a scene's opener, a word in no line). Its English is then shown openly
+ * (owner, 2026-11-21: "Full sentences need a cue or they're impossible"). */
+export function englishIsTheCue(line: SayLine): boolean {
+  return line.before.trim() === "" && line.after.trim() === "" && line.prompt.length === 0;
 }
 
 /** The Grade page's link, from a lesson or a review session. */

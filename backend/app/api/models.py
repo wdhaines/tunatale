@@ -2143,6 +2143,13 @@ class ReferencePagesResponse(BaseModel):
 # ── Grade page (tunatale-5i1p.2) ────────────────────────────────────────────
 
 
+class GradeCue(BaseModel):
+    """A sentence card's cue: the line before it, as its Anki front shows it."""
+
+    speaker: str
+    text: str
+
+
 class GradePlanCard(BaseModel):
     """One gradable direction of one of the lesson's cards."""
 
@@ -2161,6 +2168,8 @@ class GradePlanCard(BaseModel):
     blank_end: int | None = None
     # A drill card's step view (5i1p.4); `text` is its answer, `gloss` its English.
     drill: ItemDrill | None = None
+    # A sentence card's cue, the line before; None for a scene's opener and every other kind.
+    cue: GradeCue | None = None
 
 
 class GradePlanLater(BaseModel):

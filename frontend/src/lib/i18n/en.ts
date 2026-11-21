@@ -693,6 +693,7 @@ export const en = {
   "gradePage.later": "{count} more due later. Widen the range to see them.",
   "gradePage.showHidden": "Show the hidden word",
   "gradePage.showEnglish": "Show the English",
+  "gradePage.showMeaning": "Show the meaning",
   "gradePage.step": "step {step} of {of}",
   "gradePage.newWords": "Words",
   "gradePage.newContrast": "Contrast cards",

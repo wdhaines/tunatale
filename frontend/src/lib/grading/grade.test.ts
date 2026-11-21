@@ -8,6 +8,8 @@ import {
   dueTag,
   gradeHref,
   safeBack,
+  englishIsTheCue,
+  drillFront,
   gradeKey,
   parseRange,
   sayLine,
@@ -213,6 +215,44 @@ describe("sayLine", () => {
     ]).toEqual(["", "Nia man.", ""]);
   });
 
+  it("puts a sentence card's cue, the line before with its speaker, above the line", () => {
+    // Owner, 2026-11-21: a whole line hidden needs a cue, the one its Anki front shows.
+    const cued = makeGradePlanCard({
+      kind: "sentence",
+      text: "Nia man.",
+      cue: { speaker: "Kari", text: "Hei!" },
+    });
+    expect(sayLine(cued, null).prompt).toEqual(["Kari: Hei!"]);
+    expect(sayLine(makeGradePlanCard({ kind: "sentence", text: "Nia man." }), null).prompt).toEqual(
+      [],
+    );
+  });
+
+  it("the English is the cue only when nothing else of the line is shown", () => {
+    const whole = makeGradePlanCard({ kind: "sentence", text: "Nia man." });
+    expect(englishIsTheCue(sayLine(whole, null))).toBe(true);
+    const cued = makeGradePlanCard({
+      kind: "sentence",
+      text: "Nia man.",
+      cue: { speaker: "Kari", text: "Hei!" },
+    });
+    expect(englishIsTheCue(sayLine(cued, null))).toBe(false);
+    const blank = makeGradePlanCard({
+      kind: "sentence",
+      text: "Nia mi.",
+      blank_start: 4,
+      blank_end: 6,
+    });
+    expect(englishIsTheCue(sayLine(blank, null))).toBe(false);
+    const tail = makeGradePlanCard({
+      kind: "sentence",
+      text: "Nia mi.",
+      blank_start: 0,
+      blank_end: 3,
+    });
+    expect(englishIsTheCue(sayLine(tail, null))).toBe(false);
+  });
+
   it("puts a drill's worked example and new cue above its hidden answer", () => {
     const drill = {
       kind: "transformation" as const,
@@ -232,7 +272,9 @@ describe("sayLine", () => {
       makeGradePlanCard({ kind: "drill", direction: "production", drill }),
       null,
     );
-    expect(line.prompt).toEqual(["Mokaon ko.", "Mikaon ko.", "Moadto ko."]);
+    // Framed as the Review card frames it (owner, 2026-11-21: a bare cue has no instruction):
+    // the worked pair, then the new cue to transform.
+    expect(line.prompt).toEqual(["Mokaon ko. → Mikaon ko.", "Moadto ko. → ?"]);
     expect(line.hidden).toBe("Miadto ko.");
     expect(line.english).toBe("I went.");
 
@@ -243,7 +285,66 @@ describe("sayLine", () => {
       }),
       null,
     );
-    expect(sub.prompt).toEqual(["Mikaon ko.", "Moadto ko."]);
+    expect(sub.prompt).toEqual(["Mikaon ko.", "+ Moadto ko."]);
+
+    // No sentence before: the cue stands alone (a question to answer).
+    const qa = sayLine(
+      makeGradePlanCard({
+        kind: "drill",
+        drill: {
+          ...drill,
+          kind: "question_answer",
+          before: null,
+          before_cue: null,
+          cue: "Asa ka?",
+        },
+      }),
+      null,
+    );
+    expect(qa.prompt).toEqual(["Asa ka?"]);
+  });
+
+  it("frames a drill's front the same way the Review card does", () => {
+    const base = {
+      step: 1,
+      of: 4,
+      answer: "x",
+      english: "",
+      answer_audio_url: null,
+      before_audio_url: null,
+      before_cue_audio_url: null,
+      cue_audio_url: null,
+    };
+    expect(
+      drillFront({
+        ...base,
+        kind: "substitution",
+        cue: "sila",
+        before: "Nia siya dinhi.",
+        before_cue: null,
+      }),
+    ).toEqual({ before: "Nia siya dinhi.", cue: "+ sila" });
+    expect(
+      drillFront({ ...base, kind: "substitution", cue: "sila", before: null, before_cue: null }),
+    ).toEqual({
+      before: null,
+      cue: "sila",
+    });
+    expect(
+      drillFront({
+        ...base,
+        kind: "transformation",
+        cue: "Mokaon ko.",
+        before: "Milakaw ko.",
+        before_cue: "Molakaw ko.",
+      }),
+    ).toEqual({ before: "Molakaw ko. → Milakaw ko.", cue: "Mokaon ko. → ?" });
+    expect(
+      drillFront({ ...base, kind: "true_false", cue: "Nia siya?", before: null, before_cue: null }),
+    ).toEqual({
+      before: null,
+      cue: "Nia siya?",
+    });
   });
 });
 

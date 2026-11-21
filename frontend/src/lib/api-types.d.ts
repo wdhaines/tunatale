@@ -3066,6 +3066,16 @@ export interface components {
       user_prompt: string;
     };
     /**
+     * GradeCue
+     * @description A sentence card's cue: the line before it, as its Anki front shows it.
+     */
+    GradeCue: {
+      /** Speaker */
+      speaker: string;
+      /** Text */
+      text: string;
+    };
+    /**
      * GradePlanCard
      * @description One gradable direction of one of the lesson's cards.
      */
@@ -3074,6 +3084,7 @@ export interface components {
       blank_end?: number | null;
       /** Blank Start */
       blank_start?: number | null;
+      cue?: components["schemas"]["GradeCue"] | null;
       /**
        * Direction
        * @enum {string}

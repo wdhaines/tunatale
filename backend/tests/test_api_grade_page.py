@@ -397,6 +397,25 @@ class TestPlanSentenceCards:
         assert row["gloss"] == "Hi, how are you?"  # the line's English
         assert whole_id not in {c["item_id"] for c in plan["cards"]}  # still NEW: waiting, not a row
 
+    async def test_a_sentence_row_carries_its_cue_and_an_opener_none(self, srs_db):
+        """Owner, 2026-11-21: a whole line hidden is impossible to recall without its cue, the line
+        before (what the Anki front shows). A scene's opener has none."""
+        from tests.test_lesson_card_list import _story
+
+        db = _install(srs_db, _lesson("Hei!", story=_story()))
+        await _grade({})
+        cued = next(
+            r[2] for r in db.list_sibling_rows("sent:test-01:2") if r[1].syntactic_unit.disambig_key == "sent:test-01:2"
+        )
+        opener = db.list_sibling_rows("sent:test-01:1")[0][2]
+        _review_by_id(db, cued, PROD, due_in=1)
+        _review_by_id(db, opener, PROD, due_in=1)
+
+        rows = {c["item_id"]: c for c in (await _plan())["cards"]}
+
+        assert rows[cued]["cue"] == {"speaker": "Kari", "text": "Hei!"}
+        assert rows[opener]["cue"] is None
+
 
 class TestPlanDrillCards:
     """A drill card in the lesson's card list is a row showing its step view (tunatale-5i1p.4, audit I3).

@@ -2,6 +2,7 @@
 	import type { FocusRun, SRSItemDetail } from '#lib/api.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import GradeButtons from './GradeButtons.svelte';
+	import { drillFront as drillFrontText } from '#lib/grading/grade.js';
 
 	type Rating = 'again' | 'hard' | 'good' | 'easy';
 
@@ -262,14 +263,11 @@
 				<!-- The step its answers into review ask for, as the Anki note shows it:
 				     the sentence before, then the cue on its own line. -->
 				<p class="drill-step">{t('drillCard.step', { step: item.drill.step, of: item.drill.of })}</p>
-				{#if item.drill.before != null}
-					<p class="drill-before slovene">
-						{#if item.drill.before_cue != null}{`${item.drill.before_cue} → `}{/if}{item.drill.before}
-					</p>
+				{@const front = drillFrontText(item.drill)}
+				{#if front.before != null}
+					<p class="drill-before slovene">{front.before}</p>
 				{/if}
-				<p class="main-text drill-cue slovene">
-					{#if item.drill.kind === 'substitution' && item.drill.before != null}+ {item.drill.cue}{:else if item.drill.kind === 'transformation'}{item.drill.cue} → ?{:else}{item.drill.cue}{/if}
-				</p>
+				<p class="main-text drill-cue slovene">{front.cue}</p>
 				{#if drillFront.length}
 					<audio bind:this={drillAudioEl} src={drillFront[drillClip]} autoplay preload="auto" onended={nextDrillClip}></audio>
 					<button class="play-btn" onclick={replayDrillFront} aria-label={t('drillCard.playCue')}>▶</button>

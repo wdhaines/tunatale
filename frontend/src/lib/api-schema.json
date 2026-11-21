@@ -1252,6 +1252,25 @@
         "title": "GetStoryPromptResponse",
         "type": "object"
       },
+      "GradeCue": {
+        "description": "A sentence card's cue: the line before it, as its Anki front shows it.",
+        "properties": {
+          "speaker": {
+            "title": "Speaker",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "speaker",
+          "text"
+        ],
+        "title": "GradeCue",
+        "type": "object"
+      },
       "GradePlanCard": {
         "description": "One gradable direction of one of the lesson's cards.",
         "properties": {
@@ -1276,6 +1295,16 @@
               }
             ],
             "title": "Blank Start"
+          },
+          "cue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GradeCue"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "direction": {
             "enum": [

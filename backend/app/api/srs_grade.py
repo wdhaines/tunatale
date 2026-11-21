@@ -324,10 +324,19 @@ def _plan_rows(db, lesson, plan: _ListenPlan, window: _Window, range_days: int |
                     "blank_start": blank[0] if blank else None,
                     "blank_end": blank[1] if blank else None,
                     "drill": _drill_dict(card.item.syntactic_unit, db, card.item_id) if card.drill else None,
+                    "cue": _cue_dict(card.sentence),
                 }
             )
     rows.sort(key=lambda r: (r["due_at"], r["item_id"], r["direction"]))
     return rows, later, waiting_new
+
+
+def _cue_dict(sentence: SentenceCard | None) -> dict | None:
+    """A sentence row's cue: who said the line before, and what (owner, 2026-11-21: without it a whole
+    line hidden cannot be recalled)."""
+    if sentence is None or sentence.cue is None:
+        return None
+    return {"speaker": sentence.cue.speaker, "text": sentence.cue.text}
 
 
 def _refusals(db, cards: dict[int, _LessonCard], body: GradeRequest, window: _Window) -> tuple[int, list[dict]]:
