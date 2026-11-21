@@ -111,9 +111,10 @@
 		notice = '';
 	}
 
-	/** What stands in for a hidden answer: the same for every answer, so neither its
-	 * length nor its letters are a cue (owner, 2026-11-21; a blur kept both). */
-	const VEIL = '…';
+	/** What a hidden answer blurs: one fixed stand-in for every answer, so the blur shows
+	 * neither its length nor its letters (owner, 2026-11-21: a blur of the real text kept both;
+	 * the blur itself stays). */
+	const VEIL = 'xxxxx xxxx';
 
 	function open(key: string) {
 		opened[key] = true;
@@ -402,12 +403,14 @@
 									onclick={() => open(key)}>{opened[key] ? line.hidden : VEIL}</button
 								>{line.after}</span
 							>
-							<button
-								class="english"
-								class:veiled={!englishShown}
-								aria-label={englishShown ? line.english : t('gradePage.showEnglish')}
-								onclick={() => open(`${key}:en`)}>{englishShown ? line.english : VEIL}</button
-							>
+							{#if line.english}
+								<button
+									class="english"
+									class:veiled={!englishShown}
+									aria-label={englishShown ? line.english : t('gradePage.showEnglish')}
+									onclick={() => open(`${key}:en`)}>{englishShown ? line.english : VEIL}</button
+								>
+							{/if}
 						</div>
 						<span class="due" class:over={due.over}>{due.label}</span>
 						{#if opened[key]}
@@ -456,6 +459,7 @@
 		flex-direction: column;
 		align-items: flex-start;
 		min-width: 0;
+		padding-top: 0.75rem;
 	}
 	.eyebrow {
 		margin: 0.5rem 0 0;
@@ -576,16 +580,11 @@
 		text-align: left;
 		cursor: pointer;
 	}
-	/* A hidden answer: one fixed chip, whatever the answer's length. */
+	/* A hidden answer: the blurred stand-in, at its own width. */
 	.gloss.veiled,
 	.english.veiled {
 		align-self: flex-start;
-		min-width: 3.5rem;
-		padding: 0 0.6rem;
-		border-radius: 999px;
-		text-align: center;
-		letter-spacing: 0.1em;
-		background: color-mix(in srgb, var(--color-muted) 16%, transparent);
+		filter: blur(5px);
 	}
 	.due {
 		justify-self: end;
@@ -608,7 +607,7 @@
 		font-size: 1.05rem;
 		line-height: 2.1;
 	}
-	/* The hidden word: a fixed-width chip until tapped, so its length is no cue. */
+	/* The hidden word: the reader's production blur, over the fixed stand-in until tapped. */
 	.hidden-word {
 		margin: 0;
 		font: inherit;
@@ -616,16 +615,13 @@
 		border-radius: 6px;
 		padding: 0.15rem 0.3rem;
 		cursor: pointer;
-		display: inline-block;
-		min-width: 4rem;
-		text-align: center;
-		letter-spacing: 0.1em;
 		background: color-mix(in srgb, var(--color-primary) 18%, transparent);
-		color: var(--color-primary);
+		color: transparent;
+		text-shadow: 0 0 9px var(--color-primary);
 	}
 	.hidden-word.shown {
-		min-width: 0;
-		letter-spacing: normal;
+		color: var(--color-primary);
+		text-shadow: none;
 		font-weight: 650;
 	}
 	.english {

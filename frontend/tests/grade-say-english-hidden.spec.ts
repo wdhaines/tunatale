@@ -4,7 +4,7 @@ import { test, expect } from './fixtures';
 /**
  * The Say it tab keeps its English translation hidden until tapped
  * (tunatale-nb8p): practice is the language only; the English teaches once.
- * Hidden is one fixed "…" chip, not a blur of the real text, whose length was a
+ * Hidden is a blur of one fixed stand-in, not of the real text, whose length was a
  * cue (owner, 2026-11-21); that the text is absent is pinned in GradePage.test.ts.
  * The owner tests on Android, so reveal is a tap, never a hover — this spec
  * taps. Geometry is a browser fact (jsdom reports 0x0 rects), so it lives here.
@@ -76,7 +76,7 @@ async function mockPlan(page: Page) {
 	);
 }
 
-test('Say it hides the English in a short chip until tapped, and it sits below the sentence', async ({
+test('Say it blurs a fixed stand-in for the English until tapped, and it sits below the sentence', async ({
 	page
 }) => {
 	await mockPlan(page);
@@ -86,15 +86,18 @@ test('Say it hides the English in a short chip until tapped, and it sits below t
 	const row = page.locator('[data-row-text="Nia"]');
 	const english = row.locator('.english');
 	await expect(english).toBeVisible();
-	await expect(english).toHaveText('…');
+	await expect(english).toHaveText('xxxxx xxxx');
+	const filter = () => english.evaluate((el) => getComputedStyle(el).filter);
+	await expect.poll(filter).toContain('blur');
 
-	// A chip, not a full-width bar: the flex column must not stretch it.
+	// Its own width, not a full-width bar: the flex column must not stretch it.
 	const chip = await english.boundingBox();
 	const main = await row.locator('.row-main').boundingBox();
 	expect(chip!.width).toBeLessThan(main!.width / 2);
 
 	await english.tap();
 	await expect(english).toHaveText('is here');
+	await expect.poll(filter).toBe('none');
 
 	// Under the sentence as a line of its own, never inline beside it.
 	const say = await row.locator('.say').boundingBox();

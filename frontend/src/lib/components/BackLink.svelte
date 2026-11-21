@@ -12,14 +12,15 @@
 <a class="back-link" {href}>← {label}</a>
 
 <style>
+	/* Blue, as a link (owner picked this look, 2026-11-21); a phone has no hover to reveal it. */
 	.back-link {
 		display: inline-block;
-		color: var(--color-muted);
+		color: var(--color-primary);
 		text-decoration: none;
 		font-size: 0.9rem;
 		font-weight: 600;
 	}
 	.back-link:hover {
-		color: var(--color-primary);
+		color: var(--color-primary-hover);
 	}
 </style>

@@ -183,16 +183,18 @@ describe("GradePage — Understand", () => {
 
   it("hides the meaning behind the same short placeholder until it is tapped", async () => {
     // Owner, 2026-11-21: a blur of the real text gives away its length; every hidden
-    // answer is the one placeholder, whatever its length, and the text is not in the page.
+    // answer blurs one fixed stand-in, whatever its length, and the text is not in the page.
     await ready();
     const gloss = within(rowOf("búntag")).getByRole("button", { name: "Show the meaning" });
-    expect(gloss.textContent).toBe("…");
+    expect(gloss.textContent).toBe("xxxxx xxxx");
+    expect(gloss.classList.contains("veiled")).toBe(true); // blurred: the owner wants the blur kept
     expect(rowOf("búntag").textContent).not.toContain("morning");
     expect(
       within(rowOf("dínhi")).getByRole("button", { name: "Show the meaning" }).textContent,
-    ).toBe("…");
+    ).toBe("xxxxx xxxx");
     await fireEvent.click(gloss);
     expect(gloss.textContent).toBe("morning");
+    expect(gloss.classList.contains("veiled")).toBe(false);
   });
 
   it("nothing is graded until tapped, and tapping the chosen grade clears it", async () => {
@@ -217,10 +219,10 @@ describe("GradePage — Say it", () => {
     expect(within(row).queryByRole("group", { name: "Grade" })).toBeNull();
     const hidden = within(row).getByRole("button", { name: "Show the hidden word" });
     expect(hidden.classList.contains("shown")).toBe(false);
-    expect(hidden.textContent).toBe("…");
+    expect(hidden.textContent).toBe("xxxxx xxxx");
     await fireEvent.click(hidden);
     expect(hidden.classList.contains("shown")).toBe(true);
-    expect(hidden.textContent).not.toBe("…");
+    expect(hidden.textContent).not.toBe("xxxxx xxxx");
     await fireEvent.click(within(row).getByRole("button", { name: "Hard" }));
     expect(within(row).getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe(
       "true",
@@ -233,7 +235,7 @@ describe("GradePage — Say it", () => {
     await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
     const row = rowOf("Nia");
     const english = within(row).getByRole("button", { name: "Show the English" });
-    expect(english.textContent).toBe("…");
+    expect(english.textContent).toBe("xxxxx xxxx");
     expect(row.textContent).not.toContain("is here");
     await fireEvent.click(english);
     expect(english.textContent).toContain("is here");
@@ -248,7 +250,7 @@ describe("GradePage — Say it", () => {
     await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
     const row = rowOf("Nia");
     const english = within(row).queryByRole("button", { name: "Show the English" });
-    expect(english?.textContent).toBe("…");
+    expect(english?.textContent).toBe("xxxxx xxxx");
     await fireEvent.click(within(row).getByRole("button", { name: "Show the hidden word" }));
     expect(english?.textContent).toContain("is here");
   });
@@ -290,7 +292,7 @@ describe("GradePage — Say it", () => {
       "+ sila",
     ]);
     expect(row.querySelector(".step")?.textContent).toBe("step 1 of 16");
-    expect(row.querySelector(".english")?.textContent).toBe("…");
+    expect(row.querySelector(".english")?.textContent).toBe("xxxxx xxxx");
     await fireEvent.click(within(row).getByRole("button", { name: "Show the English" }));
     expect(row.querySelector(".english")?.textContent).toBe("They are here.");
   });
@@ -323,12 +325,36 @@ describe("GradePage — Say it", () => {
     await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
     const cued = rowOf("Maáyong búntag.");
     expect(cued.querySelector(".prompt")?.textContent).toBe("Inday: Maáyo.");
-    expect(within(cued).getByRole("button", { name: "Show the English" }).textContent).toBe("…");
+    expect(within(cued).getByRole("button", { name: "Show the English" }).textContent).toBe(
+      "xxxxx xxxx",
+    );
     const opener = rowOf("Maáyo.");
     expect(opener.querySelector(".english")?.textContent).toBe("Hello!");
     expect(within(opener).getByRole("button", { name: "Show the hidden word" }).textContent).toBe(
-      "…",
+      "xxxxx xxxx",
     );
+  });
+
+  it("a row with no English has no English chip to tap", async () => {
+    // A drill step the lesson gives no English (h0q3.63): a chip would reveal nothing.
+    getPlan.mockResolvedValue(
+      plan({
+        cards: [
+          word,
+          makeGradePlanCard({
+            item_id: 22,
+            kind: "sentence",
+            direction: "production",
+            text: "Nia sila dinhi.",
+            gloss: "",
+            cue: { speaker: "Inday", text: "Nia siya dinhi." },
+          }),
+        ],
+      }),
+    );
+    const view = await ready();
+    await fireEvent.click(view.getByRole("tab", { name: /Say it/ }));
+    expect(rowOf("Nia sila dinhi.").querySelector(".english")).toBeNull();
   });
 
   it("a word in no transcript line is hidden under its meaning", async () => {
