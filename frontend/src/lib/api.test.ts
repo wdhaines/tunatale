@@ -506,6 +506,13 @@ describe("TunaTaleAPI", () => {
         status: 409,
       });
     });
+
+    it("puts the server's detail on the error as sent, an object included", async () => {
+      // The Grade page tells a stale plan (its detail names rows) from a refused sentence edit.
+      const detail = { message: "reviewed", needs_confirm: ["sent:x:1:0-3"] };
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockFailBody({ detail }, 409)));
+      await expect(api.createReviewSession()).rejects.toMatchObject({ status: 409, detail });
+    });
   });
 
   describe("curriculum", () => {

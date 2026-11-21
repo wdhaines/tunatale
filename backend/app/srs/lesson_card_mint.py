@@ -55,18 +55,23 @@ def _in_deck(db, card: LessonCard, language_code: str) -> bool:
 
 
 def mint_lesson_cards(
-    db, language_code: str, cards: dict, drills: list[dict] | tuple = ()
+    db, language_code: str, cards: dict, drills: list[dict] | tuple = (), *, only: set[str] | None = None
 ) -> list[tuple[int, LessonCard]]:
     """Add the cards *cards* makes that the deck lacks, NEW and in list order; return ``(id, card)`` per row added.
 
     Cards already in the deck that the lesson has corrected are updated first
     (:func:`_update_lesson_rows`); a line it holds mints nothing new either.
     *drills* are the story's own, which a ``drill`` item names (tunatale-5i1p.4).
+    A card the learner turned off (a not-wanted mark, tunatale-h0q3.66) is never minted.
+    *only*: mint just these card keys (a list card turned back on in Grade), not the rest of the list.
     """
     built = lesson_cards(cards, drills)
     held = _update_lesson_rows(db, built)
+    marks = db.sentence_card_marks()
     minted: list[tuple[int, LessonCard]] = []
     for card in built:
+        if (only is not None and card.unit.disambig_key not in only) or card.unit.disambig_key in marks:
+            continue
         if sibling_group(card.unit) in held or _in_deck(db, card, language_code):
             continue
         db.add_collocation(card.unit, language_code=language_code)

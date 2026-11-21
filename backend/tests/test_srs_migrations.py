@@ -74,7 +74,7 @@ def _insert(
 
 class TestMigrations:
     def test_current_version(self):
-        assert CURRENT_VERSION == 51
+        assert CURRENT_VERSION == 52
 
     def test_migrates_v42_to_v43_adds_base_collocation_id(self, tmp_path):
         """The link that stops a cloze-covered word reading as two words.
@@ -2370,7 +2370,7 @@ class TestMigrateV37ToV38:
     """Tests for v37→v38 (lesson_listens table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 51
+        assert CURRENT_VERSION == 52
 
     def test_v37_to_v38_creates_lesson_listens_table_and_index(self):
         from app.srs.migrations import migrate_v37_to_v38
@@ -2440,7 +2440,7 @@ class TestMigrateV38ToV39:
     """Tests for v38→v39 (lesson_reviews table + index)."""
 
     def test_current_version_bumped(self):
-        assert CURRENT_VERSION == 51
+        assert CURRENT_VERSION == 52
 
     def test_v38_to_v39_creates_lesson_reviews_table_and_index(self):
         from app.srs.migrations import migrate_v38_to_v39

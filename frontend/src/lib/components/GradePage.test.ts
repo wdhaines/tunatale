@@ -67,7 +67,14 @@ const transcript = {
   ],
 };
 
-const ok = { status: "ok", applied: 0, created: 0, recorded_study: true, listen_count: 1 };
+const ok = {
+  status: "ok",
+  applied: 0,
+  created: 0,
+  recorded_study: true,
+  listen_count: 1,
+  not_made: [],
+};
 
 function renderPage() {
   return render(GradePage, {
@@ -110,6 +117,19 @@ describe("GradePage — loading and the range", () => {
     await fireEvent.click(view.getByRole("button", { name: "all" }));
     await waitFor(() => expect(getPlan).toHaveBeenLastCalledWith("l1", null));
     expect(view.getByTestId("range-value").textContent).toBe("all");
+  });
+
+  it("a slower response for a range since replaced does not win", async () => {
+    const view = await ready();
+    let late: (p: ReturnType<typeof plan>) => void = () => {};
+    getPlan.mockImplementationOnce(() => new Promise((resolve) => (late = resolve)));
+    await fireEvent.click(view.getByRole("button", { name: "7 days" }));
+    getPlan.mockResolvedValueOnce(plan({ cards: [ahead] }));
+    await fireEvent.click(view.getByRole("button", { name: "all" }));
+    await waitFor(() => expect(view.queryByText("búntag")).toBeNull());
+    late(plan());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(view.queryByText("búntag")).toBeNull();
   });
 
   it("− and + move the range one day", async () => {
@@ -280,6 +300,7 @@ describe("GradePage — New cards", () => {
       { key: "kuan", text: "kùán", gloss: "what's-it", will_create: false },
     ],
     contrast: [{ form: "miadto", root: "adto", english: "went", model: [], will_create: true }],
+    sentences: [],
   };
 
   it("lists suggestions on when they fit the budget, off past it", async () => {
@@ -312,6 +333,7 @@ describe("GradePage — New cards", () => {
       ],
       over_cap: [{ kind: "word", key: "kuan" }],
       studied: false,
+      sentence_edits: [],
     });
     // A turned-off word goes on the ignore list, so the notice says so (Fable, PR #425).
     expect(await view.findByText("Saved: 2 turned off · counted as studied")).toBeTruthy();
@@ -346,6 +368,7 @@ describe("GradePage — Save", () => {
         declined: [],
         over_cap: [],
         studied: false,
+        sentence_edits: [],
       },
     ]);
     expect(await view.findByText("Saved: 2 graded · counted as studied")).toBeTruthy();
@@ -474,5 +497,174 @@ describe("GradePage — tabs", () => {
     expect(
       view.getByText("5 cards from this lesson are still new; card reviews introduce them."),
     ).toBeTruthy();
+  });
+});
+
+describe("GradePage — New cards › Sentences (tunatale-h0q3.67)", () => {
+  const tok = (start: number, end: number, over = {}) => ({
+    start,
+    end,
+    part: null,
+    state: "off" as const,
+    origin: "mine" as const,
+    reviewed: false,
+    gloss: "",
+    in_deck: false,
+    ...over,
+  });
+  const carded = {
+    line_key: "sent:test-01:3",
+    speaker: "Kari",
+    text: "Bra, takk, og du?",
+    english: "Fine, thanks, and you?",
+    linked: false,
+    tokens: [
+      tok(0, 3, { gloss: "fine" }),
+      tok(5, 9, { state: "on", origin: "lesson" }),
+      tok(11, 13),
+      tok(14, 16),
+    ],
+    whole: tok(0, 17),
+  };
+  const bare = (n: number) => ({
+    ...carded,
+    line_key: `sent:test-01:${n}`,
+    text: "Hei!",
+    english: "Hi!",
+    tokens: [tok(0, 3)],
+    whole: tok(0, 4),
+  });
+  const withLines = (sentences: unknown[], over = {}) =>
+    plan({
+      studied: true,
+      listen_count: 1,
+      suggestions: { words: [], contrast: [], sentences },
+      ...over,
+    });
+  const openNew = async () => {
+    const view = await ready();
+    await fireEvent.click(view.getByRole("tab", { name: /New cards/ }));
+    return view;
+  };
+
+  it("opens the lines with cards and folds the rest behind one button", async () => {
+    getPlan.mockResolvedValue(withLines([carded, bare(4), bare(5)]));
+    const view = await openNew();
+    expect(view.getByText("Sentences")).toBeTruthy();
+    expect(view.getByText("3 lines · 1 card")).toBeTruthy();
+    expect(view.queryByText("Nothing new to add from this lesson.")).toBeNull();
+    expect(document.querySelectorAll("[data-line-key]").length).toBe(1);
+    await fireEvent.click(view.getByRole("button", { name: "Show 2 more lines ›" }));
+    expect(document.querySelectorAll("[data-line-key]").length).toBe(3);
+    expect(view.queryByRole("button", { name: /Show/ })).toBeNull();
+  });
+
+  it("a lesson none of whose lines has a card shows them all behind the button", async () => {
+    getPlan.mockResolvedValue(withLines([bare(1)]));
+    const view = await openNew();
+    expect(view.getByRole("button", { name: "Show the lesson's 1 line ›" })).toBeTruthy();
+  });
+
+  it("a tapped word counts as a new card and Save sends it as the line's edit", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    await fireEvent.click(view.getByRole("button", { name: "og" }));
+    expect(view.getByRole("tab", { name: "New cards · 1" })).toBeTruthy();
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1].sentence_edits).toEqual([
+      { line_key: "sent:test-01:3", on: [[11, 13]], off: [[5, 9]], confirm: false },
+    ]);
+    await waitFor(() => expect(view.getByRole("status").textContent).toContain("1 turned off"));
+  });
+
+  it("an edit alone makes a studied lesson's Save possible", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    const saveButton = view.getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    expect(saveButton.disabled).toBe(false);
+  });
+
+  it("names the blanks the Save could not make, loudly", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    save.mockResolvedValue({
+      ...ok,
+      not_made: [{ line_key: "sent:test-01:3", start: 11, end: 13, word: "og" }],
+    });
+    const view = await openNew();
+    await fireEvent.click(view.getByRole("button", { name: "og" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() =>
+      expect(view.getByRole("alert").textContent).toBe(
+        "Not made, no meaning found: og. Everything else was saved.",
+      ),
+    );
+  });
+
+  it("after a Save the staged lines start again from the new plan", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    await fireEvent.click(view.getByRole("button", { name: "og" }));
+    getPlan.mockResolvedValue(
+      withLines([
+        {
+          ...carded,
+          tokens: [...carded.tokens.slice(0, 2), tok(11, 13, { state: "on" }), tok(14, 16)],
+        },
+      ]),
+    );
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(view.getByText("1 line · 2 cards")).toBeTruthy());
+    expect(view.getByRole("tab", { name: "New cards · 0" })).toBeTruthy();
+  });
+
+  it("a refused sentence edit says why and does not refetch as if the plan were stale", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    const calls = getPlan.mock.calls.length;
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("409"), {
+        status: 409,
+        detail: "'sent:test-01:3' is in Anki and keeps at least one card",
+      }),
+    );
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() =>
+      expect(view.getByRole("alert").textContent).toBe(
+        "A sentence change was not saved, and nothing else was either: 'sent:test-01:3' is in Anki and keeps at least one card",
+      ),
+    );
+    expect(getPlan.mock.calls.length).toBe(calls);
+  });
+
+  it("a reviewed card the server would not turn off without a confirm is named the same way", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("409"), {
+        status: 409,
+        detail: { message: "takk has history", needs_confirm: ["k"] },
+      }),
+    );
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("takk has history"));
+  });
+
+  it("a stale grade plan (its 409 names rows) still refetches", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("409"), { status: 409, detail: { message: "m", rows: [] } }),
+    );
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() =>
+      expect(view.getByRole("status").textContent).toContain("Some cards changed"),
+    );
   });
 });

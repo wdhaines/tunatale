@@ -58,6 +58,7 @@ CLEAR_TABLES = frozenset(
     {
         "tt_revlog",
         "lesson_listens",
+        "sentence_card_marks",
         "lesson_reviews",
         "pending_listen_grades",
         "review_sessions",

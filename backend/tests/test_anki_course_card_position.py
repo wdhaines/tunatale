@@ -357,3 +357,127 @@ class TestSyncCreateNewCourse:
         )
         (note,) = conn.execute("SELECT tags FROM notes").fetchall()
         assert COURSE_TAG not in note["tags"].split()
+
+
+# --- a blank mined on a list line before its lesson is studied (tunatale-h0q3.66, finding M3) ---
+#
+# The mined blank makes the line's note first, untagged and at the front. At study the list's
+# cards join it in a fresh course region. The note must then carry ``tt-course``, or
+# ``_next_course_position`` cannot see those cards and the next lesson opens another region
+# 100,000 positions ahead of them. It must also tag the mined card ``tt-mined-c<N>``: with the
+# course tag alone, the mined card (due 4) counts as a course card and the next lesson lands
+# behind it, tied with the frequency deck. Probed 2026-11-20 (briefs/findings-sentence-mining-
+# m3-probe-2026-11-20.py), each candidate fix emulated by hand.
+
+_LINE = SentenceCard(
+    lesson_id="test-01",
+    line_index=2,
+    speaker="Per",
+    text="Jeg tar en kaffe, takk.",
+    spoken="Jeg tar en kaffe, takk.",
+    english="I'll have a coffee, thanks.",
+    glosses=(),
+)
+_MINED = _LINE.with_blank((4, 7), "take(s)")  # "tar"; unit() source is "user"
+_LIST_BLANK = _LINE.with_blank((11, 16), "coffee")  # "kaffe"
+_NEXT_LESSON = SentenceCard(
+    lesson_id="test-02",
+    line_index=1,
+    speaker="Kari",
+    text="Hva koster det?",
+    spoken="Hva koster det?",
+    english="What does it cost?",
+    glosses=(),
+)
+
+
+def _as_course(card: SentenceCard):
+    return replace(card.unit(), source="course")
+
+
+_LATE = _LINE.with_blank((18, 22), "thanks")  # "takk": a list card that joins the line after a mined one
+_FREQUENCY_DUE = 5  # the frequency deck's next new card (``_seed_new_card``)
+_ORDERS = {
+    "study_first": lambda study: [study, [_MINED.unit()]],
+    "mined_first": lambda study: [[_MINED.unit()], study],
+    # The normal order, then a course card placed later (a list blank turned back on in Grade, or
+    # one a lesson correction adds): the writer placed course cards on a note holding a mined card.
+    "study_mined_then_course": lambda study: [study, [_MINED.unit()], [_as_course(_LATE)]],
+}
+
+
+class TestMinedBeforeStudy:
+    @staticmethod
+    async def _run(order: str) -> dict:
+        from app.common.guid import compute_guid
+        from app.models.srs_item import Direction
+
+        db = _make_db()
+        conn = _make_dual_collection_conn()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS graves (oid INTEGER NOT NULL, type INTEGER NOT NULL, "
+            "usn INTEGER NOT NULL, PRIMARY KEY (oid, type))"
+        )
+        add_sentence_notetype(conn)
+        _seed_new_card(conn, 1, _FREQUENCY_DUE)
+
+        async def sync():
+            await AnkiSync(
+                db=db, _reader=FakeReader(), _writer=OfflineWriter(conn), language_code="no"
+            ).sync_create_new(deck_name="0. Slovene", model_name="Slovene Vocabulary")
+
+        def row(unit):
+            return db.get_collocation_by_guid(compute_guid(unit.text, "no", unit.disambig_key))
+
+        def due(unit):
+            cid = row(unit).directions[Direction.PRODUCTION].anki_card_id
+            return conn.execute("SELECT due, ord FROM cards WHERE id = ?", (cid,)).fetchone()
+
+        study = [_as_course(_LIST_BLANK), _as_course(_LINE)]
+        for units in _ORDERS[order](study):
+            for unit in units:
+                assert db.add_collocation(unit, "no")
+            await sync()
+        assert db.add_collocation(_as_course(_NEXT_LESSON), "no")
+        await sync()
+        return {
+            "tags": _tags(conn, row(_MINED.unit()).anki_note_id).split(),
+            "line_notes": {row(u).anki_note_id for u in [_MINED.unit(), *study]},
+            "mined_ord": due(_MINED.unit())["ord"],
+            "mined_due": due(_MINED.unit())["due"],
+            "lesson1": [due(u)["due"] for u in study],
+            "lesson2": due(_as_course(_NEXT_LESSON))["due"],
+            "twice": conn.execute("SELECT nid, ord FROM cards GROUP BY nid, ord HAVING COUNT(*) > 1").fetchall(),
+            "cards": conn.execute(
+                "SELECT COUNT(*) FROM cards WHERE nid = ?", (row(_MINED.unit()).anki_note_id,)
+            ).fetchone()[0],
+        }
+
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_the_line_note_is_a_course_note_with_its_mined_card_tagged(self, order):
+        got = await self._run(order)
+        assert len(got["line_notes"]) == 1 and None not in got["line_notes"]  # M2: one note, nothing held
+        assert COURSE_TAG in got["tags"]
+        assert f"{MINED_TAG_PREFIX}{got['mined_ord'] + 1}" in got["tags"]
+
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_no_card_is_written_twice(self, order):
+        """Review F1: the held mined ord was inserted again on every course placement. Anki's Check
+        Database deletes the copy (it keeps the lower id) while TT relinks the row to it."""
+        got = await self._run(order)
+        assert [tuple(r) for r in got["twice"]] == []
+        assert got["cards"] == (4 if order == "study_mined_then_course" else 3)
+
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_this_lessons_course_cards_open_a_region_ahead_of_the_frequency_deck(self, order):
+        """Review F2: the design's row (fix: tt-course + tt-mined-c<N>). The mined card is not the
+        course's anchor, so lesson 1's cards are not placed level with the frequency deck."""
+        got = await self._run(order)
+        assert max(got["lesson1"]) < _FREQUENCY_DUE, got
+        assert got["lesson1"] == [got["lesson1"][0], got["lesson1"][0] + 1], got
+
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_the_next_lesson_lands_right_behind_this_lessons_course_cards(self, order):
+        got = await self._run(order)
+        expected = max(got["lesson1"]) + (2 if order == "study_mined_then_course" else 1)  # behind takk too
+        assert got["lesson2"] == expected, got

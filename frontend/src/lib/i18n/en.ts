@@ -720,6 +720,36 @@ export const en = {
   "gradePage.stale":
     "Some cards changed since this page loaded. The list is refreshed; check it and save again.",
   "gradePage.open": "Grade",
+  "gradePage.newSentences": "Sentences",
+  "gradePage.sentencesCount": {
+    one: "{count} line · {cards}",
+    other: "{count} lines · {cards}",
+  },
+  "gradePage.sentencesHint": "Tap a word to make it a blank. Tap a blank to drop it.",
+  "gradePage.showLines": {
+    one: "Show the lesson's {count} line ›",
+    other: "Show the lesson's {count} lines ›",
+  },
+  "gradePage.showMoreLines": {
+    one: "Show {count} more line ›",
+    other: "Show {count} more lines ›",
+  },
+  "gradePage.sentenceRefused":
+    "A sentence change was not saved, and nothing else was either: {reason}",
+  "gradePage.notMade": "Not made, no meaning found: {words}. Everything else was saved.",
+
+  // SentenceLineEditor.svelte (tunatale-h0q3.67)
+  "sentenceLine.cards": { one: "{count} card", other: "{count} cards" },
+  "sentenceLine.whole": "whole sentence",
+  "sentenceLine.wholeOn": "whole sentence ✓",
+  "sentenceLine.wholeCard": "The whole-sentence card",
+  "sentenceLine.glossAtSave": "meaning written when you save",
+  "sentenceLine.keepsOne":
+    "This line's note is in Anki, so it keeps at least one card. Turn another one on first.",
+  "sentenceLine.reviewed":
+    "{card} has been reviewed. Turning it off deletes its history at the next sync.",
+  "sentenceLine.keep": "Keep it",
+  "sentenceLine.turnOff": "Turn it off",
 
   // +error.svelte
   "error.genericFallback": "Something went wrong",

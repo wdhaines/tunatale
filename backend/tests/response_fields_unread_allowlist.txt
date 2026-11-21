@@ -52,8 +52,6 @@ last_review_time_ms  # OWNER DECISION: DirectionStateResponse (due, items, revie
 files_removed  # OWNER DECISION: DELETE /api/review-sessions/{id} — called by the frontend, field not read.
 session_id  # OWNER DECISION: GET /api/review-sessions/{id}/source — called by the frontend, field not read.
 start_day  # OWNER DECISION: GET /api/curriculum/{id} (proposed batch) — called by the frontend, field not read.
-line_key  # OWNER DECISION: GradePlanCard drops it; also AddSentenceBlankRequest, whose route (POST /api/srs/sentence-blanks) no screen calls.
-collocation_id  # OWNER DECISION: AddSentenceBlankResponse; POST /api/srs/sentence-blanks has no frontend caller.
 restored  # OWNER DECISION: GradeRequest can un-ignore a declined word, but the Grade page never sends it — a missing control, not only a dead field.
 accepted  # OWNER DECISION: POST /api/client-log (fire-and-forget) — called by the frontend, field not read.
 anki_card_id  # OWNER DECISION: SRS item/queue payloads (declared in api.ts only) — called by the frontend, field not read.

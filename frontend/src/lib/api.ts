@@ -773,8 +773,10 @@ export class TunaTaleAPI {
       // the bare status line — statusText is empty over HTTP/2, which left sync/other
       // failures showing a useless "METHOD /path:" with no reason.
       let detail = "";
+      let rawDetail: unknown;
       try {
         const body = await res.json();
+        rawDetail = (body as { detail?: unknown }).detail;
         const parkedAt = (body as { parked_at?: unknown }).parked_at;
         if (res.status === 503 && typeof parkedAt === "string") parkedHandler?.(parkedAt);
         const d = (body as { detail?: unknown }).detail;
@@ -803,6 +805,8 @@ export class TunaTaleAPI {
       // the detail text instead would break the first time the wording changes,
       // and the wording is written for the learner, not for code.
       (err as Error & { status?: number }).status = res.status;
+      // The server's detail as sent, for a caller that must tell two refusals with one status apart.
+      (err as Error & { detail?: unknown }).detail = rawDetail;
       throw err;
     }
     return res.json();

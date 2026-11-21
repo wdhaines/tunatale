@@ -1551,7 +1551,7 @@ Three classes:
   rebuilds a table. **Not reversible: the pre-migration snapshot IS the
   rollback.**
 
-33 of the 51 are additive, 4 are backfills, and 14 are destructive.
+34 of the 52 are additive, 4 are backfills, and 14 are destructive.
 
 | From → to | Class | What it does |
 |---|---|---|
@@ -1606,6 +1606,7 @@ Three classes:
 | v48 → v49 | Additive | Adds `collocations.card_data` (TEXT, default `''`): a sentence card's authored content as JSON (tunatale-h0q3.42). Empty for every existing row; an older build ignores the column |
 | v49 → v50 | Additive | Adds `collocations.sibling_group` (TEXT, nullable) and its index: the rows whose cards share one Anki note (tunatale-h0q3.55). Filled only for unlinked sentence rows, from their own `card_data`; every other row stays NULL. An older build ignores the column (it buries those rows one by one, as before) |
 | v50 → v51 | Additive | Adds `collocation_directions.anki_ord` (INTEGER, nullable): the Anki card's `ord`, which the TEMPLATE new-card sort ranks by (tunatale-h0q3.60). NULL for every existing row until the next sync's pull writes it; a NULL is ranked by direction, as before. An older build ignores the column, and its `update_direction` leaves it untouched |
+| v51 → v52 | Additive | Adds the `sentence_card_marks` table (`card_key` TEXT PRIMARY KEY, `created_at`): the lesson cards the learner turned off in Grade's New cards, which no mint makes again (tunatale-h0q3.66). TT-only, never synced. An older build ignores the table, and mints a turned-off card again at its next study pass |
 
 `test_pre_migration_backup.py::TestReversibilityIsDocumented` fails if a new
 migration lands without a row here, so the table cannot silently fall behind

@@ -720,6 +720,21 @@ class DbSyncMixin:
             ).fetchall()
             return [(row["guid"], self._row_to_item(conn, row), row["id"]) for row in rows]
 
+    def list_sibling_groups(self, prefix: str) -> list[str]:
+        """Every sibling group whose name starts with *prefix*, in the order its first row was added.
+
+        A lesson's lines are ``sent:<set>:<line>``, so ``sent:<set>:`` reads every
+        line of it that has a row, the lines its list names and the lines mined since
+        (tunatale-h0q3.66). A prefix, not LIKE: a content id may hold ``_``.
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT sibling_group FROM collocations WHERE substr(sibling_group, 1, ?) = ? "
+                "GROUP BY sibling_group ORDER BY MIN(id)",
+                (len(prefix), prefix),
+            ).fetchall()
+            return [r[0] for r in rows]
+
     def count_words_awaiting_production(self) -> int:
         """How many linked words have a graduated recognition and no production card.
 

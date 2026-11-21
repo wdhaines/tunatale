@@ -138,4 +138,7 @@ def test_public_method_count_pinned() -> None:
     #  the mod TT last saw, so the next push does not read it as Anki's — Layer 99)
     # +get_cloze_sentences_by_key_prefix (the pace gate reads a word pattern's
     #  evidence from the sentence cards' blanks — tunatale-ve4p.36)
-    assert count == 157
+    # +add_sentence_card_mark, +remove_sentence_card_mark, +sentence_card_marks (a list card
+    #  the learner turned off is never minted again), +list_sibling_groups (the Grade page
+    #  reads every line of a lesson, mined ones too — h0q3.66)
+    assert count == 161

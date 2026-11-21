@@ -18,6 +18,11 @@ What a Save adds (word suggestions, contrast cards) and the study mark (the
 lesson's own card list, one listen row) reuse the listen's own helpers, fed by
 the same ``_build_listen_plan`` read the preview makes, so a suggestion's
 ``will_create`` and what the Save creates cannot drift (the 6a5c718 class).
+
+Sentence mining (tunatale-h0q3.66): the plan lists the lesson's lines
+(``sentence_lines``), and a Save carries the learner's changes to them as
+``sentence_edits``, applied through ``sentence_mining`` (the one write path;
+design-sentence-mining-2026-11.md § 5).
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from typing import Annotated
 import anyio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
+from app.api import app_state
 from app.api.models import DueCountsResponse, GradePlanResponse, GradeRequest, GradeResponse
 from app.api.srs import (
     _add_contrast_cards,
@@ -43,7 +49,9 @@ from app.api.srs import (
     _review_is_due,
     _schedule_listen_media,
 )
+from app.llm.translate import generate_word_gloss
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
+from app.srs import sentence_mining
 from app.srs.affix_drill_card import affix_card_key
 from app.srs.anki_mirror.queue_stats import (
     advance_learning_cutoff,
@@ -54,9 +62,11 @@ from app.srs.anki_mirror.queue_stats import (
     resolve_relearning_steps,
 )
 from app.srs.anki_mirror.rollover import anki_today
-from app.srs.drill_card import DrillCard, drill_card
+from app.srs.drill_card import DrillCard, drill_card, is_drill_key
+from app.srs.lesson_card_mint import lesson_card_rows
 from app.srs.lesson_cards import lesson_cards
-from app.srs.sentence_card import SentenceCard, sentence_card
+from app.srs.sentence_card import SENTENCE_KEY_PREFIX, SentenceCard, sentence_card
+from app.srs.sentence_lines import sentence_lines
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 
@@ -85,12 +95,20 @@ class _LessonCard:
         return self.sentence.english if self.sentence is not None else self.item.syntactic_unit.translation or ""
 
 
-def _lesson_cards(db, lesson, plan: _ListenPlan) -> dict[int, _LessonCard]:
+def _line_prefix(lesson, content_id: str) -> str:
+    """The key prefix of the lesson's lines: its list's set, else its content id (a lesson with no list)."""
+    cards = (lesson.generation_metadata.get("story") or {}).get("cards")
+    return f"{SENTENCE_KEY_PREFIX}{cards['set'] if cards else content_id}:"
+
+
+def _lesson_cards(db, lesson, plan: _ListenPlan, content_id: str) -> dict[int, _LessonCard]:
     """The lesson's cards by id: its words, its phrases (a phrase wins a shared card), its own sentence
     and drill cards, and its affix drill's card.
 
-    Sentence cards are every row of each line the lesson's card list names,
-    including blanks mined since (they join the line's sibling group). A drill
+    Sentence cards are every row of every line under the lesson's key prefix
+    (``sent:<set>:``, or ``sent:<content id>:`` with no list): the lines its card
+    list names, blanks mined since (they join the line's sibling group), and lines
+    mined that the list does not name (tunatale-h0q3.66). A drill
     card (5i1p.4) is its own sibling group, read at the step its answers into review ask for (5i1p.10).
     A function-word cloze is not a row: the popup never graded one.
     """
@@ -105,6 +123,9 @@ def _lesson_cards(db, lesson, plan: _ListenPlan) -> dict[int, _LessonCard]:
             lines.setdefault(made.line_key, None)
         elif drill_card(card.unit) is not None:
             lines.setdefault(card.unit.disambig_key, None)
+    for line_key in db.list_sibling_groups(_line_prefix(lesson, content_id)):
+        if not is_drill_key(line_key):
+            lines.setdefault(line_key, None)
     # The pattern's affix drill card (5i1p.6), on every lesson that drills the pattern.
     affix_key = affix_card_key(lesson)
     if affix_key is not None:
@@ -193,7 +214,7 @@ async def get_grade_plan(
     Read-only.
     """
     db, lesson, _words, plan = await _read_plan(request, content_id)
-    rows, later, waiting_new = _plan_rows(db, lesson, plan, _Window.read(), range_days)
+    rows, later, waiting_new = _plan_rows(db, lesson, plan, _Window.read(), range_days, content_id)
     return {
         "studied": db.has_listen(content_id),
         "listen_count": db.count_listens(content_id),
@@ -208,7 +229,33 @@ async def get_grade_plan(
                 if c["kind"] == "create"
             ],
             "contrast": plan.affix_cards,
+            "sentences": [_line_dict(line) for line in sentence_lines(db, lesson, content_id)],
         },
+    }
+
+
+def _token_dict(token) -> dict:
+    return {
+        "start": token.start,
+        "end": token.end,
+        "part": token.part,
+        "state": token.state,
+        "origin": token.origin,
+        "reviewed": token.reviewed,
+        "gloss": token.gloss,
+        "in_deck": token.in_deck,
+    }
+
+
+def _line_dict(line) -> dict:
+    return {
+        "line_key": line.line_key,
+        "speaker": line.speaker,
+        "text": line.text,
+        "english": line.english,
+        "linked": line.linked,
+        "tokens": [_token_dict(t) for t in line.tokens],
+        "whole": _token_dict(line.whole),
     }
 
 
@@ -233,11 +280,11 @@ async def get_due_counts(
             db, lesson, _words, plan = await _read_plan(request, cid)
         except HTTPException:
             continue
-        counts[cid] = len(_plan_rows(db, lesson, plan, window, range_days)[0])
+        counts[cid] = len(_plan_rows(db, lesson, plan, window, range_days, cid)[0])
     return {"counts": counts}
 
 
-def _plan_rows(db, lesson, plan: _ListenPlan, window: _Window, range_days: int | None):
+def _plan_rows(db, lesson, plan: _ListenPlan, window: _Window, range_days: int | None, content_id: str):
     """The Grade page's rows for *range_days*, soonest first, with the ``later`` and ``waiting_new`` tallies."""
     horizon = (
         None
@@ -249,7 +296,7 @@ def _plan_rows(db, lesson, plan: _ListenPlan, window: _Window, range_days: int |
     rows: list[dict] = []
     later = {Direction.RECOGNITION.value: 0, Direction.PRODUCTION.value: 0}
     waiting_new = 0
-    for card in _lesson_cards(db, lesson, plan).values():
+    for card in _lesson_cards(db, lesson, plan, content_id).values():
         for direction, rec in card.item.directions.items():
             if rec.state == SRSState.NEW:
                 waiting_new += 1
@@ -328,10 +375,21 @@ async def grade_lesson(
     """
     db, lesson, words, plan = await _read_plan(request, content_id)
     window = _Window.read()
-    cards = _lesson_cards(db, lesson, plan)
+    cards = _lesson_cards(db, lesson, plan, content_id)
     status, refused = _refusals(db, cards, body, window)
     if status:
         raise HTTPException(status_code=status, detail={"message": "Some grades cannot be applied", "rows": refused})
+    try:
+        edits = sentence_mining.plan_line_edits(db, lesson, content_id, [e.model_dump() for e in body.sentence_edits])
+    except sentence_mining.NeedsConfirm as exc:
+        raise HTTPException(status_code=exc.status, detail={"message": str(exc), "needs_confirm": exc.keys}) from exc
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    glosses = await _blank_glosses(request, lesson.language_code, edits.needs_gloss)
+    try:
+        sentence_mining.check_glossed(edits, glosses)
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
     applied = 0
     if body.card_grades:
@@ -372,11 +430,20 @@ async def grade_lesson(
     )
     made.clozes += contrast
 
+    sentence_mining.write_marks(db, edits)
     recorded = body.studied or not db.has_listen(content_id)
     course, voiced, affix = (
         _record_study_pass(db, request.state.content_store, lesson, content_id) if recorded else ([], [], None)
     )
     made.vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
+    mined = sentence_mining.apply_rows(
+        db, lesson.language_code, lesson, edits, glosses, studied=db.has_listen(content_id)
+    )
+    if mined.made:
+        # The line's takes, for the rows this Save added: the list's own and the blanks
+        # mined on its lines (``attach_lesson_card_audio`` copies them to a mined blank).
+        story = lesson.generation_metadata["story"]
+        voiced = lesson_card_rows(db, story["cards"], story.get("drills", []))
 
     for lemma in declined["word"]:
         db.add_ignored_lemma(lesson.language_code, lemma)
@@ -397,7 +464,26 @@ async def grade_lesson(
     return {
         "status": "ok",
         "applied": applied,
-        "created": made.created + len(contrast) + len(course) + (affix is not None),
+        "created": made.created + len(contrast) + len(course) + (affix is not None) + len(mined.made),
         "recorded_study": recorded,
         "listen_count": db.count_listens(content_id),
+        "not_made": mined.not_made,
     }
+
+
+async def _blank_glosses(request: Request, language_code: str, needs) -> dict:
+    """A gloss for each new blank: the line's own, else the model's; a blank with neither is left out.
+
+    Fetched before anything is written (design § 4), so a failing model call writes nothing.
+    """
+    glosses: dict = {}
+    llm = app_state.llm(request)
+    for need in needs:
+        gloss = need.own_gloss
+        if not gloss and llm is not None:
+            gloss = await generate_word_gloss(
+                llm, surface=need.word, lemma=need.word, source_lang=language_code, sentence=need.sentence
+            )
+        if gloss:
+            glosses[(need.line_key, need.span)] = gloss
+    return glosses
