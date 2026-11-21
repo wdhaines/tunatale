@@ -1313,7 +1313,7 @@ describe("header density on a phone", () => {
     const { container } = render(Page, { props: { data: data() } });
     const row = container.querySelector(".crumb-row")!;
     expect(row).toBeTruthy();
-    expect(row.querySelector("a.back")).toBeTruthy();
+    expect(row.querySelector("a.back-link")).toBeTruthy();
     expect(row.querySelector("p.date")).toBeTruthy();
   });
 

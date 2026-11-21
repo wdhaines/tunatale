@@ -1,4 +1,5 @@
 <script lang="ts">
+	import BackLink from '#lib/components/BackLink.svelte';
 	import { api } from '#lib/api.js';
 	import type { ProposedBatch, ReviewPressure } from '#lib/api.js';
 	import { onDestroy, onMount } from 'svelte';
@@ -224,7 +225,7 @@
 </script>
 
 <main>
-	<a class="back" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>
+	<BackLink href="/c/{data.curriculum.id}" label={data.curriculum.topic} />
 	<section class="card">
 		<header class="plan-head">
 			<h2>{data.curriculum.topic}</h2>
@@ -363,16 +364,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-	}
-	.back {
-		display: inline-block;
-		color: var(--color-muted);
-		text-decoration: none;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-	.back:hover {
-		color: var(--color-primary);
 	}
 	.card {
 		padding: 1.25rem;

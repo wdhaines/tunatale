@@ -1,4 +1,5 @@
 <script lang="ts">
+	import BackLink from '#lib/components/BackLink.svelte';
 	import ReviewSessionCards from '#lib/components/ReviewSessionCards.svelte';
 	import { orderSessions } from '#lib/reading/nextReviewSession.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -14,7 +15,7 @@
 </script>
 
 <main>
-	<a class="back" href="/">← {t('curriculum.backToLessons')}</a>
+	<div class="back-row"><BackLink href="/" label={t('curriculum.backToLessons')} /></div>
 	<h1>{t('reviewSessionsIndex.title')}</h1>
 	{#if ordered.length === 0}
 		<p class="muted">{t('home.noReviewSessions')}</p>
@@ -29,16 +30,8 @@
 		margin: 1.5rem auto;
 		padding: 0 1rem;
 	}
-	.back {
-		display: inline-block;
+	.back-row {
 		margin-bottom: 1rem;
-		color: var(--color-muted);
-		text-decoration: none;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-	.back:hover {
-		color: var(--color-primary);
 	}
 	h1 {
 		/* The lesson page's h1 with a bottom margin: there the header grid spaces

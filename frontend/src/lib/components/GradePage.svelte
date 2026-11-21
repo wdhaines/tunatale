@@ -26,6 +26,7 @@
 	} from '#lib/grading/grade.js';
 	import GradeButtons from './GradeButtons.svelte';
 	import SentenceLineEditor from './SentenceLineEditor.svelte';
+	import BackLink from './BackLink.svelte';
 	import {
 		countOn,
 		initStage,
@@ -246,11 +247,13 @@
 
 <div class="grade-page">
 	<header class="top">
-		<a class="back" href={backHref}>{t('gradePage.back')}</a>
-		<div class="heading">
-			<h1>{t('gradePage.title')}</h1>
-			<span class="lesson-name">{title}</span>
-		</div>
+		<BackLink href={backHref} label={t('gradePage.back')} />
+		{#if title}
+			<p class="eyebrow">{t('gradePage.title')}</p>
+			<h1>{title}</h1>
+		{:else}
+			<h1 class="solo">{t('gradePage.title')}</h1>
+		{/if}
 	</header>
 
 	<div class="tabs" role="tablist">
@@ -436,32 +439,30 @@
 		margin: 0 auto;
 		padding: 0 0.75rem 1rem;
 	}
+	/* Layout A (owner, 2026-11-21): the way back on its own line, then the lesson
+	   as the heading with "Grade" a small label above it. */
 	.top {
 		display: flex;
-		align-items: baseline;
-		gap: 1rem;
-	}
-	.back {
-		color: var(--color-primary);
-		text-decoration: none;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-	.heading {
-		display: flex;
-		align-items: baseline;
-		gap: 0.6rem;
+		flex-direction: column;
+		align-items: flex-start;
 		min-width: 0;
-		flex-wrap: wrap;
+	}
+	.eyebrow {
+		margin: 0.5rem 0 0;
+		font-size: 0.72rem;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--color-muted);
 	}
 	h1 {
-		font-size: 1.3rem;
-		margin: 0;
-	}
-	.lesson-name {
-		color: var(--color-muted);
-		font-size: 0.85rem;
+		font-size: 1.2rem;
+		line-height: 1.25;
+		margin: 0.1rem 0 0;
+		text-wrap: balance;
 		overflow-wrap: anywhere;
+	}
+	h1.solo {
+		margin-top: 0.5rem;
 	}
 	.tabs {
 		display: flex;

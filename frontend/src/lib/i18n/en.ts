@@ -676,7 +676,7 @@ export const en = {
 
   // GradePage.svelte (tunatale-5i1p.3)
   "gradePage.title": "Grade",
-  "gradePage.back": "‹ Back",
+  "gradePage.back": "Back",
   "gradePage.tabUnderstand": "Understand · {count}",
   "gradePage.tabSay": "Say it · {count}",
   "gradePage.tabNew": "New cards · {count}",

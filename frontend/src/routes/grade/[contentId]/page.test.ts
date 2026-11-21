@@ -26,7 +26,7 @@ describe("/grade/[contentId]", () => {
     urlParams.set("title", "Wolff 1");
     const view = render(Page);
     expect(api.getGradePlan).toHaveBeenCalledWith("l9", 3);
-    expect(view.getByRole("link", { name: "‹ Back" }).getAttribute("href")).toBe("/c/c1/l/l9");
+    expect(view.getByRole("link", { name: "← Back" }).getAttribute("href")).toBe("/c/c1/l/l9");
     expect(view.getByText("Wolff 1")).toBeTruthy();
   });
 
@@ -34,6 +34,6 @@ describe("/grade/[contentId]", () => {
     urlParams.delete("title");
     urlParams.set("back", "//evil.example");
     const view = render(Page);
-    expect(view.getByRole("link", { name: "‹ Back" }).getAttribute("href")).toBe("/");
+    expect(view.getByRole("link", { name: "← Back" }).getAttribute("href")).toBe("/");
   });
 });

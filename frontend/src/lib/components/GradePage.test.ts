@@ -452,11 +452,19 @@ describe("GradePage — Save", () => {
     ).toBe("true");
   });
 
-  it("links back to where it was opened from", async () => {
+  it("links back to where it was opened from, under a heading that names the lesson", async () => {
     const view = await ready();
-    expect(view.getByRole("link", { name: "‹ Back" }).getAttribute("href")).toBe("/c/c1/l/l1");
-    expect(view.getByRole("heading", { name: "Grade" })).toBeTruthy();
-    expect(view.getByText("Wolff 1")).toBeTruthy();
+    expect(view.getByRole("link", { name: "← Back" }).getAttribute("href")).toBe("/c/c1/l/l1");
+    // Owner, 2026-11-21 (layout A): the lesson is the heading, "Grade" a label above it.
+    expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Wolff 1");
+    expect(view.container.querySelector(".eyebrow")?.textContent).toBe("Grade");
+  });
+
+  it("with no lesson name the heading is Grade, with no label above it", async () => {
+    getPlan.mockResolvedValue(plan());
+    const view = render(GradePage, { props: { contentId: "l1", title: "", backHref: "/" } });
+    expect(view.getByRole("heading", { level: 1 }).textContent).toBe("Grade");
+    expect(view.container.querySelector(".eyebrow")).toBeNull();
   });
 
   it("a Save that changed nothing countable just says Saved", async () => {

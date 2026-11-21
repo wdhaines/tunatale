@@ -1,4 +1,5 @@
 <script lang="ts">
+	import BackLink from '#lib/components/BackLink.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '#lib/api.js';
@@ -127,7 +128,7 @@
 </script>
 
 <main>
-	<a class="back" href="/">← {t('curriculum.backToLessons')}</a>
+	<div class="back-row"><BackLink href="/" label={t('curriculum.backToLessons')} /></div>
 	<section class="curriculum-section card">
 		<h2>{data.curriculum.topic}</h2>
 		<p class="meta">
@@ -188,16 +189,8 @@
 		margin: 1.5rem auto;
 		padding: 0 1rem;
 	}
-	.back {
-		display: inline-block;
+	.back-row {
 		margin-bottom: 1rem;
-		color: var(--color-muted);
-		text-decoration: none;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-	.back:hover {
-		color: var(--color-primary);
 	}
 	.curriculum-section {
 		padding: 1.5rem;

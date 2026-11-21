@@ -1,4 +1,5 @@
 <script lang="ts">
+	import BackLink from '#lib/components/BackLink.svelte';
 	import { gradeHref } from '#lib/grading/grade.js';
 	import Banner from '#lib/components/Banner.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
@@ -429,7 +430,7 @@
 			     neither fills a phone's width, so stacking them spent a whole row on
 			     whitespace above a title that already needs three. -->
 			<div class="crumb-row">
-				<a class="back" href="/review-sessions">← {t('reviewSessions.backToSessions')}</a>
+				<BackLink href="/review-sessions" label={t('reviewSessions.backToSessions')} />
 				<p class="date">{formatSessionDate(data.session.session_date)}</p>
 			</div>
 			<!-- Session pager: the same band the lesson page has under its
@@ -580,16 +581,6 @@
 		gap: 1.25rem;
 	}
 
-	.back {
-		display: inline-block;
-		color: var(--color-muted);
-		font-size: 0.9rem;
-		font-weight: 600;
-		text-decoration: none;
-	}
-	.back:hover {
-		color: var(--color-primary);
-	}
 	.title-area {
 		display: flex;
 		flex-direction: column;
