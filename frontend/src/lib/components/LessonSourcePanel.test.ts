@@ -250,6 +250,23 @@ describe("LessonSourcePanel", () => {
     });
   });
 
+  it("names the lesson it edits, so the import keeps that lesson's mined sentence lines", async () => {
+    // PR #449 review G1: an edit is a correction; the curriculum page's manual story sends no replaces.
+    mockImportStory.mockResolvedValue(IMPORT_RESULT);
+    const { container } = render(LessonSourcePanel, { props: PROPS });
+    await openPanel(container);
+    await waitFor(() => expect(container.querySelector("textarea")).toBeTruthy());
+    await fireEvent.input(container.querySelector("textarea")!, {
+      target: { value: JSON.stringify(SOURCE_STORY) },
+    });
+    await fireEvent.click(container.querySelector('[data-testid="import-btn"]')!);
+    await waitFor(() =>
+      expect(mockImportStory).toHaveBeenCalledWith(
+        expect.objectContaining({ replaces: PROPS.lessonId }),
+      ),
+    );
+  });
+
   it("disables import button while import is loading", async () => {
     mockImportStory.mockReturnValue(new Promise(() => {}));
     const { container } = render(LessonSourcePanel, { props: PROPS });

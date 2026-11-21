@@ -708,6 +708,8 @@ export interface ImportStoryPayload {
   day: number;
   story?: Record<string, unknown>;
   raw?: string;
+  /** The lesson an edit of its source corrects; absent for a new story (PR #449 review G1). */
+  replaces?: string;
 }
 
 export type ImportStoryResponse = components["schemas"]["ImportStoryResponse"];

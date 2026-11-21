@@ -107,7 +107,9 @@ test('grade: a word tapped in New cards › Sentences becomes a new card of its 
 
 	// The card exists, mined (mine) and NEW: one direction more is waiting to be introduced.
 	const after = await (await request.get(planUrl)).json();
-	const prosim = after.suggestions.sentences[0].tokens[0];
+	// Every scene line is a line now (tunatale-h0q3.68); the list's names line 2.
+	const listed = after.suggestions.sentences.find((l: { line_key: string }) => l.line_key === 'sent:e2e-mine:2');
+	const prosim = listed.tokens[0];
 	expect([prosim.state, prosim.origin]).toEqual(['on', 'mine']);
 	expect(after.waiting_new).toBe(studied.waiting_new + 1);
 });

@@ -21,6 +21,7 @@ const RESULT = {
   pull_required: 0,
   push_required: 1,
   tt_push_pull_exit: 0,
+  held_sentence_lines: [],
   dry_run: false,
 };
 
@@ -108,6 +109,43 @@ describe("SyncButton", () => {
     const { getByText, findByText } = render(SyncButton);
     await fireEvent.click(getByText("Sync with AnkiWeb"));
     expect(await findByText("string error")).toBeTruthy();
+  });
+
+  // ── held sentence lines (tunatale-h0q3.68): a mined line Anki cannot take yet ──
+
+  it("says how many sentence lines the sync held, and keeps saying it", async () => {
+    vi.useFakeTimers();
+    try {
+      mockPeerSync.mockResolvedValue({ ...RESULT, held_sentence_lines: ["sent:a:1", "sent:a:2"] });
+      const { getByText, getByRole, queryByText } = render(SyncButton, {
+        props: { onSyncResult: vi.fn() },
+      });
+      await fireEvent.click(getByText("Sync with AnkiWeb"));
+      await vi.advanceTimersByTimeAsync(0);
+      await tick();
+      const alert = getByRole("alert");
+      expect(alert.textContent).toBe(
+        "2 sentence lines are not in Anki yet: the Anki collection has no “TT Sentence” note type. Add it with add_sentence_notetype (a full upload to AnkiWeb).",
+      );
+      expect(queryByText("Synced with AnkiWeb")).toBeNull();
+      await vi.advanceTimersByTimeAsync(4000);
+      await tick();
+      expect(getByRole("alert")).toBe(alert); // not flashed away like the success note
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says one held line in the singular, and a later clean sync clears it", async () => {
+    mockPeerSync.mockResolvedValueOnce({ ...RESULT, held_sentence_lines: ["sent:a:1"] });
+    const { getByText, findByRole, queryByRole } = render(SyncButton);
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
+    expect((await findByRole("alert")).textContent).toBe(
+      "1 sentence line is not in Anki yet: the Anki collection has no “TT Sentence” note type. Add it with add_sentence_notetype (a full upload to AnkiWeb).",
+    );
+    mockPeerSync.mockResolvedValueOnce(RESULT);
+    await fireEvent.click(getByText("Sync with AnkiWeb"));
+    await waitFor(() => expect(queryByRole("alert")).toBeNull());
   });
 
   // ── syncAvailable (Stage 4 — anki_sync plugin capability gate) ────────────

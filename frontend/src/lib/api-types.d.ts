@@ -3333,6 +3333,8 @@ export interface components {
       day: number;
       /** Raw */
       raw?: string | null;
+      /** Replaces */
+      replaces?: string | null;
       /** Story */
       story?: {
         [key: string]: unknown;
@@ -4234,6 +4236,11 @@ export interface components {
       auth_success: boolean;
       /** Dry Run */
       dry_run: boolean;
+      /**
+       * Held Sentence Lines
+       * @default []
+       */
+      held_sentence_lines: string[];
       /** Pull Required */
       pull_required: number | null;
       /** Push Required */

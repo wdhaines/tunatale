@@ -31,7 +31,15 @@ from app.generation.story import (
 )
 from app.models.lesson import Lesson
 from app.models.strategy import ContentStrategy
-from app.srs.lesson_card_mint import attach_lesson_card_audio, day_was_studied, lesson_card_rows, mint_lesson_cards
+from app.srs.lesson_card_mint import (
+    attach_lesson_card_audio,
+    day_was_studied,
+    lesson_card_rows,
+    mint_lesson_cards,
+    update_listed_lines,
+    update_unlisted_lines,
+)
+from app.srs.sentence_lines import has_mined_lines, line_set
 from app.storage.lesson_io import export_lesson, validate_story
 from app.storage.user_dbs import pipeline_user_id
 
@@ -166,6 +174,10 @@ async def import_story(body: ImportLessonRequest, request: Request):
     # non-default-language request.
     srs_db = getattr(request.state, "srs_db", None)
 
+    # The day's mined sentence lines keep their keys across the import (PR #449 review F1):
+    # every import is a new lesson id, and a lesson with no card list keys its lines by it.
+    _carry_line_set(store, srs_db, body, story, lesson)
+
     lesson_id = await publish_lesson(
         lesson,
         target=CurriculumDayTarget(
@@ -181,6 +193,13 @@ async def import_story(body: ImportLessonRequest, request: Request):
         replace=False,
         llm=app_state.llm(request),
     )
+
+    # A corrected scene line moves the blanks mined on it, as the study pass does for the
+    # list's own lines (review F2). Only an import changes a line's text.
+    if srs_db is not None and body.replaces is not None:
+        if story.get("cards"):
+            update_listed_lines(srs_db, story["cards"], story.get("drills", []))
+        update_unlisted_lines(srs_db, lesson, lesson_id)
 
     # A card list for a day already studied mints now (tunatale-h0q3.43): the
     # import is a new lesson id, so the day's earlier listen is what counts.
@@ -203,6 +222,35 @@ async def import_story(body: ImportLessonRequest, request: Request):
         "title": lesson.title,
         "sections": sections,
     }
+
+
+def _carry_line_set(store, srs_db, body: ImportLessonRequest, story: dict, lesson: Lesson) -> None:
+    """Key an edited lesson's lines as the lesson it corrects (``body.replaces``) keys them.
+
+    Only an edit carries (PR #449 review G1): a new story for the day has other lines,
+    and keeping their keys would move mined cards onto unrelated sentences. With no
+    card list, the lesson carries that line set. A list must use it as its ``set`` when
+    lines under it hold mined rows: any other set would make those lines a second
+    "TT Sentence" note in Anki. Refused loudly (422), naming the set to use.
+    """
+    if body.replaces is None:
+        return
+    row = store.get_lesson_row(body.replaces)
+    if row is None or row["curriculum_id"] != body.curriculum_id or row["day"] != body.day:
+        raise HTTPException(status_code=422, detail=f"replaces: {body.replaces!r} is not a lesson of this day")
+    current_set = line_set(Lesson.from_json(row["data_json"]), body.replaces)
+    cards = story.get("cards")
+    if not cards:
+        lesson.generation_metadata["line_set"] = current_set
+        return
+    if cards["set"] != current_set and srs_db is not None and has_mined_lines(srs_db, current_set):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"cards.set must be {current_set!r}: the learner mined sentence cards on this day's lines "
+                f"(sent:{current_set}:…), and another set would give those lines a second note in Anki"
+            ),
+        )
 
 
 @router.get("/prompt", status_code=200, response_model=GetStoryPromptResponse)

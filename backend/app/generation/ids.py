@@ -9,7 +9,7 @@ import uuid
 def slugify(text: str) -> str:
     text = text.lower()
     text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    return text[:50]
+    return text[:50].rstrip("-")  # a cut at a hyphen would make "--" in a minted id
 
 
 def mint_id(text: str) -> str:

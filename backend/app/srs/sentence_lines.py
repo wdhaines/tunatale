@@ -4,8 +4,10 @@ Design: ``.beads-tasks/briefs/design-sentence-mining-2026-11.md`` § Design 1-2.
 Grade's plan and Read both call :func:`sentence_lines`, so the two screens cannot
 disagree about a line.
 
-A line is one the lesson's card list names (slice A; any scene line is slice C).
-Its tokens are its written words, split here and never in the page: a word is
+A line is any line of the story's scenes (tunatale-h0q3.68). One the lesson's
+card list names is the list's card; any other is built from the scene line
+(:func:`line_card`), keyed by the list's ``set`` when the lesson has a list, else
+by the content id. Its tokens are its written words, split here and never in the page: a word is
 ``\\w`` characters with an internal hyphen or apostrophe kept inside
 (``Per-Ola's``). One word per blank mined; a list blank the lesson made over
 several words (``na lang``) is one token over all of them (review F3). A word
@@ -32,7 +34,7 @@ from dataclasses import dataclass
 from app.models.lesson import Lesson
 from app.models.srs_item import Direction, SRSItem
 from app.srs.lesson_cards import COURSE_SOURCE, lesson_cards
-from app.srs.sentence_card import SentenceCard, sentence_card
+from app.srs.sentence_card import Cue, Gloss, SentenceCard, sentence_card
 
 WORD = re.compile(r"\w+(?:['’-]\w+)*")
 
@@ -71,11 +73,14 @@ class SentenceLine:
 
 @dataclass(frozen=True)
 class ListLine:
-    """What the card list says of one line: its base card, and which of its cards the list makes."""
+    """What the lesson says of one line: its base card, which of its cards the list makes (none, for a
+    line the list does not name), and the voice roles that say the line and its cue."""
 
     card: SentenceCard  # the whole line, no blank
     blanks: frozenset[tuple[int, int]]
     whole: bool
+    role: str = ""  # the line's voice role
+    cue_role: str = ""  # its cue's; "" when the line has no cue
 
     def key(self, span: tuple[int, int] | None) -> str:
         return self.card.with_blank(span, "").key if span else self.card.key
@@ -84,32 +89,115 @@ class ListLine:
         return self.whole if span is None else span in self.blanks
 
 
-def list_lines(lesson: Lesson) -> dict[int, ListLine]:
-    """The lines the lesson's card list names, by position, in list order."""
+def line_set(lesson: Lesson, content_id: str) -> str:
+    """The set a lesson's line keys use (``sent:<set>:<pos>``): its card list's ``set``, else the
+    ``line_set`` an import carried into it (PR #449 review F1), else its own content id."""
     story = lesson.generation_metadata.get("story") or {}
     cards = story.get("cards")
-    if not cards:
-        return {}
-    lines: dict[int, tuple[SentenceCard, set, list]] = {}
-    for card in lesson_cards(cards, story.get("drills", [])):
+    if cards:
+        return cards["set"]
+    return lesson.generation_metadata.get("line_set") or content_id
+
+
+def list_lines(lesson: Lesson, content_id: str) -> dict[int, ListLine]:
+    """Every line of the lesson, by position, in story order: the list's card where the list names
+    the line, else the scene line's own (tunatale-h0q3.68)."""
+    story = lesson.generation_metadata.get("story") or {}
+    cards = story.get("cards")
+    lines: dict[int, tuple[SentenceCard, set, list, str, str]] = {}
+    for card in lesson_cards(cards, story.get("drills", [])) if cards else []:
         sentence = sentence_card(card.unit)
         if sentence is None:
             continue
-        base, blanks, whole = lines.setdefault(sentence.line_index, (_base(sentence), set(), [False]))
+        base, blanks, whole, _, _ = lines.setdefault(
+            sentence.line_index, (_base(sentence), set(), [False], card.role, card.cue_role)
+        )
         if sentence.blank is None:
             whole[0] = True
         else:
             blanks.add(sentence.blank)
-    return {pos: ListLine(base, frozenset(blanks), whole[0]) for pos, (base, blanks, whole) in lines.items()}
+    found = {
+        pos: ListLine(base, frozenset(blanks), whole[0], role, cue_role)
+        for pos, (base, blanks, whole, role, cue_role) in lines.items()
+    }
+    set_id = line_set(lesson, content_id)
+    glosses = _lesson_glosses(lesson)
+    for pos, (line, before) in enumerate(_scene_lines(story), start=1):
+        if pos not in found:
+            card = _scene_card(set_id, pos, line, before, glosses)
+            # Lowercased, as the section builder resolves a voice (review N1).
+            role, cue_role = line["speaker"].lower(), before["speaker"].lower() if before else ""
+            found[pos] = ListLine(card, frozenset(), False, role, cue_role)
+    return dict(sorted(found.items()))
+
+
+def has_mined_lines(db, set_id: str) -> bool:
+    """Whether a line keyed under *set_id* holds a row the learner mined (not the course's)."""
+    return any(
+        item.syntactic_unit.source != COURSE_SOURCE
+        for group in db.list_sibling_groups(f"sent:{set_id}:")
+        for _, item, _ in db.list_sibling_rows(group)
+        if sentence_card(item.syntactic_unit) is not None
+    )
 
 
 def _base(card: SentenceCard) -> SentenceCard:
     return card.with_blank(None, "") if card.blank is not None else card
 
 
-def line_card(lesson: Lesson, position: int) -> SentenceCard | None:
-    """The whole-line card of the line at *position*, exactly as the list builds it, or None."""
-    found = list_lines(lesson).get(position)
+def _scene_lines(story: dict) -> list[tuple[dict, dict | None]]:
+    """Each scene line, with the line before it in the same scene (``None`` for a scene's first)."""
+    out: list[tuple[dict, dict | None]] = []
+    for scene in story.get("scenes", []):
+        before = None
+        for line in scene.get("lines", []):
+            out.append((line, before))
+            before = line
+    return out
+
+
+def _lesson_glosses(lesson: Lesson) -> dict[str, str]:
+    return {word.casefold(): gloss for word, gloss in (lesson.generation_metadata.get("token_glosses") or {}).items()}
+
+
+def _word_glosses(text: str, glosses: dict[str, str]) -> tuple[Gloss, ...]:
+    """The lesson's gloss of each word of *text* it glosses, as written, in order, once each."""
+    out: list[Gloss] = []
+    seen: set[str] = set()
+    for m in WORD.finditer(text):
+        key = m.group().casefold()
+        if key in glosses and key not in seen:
+            seen.add(key)
+            out.append(Gloss(m.group(), glosses[key]))
+    return tuple(out)
+
+
+def _scene_card(set_id: str, position: int, line: dict, before: dict | None, glosses: dict) -> SentenceCard:
+    """The whole-line card of a scene line no list names: the line as the lesson says it."""
+    cue = None
+    if before is not None:
+        cue = Cue(
+            speaker=before["speaker"],
+            text=before["text"],
+            spoken=before["text"],
+            english=before["translation"],
+            glosses=_word_glosses(before["text"], glosses),
+        )
+    return SentenceCard(
+        lesson_id=set_id,
+        line_index=position,
+        speaker=line["speaker"],
+        text=line["text"],
+        spoken=line["text"],
+        english=line["translation"],
+        glosses=_word_glosses(line["text"], glosses),
+        cue=cue,
+    )
+
+
+def line_card(lesson: Lesson, position: int, content_id: str) -> SentenceCard | None:
+    """The whole-line card of the line at *position*: the list's, else the scene line's; None past the story."""
+    found = list_lines(lesson, content_id).get(position)
     return found.card if found is not None else None
 
 
@@ -174,7 +262,6 @@ def read_line(db, listed: ListLine, marks: set[str]) -> SentenceLine:
 
 
 def sentence_lines(db, lesson: Lesson, content_id: str) -> list[SentenceLine]:
-    """Every line of *lesson* the screens may mine, in the list's order. *content_id* is unused until
-    slice C, where a lesson with no list keys its lines by it."""
+    """Every line of *lesson*, in story order; a lesson with no card list keys its lines by *content_id*."""
     marks = db.sentence_card_marks()
-    return [read_line(db, listed, marks) for listed in list_lines(lesson).values()]
+    return [read_line(db, listed, marks) for listed in list_lines(lesson, content_id).values()]

@@ -148,7 +148,7 @@ class TestReadModel:
     def test_after_study_a_minted_card_is_on_and_a_mined_one_is_mine(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
         _study(db, lesson)
-        card = line_card(lesson, 3)
+        card = line_card(lesson, 3, "lesson-1")
         mining.add_blank(db, LANG, L3, _span(card.text, "og"), "and")
         line = _line(sentence_lines(db, lesson, "lesson-1"), L3)
         assert (_token(line, "takk").state, _token(line, "takk").origin) == ("on", "lesson")
@@ -177,20 +177,22 @@ class TestReadModel:
         _link(db, L3)
         assert _line(sentence_lines(db, lesson, "lesson-1"), L3).linked is True
 
-    def test_a_lesson_with_no_card_list_has_no_list_lines(self):
+    def test_a_lesson_with_no_card_list_keys_its_lines_by_the_content_id(self):
+        """Slice C (tunatale-h0q3.68) replaced "no list, no lines": any line is a line."""
         story = _story()
         del story["cards"]
-        assert sentence_lines(SRSDatabase(":memory:"), _lesson(story), "lesson-1") == []
+        lines = sentence_lines(SRSDatabase(":memory:"), _lesson(story), "lesson-1")
+        assert [line.line_key for line in lines] == ["sent:lesson-1:1", "sent:lesson-1:2", "sent:lesson-1:3"]
 
     def test_line_card_is_the_lists_base_card(self):
-        card = line_card(_lesson(), 2)
+        card = line_card(_lesson(), 2, "lesson-1")
         assert (card.key, card.blank, card.text, card.spoken) == (
             L2,
             None,
             "Hei, hvordan går det?",
             "Hei, hvordan gar det?",
         )
-        assert line_card(_lesson(), 9) is None
+        assert line_card(_lesson(), 9, "lesson-1") is None
 
 
 # --- N1, N2: not-wanted marks ------------------------------------------------------------
@@ -199,7 +201,7 @@ class TestReadModel:
 class TestMarks:
     def test_n1_a_marked_list_key_is_not_minted_and_unmarked_it_is(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
-        takk = line_card(lesson, 3).with_blank((5, 9), "").key
+        takk = line_card(lesson, 3, "lesson-1").with_blank((5, 9), "").key
         db.add_sentence_card_mark(takk)
         _study(db, lesson)
         assert takk not in _keys(db, L3)
@@ -214,7 +216,7 @@ class TestMarks:
 
     def test_a_mark_is_declined_in_the_read_model(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
-        db.add_sentence_card_mark(line_card(lesson, 3).with_blank((5, 9), "").key)
+        db.add_sentence_card_mark(line_card(lesson, 3, "lesson-1").with_blank((5, 9), "").key)
         assert _token(_line(sentence_lines(db, lesson, "lesson-1"), L3), "takk").state == "declined"
 
     def test_marks_are_idempotent(self):
@@ -234,7 +236,7 @@ class TestMarks:
         _study(db, lesson)  # the study pass between the two halves of a Save
         mining.apply_rows(db, LANG, lesson, plan, {}, studied=True)
         _study(db, lesson)  # and the next Save's
-        assert _keys(db, L3) == [line_card(lesson, 3).with_blank((14, 16), "").key]
+        assert _keys(db, L3) == [line_card(lesson, 3, "lesson-1").with_blank((14, 16), "").key]
 
 
 # --- the edit path: plan, then marks, then rows --------------------------------------------
@@ -254,7 +256,7 @@ class TestEdits:
         twin, db, lesson = SRSDatabase(":memory:"), SRSDatabase(":memory:"), _lesson()
         for each in (twin, db):
             _study(each, lesson)
-        og = _span(line_card(lesson, 3).text, "og")
+        og = _span(line_card(lesson, 3, "lesson-1").text, "og")
         expected = mining.add_blank(twin, LANG, L3, og, "and")
         result = _edit(db, lesson, [{"line_key": L3, "on": [list(og)], "off": []}], {(L3, og): "and"}, studied=True)
         assert result.made == [expected]
@@ -265,7 +267,7 @@ class TestEdits:
 
     def test_m2_a_blank_mined_before_study_shares_the_lists_base_card(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
-        og = _span(line_card(lesson, 3).text, "og")
+        og = _span(line_card(lesson, 3, "lesson-1").text, "og")
         (row,) = _edit(
             db, lesson, [{"line_key": L3, "on": [list(og)], "off": []}], {(L3, og): "and"}, studied=False
         ).made
@@ -281,7 +283,7 @@ class TestEdits:
         db, lesson = SRSDatabase(":memory:"), _lesson()
         result = _edit(db, lesson, [{"line_key": L2, "on": [], "off": ["whole"]}], studied=True)
         assert L2 in db.sentence_card_marks()
-        assert _keys(db, L2) == [line_card(lesson, 2).with_blank((13, 16), "").key]
+        assert _keys(db, L2) == [line_card(lesson, 2, "lesson-1").with_blank((13, 16), "").key]
         assert result.removed == []
 
     def test_a_declined_list_card_turned_on_in_a_studied_lesson_mints_now(self):
@@ -303,7 +305,7 @@ class TestEdits:
         whole2 = next(r for _, i, r in db.list_sibling_rows(L2) if sentence_card(i.syntactic_unit).blank is None)
         db.delete_collocation(whole2)  # another list card deleted by hand: it waits for the next study pass
         plan = mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": [[5, 9]], "off": []}])
-        assert (plan.list_on, plan.marks_off) == ([line_card(lesson, 3).with_blank((5, 9), "").key], [])
+        assert (plan.list_on, plan.marks_off) == ([line_card(lesson, 3, "lesson-1").with_blank((5, 9), "").key], [])
         (row,) = mining.apply_rows(db, LANG, lesson, plan, {}, studied=True).made
         assert sentence_card(db.get_collocation_by_id(row)[1].syntactic_unit).blank == (5, 9)
         assert L2 not in _keys(db, L2)
@@ -330,7 +332,7 @@ class TestEdits:
     def test_a_mined_blank_turned_off_is_deleted_and_not_marked(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
         _study(db, lesson)
-        og = _span(line_card(lesson, 3).text, "og")
+        og = _span(line_card(lesson, 3, "lesson-1").text, "og")
         (row,) = _edit(
             db, lesson, [{"line_key": L3, "on": [list(og)], "off": []}], {(L3, og): "and"}, studied=True
         ).made
@@ -345,7 +347,10 @@ class TestEdits:
     def test_a_blank_with_no_gloss_is_not_made_and_the_rest_apply(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
         _study(db, lesson)
-        og, bra = _span(line_card(lesson, 3).text, "og"), _span(line_card(lesson, 3).text, "Bra")
+        og, bra = (
+            _span(line_card(lesson, 3, "lesson-1").text, "og"),
+            _span(line_card(lesson, 3, "lesson-1").text, "Bra"),
+        )
         result = _edit(
             db, lesson, [{"line_key": L3, "on": [list(og), list(bra)], "off": []}], {(L3, bra): "fine"}, studied=True
         )
@@ -354,7 +359,10 @@ class TestEdits:
 
     def test_needs_gloss_lists_the_new_blanks_with_the_lines_own_gloss(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
-        og, bra = _span(line_card(lesson, 3).text, "og"), _span(line_card(lesson, 3).text, "Bra")
+        og, bra = (
+            _span(line_card(lesson, 3, "lesson-1").text, "og"),
+            _span(line_card(lesson, 3, "lesson-1").text, "Bra"),
+        )
         plan = mining.plan_line_edits(
             db, lesson, "lesson-1", [{"line_key": L3, "on": [list(og), list(bra)], "off": []}]
         )
@@ -386,7 +394,8 @@ class TestRefusals:
         _study(db, lesson)
         result = _edit(db, lesson, [{"line_key": L3, "on": [], "off": [[11, 16]]}], studied=True)
         assert (
-            len(result.removed) == 1 and line_card(lesson, 3).with_blank((11, 16), "").key in db.sentence_card_marks()
+            len(result.removed) == 1
+            and line_card(lesson, 3, "lesson-1").with_blank((11, 16), "").key in db.sentence_card_marks()
         )
 
     def test_a_blank_overlapping_a_row_of_the_line_is_refused_before_anything_is_written(self):
@@ -407,7 +416,7 @@ class TestRefusals:
         with pytest.raises(mining.NeedsConfirm) as refused:
             mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": [], "off": [[5, 9]]}])
         assert refused.value.status == 409
-        assert refused.value.keys == [line_card(lesson, 3).with_blank((5, 9), "").key]
+        assert refused.value.keys == [line_card(lesson, 3, "lesson-1").with_blank((5, 9), "").key]
 
     def test_n3_with_confirm_it_goes(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
@@ -437,7 +446,7 @@ class TestRefusals:
         db, lesson = SRSDatabase(":memory:"), _lesson()
         _study(db, lesson)
         _link(db, L3)
-        og = list(_span(line_card(lesson, 3).text, "og"))
+        og = list(_span(line_card(lesson, 3, "lesson-1").text, "og"))
         plan = mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": [og], "off": [[5, 9], [14, 16]]}])
         with pytest.raises(mining.LastCardOfLine):
             mining.check_glossed(plan, {})
@@ -471,7 +480,7 @@ class TestRefusals:
         plan = mining.plan_line_edits(
             SRSDatabase(":memory:"), lesson, "lesson-1", [{"line_key": L3, "on": [], "off": [[3, 5]]}]
         )
-        assert plan.marks_on == [line_card(lesson, 3).with_blank((3, 5), "").key]
+        assert plan.marks_on == [line_card(lesson, 3, "lesson-1").with_blank((3, 5), "").key]
 
     def test_a_word_both_on_and_off_is_refused(self):
         with pytest.raises(mining.MiningError):
@@ -488,7 +497,7 @@ class TestRefusals:
 def test_a_mined_row_is_new_with_no_anki_ids():
     """The card-adding contract (anki-sync.md § When building a new UI that adds cards)."""
     db, lesson = SRSDatabase(":memory:"), _lesson()
-    og = _span(line_card(lesson, 3).text, "og")
+    og = _span(line_card(lesson, 3, "lesson-1").text, "og")
     (row,) = _edit(db, lesson, [{"line_key": L3, "on": [list(og)], "off": []}], {(L3, og): "and"}, studied=False).made
     _, item, _ = db.get_collocation_by_id(row)
     assert item.anki_note_id is None

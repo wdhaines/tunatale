@@ -224,6 +224,21 @@ class TestG2LessonWithNoList:
         counts = (await _get("/api/srs/due-counts", {"content_id": "lesson-1", "range_days": 0})).json()
         assert counts["counts"]["lesson-1"] == 1
 
+    async def test_g2_a_re_imported_lesson_reads_the_lines_its_carried_line_set_keys(self, srs_db):
+        """Review F1: a lesson with no list that an import gave the day's line set grades the rows under it."""
+        from app.srs.sentence_card import SentenceCard
+
+        story = _story()
+        del story["cards"]
+        lesson = _lesson("Hei!", story=story)
+        lesson.generation_metadata["line_set"] = "earlier-1"
+        db = _install(srs_db, lesson)
+        card = SentenceCard("earlier-1", 2, "Per", "Hei, hvordan går det?", "Hei, hvordan gar det?", "Hi", ())
+        db.add_collocation(card.with_blank((13, 16), "goes").unit(), "no")
+        row = next(r for _, _, r in db.list_sibling_rows(card.line_key))
+        _review_by_id(db, row, PROD, due_in=0)
+        assert [c["item_id"] for c in (await _plan())["cards"]] == [row]
+
     async def test_g2_control_a_list_lessons_cards_as_before(self, srs_db):
         db = _install(srs_db, _lesson("Hei!", story=_story()))
         await _grade({})
@@ -242,3 +257,85 @@ class TestG2LessonWithNoList:
             _review_by_id(db, row["id"], Direction.PRODUCTION, due_in=0)
         kinds = {c["kind"] for c in (await _plan())["cards"]}
         assert kinds == {"drill"}
+
+
+# --- slice C (tunatale-h0q3.68): any line, a lesson with no card list ------------------------
+
+
+def _scene_lesson() -> Lesson:
+    """A generated lesson: scenes, no card list, the Natural Speed take of each line."""
+    from app.models.lesson import Phrase, Section, SectionType
+    from tests.test_lesson_take import NB_A, NB_B
+
+    story = _story()
+    del story["cards"]
+    voices = {"female-1": NB_B, "male-1": NB_A}
+    lines = [line for scene in story["scenes"] for line in scene["lines"]]
+    natural = Section(
+        SectionType.NATURAL_SPEED,
+        [Phrase("Natural Speed", "en-US-AndrewMultilingualNeural", "en", role="narrator")]
+        + [Phrase(ln["text"], voices[ln["speaker"]], "no", role=ln["speaker"]) for ln in lines],
+    )
+    return Lesson(
+        title="Dag 1",
+        language_code="no",
+        sections=[natural],
+        generation_metadata={"story": story, "token_glosses": {"bra": "fine", "takk": "thanks"}},
+    )
+
+
+NL3 = "sent:lesson-1:3"  # the content id keys a lesson with no list
+
+
+class TestAnyLine:
+    async def test_the_plan_lists_every_line_of_a_lesson_with_no_list(self, srs_db):
+        _install(srs_db, _scene_lesson())
+        sentences = (await _plan())["suggestions"]["sentences"]
+        assert [s["line_key"] for s in sentences] == ["sent:lesson-1:1", "sent:lesson-1:2", NL3]
+        assert {t["state"] for s in sentences for t in s["tokens"]} == {"off"}
+        assert sentences[2]["tokens"][0]["gloss"] == "fine"
+
+    async def test_m4_a_save_mines_a_blank_on_a_line_no_list_names(self, srs_db):
+        db = _install(srs_db, _scene_lesson())
+        result = await _grade({"sentence_edits": [{"line_key": NL3, "on": [BRA], "off": []}]})
+        assert result["not_made"] == []  # (created also counts the first Save's word cards)
+        row = _blank_rows(db, NL3)[(0, 3)]
+        unit = db.get_collocation_by_id(row)[1].syntactic_unit
+        assert (unit.source, sentence_card(unit).blank_gloss, sentence_card(unit).cue.text) == (
+            "user",
+            "fine",
+            "Hei, hvordan gar det?",
+        )
+        line = (await _plan())["suggestions"]["sentences"][2]
+        assert (line["tokens"][0]["state"], line["tokens"][0]["in_deck"]) == ("on", True)
+
+    async def test_m5_the_lines_first_row_gets_the_lessons_takes_and_nothing_synthesizes(self, srs_db, tmp_path):
+        import respx
+
+        from app.config import settings
+        from tests.test_lesson_take import NB_A, NB_B, _instrument_paths
+
+        lesson = _scene_lesson()
+        db = _install(srs_db, lesson)
+        settings.tts_cache_dir.mkdir(parents=True, exist_ok=True)
+        paths = _instrument_paths(lesson, settings.tts_cache_dir)
+        paths[("Bra, takk, og du?", NB_B, False)].write_bytes(b"answer-take")
+        paths[("Hei, hvordan gar det?", NB_A, False)].write_bytes(b"cue-take")
+        _llm("and")  # og has no gloss in the lesson: the model's
+        with respx.mock(assert_all_called=False) as router:  # no routes: any vendor call would fail
+            await _grade({"sentence_edits": [{"line_key": NL3, "on": [BRA, OG], "off": []}]})
+        assert router.calls.call_count == 0
+        for row in _blank_rows(db, NL3).values():
+            answer = db.get_media_filename(row, "audio_tts_sentence")
+            cue = db.get_media_filename(row, "audio_cue")
+            assert (tmp_path / "tt-media" / answer).read_bytes() == b"answer-take"
+            assert (tmp_path / "tt-media" / cue).read_bytes() == b"cue-take"
+
+    async def test_m5_control_an_unrendered_lesson_gets_no_take_and_a_log_line(self, srs_db, caplog):
+        db = _install(srs_db, _scene_lesson())
+        with caplog.at_level("WARNING"):
+            result = await _grade({"sentence_edits": [{"line_key": NL3, "on": [BRA], "off": []}]})
+        assert result["status"] == "ok"
+        row = _blank_rows(db, NL3)[(0, 3)]
+        assert not db.has_media_row(row, "audio_tts_sentence")
+        assert "SENTENCE_CARD_NO_TAKE" in caplog.text

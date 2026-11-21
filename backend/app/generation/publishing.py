@@ -240,6 +240,9 @@ class ReviewSessionTarget:
 
     def write(self, lesson: Lesson) -> str:
         metadata = lesson.generation_metadata
+        # A session's story is replaced under its own id, so its sentence lines get a fresh key
+        # set each write: a line mined on the old story keeps its own text (PR #449 review G3).
+        metadata["line_set"] = mint_id(self._session_id)
         self._store.save_review_session(
             self._session_id,
             self._language_code,

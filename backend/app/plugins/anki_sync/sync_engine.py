@@ -2398,6 +2398,7 @@ class AnkiSync:
         image_failed = 0
         image_duplicate = 0
         no_notetype = 0
+        sentence_lines_held: list[str] = []
         # The mint notetype's L2 (sort) field, resolved at the first vocab item.
         # "" means the notetype is not in the collection.
         mint_l2_field: str | None = None
@@ -2426,6 +2427,7 @@ class AnkiSync:
                             group,
                         )
                         skipped += len(pending_lines[group])
+                        sentence_lines_held.append(group)
                 continue
             if item.syntactic_unit.card_type == "cloze":
                 # Two texts, and they differ only for a contrast card: the
@@ -2771,6 +2773,7 @@ class AnkiSync:
             image_failed=image_failed,
             image_duplicate=image_duplicate,
             no_notetype=no_notetype,
+            sentence_lines_held=sentence_lines_held,
         )
 
     async def promote_production_cards(

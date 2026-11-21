@@ -21,16 +21,21 @@
 	let syncLoading = $state(false);
 	let syncResult = $state<PeerSyncResult | null>(null);
 	let error = $state('');
+	// Lesson lines the sync could not put in Anki (no "TT Sentence" notetype in this deck's
+	// collection). Loud, and it stays until a sync holds none: the cards exist only in TT.
+	let held = $state(0);
 	let dismissTimer: ReturnType<typeof setTimeout> | undefined;
 
 	async function handleSync() {
 		syncLoading = true;
 		syncResult = null;
 		error = '';
+		held = 0;
 		clearTimeout(dismissTimer);
 		try {
 			const result = await api.peerSync(false);
 			syncResult = result;
+			held = result.held_sentence_lines.length;
 			syncStore.notify(result);
 			if (onSyncResult) onSyncResult(result);
 			// Success is a transient confirmation — flash it, then clear so it
@@ -70,6 +75,8 @@
 
 		{#if error}
 			<span class="sync-toast error" role="alert">{error}</span>
+		{:else if held > 0}
+			<span class="sync-toast error" role="alert">{t('syncButton.heldSentenceLines', { count: held })}</span>
 		{:else if syncResult && !onSyncResult}
 			<span class="sync-toast success" role="status">{t('syncButton.synced')}</span>
 		{/if}
