@@ -139,6 +139,15 @@ def _update_lesson_rows(db, built: list[LessonCard]) -> set[str]:
     return held
 
 
+def update_listed_lines(db, cards: dict, drills: list[dict] | tuple = ()) -> set[str]:
+    """Update the deck's rows of the list's own cards to the corrected list, minting nothing; return the lines held.
+
+    The mint runs this too; an edit of a day not yet studied runs it alone, so a corrected
+    line's mined blanks move at the import, not at the study pass (PR #449 review H1).
+    """
+    return _update_lesson_rows(db, lesson_cards(cards, drills))
+
+
 def update_unlisted_lines(db, lesson: Lesson, content_id: str) -> set[str]:
     """Update the mined rows of every line no card list names to the lesson's scene text; return the lines held.
 

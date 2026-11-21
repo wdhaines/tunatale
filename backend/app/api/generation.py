@@ -36,6 +36,7 @@ from app.srs.lesson_card_mint import (
     day_was_studied,
     lesson_card_rows,
     mint_lesson_cards,
+    update_listed_lines,
     update_unlisted_lines,
 )
 from app.srs.sentence_lines import has_mined_lines, line_set
@@ -196,6 +197,8 @@ async def import_story(body: ImportLessonRequest, request: Request):
     # A corrected scene line moves the blanks mined on it, as the study pass does for the
     # list's own lines (review F2). Only an import changes a line's text.
     if srs_db is not None and body.replaces is not None:
+        if story.get("cards"):
+            update_listed_lines(srs_db, story["cards"], story.get("drills", []))
         update_unlisted_lines(srs_db, lesson, lesson_id)
 
     # A card list for a day already studied mints now (tunatale-h0q3.43): the

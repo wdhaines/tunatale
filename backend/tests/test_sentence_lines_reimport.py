@@ -217,6 +217,34 @@ class TestCorrectionReImport:
         ((_g, item, _r),) = db.list_sibling_rows(f"sent:{a}:3")
         assert sentence_card(item.syntactic_unit).blank == (10, 12)
 
+    async def test_h1_an_edit_on_a_day_not_yet_studied_moves_the_blanks_mined_on_a_listed_line(self):
+        """Round 3 H1: the list's own lines were updated only by a mint, which runs on a studied day;
+        a Save touching the line then met LineChanged (409) and lost its grades with it."""
+        db, store = _setup()
+        a, lesson_a = await _imported(store, _with_list("test-01"))
+        _mine(db, lesson_a, a, 3, OG, "and")  # a mined blank on a listed line, before study
+        corrected = _with_list("test-01")
+        corrected["scenes"][0]["lines"][2]["text"] = "Bra takk, og du?"
+        item3 = next(i for i in corrected["cards"]["items"] if i.get("line") == 3)
+        item3["text"] = item3["spoken"] = "Bra takk, og du?"
+        b, lesson_b = await _imported(store, corrected, replaces=a)
+        ((_g, item, _r),) = db.list_sibling_rows("sent:test-01:3")
+        assert sentence_card(item.syntactic_unit).text == "Bra takk, og du?"
+        plan = mining.plan_line_edits(db, lesson_b, b, [{"line_key": "sent:test-01:3", "on": [[0, 3]], "off": []}])
+        assert len(plan.adds) == 1  # no LineChanged
+
+    async def test_h1_control_a_new_story_updates_nothing(self):
+        db, store = _setup()
+        a, lesson_a = await _imported(store, _with_list("test-01"))
+        _mine(db, lesson_a, a, 3, OG, "and")
+        corrected = _with_list("test-01")
+        corrected["scenes"][0]["lines"][2]["text"] = "Bra takk, og du?"
+        item3 = next(i for i in corrected["cards"]["items"] if i.get("line") == 3)
+        item3["text"] = item3["spoken"] = "Bra takk, og du?"
+        await _imported(store, corrected)
+        ((_g, item, _r),) = db.list_sibling_rows("sent:test-01:3")
+        assert sentence_card(item.syntactic_unit).text == "Bra, takk, og du?"
+
     async def test_control_an_unchanged_re_import_writes_nothing(self, caplog):
         db, store = _setup()
         a, lesson_a = await _imported(store, _no_list())
