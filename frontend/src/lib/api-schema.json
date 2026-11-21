@@ -3866,6 +3866,14 @@
             "title": "Dry Run",
             "type": "boolean"
           },
+          "held_sentence_lines": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Held Sentence Lines",
+            "type": "array"
+          },
           "pull_required": {
             "anyOf": [
               {

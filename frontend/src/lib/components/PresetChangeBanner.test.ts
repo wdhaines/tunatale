@@ -37,6 +37,7 @@ const SYNC_RESULT = {
   pull_required: 0,
   push_required: 1,
   tt_push_pull_exit: 0,
+  held_sentence_lines: [],
   dry_run: false,
 };
 

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from app.common.guid import compute_guid
 from app.models.lesson import Lesson
 from app.models.srs_item import SRSItem
+from app.srs.lesson_cards import LessonCard
 from app.srs.sentence_card import SentenceCard, sentence_card
 from app.srs.sentence_lines import ListLine, _reviewed, list_lines, read_line
 
@@ -176,6 +177,9 @@ class LineEditResult:
     made: list[int] = field(default_factory=list)
     removed: list[int] = field(default_factory=list)
     not_made: list[dict] = field(default_factory=list)
+    #: Each mined row, with the voice roles of its line and cue: what the media step gives the
+    #: lesson's takes to (``attach_lesson_card_audio``). A line no list names has no other source.
+    voice: list[tuple[int, LessonCard]] = field(default_factory=list)
 
 
 def _spans(raw: list) -> list[Span]:
@@ -192,7 +196,7 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
     Anki keeps at least one card, counted after the edit: the only thing that
     takes a note out of Anki is a sibling flagged by a deletion.
     """
-    lines = {listed.card.line_key: listed for listed in list_lines(lesson).values()}
+    lines = {listed.card.line_key: listed for listed in list_lines(lesson, content_id).values()}
     marks = db.sentence_card_marks()
     plan = LineEditPlan()
     unconfirmed: list[str] = []
@@ -297,14 +301,17 @@ def apply_rows(
     for listed, span in plan.adds:
         line_key = listed.card.line_key
         if span is None:
-            result.made.append(_add_row(db, language_code, line_key, _line(db, line_key, listed.card)[1]))
-            continue
-        gloss = glosses.get((line_key, span), "")
-        if not gloss:
-            word = listed.card.text[span[0] : span[1]]
-            result.not_made.append({"line_key": line_key, "start": span[0], "end": span[1], "word": word})
-            continue
-        result.made.append(add_blank(db, language_code, line_key, span, gloss, base=listed.card))
+            row_id = _add_row(db, language_code, line_key, _line(db, line_key, listed.card)[1])
+        else:
+            gloss = glosses.get((line_key, span), "")
+            if not gloss:
+                word = listed.card.text[span[0] : span[1]]
+                result.not_made.append({"line_key": line_key, "start": span[0], "end": span[1], "word": word})
+                continue
+            row_id = add_blank(db, language_code, line_key, span, gloss, base=listed.card)
+        result.made.append(row_id)
+        unit = db.get_collocation_by_id(row_id)[1].syntactic_unit
+        result.voice.append((row_id, LessonCard(unit=unit, role=listed.role, cue_role=listed.cue_role)))
     if plan.list_on and studied:
         story = lesson.generation_metadata["story"]
         minted = mint_lesson_cards(db, language_code, story["cards"], story.get("drills", []), only=set(plan.list_on))

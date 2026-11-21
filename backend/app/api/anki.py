@@ -212,4 +212,5 @@ async def trigger_peer_sync(request: Request, background_tasks: BackgroundTasks,
         "push_required": report.push_required,
         "tt_push_pull_exit": report.tt_push_pull_exit,
         "dry_run": report.dry_run,
+        "held_sentence_lines": report.held_sentence_lines,
     }

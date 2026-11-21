@@ -524,6 +524,7 @@ def main(
     _db=None,
     _media_dir: Path | None = None,
     _media_fn=None,
+    _report: dict | None = None,
 ) -> int:
     import argparse
     import sys
@@ -626,6 +627,10 @@ def main(
                 )
             )
             _print_sync_report(create, push, pull, media, promotion, dry_run=args.dry_run, media_dir=_media_dir)
+            if _report is not None:
+                # What the caller shows the learner (peer_sync -> the Sync button): a line held for a
+                # missing "TT Sentence" notetype would otherwise be a log line only (tunatale-h0q3.68).
+                _report["held_sentence_lines"] = list(create.sentence_lines_held)
             timings["total"] = time.perf_counter() - _t_total
             if not args.dry_run:
                 # Gated like the soak heartbeat: a dry run is a diagnostic, and
@@ -661,6 +666,8 @@ def _print_sync_report(create, push, pull, media, promotion, *, dry_run: bool, m
     indistinguishable from the feature silently not working.
     """
     print(f"Create: {create.created} created, {create.linked} linked, {create.notes_created_from_anki} from Anki")
+    if create.sentence_lines_held:
+        print(f"Held: {len(create.sentence_lines_held)} sentence lines (no TT Sentence notetype)")
     print(
         f"Pull: {pull.notes_updated} notes updated, "
         f"{pull.directions_updated} directions, "

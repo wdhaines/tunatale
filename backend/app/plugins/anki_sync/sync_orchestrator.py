@@ -170,6 +170,8 @@ class PeerSyncReport:
     push_required: int | None = None
     push_message: str = ""
     dry_run: bool = False
+    #: Line keys the reconcile held because the collection has no "TT Sentence" notetype.
+    held_sentence_lines: list[str] = field(default_factory=list)
     # Per-leg wall times (seconds), keyed by leg name. Populated by peer_sync and
     # logged as a PEER_SYNC_TIMING line so an occasional slow sync can be diagnosed
     # from sync.log after the fact rather than reproduced live.
@@ -627,12 +629,15 @@ def peer_sync(dry_run: bool = False, *, media_fn=None, language_code: str | None
     from app.plugins.anki_sync.sync import main as tt_sync_main
 
     t0 = time.perf_counter()
+    reconciled: dict = {}
     report.tt_push_pull_exit = tt_sync_main(
         argv=["--dry-run"] if dry_run else [],
         _settings=_tt_settings(language_code),
         _media_fn=media_fn,
         _media_dir=_resolve_media_dir(),
+        _report=reconciled,
     )
+    report.held_sentence_lines = reconciled.get("held_sentence_lines", [])
     report.timings["reconcile"] = time.perf_counter() - t0
     if report.tt_push_pull_exit != 0:
         raise PeerSyncError(

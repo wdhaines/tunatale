@@ -59,13 +59,40 @@ class TestPeerSync:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"auth_success", "pull_required", "push_required", "tt_push_pull_exit", "dry_run"}
+        assert set(body) == {
+            "auth_success",
+            "pull_required",
+            "push_required",
+            "tt_push_pull_exit",
+            "dry_run",
+            "held_sentence_lines",
+        }
+        assert body["held_sentence_lines"] == []  # control for the test below
         assert body["auth_success"] is True
         assert body["dry_run"] is False
         assert body["tt_push_pull_exit"] == 0
         # The real bracket ran through the driver boundary. Nothing is pending, so
         # the push leg is correctly skipped — login + the pull sync only.
         assert [c["op"] for c in fake_driver] == ["login", "sync"]
+
+    @pytest.mark.usefixtures("sociable_tt_collection", "fake_driver")
+    async def test_a_line_held_for_a_missing_sentence_notetype_is_in_the_response(self):
+        """tunatale-h0q3.68: the synthetic collection has no "TT Sentence" notetype, so a mined
+        line is held; the response names it, so the Sync button can say so (not only the log)."""
+        from app.config import settings
+        from app.plugins.anki_sync.sync_orchestrator import _tt_settings
+        from app.srs.database import SRSDatabase
+        from app.srs.sentence_card import SentenceCard
+
+        card = SentenceCard("dag-1-ab12cd34", 2, "male-1", "Dober dan!", "Dober dan!", "Good day!", ())
+        # The db the reconcile opens for the request's language (no header: the default one).
+        db_url = _tt_settings(settings.target_language).database_url
+        SRSDatabase(db_url.removeprefix("sqlite:///")).add_collocation(card.unit(), language_code="sl")
+
+        response = await _post_peer_sync()
+
+        assert response.status_code == 200, response.text
+        assert response.json()["held_sentence_lines"] == ["sent:dag-1-ab12cd34:2"]
 
     async def test_language_header_selects_that_languages_db(self, monkeypatch, tmp_path, fake_driver):
         """``X-TT-Language`` must reach peer_sync and select that language's db+deck.

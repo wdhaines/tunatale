@@ -1869,6 +1869,9 @@ class PeerSyncResponse(BaseModel):
     push_required: int | None
     tt_push_pull_exit: int | None
     dry_run: bool
+    #: Lesson lines (line keys) the sync held because the collection has no "TT Sentence"
+    #: notetype: the Sync button says so, so a mined line is never silently missing in Anki.
+    held_sentence_lines: list[str] = []
 
 
 class PresetChange(BaseModel):

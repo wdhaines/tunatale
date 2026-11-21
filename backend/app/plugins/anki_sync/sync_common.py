@@ -167,6 +167,9 @@ class CreateNewReport:
     image_duplicate: int = 0
     #: Vocab words held unlinked because the mint notetype is not in the collection.
     no_notetype: int = 0
+    #: Lesson lines (their line keys) held unlinked because the "TT Sentence" notetype is not in
+    #: the collection (tunatale-h0q3.68): reported to the screen, not only logged.
+    sentence_lines_held: list[str] = field(default_factory=list)
 
 
 class ClozeMaterial(NamedTuple):

@@ -449,10 +449,11 @@ async def grade_lesson(
         db, lesson.language_code, lesson, edits, glosses, studied=db.has_listen(content_id)
     )
     if mined.made:
-        # The line's takes, for the rows this Save added: the list's own and the blanks
-        # mined on its lines (``attach_lesson_card_audio`` copies them to a mined blank).
+        # The line's takes, for the rows this Save added: the list's own, and each mined
+        # row's from its line and cue (a line no list names has no other source, h0q3.68).
         story = lesson.generation_metadata["story"]
-        voiced = lesson_card_rows(db, story["cards"], story.get("drills", []))
+        listed = lesson_card_rows(db, story["cards"], story.get("drills", [])) if story.get("cards") else []
+        voiced = listed + mined.voice
 
     for lemma in declined["word"]:
         db.add_ignored_lemma(lesson.language_code, lemma)

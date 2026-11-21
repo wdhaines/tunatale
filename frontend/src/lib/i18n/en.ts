@@ -297,6 +297,10 @@ export const en = {
   "syncButton.syncWithAnkiWeb": "Sync with AnkiWeb",
   "syncButton.sync": "Sync",
   "syncButton.synced": "Synced with AnkiWeb",
+  "syncButton.heldSentenceLines": {
+    one: "{count} sentence line is not in Anki yet: this deck has no TT Sentence notetype.",
+    other: "{count} sentence lines are not in Anki yet: this deck has no TT Sentence notetype.",
+  },
 
   // PresetChangeBanner.svelte
   "presetChangeBanner.heading": "FSRS preset changed — due dates were NOT rescheduled",
