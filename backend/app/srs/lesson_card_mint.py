@@ -139,6 +139,26 @@ def _update_lesson_rows(db, built: list[LessonCard]) -> set[str]:
     return held
 
 
+def update_unlisted_lines(db, lesson: Lesson, content_id: str) -> set[str]:
+    """Update the mined rows of every line no card list names to the lesson's scene text; return the lines held.
+
+    The list's own lines are updated by the study pass (:func:`_update_lesson_rows`); a
+    line it does not name has only mined rows, built from the scene line
+    (``sentence_lines.line_card``), and only an import changes that text (PR #449 review F2).
+    Same rule as a list line: every row of the line or none, and what has no place is held.
+    """
+    from app.srs.sentence_lines import list_lines  # sentence_lines is built on lesson_cards, as this module is
+
+    held: set[str] = set()
+    for listed in list_lines(lesson, content_id).values():
+        if listed.blanks or listed.whole:
+            continue
+        line = listed.card.line_key
+        if db.list_sibling_rows(line) and not _update_line(db, line, [listed.card]):
+            held.add(line)
+    return held
+
+
 def _update_drill(db, new: DrillCard) -> bool:
     """Update the one row under *new*'s key if the lesson changed the drill; False when it is held.
 

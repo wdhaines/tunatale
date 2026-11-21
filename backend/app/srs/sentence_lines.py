@@ -89,6 +89,16 @@ class ListLine:
         return self.whole if span is None else span in self.blanks
 
 
+def line_set(lesson: Lesson, content_id: str) -> str:
+    """The set a lesson's line keys use (``sent:<set>:<pos>``): its card list's ``set``, else the
+    ``line_set`` an import carried into it (PR #449 review F1), else its own content id."""
+    story = lesson.generation_metadata.get("story") or {}
+    cards = story.get("cards")
+    if cards:
+        return cards["set"]
+    return lesson.generation_metadata.get("line_set") or content_id
+
+
 def list_lines(lesson: Lesson, content_id: str) -> dict[int, ListLine]:
     """Every line of the lesson, by position, in story order: the list's card where the list names
     the line, else the scene line's own (tunatale-h0q3.68)."""
@@ -110,13 +120,25 @@ def list_lines(lesson: Lesson, content_id: str) -> dict[int, ListLine]:
         pos: ListLine(base, frozenset(blanks), whole[0], role, cue_role)
         for pos, (base, blanks, whole, role, cue_role) in lines.items()
     }
-    set_id = cards["set"] if cards else content_id
+    set_id = line_set(lesson, content_id)
     glosses = _lesson_glosses(lesson)
     for pos, (line, before) in enumerate(_scene_lines(story), start=1):
         if pos not in found:
             card = _scene_card(set_id, pos, line, before, glosses)
-            found[pos] = ListLine(card, frozenset(), False, line["speaker"], before["speaker"] if before else "")
+            # Lowercased, as the section builder resolves a voice (review N1).
+            role, cue_role = line["speaker"].lower(), before["speaker"].lower() if before else ""
+            found[pos] = ListLine(card, frozenset(), False, role, cue_role)
     return dict(sorted(found.items()))
+
+
+def has_mined_lines(db, set_id: str) -> bool:
+    """Whether a line keyed under *set_id* holds a row the learner mined (not the course's)."""
+    return any(
+        item.syntactic_unit.source != COURSE_SOURCE
+        for group in db.list_sibling_groups(f"sent:{set_id}:")
+        for _, item, _ in db.list_sibling_rows(group)
+        if sentence_card(item.syntactic_unit) is not None
+    )
 
 
 def _base(card: SentenceCard) -> SentenceCard:

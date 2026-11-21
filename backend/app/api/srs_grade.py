@@ -66,7 +66,7 @@ from app.srs.drill_card import DrillCard, drill_card, is_drill_key
 from app.srs.lesson_card_mint import lesson_card_rows
 from app.srs.lesson_cards import lesson_cards
 from app.srs.sentence_card import SENTENCE_KEY_PREFIX, SentenceCard, sentence_card
-from app.srs.sentence_lines import sentence_lines
+from app.srs.sentence_lines import line_set, sentence_lines
 
 router = APIRouter(prefix="/api/srs", tags=["srs"])
 
@@ -96,9 +96,8 @@ class _LessonCard:
 
 
 def _line_prefix(lesson, content_id: str) -> str:
-    """The key prefix of the lesson's lines: its list's set, else its content id (a lesson with no list)."""
-    cards = (lesson.generation_metadata.get("story") or {}).get("cards")
-    return f"{SENTENCE_KEY_PREFIX}{cards['set'] if cards else content_id}:"
+    """The key prefix of the lesson's lines (``sentence_lines.line_set``)."""
+    return f"{SENTENCE_KEY_PREFIX}{line_set(lesson, content_id)}:"
 
 
 def _lesson_cards(db, lesson, plan: _ListenPlan, content_id: str) -> dict[int, _LessonCard]:

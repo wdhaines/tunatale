@@ -298,8 +298,9 @@ export const en = {
   "syncButton.sync": "Sync",
   "syncButton.synced": "Synced with AnkiWeb",
   "syncButton.heldSentenceLines": {
-    one: "{count} sentence line is not in Anki yet: this deck has no TT Sentence notetype.",
-    other: "{count} sentence lines are not in Anki yet: this deck has no TT Sentence notetype.",
+    one: "{count} sentence line is not in Anki yet: the Anki collection has no “TT Sentence” note type. Add it with add_sentence_notetype (a full upload to AnkiWeb).",
+    other:
+      "{count} sentence lines are not in Anki yet: the Anki collection has no “TT Sentence” note type. Add it with add_sentence_notetype (a full upload to AnkiWeb).",
   },
 
   // PresetChangeBanner.svelte

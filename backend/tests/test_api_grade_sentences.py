@@ -224,6 +224,21 @@ class TestG2LessonWithNoList:
         counts = (await _get("/api/srs/due-counts", {"content_id": "lesson-1", "range_days": 0})).json()
         assert counts["counts"]["lesson-1"] == 1
 
+    async def test_g2_a_re_imported_lesson_reads_the_lines_its_carried_line_set_keys(self, srs_db):
+        """Review F1: a lesson with no list that an import gave the day's line set grades the rows under it."""
+        from app.srs.sentence_card import SentenceCard
+
+        story = _story()
+        del story["cards"]
+        lesson = _lesson("Hei!", story=story)
+        lesson.generation_metadata["line_set"] = "earlier-1"
+        db = _install(srs_db, lesson)
+        card = SentenceCard("earlier-1", 2, "Per", "Hei, hvordan går det?", "Hei, hvordan gar det?", "Hi", ())
+        db.add_collocation(card.with_blank((13, 16), "goes").unit(), "no")
+        row = next(r for _, _, r in db.list_sibling_rows(card.line_key))
+        _review_by_id(db, row, PROD, due_in=0)
+        assert [c["item_id"] for c in (await _plan())["cards"]] == [row]
+
     async def test_g2_control_a_list_lessons_cards_as_before(self, srs_db):
         db = _install(srs_db, _lesson("Hei!", story=_story()))
         await _grade({})

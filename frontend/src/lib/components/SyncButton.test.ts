@@ -125,7 +125,7 @@ describe("SyncButton", () => {
       await tick();
       const alert = getByRole("alert");
       expect(alert.textContent).toBe(
-        "2 sentence lines are not in Anki yet: this deck has no TT Sentence notetype.",
+        "2 sentence lines are not in Anki yet: the Anki collection has no “TT Sentence” note type. Add it with add_sentence_notetype (a full upload to AnkiWeb).",
       );
       expect(queryByText("Synced with AnkiWeb")).toBeNull();
       await vi.advanceTimersByTimeAsync(4000);
@@ -141,7 +141,7 @@ describe("SyncButton", () => {
     const { getByText, findByRole, queryByRole } = render(SyncButton);
     await fireEvent.click(getByText("Sync with AnkiWeb"));
     expect((await findByRole("alert")).textContent).toBe(
-      "1 sentence line is not in Anki yet: this deck has no TT Sentence notetype.",
+      "1 sentence line is not in Anki yet: the Anki collection has no “TT Sentence” note type. Add it with add_sentence_notetype (a full upload to AnkiWeb).",
     );
     mockPeerSync.mockResolvedValueOnce(RESULT);
     await fireEvent.click(getByText("Sync with AnkiWeb"));
