@@ -431,6 +431,18 @@ class TestRefusals:
         _link(db, L3)
         mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": ["whole"], "off": [[5, 9], [14, 16]]}])
 
+    def test_g1_a_linked_line_kept_only_by_a_blank_that_got_no_gloss_is_refused(self):
+        """Review G1: the count ran before the glosses; a blank with no gloss is not made, and the
+        line was left with no row (nothing then takes its cards out of Anki)."""
+        db, lesson = SRSDatabase(":memory:"), _lesson()
+        _study(db, lesson)
+        _link(db, L3)
+        og = list(_span(line_card(lesson, 3).text, "og"))
+        plan = mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": [og], "off": [[5, 9], [14, 16]]}])
+        with pytest.raises(mining.LastCardOfLine):
+            mining.check_glossed(plan, {})
+        mining.check_glossed(plan, {(L3, tuple(og)): "and"})  # control: with its gloss, the trade stands
+
     def test_n4_control_an_unlinked_lines_last_card_goes(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
         _study(db, lesson)

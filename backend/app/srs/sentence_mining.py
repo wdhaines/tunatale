@@ -168,6 +168,7 @@ class LineEditPlan:
     adds: list[tuple[ListLine, Span]] = field(default_factory=list)  # mined cards to write
     list_on: list[str] = field(default_factory=list)  # list cards turned on that the deck lacks
     needs_gloss: list[GlossNeed] = field(default_factory=list)
+    linked_after: dict[str, int] = field(default_factory=dict)  # a linked line's card count after the edit
 
 
 @dataclass
@@ -246,11 +247,28 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
             if span is not None:
                 word = read.text[span[0] : span[1]]
                 plan.needs_gloss.append(GlossNeed(line_key, span, word, read.text, own_gloss(listed.card, span)))
-        if read.linked and after < 1:
-            raise LastCardOfLine(f"{line_key!r} is in Anki and keeps at least one card")
+        if read.linked:
+            if after < 1:
+                raise LastCardOfLine(f"{line_key!r} is in Anki and keeps at least one card")
+            plan.linked_after[line_key] = after
     if unconfirmed:
         raise NeedsConfirm(unconfirmed)
     return plan
+
+
+def check_glossed(plan: LineEditPlan, glosses: dict) -> None:
+    """Refuse the edit when a linked line is kept only by new blanks that got no gloss.
+
+    ``plan_line_edits`` counts a new blank before its gloss is fetched; a blank with
+    none is not made (``not_made``), so a linked line could lose every row while its
+    cards stay due in Anki (review G1). Run after the glosses, before any write.
+    """
+    for line_key, after in plan.linked_after.items():
+        unglossed = sum(1 for n in plan.needs_gloss if n.line_key == line_key and (line_key, n.span) not in glosses)
+        if after - unglossed < 1:
+            raise LastCardOfLine(
+                f"{line_key!r} is in Anki and keeps at least one card; no meaning was found for the new blank"
+            )
 
 
 def write_marks(db, plan: LineEditPlan) -> None:

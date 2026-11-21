@@ -33,11 +33,23 @@ const STORY = {
 	},
 };
 
+/** The words the first Save declined: they go on the ignore list, which resetSRSItems does not clear. */
+let declinedWords: string[] = [];
+
 test.beforeEach(async ({ request }) => {
 	if (await backendAvailable(request)) await resetSRSItems(request);
 });
 test.afterEach(async ({ request }) => {
-	if (await backendAvailable(request)) await resetSRSItems(request);
+	if (!(await backendAvailable(request))) return;
+	// Restore them, or the next spec on this worker misses "kavo" (listen-preview-layout did, in CI).
+	for (const lemma of declinedWords) {
+		const restored = await request.delete(`${BACKEND}/api/srs/ignored-lemmas`, {
+			params: { lemma, language_code: 'sl' },
+		});
+		expect(restored.ok(), `restoring ${lemma}: ${await restored.text()}`).toBe(true);
+	}
+	declinedWords = [];
+	await resetSRSItems(request);
 });
 
 test('grade: a word tapped in New cards › Sentences becomes a new card of its line', async ({ page, request }) => {
@@ -75,6 +87,7 @@ test('grade: a word tapped in New cards › Sentences becomes a new card of its 
 		...before.suggestions.words.map((w: { key: string }) => ({ kind: 'word', key: w.key })),
 		...before.suggestions.contrast.map((c: { form: string }) => ({ kind: 'contrast', key: c.form })),
 	];
+	declinedWords = before.suggestions.words.map((w: { key: string }) => w.key);
 	const first = await request.post(`${BACKEND}/api/srs/content/${lessonId}/grade`, { data: { declined } });
 	expect(first.ok(), await first.text()).toBe(true);
 	const studied = await (await request.get(planUrl)).json();

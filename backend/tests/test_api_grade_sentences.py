@@ -133,6 +133,19 @@ class TestSave:
         assert set(_blank_rows(db)) == {(5, 9), (14, 16)}
         assert db.count_listens("lesson-1") == 1  # the study mark did not apply either
 
+    async def test_g1_a_linked_line_whose_only_new_card_got_no_gloss_keeps_its_cards(self, srs_db):
+        """Review G1's probe: linked L3, og on (no line gloss), takk and du off, the model gives nothing."""
+        from tests.test_sentence_lines import _link
+
+        db = _install(srs_db, _lesson("Hei!", story=_story()))
+        await _grade({})
+        _link(db, L3)
+        for reply, status, rows in [("", 409, {(5, 9), (14, 16)}), ("and", 200, {(11, 13)})]:
+            _llm(reply)
+            resp = await _post(GRADE_URL, _edit(on=[OG], off=[[5, 9], [14, 16]]))
+            assert resp.status_code == status, resp.text
+            assert set(_blank_rows(db)) == rows
+
     async def test_n3_with_confirm_it_goes(self, srs_db):
         db = _install(srs_db, _lesson("Hei!", story=_story()))
         await _grade({})

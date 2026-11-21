@@ -386,6 +386,10 @@ async def grade_lesson(
     except sentence_mining.MiningError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     glosses = await _blank_glosses(request, lesson.language_code, edits.needs_gloss)
+    try:
+        sentence_mining.check_glossed(edits, glosses)
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
     applied = 0
     if body.card_grades:
