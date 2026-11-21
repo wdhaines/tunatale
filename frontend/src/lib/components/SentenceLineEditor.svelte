@@ -94,7 +94,7 @@
 		{/each}
 	</div>
 	<div class="en">{line.english}</div>
-	{#each added as blank (blank.word)}
+	{#each added as blank (blank.key)}
 		<div class="cap">
 			<b>{blank.word}+</b>
 			{#if blank.gloss}{blank.gloss}{:else}<i>{t('sentenceLine.glossAtSave')}</i>{/if}

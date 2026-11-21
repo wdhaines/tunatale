@@ -2196,6 +2196,10 @@ class SentenceLineToken(BaseModel):
     origin: Literal["lesson", "mine"]
     reviewed: bool
     gloss: str
+    # A row holds the card. A listed card the deck lacks (deleted on the Cards page, or
+    # minted at the next study) is ``on`` but not in the deck, and does not keep a
+    # linked line in Anki (review F4).
+    in_deck: bool
 
 
 class SentenceLine(BaseModel):

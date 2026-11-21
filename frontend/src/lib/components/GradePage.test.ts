@@ -509,6 +509,7 @@ describe("GradePage — New cards › Sentences (tunatale-h0q3.67)", () => {
     origin: "mine" as const,
     reviewed: false,
     gloss: "",
+    in_deck: false,
     ...over,
   });
   const carded = {
@@ -618,5 +619,52 @@ describe("GradePage — New cards › Sentences (tunatale-h0q3.67)", () => {
     await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
     await waitFor(() => expect(view.getByText("1 line · 2 cards")).toBeTruthy());
     expect(view.getByRole("tab", { name: "New cards · 0" })).toBeTruthy();
+  });
+
+  it("a refused sentence edit says why and does not refetch as if the plan were stale", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    const calls = getPlan.mock.calls.length;
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("409"), {
+        status: 409,
+        detail: "'sent:test-01:3' is in Anki and keeps at least one card",
+      }),
+    );
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() =>
+      expect(view.getByRole("alert").textContent).toBe(
+        "A sentence change was not saved, and nothing else was either: 'sent:test-01:3' is in Anki and keeps at least one card",
+      ),
+    );
+    expect(getPlan.mock.calls.length).toBe(calls);
+  });
+
+  it("a reviewed card the server would not turn off without a confirm is named the same way", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("409"), {
+        status: 409,
+        detail: { message: "takk has history", needs_confirm: ["k"] },
+      }),
+    );
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("takk has history"));
+  });
+
+  it("a stale grade plan (its 409 names rows) still refetches", async () => {
+    getPlan.mockResolvedValue(withLines([carded]));
+    const view = await openNew();
+    save.mockRejectedValueOnce(
+      Object.assign(new Error("409"), { status: 409, detail: { message: "m", rows: [] } }),
+    );
+    await fireEvent.click(view.getByRole("button", { name: "takk" }));
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() =>
+      expect(view.getByRole("status").textContent).toContain("Some cards changed"),
+    );
   });
 });

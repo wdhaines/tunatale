@@ -1056,10 +1056,13 @@ class OfflineWriter:
         line (tunatale-h0q3.52, owner 2026-11-10). The rest go to the course region.
 
         Placing a course card makes the note a course note even when a mined blank
-        made it first, untagged (finding M3, tunatale-h0q3.66): it gains ``COURSE_TAG``,
-        and every front ord it already holds is tagged mined. Without the course tag
-        the next lesson's region opens 100,000 positions ahead of this one; with it
-        alone, the mined card (at the front) counts as the course's last card.
+        made it first, untagged (finding M3, tunatale-h0q3.66): before the course cards
+        are placed, it gains ``COURSE_TAG`` and every front ord it already holds is
+        tagged mined. Without the course tag the next lesson's region opens 100,000
+        positions ahead of this one; with it alone, or with the mined tag written only
+        after the placement, ``_next_course_position`` anchors on the mined card (at
+        the front) and places the course's cards level with the frequency deck
+        (review F2). The held ords are tagged, never inserted again (review F1).
         """
         have = {r[0] for r in self._conn.execute("SELECT ord FROM cards WHERE nid = ?", (note_id,))}
         missing = [o for o in ords if o not in have]
@@ -1068,7 +1071,8 @@ class OfflineWriter:
             placed_course = [o for o in missing if o not in front_ords]
             if placed_course:
                 self._add_course_tag(note_id, ts=ts)
-                front += [o for o in front_ords if o in have]
+                held = [o for o in front_ords if o in have]
+                self._tag_mined_cards(note_id, front=held, course=[], ts=ts)
             self._insert_sentence_cards(note_id, did, placed_course, course=True, ts=ts)
         else:
             front, placed_course = missing, []

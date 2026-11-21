@@ -9,7 +9,9 @@
  *
  * - a card that has been reviewed asks first, because its history goes at the
  *   next sync (`ask`);
- * - a line whose note is in Anki keeps at least one card (`refuse`).
+ * - a line whose note is in Anki keeps at least one card (`refuse`), counted as the
+ *   server counts it: a card the deck holds, or one this Save adds. A listed card the
+ *   deck lacks reads on but keeps nothing in Anki (review F4).
  *
  * Mockup and rules: .beads-tasks/briefs/design-sentence-mining-2026-11.md § 5-6.
  */
@@ -21,7 +23,15 @@ export type SentenceEdit = components["schemas"]["SentenceEdit"];
 
 export const WHOLE = "whole";
 
-export type StagedCard = { on: boolean; origin: string; reviewed: boolean };
+export type StagedCard = {
+  on: boolean;
+  origin: string;
+  reviewed: boolean;
+  /** A row holds it. A listed card the deck lacks is on and not in it (review F4). */
+  inDeck: boolean;
+  /** On when the page loaded. */
+  initiallyOn: boolean;
+};
 export type LineStage = {
   cards: Record<string, StagedCard>;
   /** The reviewed card waiting for "Turn it off". */
@@ -44,7 +54,19 @@ export function tokenKey(token: SentenceLineToken): string {
 
 function staged(token: SentenceLineToken): StagedCard | null {
   if (token.state === "off") return null;
-  return { on: token.state === "on", origin: token.origin, reviewed: token.reviewed };
+  const on = token.state === "on";
+  return {
+    on,
+    origin: token.origin,
+    reviewed: token.reviewed,
+    inDeck: token.in_deck,
+    initiallyOn: on,
+  };
+}
+
+/** Whether *card* will be a card of the line's note after Save: held by a row, or added by it. */
+function keepsTheNote(card: StagedCard): boolean {
+  return card.on && (card.inDeck || !card.initiallyOn);
 }
 
 export function initStage(line: SentenceLine): LineStage {
@@ -74,7 +96,8 @@ export function toggle(line: SentenceLine, stage: LineStage, key: string): void 
   stage.refuse = false;
   const card = stage.cards[key];
   if (card?.on) {
-    if (line.linked && countOn(stage) === 1) {
+    const kept = Object.values(stage.cards).filter(keepsTheNote).length;
+    if (line.linked && keepsTheNote(card) && kept === 1) {
       stage.refuse = true;
       return;
     }
@@ -86,7 +109,13 @@ export function toggle(line: SentenceLine, stage: LineStage, key: string): void 
   } else if (card) {
     card.on = true;
   } else {
-    stage.cards[key] = { on: true, origin: "mine", reviewed: false };
+    stage.cards[key] = {
+      on: true,
+      origin: "mine",
+      reviewed: false,
+      inDeck: false,
+      initiallyOn: false,
+    };
   }
 }
 
@@ -143,12 +172,12 @@ export function turnedOff(line: SentenceLine, stage: LineStage): number {
 export function addedBlanks(
   line: SentenceLine,
   stage: LineStage,
-): { word: string; gloss: string }[] {
+): { key: string; word: string; gloss: string }[] {
   const was = initStage(line).cards;
   return line.tokens
     .filter((t) => {
       const c = stage.cards[tokenKey(t)];
       return c?.on && c.origin === "mine" && !was[tokenKey(t)]?.on;
     })
-    .map((t) => ({ word: line.text.slice(...tokenSpan(t)), gloss: t.gloss }));
+    .map((t) => ({ key: tokenKey(t), word: line.text.slice(...tokenSpan(t)), gloss: t.gloss }));
 }

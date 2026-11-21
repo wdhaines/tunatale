@@ -5673,6 +5673,10 @@
             "title": "Gloss",
             "type": "string"
           },
+          "in_deck": {
+            "title": "In Deck",
+            "type": "boolean"
+          },
           "origin": {
             "enum": [
               "lesson",
@@ -5727,7 +5731,8 @@
           "state",
           "origin",
           "reviewed",
-          "gloss"
+          "gloss",
+          "in_deck"
         ],
         "title": "SentenceLineToken",
         "type": "object"

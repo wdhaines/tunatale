@@ -395,9 +395,20 @@ def _as_course(card: SentenceCard):
     return replace(card.unit(), source="course")
 
 
+_LATE = _LINE.with_blank((18, 22), "thanks")  # "takk": a list card that joins the line after a mined one
+_FREQUENCY_DUE = 5  # the frequency deck's next new card (``_seed_new_card``)
+_ORDERS = {
+    "study_first": lambda study: [study, [_MINED.unit()]],
+    "mined_first": lambda study: [[_MINED.unit()], study],
+    # The normal order, then a course card placed later (a list blank turned back on in Grade, or
+    # one a lesson correction adds): the writer placed course cards on a note holding a mined card.
+    "study_mined_then_course": lambda study: [study, [_MINED.unit()], [_as_course(_LATE)]],
+}
+
+
 class TestMinedBeforeStudy:
     @staticmethod
-    async def _run(*, mined_first: bool) -> dict:
+    async def _run(order: str) -> dict:
         from app.common.guid import compute_guid
         from app.models.srs_item import Direction
 
@@ -408,7 +419,7 @@ class TestMinedBeforeStudy:
             "usn INTEGER NOT NULL, PRIMARY KEY (oid, type))"
         )
         add_sentence_notetype(conn)
-        _seed_new_card(conn, 1, 5)
+        _seed_new_card(conn, 1, _FREQUENCY_DUE)
 
         async def sync():
             await AnkiSync(
@@ -423,7 +434,7 @@ class TestMinedBeforeStudy:
             return conn.execute("SELECT due, ord FROM cards WHERE id = ?", (cid,)).fetchone()
 
         study = [_as_course(_LIST_BLANK), _as_course(_LINE)]
-        for units in [[_MINED.unit()], study] if mined_first else [study, [_MINED.unit()]]:
+        for units in _ORDERS[order](study):
             for unit in units:
                 assert db.add_collocation(unit, "no")
             await sync()
@@ -433,18 +444,40 @@ class TestMinedBeforeStudy:
             "tags": _tags(conn, row(_MINED.unit()).anki_note_id).split(),
             "line_notes": {row(u).anki_note_id for u in [_MINED.unit(), *study]},
             "mined_ord": due(_MINED.unit())["ord"],
+            "mined_due": due(_MINED.unit())["due"],
             "lesson1": [due(u)["due"] for u in study],
             "lesson2": due(_as_course(_NEXT_LESSON))["due"],
+            "twice": conn.execute("SELECT nid, ord FROM cards GROUP BY nid, ord HAVING COUNT(*) > 1").fetchall(),
+            "cards": conn.execute(
+                "SELECT COUNT(*) FROM cards WHERE nid = ?", (row(_MINED.unit()).anki_note_id,)
+            ).fetchone()[0],
         }
 
-    @pytest.mark.parametrize("mined_first", [False, True], ids=["control_study_first", "mined_first"])
-    async def test_the_line_note_is_a_course_note_with_its_mined_card_tagged(self, mined_first):
-        got = await self._run(mined_first=mined_first)
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_the_line_note_is_a_course_note_with_its_mined_card_tagged(self, order):
+        got = await self._run(order)
         assert len(got["line_notes"]) == 1 and None not in got["line_notes"]  # M2: one note, nothing held
         assert COURSE_TAG in got["tags"]
         assert f"{MINED_TAG_PREFIX}{got['mined_ord'] + 1}" in got["tags"]
 
-    @pytest.mark.parametrize("mined_first", [False, True], ids=["control_study_first", "mined_first"])
-    async def test_the_next_lesson_lands_right_behind_this_lessons_course_cards(self, mined_first):
-        got = await self._run(mined_first=mined_first)
-        assert got["lesson2"] == max(got["lesson1"]) + 1, got
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_no_card_is_written_twice(self, order):
+        """Review F1: the held mined ord was inserted again on every course placement. Anki's Check
+        Database deletes the copy (it keeps the lower id) while TT relinks the row to it."""
+        got = await self._run(order)
+        assert [tuple(r) for r in got["twice"]] == []
+        assert got["cards"] == (4 if order == "study_mined_then_course" else 3)
+
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_this_lessons_course_cards_open_a_region_ahead_of_the_frequency_deck(self, order):
+        """Review F2: the design's row (fix: tt-course + tt-mined-c<N>). The mined card is not the
+        course's anchor, so lesson 1's cards are not placed level with the frequency deck."""
+        got = await self._run(order)
+        assert max(got["lesson1"]) < _FREQUENCY_DUE, got
+        assert got["lesson1"] == [got["lesson1"][0], got["lesson1"][0] + 1], got
+
+    @pytest.mark.parametrize("order", list(_ORDERS))
+    async def test_the_next_lesson_lands_right_behind_this_lessons_course_cards(self, order):
+        got = await self._run(order)
+        expected = max(got["lesson1"]) + (2 if order == "study_mined_then_course" else 1)  # behind takk too
+        assert got["lesson2"] == expected, got

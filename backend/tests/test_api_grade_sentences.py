@@ -62,6 +62,7 @@ class TestPlan:
             (14, 16, "on", "lesson"),
         ]
         assert line["tokens"][0]["gloss"] == "fine" and line["tokens"][0]["part"] is None
+        assert [t["in_deck"] for t in line["tokens"]] == [False, False, False, False]  # not studied yet
         assert line["whole"]["state"] == "off"
 
     async def test_a_lesson_with_no_list_has_no_lines(self, srs_db):
@@ -147,6 +148,21 @@ class TestSave:
         ]:
             resp = await _post(GRADE_URL, body)
             assert resp.status_code == status, resp.text
+
+    async def test_f3_a_word_inside_a_two_word_list_blank_is_refused_and_nothing_applies(self, srs_db):
+        """Review F3: it was a 500 out of ``apply_rows`` after the removals, marks and listen were written."""
+        from tests.test_sentence_lines import _two_word_story
+
+        db = _install(srs_db, _lesson("Hei!", story=_two_word_story()))
+        await _grade({})
+        _llm("and")
+        resp = await _post(GRADE_URL, {"studied": True, **_edit(on=[[11, 13]], off=[[5, 9]])})
+        assert resp.status_code == 422, resp.text
+        assert set(_blank_rows(db)) == {(5, 9), (11, 16)}
+        assert db.sentence_card_marks() == set()
+        assert db.count_listens("lesson-1") == 1
+        control = await _post(GRADE_URL, {"studied": True, **_edit(on=[BRA], off=[[5, 9]])})
+        assert control.status_code == 200, control.text
 
     async def test_the_new_card_is_served_today_without_a_sync(self, srs_db):
         """The card-adding contract: a NEW latecomer is tail-appended to the frozen queue.

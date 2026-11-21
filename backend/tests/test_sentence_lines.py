@@ -126,6 +126,15 @@ class TestReadModel:
         assert (bilen.start, bilen.end, bilen.part, bilen.state) == (0, 5, (3, 5), "on")
         assert er.part is None  # control: a whole word has no part
 
+    def test_a_list_blank_spanning_two_words_is_one_token(self):
+        """Review F3 (live: wolff-01b:25, list blank "na lang"): its words toggle that one card."""
+        line = _line(sentence_lines(SRSDatabase(":memory:"), _lesson(_two_word_story()), "lesson-1"), L3)
+        assert [(line.text[t.start : t.end], t.state, t.origin, t.part) for t in line.tokens] == [
+            ("Bra", "off", "mine", None),
+            ("takk", "on", "lesson", None),
+            ("og du", "on", "lesson", None),
+        ]
+
     def test_l4_spoken_map_pairs_the_lessons_words_with_the_cards_by_index(self):
         line = _line(sentence_lines(SRSDatabase(":memory:"), _lesson(), "lesson-1"), L2)
         assert line.spoken_map == [0, 1, 2, 3]  # "gar" (spoken) is word 2 of "går" (shown)
@@ -145,6 +154,15 @@ class TestReadModel:
         assert (_token(line, "takk").state, _token(line, "takk").origin) == ("on", "lesson")
         assert (_token(line, "og").state, _token(line, "og").origin) == ("on", "mine")
         assert _token(line, "takk").reviewed is False
+
+    def test_a_card_says_whether_the_deck_holds_it(self):
+        """Review F4: a listed card the deck lacks reads ``on`` (it mints at study) but is not in it."""
+        db, lesson = SRSDatabase(":memory:"), _lesson()
+        before = _line(sentence_lines(db, lesson, "lesson-1"), L3)
+        assert (_token(before, "takk").state, _token(before, "takk").in_deck) == ("on", False)
+        _study(db, lesson)
+        after = _line(sentence_lines(db, lesson, "lesson-1"), L3)
+        assert (_token(after, "takk").in_deck, _token(after, "og").in_deck) == (True, False)
 
     def test_a_reviewed_card_says_so(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
@@ -282,10 +300,13 @@ class TestEdits:
         _study(db, lesson)
         takk = next(r for _, i, r in db.list_sibling_rows(L3) if sentence_card(i.syntactic_unit).blank == (5, 9))
         db.delete_collocation(takk)
+        whole2 = next(r for _, i, r in db.list_sibling_rows(L2) if sentence_card(i.syntactic_unit).blank is None)
+        db.delete_collocation(whole2)  # another list card deleted by hand: it waits for the next study pass
         plan = mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": [[5, 9]], "off": []}])
-        assert (plan.list_on, plan.marks_off) == (True, [])
+        assert (plan.list_on, plan.marks_off) == ([line_card(lesson, 3).with_blank((5, 9), "").key], [])
         (row,) = mining.apply_rows(db, LANG, lesson, plan, {}, studied=True).made
         assert sentence_card(db.get_collocation_by_id(row)[1].syntactic_unit).blank == (5, 9)
+        assert L2 not in _keys(db, L2)
 
     def test_a_declined_list_card_turned_on_before_study_waits_for_the_study(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
@@ -344,7 +365,40 @@ class TestEdits:
         assert plan.needs_gloss[0].sentence == "Bra, takk, og du?"
 
 
+def _two_word_story() -> dict:
+    story = _story()
+    story["cards"]["items"][3]["blanks"] = [{"form": "takk", "gloss": "thanks"}, {"form": "og du", "gloss": "and you"}]
+    return story
+
+
 class TestRefusals:
+    def test_a_word_inside_a_two_word_list_blank_is_not_a_span_the_line_takes(self):
+        with pytest.raises(mining.NotWholeWords):
+            mining.plan_line_edits(
+                SRSDatabase(":memory:"),
+                _lesson(_two_word_story()),
+                "lesson-1",
+                [{"line_key": L3, "on": [[11, 13]], "off": []}],
+            )
+
+    def test_the_two_word_list_blank_turns_off_as_one_card(self):
+        db, lesson = SRSDatabase(":memory:"), _lesson(_two_word_story())
+        _study(db, lesson)
+        result = _edit(db, lesson, [{"line_key": L3, "on": [], "off": [[11, 16]]}], studied=True)
+        assert (
+            len(result.removed) == 1 and line_card(lesson, 3).with_blank((11, 16), "").key in db.sentence_card_marks()
+        )
+
+    def test_a_blank_overlapping_a_row_of_the_line_is_refused_before_anything_is_written(self):
+        """Every blank the plan will add passes ``plan_blank`` in the plan, so ``apply_rows`` cannot raise."""
+        db, lesson = SRSDatabase(":memory:"), _lesson()
+        _study(db, lesson)
+        du = next(r for _, i, r in db.list_sibling_rows(L3) if sentence_card(i.syntactic_unit).blank == (14, 16))
+        db.delete_collocation(du)
+        mining.add_blank(db, LANG, L3, (11, 16), "and you")  # a two-word mined row, as the old route could make
+        with pytest.raises(mining.BlankOverlaps):
+            mining.plan_line_edits(db, lesson, "lesson-1", [{"line_key": L3, "on": [[11, 13]], "off": []}])
+
     def test_n3_a_reviewed_card_turned_off_without_confirm_names_it_and_nothing_applies(self):
         db, lesson = SRSDatabase(":memory:"), _lesson()
         _study(db, lesson)

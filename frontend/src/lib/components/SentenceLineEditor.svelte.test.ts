@@ -23,6 +23,7 @@ const tok = (
   origin: "mine",
   reviewed: false,
   gloss: "",
+  in_deck: false,
   ...over,
 });
 
@@ -110,7 +111,9 @@ describe("SentenceLineEditor", () => {
   });
 
   it("a linked line's last card is refused in the page", async () => {
-    const { view, word } = mount(line({ linked: true }));
+    const l = line({ linked: true });
+    l.tokens[1] = { ...l.tokens[1], in_deck: true };
+    const { view, word } = mount(l);
     await fireEvent.click(word("takk"));
     expect(view.getByRole("alert").textContent).toContain("keeps at least one card");
     expect(word("takk").getAttribute("aria-pressed")).toBe("true");
@@ -135,6 +138,19 @@ describe("SentenceLineEditor", () => {
       "false",
     );
     expect(onchange).toHaveBeenCalledTimes(4);
+  });
+
+  it("two blanks of the same word each get their caption (review F5)", async () => {
+    const l = line({
+      text: "det er det",
+      tokens: [tok(0, 3), tok(4, 6), tok(7, 10)],
+      whole: tok(0, 10),
+    });
+    const { view } = mount(l);
+    const dets = view.getAllByRole("button", { name: "det" });
+    await fireEvent.click(dets[0]);
+    await fireEvent.click(dets[1]);
+    expect(view.container.querySelectorAll(".cap").length).toBe(2);
   });
 
   it("works with no onchange", async () => {

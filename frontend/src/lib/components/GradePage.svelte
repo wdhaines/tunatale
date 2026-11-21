@@ -207,7 +207,11 @@
 			void listenedStore.refresh();
 			queueStatsStore.refresh();
 		} catch (e) {
-			if ((e as { status?: number }).status === 409) {
+			const refusal = sentenceRefusal(e);
+			if (refusal !== null) {
+				// A sentence edit the server refused: not a stale plan, so a refetch would not help (review F4).
+				error = t('gradePage.sentenceRefused', { reason: refusal });
+			} else if ((e as { status?: number }).status === 409) {
 				notice = t('gradePage.stale');
 				await load(range);
 			} else {
@@ -216,6 +220,18 @@
 		} finally {
 			saving = false;
 		}
+	}
+
+	/** The reason a 409 gives when it refused a sentence edit, or null for any other error.
+	 * A stale grade plan's 409 names its rows; a sentence refusal names a reason. */
+	function sentenceRefusal(e: unknown): string | null {
+		const { status, detail } = e as { status?: number; detail?: unknown };
+		if (status !== 409) return null;
+		if (typeof detail === 'string') return detail;
+		if (detail && typeof detail === 'object' && 'needs_confirm' in detail) {
+			return String((detail as { message?: unknown }).message);
+		}
+		return null;
 	}
 
 	function rangeChipLabel(r: GradeRange): string {

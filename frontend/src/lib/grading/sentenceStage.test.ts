@@ -30,6 +30,7 @@ const tok = (
   origin: "mine",
   reviewed: false,
   gloss: "",
+  in_deck: false,
   ...over,
 });
 
@@ -81,7 +82,13 @@ describe("toggle and lineEdit", () => {
     const l = line();
     const stage = initStage(l);
     toggle(l, stage, "11-13");
-    expect(stage.cards["11-13"]).toEqual({ on: true, origin: "mine", reviewed: false });
+    expect(stage.cards["11-13"]).toEqual({
+      on: true,
+      origin: "mine",
+      reviewed: false,
+      inDeck: false,
+      initiallyOn: false,
+    });
     expect(lineEdit(l, stage)).toEqual({
       line_key: l.line_key,
       on: [[11, 13]],
@@ -89,14 +96,14 @@ describe("toggle and lineEdit", () => {
       confirm: false,
     });
     expect(newCards(l, stage, true)).toBe(1);
-    expect(addedBlanks(l, stage)).toEqual([{ word: "og", gloss: "" }]);
+    expect(addedBlanks(l, stage)).toEqual([{ key: "11-13", word: "og", gloss: "" }]);
   });
 
   it("a blank of mine tapped again is gone, and nothing is sent", () => {
     const l = line();
     const stage = initStage(l);
     toggle(l, stage, "0-3");
-    expect(addedBlanks(l, stage)).toEqual([{ word: "Bra", gloss: "fine" }]);
+    expect(addedBlanks(l, stage)).toEqual([{ key: "0-3", word: "Bra", gloss: "fine" }]);
     toggle(l, stage, "0-3");
     expect(stage.cards["0-3"]).toBeUndefined();
     expect(lineEdit(l, stage)).toBeNull();
@@ -181,7 +188,10 @@ describe("the two refusals", () => {
 
   it("a linked line's last card is refused; an unlinked line's goes", () => {
     for (const linked of [true, false]) {
-      const l = line({ linked, tokens: [tok(5, 9, { state: "on", origin: "lesson" })] });
+      const l = line({
+        linked,
+        tokens: [tok(5, 9, { state: "on", origin: "lesson", in_deck: true })],
+      });
       const stage = initStage(l);
       toggle(l, stage, "5-9");
       expect(stage.refuse).toBe(linked);
@@ -192,7 +202,7 @@ describe("the two refusals", () => {
   it("the next tap clears a refusal", () => {
     const l = line({
       linked: true,
-      tokens: [tok(5, 9, { state: "on", origin: "lesson" }), tok(11, 13)],
+      tokens: [tok(5, 9, { state: "on", origin: "lesson", in_deck: true }), tok(11, 13)],
     });
     const stage = initStage(l);
     toggle(l, stage, "5-9");
@@ -201,5 +211,39 @@ describe("the two refusals", () => {
     expect(stage.refuse).toBe(false);
     toggle(l, stage, "5-9");
     expect(stage.cards["5-9"].on).toBe(false);
+  });
+
+  it("a listed card the deck lacks keeps nothing in Anki: it goes freely, and does not save the last real card", () => {
+    // Review F4: du's row was deleted on the Cards page; it reads on (it mints at study), the server counts rows.
+    const l = line({
+      linked: true,
+      tokens: [
+        tok(5, 9, { state: "on", origin: "lesson", in_deck: true }),
+        tok(14, 16, { state: "on", origin: "lesson" }),
+      ],
+    });
+    const stage = initStage(l);
+    toggle(l, stage, "5-9");
+    expect(stage.refuse).toBe(true);
+    toggle(l, stage, "14-16");
+    expect(stage.refuse).toBe(false);
+    expect(stage.cards["14-16"].on).toBe(false);
+  });
+
+  it("a card this Save adds keeps the note, so the last held card may then go", () => {
+    const l = line({
+      linked: true,
+      tokens: [tok(5, 9, { state: "on", origin: "lesson", in_deck: true }), tok(11, 13)],
+    });
+    const stage = initStage(l);
+    toggle(l, stage, "11-13");
+    toggle(l, stage, "5-9");
+    expect(stage.refuse).toBe(false);
+    expect(lineEdit(l, stage)).toEqual({
+      line_key: l.line_key,
+      on: [[11, 13]],
+      off: [[5, 9]],
+      confirm: false,
+    });
   });
 });

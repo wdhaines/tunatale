@@ -734,6 +734,8 @@ export const en = {
     one: "Show {count} more line ›",
     other: "Show {count} more lines ›",
   },
+  "gradePage.sentenceRefused":
+    "A sentence change was not saved, and nothing else was either: {reason}",
   "gradePage.notMade": "Not made, no meaning found: {words}. Everything else was saved.",
 
   // SentenceLineEditor.svelte (tunatale-h0q3.67)

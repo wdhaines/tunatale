@@ -7,8 +7,10 @@ disagree about a line.
 A line is one the lesson's card list names (slice A; any scene line is slice C).
 Its tokens are its written words, split here and never in the page: a word is
 ``\\w`` characters with an internal hyphen or apostrophe kept inside
-(``Per-Ola's``). One word per blank. A word the list blanks only part of (a
-linker suffix) carries that part, and toggling the word toggles the part.
+(``Per-Ola's``). One word per blank mined; a list blank the lesson made over
+several words (``na lang``) is one token over all of them (review F3). A word
+the list blanks only part of (a linker suffix) carries that part, and toggling
+the word toggles the part.
 
 Each token, and the whole-line card, is:
 
@@ -46,6 +48,7 @@ class LineToken:
     origin: str
     reviewed: bool
     gloss: str
+    in_deck: bool = False  # a row holds this card; a listed card the deck lacks is ``on`` and not in it
 
     @property
     def span(self) -> tuple[int, int]:
@@ -138,7 +141,7 @@ def read_line(db, listed: ListLine, marks: set[str]) -> SentenceLine:
         item = rows.get(key)
         if item is not None:
             origin = "lesson" if item.syntactic_unit.source == COURSE_SOURCE else "mine"
-            return LineToken(start, end, part, ON, origin, _reviewed(item), _gloss(span))
+            return LineToken(start, end, part, ON, origin, _reviewed(item), _gloss(span), in_deck=True)
         if listed.listed(span):
             return LineToken(start, end, part, DECLINED if key in marks else ON, "lesson", False, _gloss(span))
         return LineToken(start, end, part, OFF, "mine", False, _gloss(span))
@@ -147,7 +150,13 @@ def read_line(db, listed: ListLine, marks: set[str]) -> SentenceLine:
         return _own_gloss(card, span) if span else ""
 
     tokens = []
-    for start, end in words(card.text):
+    # A list blank spanning several words (live: "na lang") is one token over all of them.
+    spans = [(s, e) for s, e in words(card.text)]
+    for blank in sorted(listed.blanks):
+        inside = [w for w in spans if blank[0] <= w[0] and w[1] <= blank[1]]
+        if len(inside) > 1:
+            spans = [w for w in spans if w not in inside] + [blank]
+    for start, end in sorted(spans):
         part = next((b for b in listed.blanks if start <= b[0] and b[1] <= end and b != (start, end)), None)
         tokens.append(token(start, end, part, part or (start, end)))
     shown, spoken = words(card.text), words(card.spoken)

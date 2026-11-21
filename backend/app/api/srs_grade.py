@@ -243,6 +243,7 @@ def _token_dict(token) -> dict:
         "origin": token.origin,
         "reviewed": token.reviewed,
         "gloss": token.gloss,
+        "in_deck": token.in_deck,
     }
 
 

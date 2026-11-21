@@ -4955,6 +4955,8 @@ export interface components {
       end: number;
       /** Gloss */
       gloss: string;
+      /** In Deck */
+      in_deck: boolean;
       /**
        * Origin
        * @enum {string}

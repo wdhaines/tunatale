@@ -166,7 +166,7 @@ class LineEditPlan:
     marks_off: list[str] = field(default_factory=list)  # list cards turned on: clear their marks
     removals: list[int] = field(default_factory=list)
     adds: list[tuple[ListLine, Span]] = field(default_factory=list)  # mined cards to write
-    list_on: bool = False  # a list card turned on that the deck lacks: the next mint makes it
+    list_on: list[str] = field(default_factory=list)  # list cards turned on that the deck lacks
     needs_gloss: list[GlossNeed] = field(default_factory=list)
 
 
@@ -236,8 +236,12 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
             if listed.listed(span):
                 if key in marks:
                     plan.marks_off.append(key)
-                plan.list_on = True
+                plan.list_on.append(key)
                 continue
+            if span is not None:
+                # The same check ``add_blank`` makes, here, so ``apply_rows`` cannot raise after
+                # the grades, marks and study pass are written (review F3).
+                plan_blank(db, line_key, span, listed.card)
             plan.adds.append((listed, span))
             if span is not None:
                 word = read.text[span[0] : span[1]]
@@ -260,7 +264,8 @@ def write_marks(db, plan: LineEditPlan) -> None:
 def apply_rows(
     db, language_code: str, lesson: Lesson, plan: LineEditPlan, glosses: dict, *, studied: bool
 ) -> LineEditResult:
-    """Delete the cards turned off, write the mined ones, and in a *studied* lesson mint the list cards turned on.
+    """Delete the cards turned off, write the mined ones, and in a *studied* lesson mint the list cards turned on
+    (those only: a list card deleted on the Cards page waits for the next study pass, as before).
 
     *glosses* maps ``(line_key, span)`` to a new blank's gloss; a blank with none
     is named in ``not_made`` and the rest still apply (the owner wants loud failures).
@@ -284,5 +289,6 @@ def apply_rows(
         result.made.append(add_blank(db, language_code, line_key, span, gloss, base=listed.card))
     if plan.list_on and studied:
         story = lesson.generation_metadata["story"]
-        result.made += [cid for cid, _ in mint_lesson_cards(db, language_code, story["cards"], story.get("drills", []))]
+        minted = mint_lesson_cards(db, language_code, story["cards"], story.get("drills", []), only=set(plan.list_on))
+        result.made += [cid for cid, _ in minted]
     return result
