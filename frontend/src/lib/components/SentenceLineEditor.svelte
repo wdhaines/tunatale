@@ -51,7 +51,7 @@
 		const card = stage.cards[key];
 		if (!card) return '';
 		if (!card.on) return 'declined';
-		return card.origin === 'mine' ? 'on mine' : 'on';
+		return card.origin === 'lesson' ? 'on' : 'on mine';
 	}
 
 	/** What the reviewed card the line asks about is called: its word, or the whole-sentence card. */
@@ -86,6 +86,7 @@
 				{:else}
 					<button
 						class="tok {cardClass(key)}"
+						class:suggest={token.suggested && !stage.cards[key]}
 						aria-pressed={Boolean(stage.cards[key]?.on)}
 						onclick={() => tap(key)}>{line.text.slice(s, e)}</button
 					>
@@ -185,6 +186,11 @@
 		font-size: 0.62em;
 		vertical-align: super;
 		margin-left: 1px;
+	}
+	/* A form of the day's pattern Grade did not turn on (Read, or past the budget): tap to make it a card. */
+	.tok.suggest {
+		text-decoration: underline dashed var(--color-primary);
+		text-underline-offset: 4px;
 	}
 	.tok.declined,
 	.part.declined {

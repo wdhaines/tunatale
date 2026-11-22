@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from itertools import count
 
-import app.generation.pattern_gate as pattern_gate
+import app.srs.pattern_forms as pattern_forms
 from app.common.guid import compute_guid
 from app.models.srs_item import Direction, RevlogRow
 from app.models.syntactic_unit import SyntacticUnit
@@ -42,7 +42,7 @@ def install_gate_lemmatizer(monkeypatch) -> StubLemmatizer:
         for form in forms:
             prefix = next(p for p in _PREFIXES if form.startswith(p))
             stub.set_analysis(form, form[len(prefix) :], upos="VERB")
-    monkeypatch.setattr(pattern_gate, "get_lemmatizer", lambda code: stub)
+    monkeypatch.setattr(pattern_forms, "get_lemmatizer", lambda code: stub)
     return stub
 
 

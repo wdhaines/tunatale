@@ -237,6 +237,7 @@ async def get_grade_plan(
             ],
             "contrast": plan.affix_cards,
             "sentences": [_line_dict(line) for line in sentence_lines(db, lesson, content_id)],
+            "sentence_budget": plan.sentence_budget,
         },
     }
 
@@ -251,6 +252,7 @@ def _token_dict(token) -> dict:
         "reviewed": token.reviewed,
         "gloss": token.gloss,
         "in_deck": token.in_deck,
+        "suggested": token.suggested,
     }
 
 

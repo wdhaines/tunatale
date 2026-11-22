@@ -25,7 +25,7 @@ from app.models.lesson import Lesson
 from app.models.srs_item import SRSItem
 from app.srs.lesson_cards import LessonCard
 from app.srs.sentence_card import SentenceCard, sentence_card
-from app.srs.sentence_lines import ListLine, _reviewed, list_lines, read_line
+from app.srs.sentence_lines import ListLine, PatternForms, _reviewed, list_lines, read_line
 
 #: The line's takes, which every card of the line plays (``app.audio.sentence_card_audio``).
 _TAKE_KINDS = ("audio_tts_sentence", "audio_cue")
@@ -204,6 +204,8 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
     """
     lines = {listed.card.line_key: listed for listed in list_lines(lesson, content_id).values()}
     marks = db.sentence_card_marks()
+    # A word saying the day's pattern is a suggestion (design § 8): turned off, it is marked not wanted.
+    forms = PatternForms(lesson)
     plan = LineEditPlan()
     unconfirmed: list[str] = []
     seen: set[str] = set()
@@ -243,7 +245,7 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
                     unconfirmed.append(key)
                 plan.removals.append(row_id)
                 after -= 1
-            if listed.listed(span):
+            if listed.listed(span) or (span is not None and forms.says(read.text[span[0] : span[1]])):
                 plan.marks_on.append(key)
         for span in on:
             key = listed.key(span)
@@ -255,6 +257,8 @@ def plan_line_edits(db, lesson: Lesson, content_id: str, edits: list[dict]) -> L
                     plan.marks_off.append(key)
                 plan.list_on.append(key)
                 continue
+            if key in marks:  # a declined suggestion, turned on by hand
+                plan.marks_off.append(key)
             if span is not None:
                 # The same check ``add_blank`` makes, here, so ``apply_rows`` cannot raise after
                 # the grades, marks and study pass are written (review F3).

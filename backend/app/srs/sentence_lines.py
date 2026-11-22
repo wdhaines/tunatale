@@ -36,6 +36,7 @@ from difflib import SequenceMatcher
 from app.models.lesson import Lesson, SectionType
 from app.models.srs_item import Direction, SRSItem
 from app.srs.lesson_cards import COURSE_SOURCE, lesson_cards
+from app.srs.pattern_forms import FormReader, lesson_word_pattern
 from app.srs.sentence_card import Cue, Gloss, SentenceCard, sentence_card
 
 WORD = re.compile(r"\w+(?:['’-]\w+)*")
@@ -53,6 +54,9 @@ class LineToken:
     reviewed: bool
     gloss: str
     in_deck: bool = False  # a row holds this card; a listed card the deck lacks is ``on`` and not in it
+    # The word says a form of the day's pattern and Grade offers it as a blank (``PatternForms``).
+    # Its state stays ``off``: Grade turns it on within the day's budget, Read leaves it a hint.
+    suggested: bool = False
 
     @property
     def span(self) -> tuple[int, int]:
@@ -306,11 +310,64 @@ def _token_of(tokens: list[LineToken], word: tuple[int, int]) -> int:
     return next(i for i, t in enumerate(tokens) if t.start <= word[0] and word[1] <= t.end)
 
 
+class PatternForms:
+    """The forms of the word pattern a lesson drills, read as the pace gate reads a blank.
+
+    Design § 8 (tunatale-ve4p.37). ``says`` is whether one word says one of the pattern's forms;
+    ``suggest`` marks, across a lesson's lines, the first word of each such form that no card or
+    not-wanted mark already covers.
+    """
+
+    def __init__(self, lesson: Lesson) -> None:
+        self.pattern = lesson_word_pattern(lesson)
+        self._reader = FormReader(lesson.language_code) if self.pattern is not None else None
+
+    def says(self, word: str) -> bool:
+        """Whether *word* (one written word) says a form of the lesson's pattern."""
+        if self._reader is None or len(words(word)) != 1:
+            return False
+        return bool(self._reader.said(word) & set(self.pattern.features))
+
+    def suggest(self, lines: list[tuple[ListLine, SentenceLine]], marks: set[str]) -> list[SentenceLine]:
+        """*lines* with the suggested tokens marked: one per form, story order, a form no card or mark has."""
+        if self._reader is None:
+            return [line for _, line in lines]
+        have: set[str] = set()
+        offer: set[tuple[str, tuple[int, int]]] = set()
+        for listed, line in lines:
+            for token in line.tokens:
+                word = line.text[token.start : token.end]
+                if token.part is not None or not self.says(word):
+                    continue
+                if token.state != OFF or listed.key(token.span) in marks:
+                    have.add(self._reader.form(word))
+                else:
+                    offer.add((line.line_key, token.span))
+        out: list[SentenceLine] = []
+        for _, line in lines:
+            tokens = []
+            for token in line.tokens:
+                if (line.line_key, token.span) in offer:
+                    form = self._reader.form(line.text[token.start : token.end])
+                    if form not in have:
+                        have.add(form)
+                        token = replace(token, suggested=True)
+                tokens.append(token)
+            out.append(replace(line, tokens=tuple(tokens)))
+        return out
+
+
 def sentence_lines(db, lesson: Lesson, content_id: str) -> list[SentenceLine]:
-    """Every line of *lesson*, in story order; a lesson with no card list keys its lines by *content_id*."""
+    """Every line of *lesson*, in story order; a lesson with no card list keys its lines by *content_id*.
+
+    In a lesson that drills a word pattern, the first word of each of its forms no card covers is
+    ``suggested`` (design § 8).
+    """
     marks = db.sentence_card_marks()
     listed = list(list_lines(lesson, content_id).values())
     indexes = _dialogue_indexes(lesson, [line.card for line in listed])
-    return [
-        replace(read_line(db, line, marks), dialogue_index=index) for line, index in zip(listed, indexes, strict=True)
+    read = [
+        (line, replace(read_line(db, line, marks), dialogue_index=index))
+        for line, index in zip(listed, indexes, strict=True)
     ]
+    return PatternForms(lesson).suggest(read, marks)

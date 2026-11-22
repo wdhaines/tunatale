@@ -1557,6 +1557,10 @@
             "title": "Contrast",
             "type": "array"
           },
+          "sentence_budget": {
+            "title": "Sentence Budget",
+            "type": "integer"
+          },
           "sentences": {
             "items": {
               "$ref": "#/components/schemas/SentenceLine"
@@ -1575,7 +1579,8 @@
         "required": [
           "words",
           "contrast",
-          "sentences"
+          "sentences",
+          "sentence_budget"
         ],
         "title": "GradeSuggestions",
         "type": "object"
@@ -5797,6 +5802,10 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "suggested": {
+            "title": "Suggested",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5807,7 +5816,8 @@
           "origin",
           "reviewed",
           "gloss",
-          "in_deck"
+          "in_deck",
+          "suggested"
         ],
         "title": "SentenceLineToken",
         "type": "object"

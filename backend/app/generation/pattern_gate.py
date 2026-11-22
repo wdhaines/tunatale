@@ -44,7 +44,6 @@ Reads only.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -54,7 +53,7 @@ from app.srs.a1_morphology import AffixPattern
 from app.srs.anki_mirror.rollover import anki_today
 from app.srs.focus_card import focus_key
 from app.srs.function_words import cloze_answers
-from app.srs.lemmatizer import get_lemmatizer
+from app.srs.pattern_forms import FormReader
 from app.srs.sentence_card import SENTENCE_KEY_PREFIX
 from app.storage.store import ContentStore
 
@@ -136,18 +135,15 @@ def _sentence_cards_saying(language_code: str, srs_db) -> dict[str, frozenset[in
     """Per A1 feature, the sentence cards whose blank says a word of it.
 
     The blank is what the card asks the learner to say: the whole line on a
-    line's own card, one word on its word cards. It is read in the language's
-    plain spelling (``A1Morphology.plain_text``) by its lemmatizer.
+    line's own card, one word on its word cards. It is read by
+    ``pattern_forms.FormReader``, the reader Grade's suggested blanks use too.
     """
-    bundle = get_a1_morphology(language_code)
-    plain: Callable[[str], str] = bundle.plain_text or str
-    lemmatizer = get_lemmatizer(language_code)
+    reader = FormReader(language_code)
     said: dict[str, set[int]] = {}
     for collocation_id, sentence in srs_db.get_cloze_sentences_by_key_prefix(SENTENCE_KEY_PREFIX):
         for answer in cloze_answers(sentence):
-            for token in lemmatizer.analyze_sentence(plain(answer), language_code):
-                if (feature := bundle.to_feature(token)) is not None:
-                    said.setdefault(feature, set()).add(collocation_id)
+            for feature in reader.said(answer):
+                said.setdefault(feature, set()).add(collocation_id)
     return {feature: frozenset(ids) for feature, ids in said.items()}
 
 

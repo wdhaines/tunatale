@@ -591,6 +591,7 @@ describe("GradePage — New cards › Sentences (tunatale-h0q3.67)", () => {
     reviewed: false,
     gloss: "",
     in_deck: false,
+    suggested: false,
     ...over,
   });
   const carded = {
@@ -619,7 +620,7 @@ describe("GradePage — New cards › Sentences (tunatale-h0q3.67)", () => {
     plan({
       studied: true,
       listen_count: 1,
-      suggestions: { words: [], contrast: [], sentences },
+      suggestions: { words: [], contrast: [], sentences, sentence_budget: 0 },
       ...over,
     });
   const openNew = async () => {
@@ -638,6 +639,51 @@ describe("GradePage — New cards › Sentences (tunatale-h0q3.67)", () => {
     await fireEvent.click(view.getByRole("button", { name: "Show 2 more lines ›" }));
     expect(document.querySelectorAll("[data-line-key]").length).toBe(3);
     expect(view.queryByRole("button", { name: /Show/ })).toBeNull();
+  });
+
+  // The day's pattern forms (tunatale-ve4p.37, design § 8; owner 2026-11-22: on up to the budget).
+  const verbs = (n: number) => ({
+    ...carded,
+    line_key: `sent:lesson-1:${n}`,
+    text: "Molakaw ko.",
+    english: "I will go.",
+    tokens: [tok(0, 7, { suggested: true, gloss: "will go" }), tok(8, 10)],
+    whole: tok(0, 11),
+  });
+  const withBudget = (budget: number, sentences: unknown[]) =>
+    plan({
+      studied: true,
+      listen_count: 1,
+      suggestions: { words: [], contrast: [], sentences, sentence_budget: budget },
+    });
+
+  it("the suggestions the day's budget reaches start on, the rest wait as dashed hints", async () => {
+    getPlan.mockResolvedValue(withBudget(1, [verbs(1), verbs(2)]));
+    const view = await openNew();
+    expect(view.getByRole("tab", { name: "New cards · 1" })).toBeTruthy();
+    expect(view.getByText("will go")).toBeTruthy(); // the offered blank's meaning, as an added blank's
+    await fireEvent.click(view.getByRole("button", { name: /Show 1 more line/ }));
+    const [first, second] = view.getAllByRole("button", { name: "Molakaw" });
+    expect(first.className).toContain("on");
+    expect(second.className).toContain("suggest");
+    expect(second.className).not.toContain("on");
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1].sentence_edits).toEqual([
+      { line_key: "sent:lesson-1:1", on: [[0, 7]], off: [], confirm: false },
+    ]);
+  });
+
+  it("an offered suggestion turned off is sent as declined", async () => {
+    getPlan.mockResolvedValue(withBudget(1, [verbs(1)]));
+    const view = await openNew();
+    await fireEvent.click(view.getByRole("button", { name: "Molakaw" }));
+    expect(view.getByRole("tab", { name: "New cards · 0" })).toBeTruthy();
+    await fireEvent.click(view.getByRole("button", { name: /^Save/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1].sentence_edits).toEqual([
+      { line_key: "sent:lesson-1:1", on: [], off: [[0, 7]], confirm: false },
+    ]);
   });
 
   it("a lesson none of whose lines has a card shows them all behind the button", async () => {

@@ -13,7 +13,12 @@
  *   server counts it: a card the deck holds, or one this Save adds. A listed card the
  *   deck lacks reads on but keeps nothing in Anki (review F4).
  *
- * Mockup and rules: .beads-tasks/briefs/design-sentence-mining-2026-11.md § 5-6.
+ * A token the server marks `suggested` says a form of the day's pattern (design § 8,
+ * tunatale-ve4p.37). Grade stages the ones its day's budget reaches as on (`offered`):
+ * a Save keeps them as mined blanks, and one turned off is declined (sent as `off`,
+ * which the server marks not wanted). Read offers none: there it is only a hint.
+ *
+ * Mockup and rules: .beads-tasks/briefs/design-sentence-mining-2026-11.md § 5-6, § 8.
  */
 import type { components } from "#lib/api-types.js";
 
@@ -31,6 +36,8 @@ export type StagedCard = {
   inDeck: boolean;
   /** On when the page loaded. */
   initiallyOn: boolean;
+  /** A suggested blank the page turned on for the learner: turned off, a Save declines it. */
+  offered?: boolean;
 };
 export type LineStage = {
   cards: Record<string, StagedCard>;
@@ -69,11 +76,23 @@ function keepsTheNote(card: StagedCard): boolean {
   return card.on && (card.inDeck || !card.initiallyOn);
 }
 
-export function initStage(line: SentenceLine): LineStage {
+/** The line as the server read it; with *offer*, those suggested tokens' keys staged on (Grade's budget). */
+export function initStage(line: SentenceLine, offer: ReadonlySet<string> = new Set()): LineStage {
   const cards: Record<string, StagedCard> = {};
   for (const token of line.tokens) {
     const card = staged(token);
-    if (card) cards[tokenKey(token)] = card;
+    const key = tokenKey(token);
+    if (card) cards[key] = card;
+    else if (token.suggested && offer.has(key)) {
+      cards[key] = {
+        on: true,
+        origin: "suggest",
+        reviewed: false,
+        inDeck: false,
+        initiallyOn: false,
+        offered: true,
+      };
+    }
   }
   const whole = staged(line.whole);
   if (whole) cards[WHOLE] = whole;
@@ -86,7 +105,7 @@ export function countOn(stage: LineStage): number {
 
 function turnOff(stage: LineStage, key: string) {
   const card = stage.cards[key];
-  if (card.origin === "lesson") card.on = false;
+  if (card.origin === "lesson" || card.offered) card.on = false;
   else delete stage.cards[key];
 }
 
@@ -150,6 +169,8 @@ export function lineEdit(line: SentenceLine, stage: LineStage): SentenceEdit | n
     const after = Boolean(stage.cards[key]?.on);
     if (after && !before) on.push(spanOf(key));
     if (before && !after) off.push(spanOf(key));
+    // A suggestion the page offered and the learner turned down: declined, so it stays off.
+    if (!before && !after && stage.cards[key]?.offered) off.push(spanOf(key));
   }
   if (on.length === 0 && off.length === 0) return null;
   return { line_key: line.line_key, on, off, confirm: stage.confirmed.length > 0 };
@@ -177,7 +198,7 @@ export function addedBlanks(
   return line.tokens
     .filter((t) => {
       const c = stage.cards[tokenKey(t)];
-      return c?.on && c.origin === "mine" && !was[tokenKey(t)]?.on;
+      return c?.on && c.origin !== "lesson" && !was[tokenKey(t)]?.on;
     })
     .map((t) => ({ key: tokenKey(t), word: line.text.slice(...tokenSpan(t)), gloss: t.gloss }));
 }
@@ -192,4 +213,23 @@ export function sentenceRefusal(e: unknown, statuses: readonly number[] = [409])
     return String((detail as { message?: unknown }).message);
   }
   return null;
+}
+
+/** Grade's offer: the first *budget* suggested tokens across *lines*, in story order, as line key → token keys. */
+export function offeredSuggestions(
+  lines: SentenceLine[],
+  budget: number,
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  let left = budget;
+  for (const line of lines) {
+    for (const token of line.tokens) {
+      if (left <= 0) return out;
+      if (!token.suggested) continue;
+      if (!out.has(line.line_key)) out.set(line.line_key, new Set());
+      out.get(line.line_key)!.add(tokenKey(token));
+      left -= 1;
+    }
+  }
+  return out;
 }
