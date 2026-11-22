@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 
 from app.models.lesson import Lesson, SectionType
 from app.models.srs_item import Direction, SRSItem
@@ -284,20 +285,19 @@ def _plain(text: str) -> str:
 
 
 def _dialogue_indexes(lesson: Lesson, cards: list[SentenceCard]) -> list[int | None]:
-    """Each card's transcript line: the next one, in story order, that says what the card's line says.
+    """Each card's transcript line: the cards and what the voice says, aligned by text in order.
 
     Measured 2026-11-22 on the live Cebuano lessons and review sessions: 17 of 17 with scenes align
-    one to one. The walk still matches by text, so a spoken line the story lacks shifts nothing after it.
+    one to one. The alignment is a longest-matching-blocks diff, not a greedy walk (review N1): a line
+    the voice says otherwise matches nothing and takes no later line's saying, and a spoken line the
+    story lacks shifts nothing after it.
     """
     said = [_plain(text) for text in _said(lesson)]
-    out: list[int | None] = []
-    at = 0
-    for card in cards:
-        want = _plain(card.spoken)
-        found = next((i for i in range(at, len(said)) if said[i] == want), None)
-        out.append(found)
-        if found is not None:
-            at = found + 1
+    wants = [_plain(card.spoken) for card in cards]
+    out: list[int | None] = [None] * len(cards)
+    for block in SequenceMatcher(None, wants, said, autojunk=False).get_matching_blocks():
+        for k in range(block.size):
+            out[block.a + k] = block.b + k
     return out
 
 

@@ -687,6 +687,7 @@
 										{@const canStartPhrase =
 											onCreatePhrase != null &&
 											picking === null &&
+											cloze === null &&
 											selection === null &&
 											nextWord != null &&
 											nextWord.collocation_span_id === null}

@@ -142,6 +142,17 @@ describe("Read's Cloze…", () => {
     expect(clozeButton(container, 0)).toBeUndefined(); // one editor at a time
   });
 
+  it("an open editor offers no Phrase… elsewhere on the line (review nit, 2026-11-22)", async () => {
+    const { container } = await mount([line()], { onCreatePhrase: vi.fn() });
+    const phrase = (i: number) =>
+      Array.from(el(container, i).closest(".tt-wrap")!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Phrase…",
+      );
+    expect(phrase(0)).toBeTruthy(); // control: offered while nothing is open
+    await openCloze(container, 2);
+    expect(phrase(0)).toBeUndefined();
+  });
+
   it("opens with no word on when the transcript's words do not map to the card's", async () => {
     const { container } = await mount([line({ spoken_map: null })]);
     await openCloze(container, 2);

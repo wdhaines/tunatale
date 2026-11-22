@@ -85,6 +85,17 @@ class TestGetLines:
         _install(srs_db, _spoken_lesson([(SPOKEN[0], "no"), ("Ja.", "no"), (SPOKEN[1], "no"), (SPOKEN[2], "no")]))
         assert [ln["dialogue_index"] for ln in await _lines()] == [0, 2, 3]
 
+    async def test_a_line_said_otherwise_does_not_take_a_later_lines_saying(self, srs_db):
+        """Review N1 (2026-11-22): line 2 "Ja." is said "Ja, takk.". A greedy walk gave it line 4's
+        saying, and lines 3 and 4 then matched nothing ([0, 3, None, None])."""
+        story = _story()
+        del story["cards"]
+        template = story["scenes"][0]["lines"][0]
+        story["scenes"][0]["lines"] = [dict(template, text=t) for t in ["Hei!", "Ja.", "Bra.", "Ja."]]
+        said = ["Hei!", "Ja, takk.", "Bra.", "Ja."]
+        _install(srs_db, _spoken_lesson([(s, "no") for s in said], story=story))
+        assert [ln["dialogue_index"] for ln in await _lines()] == [0, None, 2, 3]
+
     async def test_a_repeated_line_maps_to_each_saying_in_order(self, srs_db):
         story = _story()
         del story["cards"]
