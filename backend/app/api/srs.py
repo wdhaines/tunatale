@@ -580,6 +580,16 @@ async def undo_grade(item_id: int, direction: str, request: Request):
     }
 
 
+def _budget_after_pool(intro_budget: int, new_state_rows: list, live_new: list, live_creates: list) -> int:
+    """What the introduction budget has left once the ranked pool took its share.
+
+    The pool charged its live NEW-state rows that were not free (created today), plus its live
+    creations. The contrast cards draw on what is left, and the sentence suggestions after them.
+    """
+    charged = len(live_new) - sum(1 for new_row in new_state_rows if new_row[1]) + len(live_creates)
+    return max(0, intro_budget - charged)
+
+
 def _due_contrast_cards(
     db, store, lesson, content_id: str, *, intro_budget: int, new_state_rows: list, live_new: list, live_creates: list
 ) -> list[tuple[FocusCard, bool]]:
@@ -600,8 +610,7 @@ def _due_contrast_cards(
     row = store.get_lesson_row(content_id)
     if row is None:
         return []
-    charged = len(live_new) - sum(1 for new_row in new_state_rows if new_row[1]) + len(live_creates)
-    left = max(0, intro_budget - charged)
+    left = _budget_after_pool(intro_budget, new_state_rows, live_new, live_creates)
     cards = contrast_cards(lesson, srs_db=db, store=store, curriculum_id=row["curriculum_id"])
     return [(card, i < left) for i, card in enumerate(cards)]
 
@@ -2495,6 +2504,9 @@ class _ListenPlan(NamedTuple):
     offered: list
     word_cards: dict[int, tuple[str, SRSItem]]
     phrase_cards: dict[int, tuple[str, SRSItem]]
+    # How many of the lesson's suggested sentence blanks (its pattern's forms, design § 8) the day's
+    # budget still reaches, after the pool and the contrast cards: Grade turns that many on.
+    sentence_budget: int = 0
 
 
 def _build_listen_plan(db, store, lesson, content_id: str, words: _LessonWords) -> _ListenPlan:
@@ -2862,6 +2874,10 @@ def _build_listen_plan(db, store, lesson, content_id: str, words: _LessonWords) 
         offered=offered,
         word_cards=word_cards,
         phrase_cards=phrase_cards,
+        sentence_budget=max(
+            0,
+            _budget_after_pool(intro_budget, new_state_rows, live_new, live_creates) - sum(live for _, live in offered),
+        ),
     )
 
 

@@ -3228,6 +3228,8 @@ export interface components {
     GradeSuggestions: {
       /** Contrast */
       contrast: components["schemas"]["AffixCardPreview"][];
+      /** Sentence Budget */
+      sentence_budget: number;
       /** Sentences */
       sentences: components["schemas"]["SentenceLine"][];
       /** Words */
@@ -5022,6 +5024,8 @@ export interface components {
        * @enum {string}
        */
       state: "on" | "off" | "declined";
+      /** Suggested */
+      suggested: boolean;
     };
     /**
      * SentenceLinesRequest

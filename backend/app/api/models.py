@@ -2216,6 +2216,9 @@ class SentenceLineToken(BaseModel):
     # minted at the next study) is ``on`` but not in the deck, and does not keep a
     # linked line in Anki (review F4).
     in_deck: bool
+    # The word says a form of the day's pattern (tunatale-ve4p.37): Grade offers it as a blank,
+    # on within ``sentence_budget``. Its state stays ``off`` until it is a card.
+    suggested: bool
 
 
 class SentenceLine(BaseModel):
@@ -2246,6 +2249,9 @@ class GradeSuggestions(BaseModel):
     words: list[GradeWordSuggestion]
     contrast: list[AffixCardPreview]
     sentences: list[SentenceLine]
+    # How many suggested blanks the day's new-card budget reaches, in story order, after the word
+    # creations and the contrast cards (owner, 2026-11-22: as word suggestions are).
+    sentence_budget: int
 
 
 class GradePlanResponse(BaseModel):

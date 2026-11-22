@@ -11,6 +11,7 @@ import {
   keep,
   lineEdit,
   newCards,
+  offeredSuggestions,
   toggle,
   turnedOff,
   WHOLE,
@@ -31,6 +32,7 @@ const tok = (
   reviewed: false,
   gloss: "",
   in_deck: false,
+  suggested: false,
   ...over,
 });
 
@@ -247,5 +249,88 @@ describe("the two refusals", () => {
       off: [[5, 9]],
       confirm: false,
     });
+  });
+});
+
+// The day's pattern forms as suggested blanks (tunatale-ve4p.37, design § 8): Grade offers
+// the ones its budget reaches; a Save keeps them, and one turned off is declined.
+describe("suggested blanks", () => {
+  /** "Molakaw ko. Moinom siya.": both verbs say mo-/mi-; "ko" says nothing. */
+  const verbs = (over: Partial<SentenceLine> = {}): SentenceLine =>
+    line({
+      line_key: "sent:lesson-1:1",
+      text: "Molakaw ko. Moinom siya.",
+      tokens: [
+        tok(0, 7, { suggested: true, gloss: "will go" }),
+        tok(8, 10),
+        tok(12, 18, { suggested: true }),
+        tok(19, 23),
+      ],
+      whole: tok(0, 24),
+      ...over,
+    });
+  const offer = (...keys: string[]) => new Set(keys);
+
+  it("offeredSuggestions takes the budget's worth in story order, across lines", () => {
+    const second = verbs({ line_key: "sent:lesson-1:2" });
+    expect(offeredSuggestions([verbs(), second], 3)).toEqual(
+      new Map([
+        ["sent:lesson-1:1", new Set(["0-7", "12-18"])],
+        ["sent:lesson-1:2", new Set(["0-7"])],
+      ]),
+    );
+    expect(offeredSuggestions([verbs()], 0)).toEqual(new Map());
+  });
+
+  it("an offered suggestion starts on and a Save makes it", () => {
+    const l = verbs();
+    const stage = initStage(l, offer("0-7"));
+    expect(countOn(stage)).toBe(1);
+    expect(stage.cards["12-18"]).toBeUndefined(); // past the budget: not staged
+    expect(lineEdit(l, stage)).toEqual({
+      line_key: l.line_key,
+      on: [[0, 7]],
+      off: [],
+      confirm: false,
+    });
+    expect(newCards(l, stage, true)).toBe(1);
+    expect(addedBlanks(l, stage)).toEqual([{ key: "0-7", word: "Molakaw", gloss: "will go" }]);
+  });
+
+  it("an offered suggestion turned off is declined, and on again is a card again", () => {
+    const l = verbs();
+    const stage = initStage(l, offer("0-7"));
+    toggle(l, stage, "0-7");
+    expect(stage.cards["0-7"].on).toBe(false); // kept, so the Save can decline it
+    expect(lineEdit(l, stage)).toEqual({
+      line_key: l.line_key,
+      on: [],
+      off: [[0, 7]],
+      confirm: false,
+    });
+    expect(turnedOff(l, stage)).toBe(1);
+    toggle(l, stage, "0-7");
+    expect(lineEdit(l, stage)?.on).toEqual([[0, 7]]);
+  });
+
+  it("a suggestion not offered (Read, or past the budget) is a plain word: tapped on, it is a mined blank", () => {
+    const l = verbs();
+    const stage = initStage(l);
+    expect(lineEdit(l, stage)).toBeNull(); // nothing offered, nothing declined
+    toggle(l, stage, "12-18");
+    expect(stage.cards["12-18"].origin).toBe("mine");
+    toggle(l, stage, "12-18");
+    expect(stage.cards["12-18"]).toBeUndefined(); // and off again: nothing to decline
+    expect(lineEdit(l, stage)).toBeNull();
+  });
+
+  it("an offered suggestion keeps a linked line's note, as any card this Save adds", () => {
+    const l = verbs({
+      linked: true,
+      tokens: [tok(0, 7, { suggested: true }), tok(8, 10, { state: "on", in_deck: true })],
+    });
+    const stage = initStage(l, offer("0-7"));
+    toggle(l, stage, "8-10");
+    expect(stage.refuse).toBe(false);
   });
 });

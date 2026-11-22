@@ -31,6 +31,7 @@
 	import {
 		countOn,
 		initStage,
+		offeredSuggestions,
 		lineEdit,
 		newCards,
 		sentenceRefusal,
@@ -77,8 +78,10 @@
 			// A slower response for a range since replaced must not win.
 			if (r !== range) return;
 			plan = next;
+			// The day's pattern forms the budget reaches start on (design § 8, owner 2026-11-22).
+			const offers = offeredSuggestions(next.suggestions.sentences, next.suggestions.sentence_budget);
 			for (const line of next.suggestions.sentences) {
-				stages[line.line_key] ??= initStage(line);
+				stages[line.line_key] ??= initStage(line, offers.get(line.line_key));
 			}
 			error = '';
 		} catch (e) {

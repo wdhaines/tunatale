@@ -24,6 +24,7 @@ const tok = (
   reviewed: false,
   gloss: "",
   in_deck: false,
+  suggested: false,
   ...over,
 });
 
