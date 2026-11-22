@@ -79,6 +79,9 @@ class SentenceLine:
     spoken_map: list[int] | None
     # The line's index in the transcript's ``dialogue_lines`` (Read's Cloze…); None when the voice does not say it.
     dialogue_index: int | None = None
+    # Its rows hold another text than the lesson's line now: any edit of it is refused
+    # (``sentence_mining.LineChanged``), so nothing is offered on it (review N2).
+    stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,6 +260,7 @@ def read_line(db, listed: ListLine, marks: set[str]) -> SentenceLine:
     for start, end in sorted(spans):
         part = next((b for b in listed.blanks if start <= b[0] and b[1] <= end and b != (start, end)), None)
         tokens.append(token(start, end, part, part or (start, end)))
+    stale = any(item_text != card.text for item_text in (sentence_card(i.syntactic_unit).text for i in rows.values()))
     shown, spoken = words(card.text), words(card.spoken)
     return SentenceLine(
         line_key=card.line_key,
@@ -268,6 +272,7 @@ def read_line(db, listed: ListLine, marks: set[str]) -> SentenceLine:
         tokens=tuple(tokens),
         whole=token(0, len(card.text), None, None),
         spoken_map=[_token_of(tokens, w) for w in shown] if len(shown) == len(spoken) else None,
+        stale=stale,
     )
 
 
@@ -341,7 +346,7 @@ class PatternForms:
                     continue
                 if token.state != OFF or listed.key(token.span) in marks:
                     have.add(self._reader.form(word))
-                else:
+                elif not line.stale:  # never offer an edit plan_line_edits would refuse (review N2)
                     offer.add((line.line_key, token.span))
         out: list[SentenceLine] = []
         for _, line in lines:

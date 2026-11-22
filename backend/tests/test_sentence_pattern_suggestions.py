@@ -145,6 +145,42 @@ class TestReadModel:
         assert _suggested(sentence_lines(srs_db, _lesson(), "lesson-1")) == [("sent:lesson-1:1", "Molakaw")]
 
 
+class TestStaleLine:
+    """Review N2 (2026-11-22): never auto-offer an edit ``plan_line_edits`` would refuse.
+
+    Line 1's rows hold "Molakaw ko." and the lesson now says "Molakaw ko karon.": any edit of that
+    line is LineChanged (409). A suggestion staged there refused every Grade Save, grades included,
+    and declining it was an edit of the same line.
+    """
+
+    def _stale(self, srs_db) -> Lesson:
+        from app.srs.sentence_lines import line_card
+
+        srs_db.add_collocation(line_card(_lesson(), 1, "lesson-1").with_blank((8, 10), "I").unit(), "ceb")
+        edited = _lesson()
+        edited.generation_metadata["story"]["scenes"][0]["lines"][0]["text"] = "Molakaw ko karon."
+        return edited
+
+    def test_a_line_whose_cards_hold_another_text_offers_nothing(self, srs_db):
+        lines = sentence_lines(srs_db, self._stale(srs_db), "lesson-1")
+        # The form moves to its next saying (line 3), on a line that can be edited.
+        assert _suggested(lines) == [("sent:lesson-1:2", "Moinom"), ("sent:lesson-1:3", "Molakaw")]
+
+    async def test_the_grade_page_save_of_the_offered_suggestions_goes_through(self, srs_db):
+        lesson = self._stale(srs_db)
+        _install(srs_db, lesson)
+        lines = sentence_lines(srs_db, lesson, "lesson-1")
+        result = await _post("/api/srs/content/lesson-1/grade", {"sentence_edits": _edits(lines)})
+        assert result["status"] == "ok"
+
+    def test_control_the_same_line_not_stale_offers_its_form(self, srs_db):
+        from app.srs.sentence_lines import line_card
+
+        lesson = _lesson()
+        srs_db.add_collocation(line_card(lesson, 1, "lesson-1").with_blank((8, 10), "I").unit(), "ceb")
+        assert _suggested(sentence_lines(srs_db, lesson, "lesson-1"))[0] == ("sent:lesson-1:1", "Molakaw")
+
+
 class TestS1ClosingTheLoop:
     async def test_s1_a_save_keeping_the_suggestions_makes_the_gates_evidence(self, srs_db):
         store = _install(srs_db, _lesson())
