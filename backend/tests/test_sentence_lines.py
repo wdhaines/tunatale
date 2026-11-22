@@ -139,6 +139,11 @@ class TestReadModel:
         line = _line(sentence_lines(SRSDatabase(":memory:"), _lesson(), "lesson-1"), L2)
         assert line.spoken_map == [0, 1, 2, 3]  # "gar" (spoken) is word 2 of "går" (shown)
 
+    def test_l4_spoken_map_names_the_token_of_each_word_so_two_words_of_one_blank_share_it(self):
+        """The editor toggles tokens: "og" and "du" are the one "og du" card (review F3's line)."""
+        line = _line(sentence_lines(SRSDatabase(":memory:"), _lesson(_two_word_story()), "lesson-1"), L3)
+        assert line.spoken_map == [0, 1, 2, 2]
+
     def test_l4_counts_that_differ_give_no_map(self):
         story = _story()
         story["cards"]["items"][2]["spoken"] = "Hei, hvordan gar det med deg?"

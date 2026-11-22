@@ -181,3 +181,15 @@ export function addedBlanks(
     })
     .map((t) => ({ key: tokenKey(t), word: line.text.slice(...tokenSpan(t)), gloss: t.gloss }));
 }
+
+/** The reason the server gave when it refused a sentence edit, or null for any other error.
+ *  Grade passes only 409 (a stale grade plan's 409 names rows, not a reason); Read, every refusal. */
+export function sentenceRefusal(e: unknown, statuses: readonly number[] = [409]): string | null {
+  const { status, detail } = e as { status?: number; detail?: unknown };
+  if (status === undefined || !statuses.includes(status)) return null;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && "needs_confirm" in detail) {
+    return String((detail as { message?: unknown }).message);
+  }
+  return null;
+}

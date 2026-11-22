@@ -4083,7 +4083,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-110 operations
+112 operations
   9  (untagged)
   3  admin
   3  anki
@@ -4094,7 +4094,7 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
   4  llm
   3  pipeline
  15  review-sessions
- 39  srs
+ 41  srs
   5  srs-images
 ```
 
@@ -4121,6 +4121,7 @@ for (t, p), ms in sorted(rows.items()): print(f\"{'/'.join(ms):<12}{p.replace('/
  GET         /content/{content_id}/listen-preview
  GET         /content/{content_id}/review-queue
  POST        /content/{content_id}/reviewed
+ GET/POST    /content/{content_id}/sentence-lines
  GET         /content/{content_id}/transcript
  GET         /due
  GET         /due-counts
@@ -5092,7 +5093,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grade-page-layout.spec.ts grade-say-english-hidden.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grade-page-layout.spec.ts grade-say-english-hidden.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts read-cloze.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;

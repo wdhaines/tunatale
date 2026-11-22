@@ -35,7 +35,15 @@ import anyio
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 
 from app.api import app_state
-from app.api.models import DueCountsResponse, GradePlanResponse, GradeRequest, GradeResponse
+from app.api.models import (
+    DueCountsResponse,
+    GradePlanResponse,
+    GradeRequest,
+    GradeResponse,
+    SentenceLinesRequest,
+    SentenceLinesResponse,
+    SentenceLinesSaveResponse,
+)
 from app.api.srs import (
     _add_contrast_cards,
     _analyze_lesson_words,
@@ -255,6 +263,8 @@ def _line_dict(line) -> dict:
         "linked": line.linked,
         "tokens": [_token_dict(t) for t in line.tokens],
         "whole": _token_dict(line.whole),
+        "dialogue_index": line.dialogue_index,
+        "spoken_map": line.spoken_map,
     }
 
 
@@ -387,17 +397,7 @@ async def grade_lesson(
     status, refused = _refusals(db, cards, body, window)
     if status:
         raise HTTPException(status_code=status, detail={"message": "Some grades cannot be applied", "rows": refused})
-    try:
-        edits = sentence_mining.plan_line_edits(db, lesson, content_id, [e.model_dump() for e in body.sentence_edits])
-    except sentence_mining.NeedsConfirm as exc:
-        raise HTTPException(status_code=exc.status, detail={"message": str(exc), "needs_confirm": exc.keys}) from exc
-    except sentence_mining.MiningError as exc:
-        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
-    glosses = await _blank_glosses(request, lesson.language_code, edits.needs_gloss)
-    try:
-        sentence_mining.check_glossed(edits, glosses)
-    except sentence_mining.MiningError as exc:
-        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    edits, glosses = await _plan_sentence_edits(request, db, lesson, content_id, body.sentence_edits)
 
     applied = 0
     if body.card_grades:
@@ -444,15 +444,9 @@ async def grade_lesson(
         _record_study_pass(db, request.state.content_store, lesson, content_id) if recorded else ([], [], None)
     )
     made.vocab += [(cid, card.unit, card.unit.lemma) for cid, card in course if card.unit.card_type == "vocab"]
-    mined = sentence_mining.apply_rows(
-        db, lesson.language_code, lesson, edits, glosses, studied=db.has_listen(content_id)
-    )
+    mined, mined_voiced = _apply_sentence_rows(db, lesson, content_id, edits, glosses)
     if mined.made:
-        # The line's takes, for the rows this Save added: the list's own, and each mined
-        # row's from its line and cue (a line no list names has no other source, h0q3.68).
-        story = lesson.generation_metadata["story"]
-        listed = lesson_card_rows(db, story["cards"], story.get("drills", [])) if story.get("cards") else []
-        voiced = listed + mined.voice
+        voiced = mined_voiced
 
     for lemma in declined["word"]:
         db.add_ignored_lemma(lesson.language_code, lemma)
@@ -478,6 +472,70 @@ async def grade_lesson(
         "listen_count": db.count_listens(content_id),
         "not_made": mined.not_made,
     }
+
+
+async def _plan_sentence_edits(request: Request, db, lesson, content_id: str, sentence_edits) -> tuple:
+    """Validate *sentence_edits* and fetch their glosses; nothing is written (design § 4).
+
+    Grade's Save and Read's POST both start here, so a refusal reads the same on either screen.
+    """
+    try:
+        edits = sentence_mining.plan_line_edits(db, lesson, content_id, [e.model_dump() for e in sentence_edits])
+    except sentence_mining.NeedsConfirm as exc:
+        raise HTTPException(status_code=exc.status, detail={"message": str(exc), "needs_confirm": exc.keys}) from exc
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    glosses = await _blank_glosses(request, lesson.language_code, edits.needs_gloss)
+    try:
+        sentence_mining.check_glossed(edits, glosses)
+    except sentence_mining.MiningError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    return edits, glosses
+
+
+def _apply_sentence_rows(db, lesson, content_id: str, edits, glosses) -> tuple:
+    """Add and remove the rows of planned *edits*; returns the result and the rows whose takes to attach.
+
+    The takes, when the edit added a row: the list's own, and each mined row's from its line and
+    cue (a line no list names has no other source, h0q3.68). Empty when nothing was added.
+    """
+    mined = sentence_mining.apply_rows(
+        db, lesson.language_code, lesson, edits, glosses, studied=db.has_listen(content_id)
+    )
+    if not mined.made:
+        return mined, []
+    story = lesson.generation_metadata["story"]
+    listed = lesson_card_rows(db, story["cards"], story.get("drills", [])) if story.get("cards") else []
+    return mined, listed + mined.voice
+
+
+@router.get("/content/{content_id}/sentence-lines", status_code=200, response_model=SentenceLinesResponse)
+async def get_sentence_lines(content_id: str, request: Request) -> dict:
+    """The lesson's lines as Read's Cloze… edits them: Grade's ``suggestions.sentences``, same read model."""
+    lesson = request.state.content_store.get_readable_content(content_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return {"lines": [_line_dict(line) for line in sentence_lines(request.state.srs_db, lesson, content_id)]}
+
+
+@router.post("/content/{content_id}/sentence-lines", status_code=200, response_model=SentenceLinesSaveResponse)
+async def save_sentence_lines(
+    content_id: str, body: SentenceLinesRequest, request: Request, background_tasks: BackgroundTasks
+) -> dict:
+    """Read's Cloze… Save: Grade's sentence sequence without the study pass (oracle R1).
+
+    Validate → glosses → not-wanted marks → rows → the rows' takes. It never marks the lesson
+    studied: a list card turned on before study still mints at study, as from Grade.
+    """
+    db = request.state.srs_db
+    lesson = request.state.content_store.get_readable_content(content_id)
+    if lesson is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    edits, glosses = await _plan_sentence_edits(request, db, lesson, content_id, body.edits)
+    sentence_mining.write_marks(db, edits)
+    mined, voiced = _apply_sentence_rows(db, lesson, content_id, edits, glosses)
+    _schedule_listen_media(background_tasks, request, db, lesson, vocab=[], clozes=[], reglosses=[], course=voiced)
+    return {"status": "ok", "created": len(mined.made), "not_made": mined.not_made}
 
 
 async def _blank_glosses(request: Request, language_code: str, needs) -> dict:

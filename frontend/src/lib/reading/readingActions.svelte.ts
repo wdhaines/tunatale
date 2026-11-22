@@ -289,6 +289,9 @@ export function createReadingActions(opts: ReadingActionsOptions) {
         onCollocationUndo,
         onCreatePhrase,
         tooltipActions,
+        // Read's Cloze… (tunatale-h0q3.69): its lines are this content's, and a save re-reads the transcript.
+        contentId: opts.contentId,
+        onLinesSaved: refetch,
       };
     },
   };

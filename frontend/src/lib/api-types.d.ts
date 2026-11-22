@@ -1615,6 +1615,33 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/srs/content/{content_id}/sentence-lines": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Sentence Lines
+     * @description The lesson's lines as Read's Cloze… edits them: Grade's ``suggestions.sentences``, same read model.
+     */
+    get: operations["get_sentence_lines_api_srs_content__content_id__sentence_lines_get"];
+    put?: never;
+    /**
+     * Save Sentence Lines
+     * @description Read's Cloze… Save: Grade's sentence sequence without the study pass (oracle R1).
+     *
+     *     Validate → glosses → not-wanted marks → rows → the rows' takes. It never marks the lesson
+     *     studied: a list card turned on before study still mints at study, as from Grade.
+     */
+    post: operations["save_sentence_lines_api_srs_content__content_id__sentence_lines_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/srs/content/{content_id}/transcript": {
     parameters: {
       query?: never;
@@ -4945,6 +4972,8 @@ export interface components {
      * @description A lesson line the Grade page's New cards may mine (``app.srs.sentence_lines``).
      */
     SentenceLine: {
+      /** Dialogue Index */
+      dialogue_index: number | null;
       /** English */
       english: string;
       /** Line Key */
@@ -4953,6 +4982,8 @@ export interface components {
       linked: boolean;
       /** Speaker */
       speaker: string;
+      /** Spoken Map */
+      spoken_map: number[] | null;
       /** Text */
       text: string;
       /** Tokens */
@@ -4991,6 +5022,37 @@ export interface components {
        * @enum {string}
        */
       state: "on" | "off" | "declined";
+    };
+    /**
+     * SentenceLinesRequest
+     * @description Body of POST /api/srs/content/{id}/sentence-lines: Read's line edits, as a Grade Save carries them.
+     */
+    SentenceLinesRequest: {
+      /** Edits */
+      edits: components["schemas"]["SentenceEdit"][];
+    };
+    /**
+     * SentenceLinesResponse
+     * @description Response of GET /api/srs/content/{id}/sentence-lines: the lines Read's Cloze… edits.
+     */
+    SentenceLinesResponse: {
+      /** Lines */
+      lines: components["schemas"]["SentenceLine"][];
+    };
+    /**
+     * SentenceLinesSaveResponse
+     * @description Response of POST /api/srs/content/{id}/sentence-lines.
+     */
+    SentenceLinesSaveResponse: {
+      /** Created */
+      created: number;
+      /**
+       * Not Made
+       * @default []
+       */
+      not_made: components["schemas"]["NotMadeBlank"][];
+      /** Status */
+      status: string;
     };
     /**
      * SetClozeSentenceRequest
@@ -7550,6 +7612,72 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["MarkLessonReviewedResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_sentence_lines_api_srs_content__content_id__sentence_lines_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SentenceLinesResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  save_sentence_lines_api_srs_content__content_id__sentence_lines_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        content_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SentenceLinesRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SentenceLinesSaveResponse"];
         };
       };
       /** @description Validation Error */

@@ -24,6 +24,8 @@
 		// "Phrase…" — start a phrase at this word (bd tunatale-1409). Passed
 		// straight through to Tooltip; null hides the utility.
 		onStartPhrase?: (() => void) | null;
+		// "Cloze…" — open the line editor with this word on (tunatale-h0q3.69). Passed through.
+		onCloze?: (() => void) | null;
 	}
 
 	let {
@@ -39,7 +41,8 @@
 		showGloss = false,
 		hideRails = false,
 		blurProduction = false,
-		onStartPhrase = null
+		onStartPhrase = null,
+		onCloze = null
 	}: Props = $props();
 
 	// Blur-as-cloze (bd tunatale-dvdm.3). A word whose PRODUCTION direction is a
@@ -221,6 +224,7 @@
 	{masteryLabel}
 	{masterySides}
 	{onStartPhrase}
+	{onCloze}
 >
 	<span
 		class="word-wrapper"

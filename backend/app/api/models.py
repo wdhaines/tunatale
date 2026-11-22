@@ -2229,6 +2229,17 @@ class SentenceLine(BaseModel):
     linked: bool
     tokens: list[SentenceLineToken]
     whole: SentenceLineToken
+    # Read's Cloze… (tunatale-h0q3.69): the line's index in the transcript's dialogue_lines,
+    # None when the voice does not say it; and the token of each spoken word, None when the
+    # counts differ (the editor then opens with no word on).
+    dialogue_index: int | None
+    spoken_map: list[int] | None
+
+
+class SentenceLinesResponse(BaseModel):
+    """Response of GET /api/srs/content/{id}/sentence-lines: the lines Read's Cloze… edits."""
+
+    lines: list[SentenceLine]
 
 
 class GradeSuggestions(BaseModel):
@@ -2318,4 +2329,19 @@ class GradeResponse(BaseModel):
     recorded_study: bool
     listen_count: int
     # A blank turned on that could not be made; the page names each one.
+    not_made: list[NotMadeBlank] = []
+
+
+class SentenceLinesRequest(BaseModel):
+    """Body of POST /api/srs/content/{id}/sentence-lines: Read's line edits, as a Grade Save carries them."""
+
+    edits: list[SentenceEdit]
+
+
+class SentenceLinesSaveResponse(BaseModel):
+    """Response of POST /api/srs/content/{id}/sentence-lines."""
+
+    status: str
+    created: int
+    # A blank turned on that could not be made; Read names each one.
     not_made: list[NotMadeBlank] = []
