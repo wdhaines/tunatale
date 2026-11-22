@@ -91,6 +91,7 @@ export const en = {
   "tooltip.notDue": "Not Due",
   "tooltip.words": "Words…",
   "tooltip.phrase": "Phrase…",
+  "tooltip.cloze": "Cloze…",
   "tooltip.createInflectionCard": "Inflect",
   "tooltip.differentMeaning": "Different meaning",
   "tooltip.unignore": "Un-ignore",
@@ -756,6 +757,14 @@ export const en = {
     "{card} has been reviewed. Turning it off deletes its history at the next sync.",
   "sentenceLine.keep": "Keep it",
   "sentenceLine.turnOff": "Turn it off",
+
+  // ReadClozeBar.svelte (tunatale-h0q3.69): Read's Cloze… under a transcript line
+  "readCloze.save": "Save",
+  "readCloze.saving": "Saving…",
+  "readCloze.cancel": "Cancel",
+  "readCloze.saved": { one: "Saved: {count} new card", other: "Saved: {count} new cards" },
+  "readCloze.savedNoNew": "Saved",
+  "readCloze.refused": "Not saved: {reason}",
 
   // +error.svelte
   "error.genericFallback": "Something went wrong",

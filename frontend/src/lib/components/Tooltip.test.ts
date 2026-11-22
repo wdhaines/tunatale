@@ -1481,4 +1481,61 @@ describe("Tooltip", () => {
       expect(wrap.classList.contains("open")).toBe(false);
     });
   });
+
+  // --- "Cloze…" (tunatale-h0q3.69): open the line editor under this word's line.
+  // A reader action like Phrase…, and a UTILITY: it counts toward More… (design § 6).
+  describe("Cloze… utility", () => {
+    const child = (text: string) =>
+      createRawSnippet(() => ({ render: () => `<span>${text}</span>` }));
+
+    it("is absent when onCloze is not given", () => {
+      const { queryByRole } = render(Tooltip, {
+        props: { translation: "hello", children: child("hi") },
+      });
+      expect(queryByRole("button", { name: /cloze…/i })).toBeNull();
+    });
+
+    it("counts as a utility: a primary action plus Cloze… and one more hides both behind More…", async () => {
+      // Ratings (primary) + Phrase… + Cloze… = two utilities: collapsed. Without Cloze… the one
+      // utility (Phrase…) would render directly, so this fails if Cloze… is not counted.
+      const { getByRole, queryByRole } = render(Tooltip, {
+        props: {
+          translation: "hi",
+          ratings: { onRate: vi.fn() },
+          onStartPhrase: vi.fn(),
+          onCloze: vi.fn(),
+          children: child("hi"),
+        },
+      });
+      expect(queryByRole("button", { name: /cloze…/i })).toBeNull();
+      expect(queryByRole("button", { name: /phrase…/i })).toBeNull();
+      await fireEvent.click(getByRole("button", { name: /more…/i }));
+      expect(getByRole("button", { name: /cloze…/i })).toBeTruthy();
+    });
+
+    it("renders directly when it is the only utility beside a primary action", () => {
+      const { getByRole, queryByRole } = render(Tooltip, {
+        props: {
+          translation: "hi",
+          ratings: { onRate: vi.fn() },
+          onCloze: vi.fn(),
+          children: child("hi"),
+        },
+      });
+      expect(getByRole("button", { name: /cloze…/i })).toBeTruthy();
+      expect(queryByRole("button", { name: /more…/i })).toBeNull();
+    });
+
+    it("calls onCloze and closes the popover when clicked", async () => {
+      const onCloze = vi.fn();
+      const { container, getByText, getByRole } = render(Tooltip, {
+        props: { translation: "hi", onCloze, children: child("open-me") },
+      });
+      const wrap = container.querySelector<HTMLElement>(".tt-wrap")!;
+      await fireEvent.click(getByText("open-me"));
+      await fireEvent.click(getByRole("button", { name: /cloze…/i }));
+      expect(onCloze).toHaveBeenCalledTimes(1);
+      expect(wrap.classList.contains("open")).toBe(false);
+    });
+  });
 });

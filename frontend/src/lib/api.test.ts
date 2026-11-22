@@ -3034,6 +3034,31 @@ describe("image methods", () => {
     expect(result.applied).toBe(1);
   });
 
+  it("getSentenceLines reads the content's lines for Read's Cloze…", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk({ lines: [] })));
+
+    const result = await api.getSentenceLines("l1");
+
+    expect(fetch).toHaveBeenCalledWith(`${BASE}/api/srs/content/l1/sentence-lines`);
+    expect(result).toEqual({ lines: [] });
+  });
+
+  it("saveSentenceLines POSTs the line edits as {edits}", async () => {
+    const resp = { status: "ok", created: 1, not_made: [] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));
+    const edits = [
+      { line_key: "sent:x:1", on: [[0, 3] as [number, number]], off: [], confirm: false },
+    ];
+
+    const result = await api.saveSentenceLines("l1", edits);
+
+    expect(fetch).toHaveBeenCalledWith(
+      `${BASE}/api/srs/content/l1/sentence-lines`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ edits }) }),
+    );
+    expect(result.created).toBe(1);
+  });
+
   it("commitPending calls POST /api/srs/content/:id/commit-pending with no body", async () => {
     const resp = { status: "ok", applied: 3 };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockOk(resp)));

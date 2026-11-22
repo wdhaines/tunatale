@@ -41,6 +41,8 @@ const line = (over: Partial<SentenceLine> = {}): SentenceLine => ({
   text: "Bra, takk, og du?",
   english: "Fine, thanks, and you?",
   linked: false,
+  dialogue_index: 2,
+  spoken_map: [0, 1, 2, 3],
   tokens: [
     tok(0, 3, { gloss: "fine" }),
     tok(5, 9, { state: "on", origin: "lesson" }),

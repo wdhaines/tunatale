@@ -1,6 +1,8 @@
 <script lang="ts">
 	import WordSpan from '#lib/WordSpan.svelte';
 	import Tooltip from './Tooltip.svelte';
+	import ReadClozeBar from './ReadClozeBar.svelte';
+	import type { SentenceLine } from '#lib/grading/sentenceStage.js';
 	import type { TooltipActions } from './Tooltip.svelte';
 	import { api } from '#lib/api.js';
 	import type { GradeRating, ReadableLesson, TranscriptData, WordToken } from '#lib/api.js';
@@ -49,6 +51,10 @@
 		onCreatePhrase?: (args: CreatePhraseArgs) => void | Promise<void>;
 		tooltipActions?: TooltipActions;
 		controller?: PlaybackController | null;
+		// Read's Cloze… (tunatale-h0q3.69): the lesson or session id whose sentence lines the
+		// popover's Cloze… edits, and what to refresh after a save. No id, no Cloze….
+		contentId?: string | null;
+		onLinesSaved?: () => void | Promise<void>;
 	}
 
 	let {
@@ -60,7 +66,9 @@
 		onCollocationUndo,
 		onCreatePhrase,
 		tooltipActions,
-		controller = null
+		controller = null,
+		contentId = null,
+		onLinesSaved
 	}: Props = $props();
 
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
@@ -76,6 +84,56 @@
 	// (capture-swallowed, so it neither opens a popover nor starts a drag) ends
 	// the phrase and drops into the same confirm bar the desktop drag uses.
 	let picking = $state<{ lineIndex: number; startIdx: number } | null>(null);
+
+	// Cloze… (tunatale-h0q3.69). The lesson's sentence lines are read once per content id; a line
+	// is offered when the server matched it to a transcript line (`dialogue_index`). The editor
+	// opens under that line with the tapped word on, when the transcript's words map to its tokens.
+	let sentenceLines = $state<SentenceLine[]>([]);
+	let cloze = $state<{ lineIndex: number; tapped: number | null } | null>(null);
+	let clozeNotice = $state<{ lineIndex: number; text: string } | null>(null);
+	const lineAt = $derived(
+		new Map(sentenceLines.flatMap((l) => (l.dialogue_index == null ? [] : [[l.dialogue_index, l] as const])))
+	);
+
+	async function loadLines(id: string) {
+		try {
+			sentenceLines = (await api.getSentenceLines(id)).lines;
+		} catch (e) {
+			// Read still reads: only Cloze… is missing, and the console says why.
+			console.error('sentence lines', e);
+			sentenceLines = [];
+		}
+	}
+	$effect(() => {
+		if (contentId) void loadLines(contentId);
+	});
+
+	/** Cloze… is offered on a line the lesson's sentence lines cover, while nothing else is open on the page. */
+	const canCloze = (lineIndex: number) =>
+		lineAt.has(lineIndex) && cloze === null && picking === null && selection === null;
+
+	function openCloze(lineIndex: number, wordIdx: number) {
+		const line = lineAt.get(lineIndex)!;
+		const map = line.spoken_map;
+		const said = transcript.dialogue_lines[lineIndex].words.length;
+		picking = null;
+		selection = null;
+		clozeNotice = null;
+		cloze = { lineIndex, tapped: map && map.length === said ? map[wordIdx] : null };
+	}
+
+	async function clozeSaved(lineIndex: number, result: { created: number; not_made: { word: string }[] }) {
+		cloze = null;
+		const parts = [
+			result.created > 0 ? t('readCloze.saved', { count: result.created }) : t('readCloze.savedNoNew')
+		];
+		if (result.not_made.length > 0) {
+			parts.push(t('gradePage.notMade', { words: result.not_made.map((b) => b.word).join(', ') }));
+		}
+		clozeNotice = { lineIndex, text: parts.join(' ') };
+		await loadLines(contentId!);
+		await onLinesSaved?.();
+	}
 
 	let translateLoading = $state(false);
 	let translateError = $state('');
@@ -613,6 +671,7 @@
 															sentence={lineSentence}
 															tooltipActions={tooltipActions}
 															hideRails={true}
+															onCloze={canCloze(lineIndex) ? () => openCloze(lineIndex, wIdx) : null}
 														/>
 													{/each}
 												</span>
@@ -628,6 +687,7 @@
 										{@const canStartPhrase =
 											onCreatePhrase != null &&
 											picking === null &&
+											cloze === null &&
 											selection === null &&
 											nextWord != null &&
 											nextWord.collocation_span_id === null}
@@ -643,6 +703,7 @@
 												{showGloss}
 												blurProduction={readerProductionPref.enabled}
 												onStartPhrase={canStartPhrase ? () => startPhrase(lineIndex, wIdx) : null}
+												onCloze={canCloze(lineIndex) ? () => openCloze(lineIndex, wIdx) : null}
 											/>
 										</span>
 									{/if}
@@ -657,7 +718,15 @@
 						{/if}
 					</div>
 
-					{#if picking && picking.lineIndex === lineIndex}
+					{#if cloze && cloze.lineIndex === lineIndex}
+						<ReadClozeBar
+							contentId={contentId!}
+							line={lineAt.get(lineIndex)!}
+							tapped={cloze.tapped}
+							onsaved={(result) => clozeSaved(lineIndex, result)}
+							oncancel={() => (cloze = null)}
+						/>
+					{:else if picking && picking.lineIndex === lineIndex}
 						<div class="phrase-confirm-bar">
 							<span class="phrase-preview">{line.words[picking.startIdx].surface}…</span>
 							<span class="phrase-picking-hint">{t('transcript.tapLastWord')}</span>
@@ -690,6 +759,9 @@
 								<span class="phrase-error">{translateError}</span>
 							{/if}
 						</div>
+					{/if}
+					{#if clozeNotice && clozeNotice.lineIndex === lineIndex}
+						<p class="cloze-notice" role="status">{clozeNotice.text}</p>
 					{/if}
 				{/each}
 			{/each}
@@ -1142,6 +1214,11 @@
 		font-size: 0.8rem;
 	}
 
+	.cloze-notice {
+		margin: 0.25rem 0 0.5rem;
+		font-size: 0.85rem;
+		color: var(--color-muted, #6b7280);
+	}
 	.phrase-error {
 		color: var(--color-danger, #dc2626);
 		font-size: 0.75rem;

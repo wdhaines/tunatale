@@ -5667,6 +5667,17 @@
       "SentenceLine": {
         "description": "A lesson line the Grade page's New cards may mine (``app.srs.sentence_lines``).",
         "properties": {
+          "dialogue_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dialogue Index"
+          },
           "english": {
             "title": "English",
             "type": "string"
@@ -5682,6 +5693,20 @@
           "speaker": {
             "title": "Speaker",
             "type": "string"
+          },
+          "spoken_map": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spoken Map"
           },
           "text": {
             "title": "Text",
@@ -5705,7 +5730,9 @@
           "english",
           "linked",
           "tokens",
-          "whole"
+          "whole",
+          "dialogue_index",
+          "spoken_map"
         ],
         "title": "SentenceLine",
         "type": "object"
@@ -5783,6 +5810,67 @@
           "in_deck"
         ],
         "title": "SentenceLineToken",
+        "type": "object"
+      },
+      "SentenceLinesRequest": {
+        "description": "Body of POST /api/srs/content/{id}/sentence-lines: Read's line edits, as a Grade Save carries them.",
+        "properties": {
+          "edits": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceEdit"
+            },
+            "title": "Edits",
+            "type": "array"
+          }
+        },
+        "required": [
+          "edits"
+        ],
+        "title": "SentenceLinesRequest",
+        "type": "object"
+      },
+      "SentenceLinesResponse": {
+        "description": "Response of GET /api/srs/content/{id}/sentence-lines: the lines Read's Cloze\u2026 edits.",
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/SentenceLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines"
+        ],
+        "title": "SentenceLinesResponse",
+        "type": "object"
+      },
+      "SentenceLinesSaveResponse": {
+        "description": "Response of POST /api/srs/content/{id}/sentence-lines.",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "not_made": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/NotMadeBlank"
+            },
+            "title": "Not Made",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "created"
+        ],
+        "title": "SentenceLinesSaveResponse",
         "type": "object"
       },
       "SetClozeSentenceRequest": {
@@ -9980,6 +10068,100 @@
           }
         },
         "summary": "Mark Lesson Reviewed",
+        "tags": [
+          "srs"
+        ]
+      }
+    },
+    "/api/srs/content/{content_id}/sentence-lines": {
+      "get": {
+        "description": "The lesson's lines as Read's Cloze\u2026 edits them: Grade's ``suggestions.sentences``, same read model.",
+        "operationId": "get_sentence_lines_api_srs_content__content_id__sentence_lines_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentenceLinesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Sentence Lines",
+        "tags": [
+          "srs"
+        ]
+      },
+      "post": {
+        "description": "Read's Cloze\u2026 Save: Grade's sentence sequence without the study pass (oracle R1).\n\nValidate \u2192 glosses \u2192 not-wanted marks \u2192 rows \u2192 the rows' takes. It never marks the lesson\nstudied: a list card turned on before study still mints at study, as from Grade.",
+        "operationId": "save_sentence_lines_api_srs_content__content_id__sentence_lines_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "title": "Content Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SentenceLinesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SentenceLinesSaveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save Sentence Lines",
         "tags": [
           "srs"
         ]

@@ -29,9 +29,11 @@ Nothing here writes anything.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import unicodedata
+from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 
-from app.models.lesson import Lesson
+from app.models.lesson import Lesson, SectionType
 from app.models.srs_item import Direction, SRSItem
 from app.srs.lesson_cards import COURSE_SOURCE, lesson_cards
 from app.srs.sentence_card import Cue, Gloss, SentenceCard, sentence_card
@@ -68,7 +70,11 @@ class SentenceLine:
     linked: bool  # its note is in Anki: the line keeps at least one card
     tokens: tuple[LineToken, ...]
     whole: LineToken
-    spoken_map: list[int] | None  # the card word for each word the lesson speaks; None when the counts differ
+    # For each word the lesson speaks, the index of its token (words pair by index, "gar" with "går");
+    # None when the counts differ. Two words of one list blank share a token.
+    spoken_map: list[int] | None
+    # The line's index in the transcript's ``dialogue_lines`` (Read's Cloze…); None when the voice does not say it.
+    dialogue_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -257,11 +263,54 @@ def read_line(db, listed: ListLine, marks: set[str]) -> SentenceLine:
         linked=any(item.anki_note_id is not None for item in rows.values()),
         tokens=tuple(tokens),
         whole=token(0, len(card.text), None, None),
-        spoken_map=list(range(len(shown))) if len(shown) == len(spoken) else None,
+        spoken_map=[_token_of(tokens, w) for w in shown] if len(shown) == len(spoken) else None,
     )
+
+
+def _said(lesson: Lesson) -> list[str]:
+    """What the transcript shows, line by line: the Natural Speed phrases in the lesson's language.
+
+    The same walk as ``drill_lines.py`` and ``transcript.extract_transcript``: one transcript line each.
+    """
+    story = next((s for s in lesson.sections if s.section_type is SectionType.NATURAL_SPEED), None)
+    if story is None:
+        return []
+    return [phrase.text for phrase in story.phrases if phrase.language_code == lesson.language_code]
+
+
+def _plain(text: str) -> str:
+    """*text* as its words, case and accents aside: a list's ``går`` matches a take's ``gar``."""
+    folded = "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
+    return " ".join(m.group() for m in WORD.finditer(folded))
+
+
+def _dialogue_indexes(lesson: Lesson, cards: list[SentenceCard]) -> list[int | None]:
+    """Each card's transcript line: the cards and what the voice says, aligned by text in order.
+
+    Measured 2026-11-22 on the live Cebuano lessons and review sessions: 17 of 17 with scenes align
+    one to one. The alignment is a longest-matching-blocks diff, not a greedy walk (review N1): a line
+    the voice says otherwise matches nothing and takes no later line's saying, and a spoken line the
+    story lacks shifts nothing after it.
+    """
+    said = [_plain(text) for text in _said(lesson)]
+    wants = [_plain(card.spoken) for card in cards]
+    out: list[int | None] = [None] * len(cards)
+    for block in SequenceMatcher(None, wants, said, autojunk=False).get_matching_blocks():
+        for k in range(block.size):
+            out[block.a + k] = block.b + k
+    return out
+
+
+def _token_of(tokens: list[LineToken], word: tuple[int, int]) -> int:
+    """The index of the token holding *word* (every word of the card's text is inside one)."""
+    return next(i for i, t in enumerate(tokens) if t.start <= word[0] and word[1] <= t.end)
 
 
 def sentence_lines(db, lesson: Lesson, content_id: str) -> list[SentenceLine]:
     """Every line of *lesson*, in story order; a lesson with no card list keys its lines by *content_id*."""
     marks = db.sentence_card_marks()
-    return [read_line(db, listed, marks) for listed in list_lines(lesson, content_id).values()]
+    listed = list(list_lines(lesson, content_id).values())
+    indexes = _dialogue_indexes(lesson, [line.card for line in listed])
+    return [
+        replace(read_line(db, line, marks), dialogue_index=index) for line, index in zip(listed, indexes, strict=True)
+    ]

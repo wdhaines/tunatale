@@ -59,6 +59,10 @@
 		// reader's free words pass it (the next word must be able to end the
 		// phrase); null hides it.
 		onStartPhrase?: (() => void) | null;
+		// "Cloze…" — open the line editor under this word's line with the word on
+		// (tunatale-h0q3.69). Only the reader passes it, on a line the lesson's
+		// sentence lines cover; null hides it. A utility: it hides behind More….
+		onCloze?: (() => void) | null;
 		// Single-word mastery state shown beside the translation ("not tracked", "known", "ignored").
 		// Caller computes the label; null hides the line.
 		masteryLabel?: string | null;
@@ -79,6 +83,7 @@
 		ratings = null,
 		onDrillIn = null,
 		onStartPhrase = null,
+		onCloze = null,
 		masteryLabel = null,
 		masterySides = null
 	}: Props = $props();
@@ -382,10 +387,12 @@
 	const showGrade = $derived(Boolean(gradeLabel && onGrade) && ratings == null);
 	const showDrillIn = $derived(Boolean(onDrillIn));
 	const showStartPhrase = $derived(Boolean(onStartPhrase));
+	const showCloze = $derived(Boolean(onCloze));
 
 	const utilityCount = $derived(
 		[
 			showStartPhrase,
+			showCloze,
 			showCreateInflection,
 			showCreateSense,
 			showUnignore,
@@ -470,7 +477,7 @@
 			{#if ratings}
 				<GradeButtons variant="popover" onRate={ratings.onRate} />
 			{/if}
-			{#if showGrade || showDrillIn || (!collapsed && (showStartPhrase || showCreateInflection || showCreateSense || showUnignore || showUnignoreCardless || showIgnore || showIgnoreCardless || showMarkKnown || showUnmarkKnown || showResetNew)) || collapsed}
+			{#if showGrade || showDrillIn || (!collapsed && (showStartPhrase || showCloze || showCreateInflection || showCreateSense || showUnignore || showUnignoreCardless || showIgnore || showIgnoreCardless || showMarkKnown || showUnmarkKnown || showResetNew)) || collapsed}
 				<span class="tt-actions" class:tt-actions-grid={actionCount > 3}>
 					{#if showGrade}
 						<button type="button" class="tt-btn tt-btn-grade" onclick={() => onGrade!()}
@@ -502,6 +509,17 @@
 									open = false;
 									moreOpen = false;
 								}}>{t('tooltip.phrase')}</button
+							>
+						{/if}
+						{#if showCloze}
+							<button
+								type="button"
+								class="tt-btn"
+								onclick={() => {
+									onCloze!();
+									open = false;
+									moreOpen = false;
+								}}>{t('tooltip.cloze')}</button
 							>
 						{/if}
 						{#if showCreateInflection}

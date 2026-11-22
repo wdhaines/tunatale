@@ -41,6 +41,8 @@ export type GradeWordSuggestion = components["schemas"]["GradeWordSuggestion"];
 export type GradeRequest = components["schemas"]["GradeRequest"];
 export type GradeResponse = components["schemas"]["GradeResponse"];
 export type DueCountsResponse = components["schemas"]["DueCountsResponse"];
+export type SentenceLinesResponse = components["schemas"]["SentenceLinesResponse"];
+export type SentenceLinesSaveResponse = components["schemas"]["SentenceLinesSaveResponse"];
 
 // SSR fetches go straight to the backend (the browser uses the Vite proxy via
 // relative URLs). Protocol and port must mirror the proxy target in
@@ -1407,6 +1409,23 @@ export class TunaTaleAPI {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    });
+  }
+
+  /** Read's Cloze…: the lesson's lines, as Grade's New cards lists them (tunatale-h0q3.69). */
+  async getSentenceLines(contentId: string): Promise<SentenceLinesResponse> {
+    return this.request(`/api/srs/content/${contentId}/sentence-lines`);
+  }
+
+  /** Save Read's line edits: Grade's sentence sequence, never a study mark. A refusal carries `.status`/`.detail`. */
+  async saveSentenceLines(
+    contentId: string,
+    edits: GradeRequest["sentence_edits"],
+  ): Promise<SentenceLinesSaveResponse> {
+    return this.request(`/api/srs/content/${contentId}/sentence-lines`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ edits }),
     });
   }
 
