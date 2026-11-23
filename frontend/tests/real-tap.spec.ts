@@ -174,7 +174,7 @@ test.describe("real touch taps", () => {
 			"(hover: hover) is true — the popover would open on hover and the touch path would go untested",
 		).toBe(false);
 
-		await page.getByRole("button", { name: "Day 1" }).click();
+		await page.getByTestId("day-1").click();
 		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
 		await page.getByRole("button", { name: "Read", exact: true }).click();
 		// Scoped to the transcript: mastery chips also render `.tt-wrap`, so the

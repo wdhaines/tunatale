@@ -294,6 +294,8 @@ export type ReadableLesson = Pick<
 /** One element of GET /curriculum/{id}/progress.
  *  `position` @see DayPlan.position */
 export type DayProgress = components["schemas"]["CurriculumProgressEntry"];
+/** What a day's lesson holds: its parts and the drills its story authored (tunatale-cs3p). */
+export type DayOutline = components["schemas"]["CurriculumDayOutline"];
 
 // Mirrors the backend's rating domain for /listen (app/api/models.py::ListenRequest).
 // "good" is the default a listen stages; "skip" means "stage nothing for this item".
@@ -988,6 +990,10 @@ export class TunaTaleAPI {
 
   async getCurriculumProgress(id: string): Promise<DayProgress[]> {
     return this.request(`/api/curriculum/${id}/progress`);
+  }
+
+  async getCurriculumOutline(id: string): Promise<DayOutline[]> {
+    return this.request(`/api/curriculum/${id}/outline`);
   }
 
   async startPlan(topic: string, cefrLevel = "A2"): Promise<CurriculumCreated> {

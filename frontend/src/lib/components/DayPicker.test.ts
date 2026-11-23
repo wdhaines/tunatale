@@ -40,8 +40,8 @@ describe("DayPicker", () => {
     });
     const buttons = getAllByRole("button");
     expect(buttons).toHaveLength(3);
-    expect(buttons[0].textContent).toContain("Day 1");
-    expect(buttons[2].textContent).toContain("Day 3");
+    expect(buttons[0].textContent).toContain("Title 1");
+    expect(buttons[2].textContent).toContain("Title 3");
   });
 
   it("shows each generated day's due count, and no badge at zero or without a count", () => {
@@ -80,8 +80,7 @@ describe("DayPicker", () => {
     expect(getByTestId("due-badge").getAttribute("aria-label")).toBe("1 card due");
   });
 
-  it("numbers buttons by position, so a deleted day leaves no gap", () => {
-    // day 3 was deleted: the keys are 1, 2, 4 but the learner sees Day 1-3.
+  it("shows titles and no day numbers (Option A, owner 2026-11-13)", () => {
     const gappy: CurriculumSummary = {
       ...curriculum,
       days: [day(1, 1), day(2, 2), day(4, 3)],
@@ -90,7 +89,7 @@ describe("DayPicker", () => {
       props: { curriculum: gappy, onSelectDay: vi.fn() },
     });
     const labels = getAllByRole("button").map((b) => b.textContent?.trim());
-    expect(labels).toEqual(["Day 1 · Title 1", "Day 2 · Title 2", "Day 3 · Title 4"]);
+    expect(labels).toEqual(["Title 1", "Title 2", "Title 4"]);
   });
 
   it("still selects by the day key, not the displayed position", async () => {
@@ -100,7 +99,7 @@ describe("DayPicker", () => {
       days: [day(1, 1), day(2, 2), day(4, 3)],
     };
     const { getByText } = render(DayPicker, { props: { curriculum: gappy, onSelectDay } });
-    await fireEvent.click(getByText(/Day 3 ·/));
+    await fireEvent.click(getByText("Title 4"));
     expect(onSelectDay).toHaveBeenCalledWith(4);
   });
 
@@ -116,7 +115,7 @@ describe("DayPicker", () => {
   it("calls onSelectDay with the correct day when clicked", async () => {
     const onSelectDay = vi.fn().mockResolvedValue(undefined);
     const { getByText } = render(DayPicker, { props: { curriculum, onSelectDay } });
-    await fireEvent.click(getByText(/Day 2 ·/));
+    await fireEvent.click(getByText("Title 2"));
     expect(onSelectDay).toHaveBeenCalledWith(2);
   });
 
@@ -302,6 +301,138 @@ describe("DayPicker", () => {
         props: { curriculum: untitled, onSelectDay: vi.fn() },
       });
       expect(getByRole("heading").textContent).toContain("unit-a");
+    });
+  });
+
+  describe("a row opens in place to show what is inside (tunatale-cs3p slice 2)", () => {
+    const practice = {
+      day: 1,
+      parts: ["drill"],
+      drills: [
+        { kind: "substitution", model: "Dia siya diri.", instruction: "", steps: 11 },
+        { kind: "substitution", model: "Nia siya dinhis Cebu.", instruction: "", steps: 1 },
+      ],
+    };
+    const dialogue = { day: 2, parts: ["key_phrases", "dialogue"], drills: [] };
+    const outlines = new Map([
+      [1, practice],
+      [2, dialogue],
+    ]);
+
+    it("says under each title what the lesson holds", () => {
+      const { getByTestId } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), outlines },
+      });
+      expect(getByTestId("day-1").textContent).toContain("2 drills");
+      expect(getByTestId("day-2").textContent).toContain("Key phrases, Dialogue");
+      // Day 3 has no lesson yet: nothing to say, and nothing to open.
+      expect(getByTestId("day-3").querySelector("small")).toBeNull();
+    });
+
+    it("opens a practice row to each drill's model sentence and step count, without opening the lesson", async () => {
+      const onSelectDay = vi.fn();
+      const { getByRole, queryByText, getByText } = render(DayPicker, {
+        props: { curriculum, onSelectDay, outlines },
+      });
+      const toggle = getByRole("button", { name: "What's in Title 1" });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(queryByText(/Dia siya diri\./)).toBeNull();
+
+      await fireEvent.click(toggle);
+
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(getByText(/Drill 1 · Dia siya diri\./)).toBeTruthy();
+      expect(getByText("11 steps")).toBeTruthy();
+      expect(getByText(/Drill 2 · Nia siya dinhis Cebu\./)).toBeTruthy();
+      expect(getByText("1 step")).toBeTruthy();
+      expect(onSelectDay).not.toHaveBeenCalled();
+
+      await fireEvent.click(toggle);
+      expect(queryByText(/Dia siya diri\./)).toBeNull();
+    });
+
+    it("opens a dialogue row to its parts", async () => {
+      const { getByRole, getByTestId } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), outlines },
+      });
+      await fireEvent.click(getByRole("button", { name: "What's in Title 2" }));
+      const items = [...getByTestId("outline-2").querySelectorAll("li")].map((li) =>
+        li.textContent?.trim(),
+      );
+      expect(items).toEqual(["Key phrases", "Dialogue"]);
+    });
+
+    it("lists a dialogue's parts before its drills when it has both", async () => {
+      const both = new Map([
+        [
+          1,
+          {
+            day: 1,
+            parts: ["key_phrases", "dialogue", "drill"],
+            drills: [{ kind: "substitution", model: "Nia.", instruction: "", steps: 3 }],
+          },
+        ],
+      ]);
+      const { getByRole, getByTestId } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), outlines: both },
+      });
+      expect(getByTestId("day-1").textContent).toContain("Key phrases, Dialogue, 1 drill");
+      await fireEvent.click(getByRole("button", { name: "What's in Title 1" }));
+      const items = [...getByTestId("outline-1").querySelectorAll("li")].map((li) =>
+        [...li.children].map((c) => c.textContent).join(" | "),
+      );
+      expect(items).toEqual(["Key phrases", "Dialogue", "Drill 1 · Nia. | 3 steps"]);
+    });
+
+    it("names a rule-built drill by its part, having no model sentence", () => {
+      const grammar = new Map([[1, { day: 1, parts: ["drill"], drills: [] }]]);
+      const { getByTestId } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), outlines: grammar },
+      });
+      expect(getByTestId("day-1").textContent).toContain("Drill");
+    });
+
+    it("names a drill with no model sentence by its instruction, else by its kind", async () => {
+      const drills = [
+        { kind: "transformation", model: "", instruction: "Put the owner first.", steps: 7 },
+        { kind: "question_answer", model: "", instruction: "", steps: 9 },
+        { kind: "mystery", model: "", instruction: "", steps: 2 },
+        { kind: "", model: "", instruction: "", steps: 1 },
+      ];
+      const kinds = new Map([[1, { day: 1, parts: ["drill"], drills }]]);
+      const { getByRole, getByTestId } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), outlines: kinds },
+      });
+      await fireEvent.click(getByRole("button", { name: "What's in Title 1" }));
+      const lines = [...getByTestId("outline-1").querySelectorAll("li > span")].map(
+        (x) => x.textContent,
+      );
+      expect(lines).toEqual([
+        "Drill 1 · Put the owner first.",
+        "Drill 2 · Questions and answers",
+        "Drill 3 · mystery",
+        "Drill 4 · Drill",
+      ]);
+    });
+
+    it("shows a part this build has no name for by its token", () => {
+      const odd = new Map([[1, { day: 1, parts: ["quiz"], drills: [] }]]);
+      const { getByTestId } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn(), outlines: odd },
+      });
+      expect(getByTestId("day-1").textContent).toContain("quiz");
+    });
+
+    it("draws a progress bar under a lesson's heading", () => {
+      const grouped: CurriculumSummary = {
+        ...curriculum,
+        days: [day(1), day(2)].map((d) => ({ ...d, group: "g", group_title: "Lesson 1" })),
+      };
+      const { container } = render(DayPicker, {
+        props: { curriculum: grouped, onSelectDay: vi.fn() },
+      });
+      const bar = container.querySelector(".bar i") as HTMLElement;
+      expect(bar.style.width).toBe("0%");
     });
   });
 });

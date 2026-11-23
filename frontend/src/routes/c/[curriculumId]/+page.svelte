@@ -2,9 +2,9 @@
 	import BackLink from '#lib/components/BackLink.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '#lib/api.js';
+	import { api, type DayOutline } from '#lib/api.js';
 	import DayPicker from '#lib/components/DayPicker.svelte';
-	import RateLimitWidget from '#lib/components/RateLimitWidget.svelte';
+	import NextUp from '#lib/components/NextUp.svelte';
 	import LlmActivityLog from '#lib/components/LlmActivityLog.svelte';
 	import ManualStoryPanel from '#lib/components/ManualStoryPanel.svelte';
 	import { pipelineStore } from '#lib/stores/pipeline.svelte.js';
@@ -19,6 +19,7 @@
 	let error = $state('');
 	let progress: Map<number, string> = $state(new Map());
 	let dueCounts: Map<string, number> = $state(new Map());
+	let outlines: Map<number, DayOutline> = $state(new Map());
 	let manualStoryDay: number | null = $state(null);
 
 	const isManual = $derived((data.curriculum.generation_mode ?? 'auto') === 'manual');
@@ -65,6 +66,15 @@
 			progress = new Map(days.map(d => [d.day, d.lesson_id]));
 		} catch { /* non-critical */ }
 		void refreshDueCounts();
+		void refreshOutlines();
+	}
+
+	// What each row opens to (tunatale-cs3p). A failure leaves rows closed-only.
+	async function refreshOutlines() {
+		try {
+			const days = await api.getCurriculumOutline(data.curriculum.id);
+			outlines = new Map(days.map(d => [d.day, d]));
+		} catch { /* non-critical: no outlines */ }
 	}
 
 	// Each lesson's badge counts what its Grade page shows at the range the
@@ -78,8 +88,9 @@
 	}
 
 	onMount(async () => {
-		// The rate-limit widget lives on this page now (not the global nav);
-		// seed its store so it doesn't sit empty while the pipeline is idle.
+		// The LLM activity log below reads the rate-limit store; seed it so it
+		// doesn't sit empty while the pipeline is idle. (The budget chip itself
+		// moved into Lesson tools, tunatale-cs3p.)
 		rateLimitStore.ensureFresh();
 		await refreshProgress();
 		pipelineStore.start(data.curriculum.id);
@@ -134,8 +145,8 @@
 		<p class="meta">
 			{t('curriculum.dayCount', { count: data.curriculum.days.length })} · {data.curriculum.language_code.toUpperCase()}
 		</p>
-		<RateLimitWidget />
-		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} {dueCounts} pipelineStates={pipelineStates} />
+		<NextUp curriculum={data.curriculum} {progress} onSelectDay={handleSelectDay} />
+		<DayPicker curriculum={data.curriculum} onSelectDay={handleSelectDay} {progress} {dueCounts} {outlines} pipelineStates={pipelineStates} />
 		{#if manualStoryDay != null}
 			<ManualStoryPanel
 				copyPrompt={async () => {

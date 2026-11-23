@@ -2,7 +2,7 @@
  * Tests for /c/[curriculumId] — curriculum view with day picker + pipeline.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, fireEvent, waitFor, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
 
 const mockGoto = vi.fn();
@@ -16,6 +16,7 @@ vi.mock("#lib/api.js", () => ({
   api: {
     getLessonByDay: vi.fn(),
     getCurriculumProgress: vi.fn().mockResolvedValue([]),
+    getCurriculumOutline: vi.fn().mockResolvedValue([]),
     getDueCounts: vi.fn().mockResolvedValue({}),
     retryPipelineDay: vi.fn(),
     getStoryPrompt: vi.fn().mockResolvedValue({ system_prompt: "sys", user_prompt: "usr" }),
@@ -54,11 +55,11 @@ vi.mock("#lib/stores/rateLimit.svelte.js", () => ({
   },
 }));
 
-vi.mock("#lib/components/RateLimitWidget.svelte", () => ({
-  default: (_props: unknown) => "<span>LLM —</span>",
-}));
+// The LLM budget chip moved into Lesson tools (Option A): a render here is red.
+vi.mock("#lib/components/RateLimitWidget.svelte", () => ({ default: vi.fn() }));
 
 import { api } from "#lib/api.js";
+import RateLimitWidget from "#lib/components/RateLimitWidget.svelte";
 import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
 
@@ -105,10 +106,10 @@ beforeEach(() => {
 
 describe("/c/[curriculumId] page", () => {
   it("renders curriculum topic and day buttons", () => {
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
+    const { getByText, getByTestId } = render(Page, { props: { data: { curriculum } } });
     expect(getByText("Coffee")).toBeTruthy();
-    expect(getByText(/Day 1/)).toBeTruthy();
-    expect(getByText(/Day 3/)).toBeTruthy();
+    expect(getByTestId("day-1").textContent).toContain("Title 1");
+    expect(getByTestId("day-3").textContent).toContain("Title 3");
   });
 
   it("shows the committed day count and a link to the planner chat", () => {
@@ -129,7 +130,7 @@ describe("/c/[curriculumId] page", () => {
     });
   });
 
-  it("ensures rate-limit store is fresh on mount (widget lives here now)", async () => {
+  it("ensures rate-limit store is fresh on mount (the activity log reads it)", async () => {
     const { rateLimitStore } = await import("#lib/stores/rateLimit.svelte.js");
     render(Page, { props: { data: { curriculum } } });
     await waitFor(() => {
@@ -164,8 +165,8 @@ describe("/c/[curriculumId] page", () => {
       configurable: true,
     });
 
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(screen.getByTestId("day-1"));
     await waitFor(() => {
       expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l1");
     });
@@ -193,8 +194,8 @@ describe("/c/[curriculumId] page", () => {
     });
     mockRetryPipelineDay.mockResolvedValue({ status: "queued" });
 
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText(/Day 2 ·/));
+    render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(screen.getByTestId("day-2"));
     await waitFor(() => {
       expect(mockRetryPipelineDay).toHaveBeenCalledWith("cid-1", 2);
     });
@@ -226,8 +227,8 @@ describe("/c/[curriculumId] page", () => {
     });
 
     mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText(/Day 3 ·/));
+    render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(screen.getByTestId("day-3"));
     // Falls through to the cached-lesson check (none here) — no navigation, no retry
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(mockGoto).not.toHaveBeenCalled();
@@ -265,8 +266,8 @@ describe("/c/[curriculumId] page", () => {
     };
     mockGetLessonByDay.mockResolvedValue(lesson);
 
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText(/Day 2 ·/));
+    render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(screen.getByTestId("day-2"));
     await waitFor(() => {
       expect(mockGetLessonByDay).toHaveBeenCalledWith("cid-1", 2);
       expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l2");
@@ -284,8 +285,8 @@ describe("/c/[curriculumId] page", () => {
     };
     mockGetLessonByDay.mockResolvedValue(lesson);
 
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(screen.getByTestId("day-1"));
     await waitFor(() => {
       expect(mockGetLessonByDay).toHaveBeenCalledWith("cid-1", 1);
       expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/l1");
@@ -295,8 +296,8 @@ describe("/c/[curriculumId] page", () => {
   it("silently ignores when fallback getLessonByDay also fails (pipeline will handle)", async () => {
     mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
 
-    const { getByText } = render(Page, { props: { data: { curriculum } } });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    render(Page, { props: { data: { curriculum } } });
+    await fireEvent.click(screen.getByTestId("day-1"));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(mockGoto).not.toHaveBeenCalled();
   });
@@ -322,10 +323,10 @@ describe("/c/[curriculumId] page", () => {
     });
     mockRetryPipelineDay.mockRejectedValue(new Error("409 Conflict"));
 
-    const { getByText, findByText } = render(Page, {
+    const { findByText } = render(Page, {
       props: { data: { curriculum } },
     });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    await fireEvent.click(screen.getByTestId("day-1"));
     expect(await findByText("409 Conflict")).toBeTruthy();
   });
 
@@ -350,10 +351,10 @@ describe("/c/[curriculumId] page", () => {
     });
     mockRetryPipelineDay.mockRejectedValue("retry string error");
 
-    const { getByText, findByText } = render(Page, {
+    const { findByText } = render(Page, {
       props: { data: { curriculum } },
     });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    await fireEvent.click(screen.getByTestId("day-1"));
     expect(await findByText("retry string error")).toBeTruthy();
   });
 
@@ -453,7 +454,7 @@ describe("/c/[curriculumId] page", () => {
     const { getByText, container } = render(Page, {
       props: { data: { curriculum: manualCurriculum } },
     });
-    const btn = getByText(/Day 1 ·/);
+    const btn = screen.getByTestId("day-1");
     await fireEvent.click(btn);
     await waitFor(() => {
       expect(getByText("Copy story prompt")).toBeTruthy();
@@ -472,7 +473,7 @@ describe("/c/[curriculumId] page", () => {
     const { getByText, container } = render(Page, {
       props: { data: { curriculum: manualCurriculum } },
     });
-    const btn = getByText(/Day 1 ·/);
+    const btn = screen.getByTestId("day-1");
     await fireEvent.click(btn);
     await waitFor(() => {
       expect(getByText("Copy story prompt")).toBeTruthy();
@@ -498,7 +499,7 @@ describe("/c/[curriculumId] page", () => {
     const { getByText } = render(Page, {
       props: { data: { curriculum: manualCurriculum } },
     });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    await fireEvent.click(screen.getByTestId("day-1"));
     await waitFor(() => {
       expect(getByText("Copy story prompt")).toBeTruthy();
     });
@@ -514,10 +515,10 @@ describe("/c/[curriculumId] page", () => {
   it("auto-mode: selecting a lesson-less day renders NO story panel", async () => {
     mockGetLessonByDay.mockRejectedValue(new Error("Not Found"));
 
-    const { getByText, container } = render(Page, {
+    const { container } = render(Page, {
       props: { data: { curriculum } },
     });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    await fireEvent.click(screen.getByTestId("day-1"));
     await tick();
     expect(container.querySelector("textarea")).toBeNull();
   });
@@ -532,7 +533,7 @@ describe("/c/[curriculumId] page", () => {
     const { getByText, container } = render(Page, {
       props: { data: { curriculum: manualCurriculum } },
     });
-    await fireEvent.click(getByText(/Day 1 ·/));
+    await fireEvent.click(screen.getByTestId("day-1"));
     await waitFor(() => {
       expect(getByText("Copy story prompt")).toBeTruthy();
     });
@@ -651,5 +652,45 @@ describe("load function for /c/[curriculumId]", () => {
     const { api: mockApi } = await import("#lib/api.js");
     vi.mocked(mockApi.getCurriculum).mockRejectedValue(new Error("Not Found"));
     await expect(load({ params: { curriculumId: "nonexistent" } } as never)).rejects.toBeDefined();
+  });
+
+  describe("Option A (tunatale-cs3p slice 2)", () => {
+    it("loads each day's outline and shows it under the row's title", async () => {
+      vi.mocked(api.getCurriculumOutline).mockResolvedValueOnce([
+        {
+          day: 2,
+          parts: ["drill"],
+          drills: [
+            { kind: "substitution", model: "Dia siya diri.", instruction: "", steps: 11 },
+            { kind: "substitution", model: "Nia.", instruction: "", steps: 3 },
+          ],
+        },
+      ]);
+      const { getByTestId } = render(Page, { props: { data: { curriculum } } });
+      await waitFor(() => expect(getByTestId("day-2").textContent).toContain("2 drills"));
+      expect(api.getCurriculumOutline).toHaveBeenCalledWith("cid-1");
+    });
+
+    it("silently shows no outlines when the outline call fails", async () => {
+      vi.mocked(api.getCurriculumOutline).mockRejectedValueOnce(new Error("Network error"));
+      const { getByTestId } = render(Page, { props: { data: { curriculum } } });
+      await waitFor(() => expect(api.getCurriculumOutline).toHaveBeenCalled());
+      expect(getByTestId("day-1").querySelector("small")).toBeNull();
+    });
+
+    it("puts Next up on top, and it opens that day like its row does", async () => {
+      mockGetLessonByDay.mockResolvedValueOnce({ id: "lesson-1" } as never);
+      const { getByRole } = render(Page, { props: { data: { curriculum } } });
+      const next = getByRole("button", { name: /Next up/ });
+      expect(next.textContent).toContain("Title 1");
+      await fireEvent.click(next);
+      await waitFor(() => expect(mockGoto).toHaveBeenCalledWith("/c/cid-1/l/lesson-1"));
+      expect(mockGetLessonByDay).toHaveBeenCalledWith("cid-1", 1);
+    });
+
+    it("no longer carries the LLM budget chip (it lives in Lesson tools)", () => {
+      render(Page, { props: { data: { curriculum } } });
+      expect(vi.mocked(RateLimitWidget)).not.toHaveBeenCalled();
+    });
   });
 });

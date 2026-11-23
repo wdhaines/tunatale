@@ -1467,6 +1467,32 @@ class CurriculumProgressEntry(BaseModel):
     position: int
 
 
+class DrillOutline(BaseModel):
+    """One drill a story authored, and how many steps it runs.
+
+    ``kind`` is ``substitution`` / ``transformation`` / ``question_answer``.
+    Only a substitution has a ``model`` sentence; a transformation has an
+    ``instruction``; either may be "".
+    """
+
+    kind: str
+    model: str
+    instruction: str
+    steps: int
+
+
+class CurriculumDayOutline(BaseModel):
+    """One element of the response of GET /api/curriculum/{curriculum_id}/outline.
+
+    What the day's latest lesson holds (``app.models.lesson.lesson_outline``):
+    ``parts`` from ``key_phrases`` / ``dialogue`` / ``drill``, in lesson order.
+    """
+
+    day: int
+    parts: list[str]
+    drills: list[DrillOutline]
+
+
 class CurriculumSourceDay(BaseModel):
     """One element of CurriculumSourceResponse.days.
 

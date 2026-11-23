@@ -11,7 +11,7 @@ test('curriculum → day picker → lesson page renders header', async ({ page, 
 	const { curriculumId } = await seedCurriculumWithLesson(request, { topic: 'ordering coffee' });
 
 	await page.goto(`/c/${curriculumId}`);
-	await expect(page.getByRole('button', { name: 'Day 1' })).toBeVisible({ timeout: 10000 });
+	await expect(page.getByTestId('day-1')).toBeVisible({ timeout: 10000 });
 
 	// Day buttons must not inherit the <button> UA stylesheet's `text-align:
 	// center`. On one line that is invisible; a long title wraps and every
@@ -28,9 +28,9 @@ test('curriculum → day picker → lesson page renders header', async ({ page, 
 	// this vitest setup injects no Svelte component CSS, so the override is
 	// invisible there and the test could never go green. Resolving the real
 	// cascade needs a real browser.
-	await expect(page.getByRole('button', { name: 'Day 1' })).toHaveCSS('text-align', 'left');
+	await expect(page.getByTestId('day-1')).toHaveCSS('text-align', 'left');
 
-	await page.getByRole('button', { name: 'Day 1' }).click();
+	await page.getByTestId('day-1').click();
 
 	// getLessonByDay returns the pre-seeded lesson; no LLM call needed at click time.
 	await expect(page).toHaveURL(new RegExp(`/c/${curriculumId}/l/[a-z0-9-]+$`), { timeout: 15000 });

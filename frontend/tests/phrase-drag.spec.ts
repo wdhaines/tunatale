@@ -124,7 +124,7 @@ test("dragging across three words offers a phrase card, and Create sends it with
     });
   });
   await page.goto(`/c/${await curriculumId(request)}`);
-  await page.getByRole("button", { name: "Day 1" }).click();
+  await page.getByTestId("day-1").click();
   await page.getByRole("button", { name: "Read", exact: true }).click();
 
   const word = (i: number) => page.locator(`[data-line-index="0"][data-word-index="${i}"]`).first();

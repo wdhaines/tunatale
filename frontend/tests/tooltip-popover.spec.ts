@@ -160,7 +160,7 @@ test.describe("word popover (coarse pointer)", () => {
 			"(hover: hover) is true — .hover() would open the popover and the touch path would go untested",
 		).toBe(false);
 
-		await page.getByRole("button", { name: "Day 1" }).click();
+		await page.getByTestId("day-1").click();
 		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
 			timeout: 15000,
 		});

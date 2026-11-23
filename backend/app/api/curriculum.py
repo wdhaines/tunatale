@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api import app_state
 from app.api._serializers import serialize_lesson
 from app.api.models import (
+    CurriculumDayOutline,
     CurriculumProgressEntry,
     CurriculumSourceResponse,
     CurriculumSummary,
@@ -41,6 +42,7 @@ from app.api.models import (
 )
 from app.generation.planner import CurriculumPlanner, PlannerError, build_turn_prompt, parse_turn
 from app.models.curriculum import Curriculum, CurriculumDay
+from app.models.lesson import lesson_outline
 from app.srs.planner_snapshot import build_learner_snapshot
 from app.storage.plan_io import export_plan, get_planner_state, import_plan, mint_curriculum_id
 from app.storage.user_dbs import pipeline_user_id
@@ -339,6 +341,25 @@ async def get_curriculum_progress(curriculum_id: str, request: Request):
         {**entry, "position": positions.get(entry["day"], entry["day"])}
         for entry in store.get_lesson_days(curriculum_id)
     ]
+
+
+@router.get("/{curriculum_id}/outline", response_model=list[CurriculumDayOutline], tags=["curriculum"])
+async def get_curriculum_outline(curriculum_id: str, request: Request):
+    """What each day's lesson holds, in display order, for rows that open in place.
+
+    Separate from ``/progress`` because it reads every lesson's body, and the
+    home page's Continue card polls progress for a single lesson id.
+    """
+    store = request.state.content_store
+    curriculum = _get_curriculum_or_404(store, curriculum_id)
+    lesson_ids = {entry["day"]: entry["lesson_id"] for entry in store.get_lesson_days(curriculum_id)}
+    out = []
+    for day in curriculum.ordered_days():
+        lesson_id = lesson_ids.get(day.day)
+        lesson = store.get_lesson(lesson_id) if lesson_id else None
+        if lesson is not None:
+            out.append({"day": day.day, **lesson_outline(lesson)})
+    return out
 
 
 @router.get("/{curriculum_id}/source", status_code=200, response_model=CurriculumSourceResponse, tags=["curriculum"])

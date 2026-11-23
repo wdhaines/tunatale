@@ -100,7 +100,7 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 
 async function openRead(page: import("@playwright/test").Page, curriculumId: string) {
 	await page.goto(`/c/${curriculumId}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByTestId("day-1").click();
 	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
 	await page.getByRole("button", { name: "Read", exact: true }).click();
 	await expect(page.locator(".dialogue-words .tt-wrap").first()).toBeVisible({ timeout: 15000 });

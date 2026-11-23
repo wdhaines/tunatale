@@ -1771,6 +1771,33 @@ describe("TunaTaleAPI", () => {
   });
 
   describe("curriculum progress", () => {
+    it("getCurriculumOutline calls GET /api/curriculum/:id/outline", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockOk([
+            {
+              day: 6,
+              parts: ["drill"],
+              drills: [
+                { kind: "substitution", model: "Dia siya diri.", instruction: "", steps: 11 },
+              ],
+            },
+          ]),
+        ),
+      );
+
+      const result = await api.getCurriculumOutline("abc");
+
+      expect(fetch).toHaveBeenCalledWith(`${BASE}/api/curriculum/abc/outline`);
+      expect(result[0].drills[0]).toEqual({
+        kind: "substitution",
+        model: "Dia siya diri.",
+        instruction: "",
+        steps: 11,
+      });
+    });
+
     it("getCurriculumProgress calls GET /api/curriculum/:id/progress", async () => {
       vi.stubGlobal(
         "fetch",

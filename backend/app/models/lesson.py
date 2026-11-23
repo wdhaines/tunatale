@@ -195,6 +195,56 @@ class Lesson:
         )
 
 
+# Which part of a lesson each section type belongs to, for the curriculum page's
+# row outline. The bilingual and slow variants are all the dialogue: the learner
+# sees one dialogue, not six recordings of it.
+_OUTLINE_PART = {
+    SectionType.KEY_PHRASES: "key_phrases",
+    SectionType.NATURAL_SPEED: "dialogue",
+    SectionType.SLOW_SPEED: "dialogue",
+    SectionType.TRANSLATED: "dialogue",
+    SectionType.SLOW_TRANSLATED: "dialogue",
+    SectionType.EN_TRANSLATED: "dialogue",
+    SectionType.SLOW_EN_TRANSLATED: "dialogue",
+    SectionType.AFFIX_DRILL: "drill",
+}
+
+
+def _text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def lesson_outline(lesson: Lesson) -> dict:
+    """What a lesson holds, for a curriculum row that opens in place (tunatale-cs3p).
+
+    ``parts`` are the distinct parts in section order; ``drills`` are the drills
+    the story authored (``generation_metadata["story"]["drills"]``), each as its
+    kind, model sentence, instruction and step count. Only a substitution drill
+    has a model; a transformation has an instruction, a question-and-answer
+    drill neither (``section_builder.Drill``). A rule-built affix drill has the
+    part but no authored drills. ``generation_metadata`` is free-form JSON, so
+    an entry without a steps list is skipped and a non-text field reads as "".
+    """
+    parts: list[str] = []
+    for section in lesson.sections:
+        part = _OUTLINE_PART[section.section_type]
+        if part not in parts:
+            parts.append(part)
+    story = lesson.generation_metadata.get("story")
+    stored = story.get("drills") if isinstance(story, dict) else None
+    drills = [
+        {
+            "kind": _text(d.get("kind")),
+            "model": _text(d.get("model")),
+            "instruction": _text(d.get("instruction")),
+            "steps": len(d["steps"]),
+        }
+        for d in (stored if isinstance(stored, list) else [])
+        if isinstance(d, dict) and isinstance(d.get("steps"), list)
+    ]
+    return {"parts": parts, "drills": drills}
+
+
 def extract_sentence_translations_from_translated(lesson: Lesson) -> dict[str, str]:
     """Recover {L2_sentence: EN_translation} from a stored Lesson's TRANSLATED section.
 
