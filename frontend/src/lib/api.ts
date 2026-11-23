@@ -150,6 +150,10 @@ export interface DayPlan {
   kind: string;
   /** The affix pattern a grammar day drills, e.g. "mo-mi"; empty on a story day. */
   pattern: string;
+  /** The book lesson this day belongs to (e.g. "wolff-1"); empty when the plan has no grouping. */
+  group: string;
+  /** The lesson's heading on the curriculum page, e.g. "Lesson 1"; empty falls back to `group`. */
+  group_title: string;
 }
 
 export type ProposedBatch = components["schemas"]["ProposedBatch"];

@@ -333,6 +333,9 @@ class TestExportPlan:
                 "story_guidance",
                 "kind",
                 "pattern",
+                "group",
+                "group_title",
+                "order",
             }
             assert (day["kind"], day["pattern"]) == ("thematic", "")
 

@@ -301,7 +301,7 @@ async def get_curriculum(curriculum_id: str, request: Request):
     if curriculum is None:
         raise HTTPException(status_code=404, detail="Curriculum not found")
     positions = curriculum.day_positions()
-    days = sorted((asdict(d) for d in curriculum.days), key=lambda d: d["day"])
+    days = [asdict(d) for d in curriculum.ordered_days()]
     for entry in days:
         entry["position"] = positions[entry["day"]]
 

@@ -1433,6 +1433,10 @@ class CurriculumDayWithPosition(BaseModel):
     # stored without them.
     kind: str = "thematic"
     pattern: str = ""
+    # The book lesson this day belongs to (tunatale-cs3p); empty = ungrouped.
+    # ``days`` already arrive in display order, so ``order`` is not repeated here.
+    group: str = ""
+    group_title: str = ""
 
 
 class ProposedBatch(BaseModel):
@@ -1479,6 +1483,11 @@ class CurriculumSourceDay(BaseModel):
     story_guidance: str
     kind: str
     pattern: str
+    # Without these the plan editor's export -> import round trip would drop a
+    # day's book grouping (tunatale-cs3p).
+    group: str = ""
+    group_title: str = ""
+    order: int | None = None
 
 
 class CurriculumSourceResponse(BaseModel):

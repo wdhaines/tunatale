@@ -110,6 +110,8 @@ class TestCurriculumEndpoints:
                 "story_guidance": "café",
                 "kind": "thematic",
                 "pattern": "",
+                "group": "",
+                "group_title": "",
             }
         ]
 
@@ -317,6 +319,8 @@ class TestCurriculumEndpoints:
             "position",
             "kind",
             "pattern",
+            "group",
+            "group_title",
         }
         assert set(data["days"][0].keys()) == day_keys
         assert set(CurriculumDayWithPosition.model_fields) == day_keys
@@ -622,7 +626,19 @@ class TestCurriculumPlanIOEndpoints:
         assert set(data.keys()) == {"id", "topic", "language_code", "cefr_level", "days"}
         assert set(CurriculumSourceResponse.model_fields) == {"id", "topic", "language_code", "cefr_level", "days"}
 
-        day_keys = {"day", "title", "focus", "collocations", "learning_objective", "story_guidance", "kind", "pattern"}
+        day_keys = {
+            "day",
+            "title",
+            "focus",
+            "collocations",
+            "learning_objective",
+            "story_guidance",
+            "kind",
+            "pattern",
+            "group",
+            "group_title",
+            "order",
+        }
         assert set(data["days"][0].keys()) == day_keys
         assert set(CurriculumSourceDay.model_fields) == day_keys
 

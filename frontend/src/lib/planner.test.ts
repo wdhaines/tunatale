@@ -14,6 +14,8 @@ const batch = (start: number, count: number, firstPosition = start): ProposedBat
     story_guidance: "",
     kind: "thematic",
     pattern: "",
+    group: "",
+    group_title: "",
   })),
 });
 

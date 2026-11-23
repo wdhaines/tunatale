@@ -2781,6 +2781,16 @@ export interface components {
       /** Focus */
       focus: string;
       /**
+       * Group
+       * @default
+       */
+      group: string;
+      /**
+       * Group Title
+       * @default
+       */
+      group_title: string;
+      /**
        * Kind
        * @default thematic
        */
@@ -2826,10 +2836,22 @@ export interface components {
       day: number;
       /** Focus */
       focus: string;
+      /**
+       * Group
+       * @default
+       */
+      group: string;
+      /**
+       * Group Title
+       * @default
+       */
+      group_title: string;
       /** Kind */
       kind: string;
       /** Learning Objective */
       learning_objective: string;
+      /** Order */
+      order?: number | null;
       /** Pattern */
       pattern: string;
       /** Story Guidance */

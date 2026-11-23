@@ -67,6 +67,8 @@ const day = (n: number, position = n): DayPlan => ({
   story_guidance: "",
   kind: "thematic",
   pattern: "",
+  group: "",
+  group_title: "",
 });
 
 function makeCurriculum(overrides: Partial<CurriculumSummary> = {}): CurriculumSummary {

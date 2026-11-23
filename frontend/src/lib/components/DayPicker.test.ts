@@ -20,6 +20,8 @@ const day = (n: number, position = n) => ({
   story_guidance: "",
   kind: "thematic",
   pattern: "",
+  group: "",
+  group_title: "",
 });
 
 const curriculum: CurriculumSummary = {
@@ -237,6 +239,69 @@ describe("DayPicker", () => {
       const buttons = getAllByRole("button") as HTMLButtonElement[];
       expect(buttons[0].classList.contains("pulse")).toBe(false);
       expect(buttons[2].classList.contains("pulse")).toBe(false);
+    });
+  });
+
+  describe("book lessons (tunatale-cs3p)", () => {
+    // The backend sends days in the book's order; a block is a run of one group.
+    const inLesson = (n: number, position: number, lesson: number) => ({
+      ...day(n, position),
+      group: `wolff-${lesson}`,
+      group_title: `Lesson ${lesson}`,
+    });
+    const wolff: CurriculumSummary = {
+      ...curriculum,
+      days: [
+        inLesson(1, 1, 1),
+        inLesson(2, 2, 1),
+        inLesson(5, 3, 1),
+        inLesson(3, 4, 2),
+        inLesson(4, 5, 2),
+      ],
+    };
+
+    it("heads each lesson's run of days with its title and how many are listened", async () => {
+      const { listenedStore } = await import("#lib/stores/listened.svelte.js");
+      vi.mocked(listenedStore.has).mockImplementation((id: string) => id === "l1" || id === "l5");
+      const progress = new Map([
+        [1, "l1"],
+        [2, "l2"],
+        [5, "l5"],
+        [3, "l3"],
+      ]);
+      const { getAllByRole } = render(DayPicker, {
+        props: { curriculum: wolff, onSelectDay: vi.fn(), progress },
+      });
+      const headings = getAllByRole("heading");
+      expect(headings.map((h) => h.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+        "Lesson 1 2 of 3",
+        "Lesson 2 0 of 2",
+      ]);
+      // Each block holds its own days, in the order sent.
+      const blocks = headings.map((h) => h.closest("section")!);
+      const titles = (b: Element) => [...b.querySelectorAll("button")].map((x) => x.textContent);
+      expect(titles(blocks[0]).map((t) => t?.includes("Title 5"))).toEqual([false, false, true]);
+      expect(titles(blocks[1])).toHaveLength(2);
+      vi.mocked(listenedStore.has).mockReset().mockReturnValue(false);
+    });
+
+    it("draws no heading for an ungrouped curriculum", () => {
+      const { queryAllByRole, getAllByRole } = render(DayPicker, {
+        props: { curriculum, onSelectDay: vi.fn() },
+      });
+      expect(queryAllByRole("heading")).toHaveLength(0);
+      expect(getAllByRole("button")).toHaveLength(3);
+    });
+
+    it("falls back to the group key when a group has no title", () => {
+      const untitled: CurriculumSummary = {
+        ...curriculum,
+        days: [{ ...day(1), group: "unit-a", group_title: "" }],
+      };
+      const { getByRole } = render(DayPicker, {
+        props: { curriculum: untitled, onSelectDay: vi.fn() },
+      });
+      expect(getByRole("heading").textContent).toContain("unit-a");
     });
   });
 });
