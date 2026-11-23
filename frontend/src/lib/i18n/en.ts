@@ -9,6 +9,7 @@ export const en = {
   "lessonPlayer.keyPhrases": "Key Phrases",
   "lessonPlayer.dialogue": "Dialogue",
   "lessonPlayer.drill": "Drill",
+  "lessonPlayer.sectionLine.drill": "Drill {n} of {total}",
   "lessonPlayer.play": "Play",
   "lessonPlayer.pause": "Pause",
   "lessonPlayer.seek": "Seek",
