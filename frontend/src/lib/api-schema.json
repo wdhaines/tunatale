@@ -588,6 +588,16 @@
             "title": "Focus",
             "type": "string"
           },
+          "group": {
+            "default": "",
+            "title": "Group",
+            "type": "string"
+          },
+          "group_title": {
+            "default": "",
+            "title": "Group Title",
+            "type": "string"
+          },
           "kind": {
             "default": "thematic",
             "title": "Kind",
@@ -669,6 +679,16 @@
             "title": "Focus",
             "type": "string"
           },
+          "group": {
+            "default": "",
+            "title": "Group",
+            "type": "string"
+          },
+          "group_title": {
+            "default": "",
+            "title": "Group Title",
+            "type": "string"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"
@@ -676,6 +696,17 @@
           "learning_objective": {
             "title": "Learning Objective",
             "type": "string"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
           },
           "pattern": {
             "title": "Pattern",

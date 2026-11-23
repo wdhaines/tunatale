@@ -77,6 +77,8 @@ const day = (n: number, position = n) => ({
   story_guidance: "",
   kind: "thematic",
   pattern: "",
+  group: "",
+  group_title: "",
 });
 
 const curriculum = {

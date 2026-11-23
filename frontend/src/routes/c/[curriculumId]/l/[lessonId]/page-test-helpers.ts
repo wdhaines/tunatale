@@ -96,6 +96,8 @@ export const curriculum = {
       story_guidance: "",
       kind: "thematic",
       pattern: "",
+      group: "",
+      group_title: "",
     },
   ],
   proposed: null,

@@ -41,6 +41,25 @@
 		return '';
 	}
 
+	type Day = CurriculumSummary['days'][number];
+
+	// The backend sends days in display order (a book's own order when the plan
+	// carries one), so a block is a consecutive run of one group. An ungrouped
+	// curriculum is one block with no heading (tunatale-cs3p).
+	const blocks = $derived.by(() => {
+		const out: { group: string; title: string; days: Day[] }[] = [];
+		for (const d of curriculum.days) {
+			const last = out.at(-1);
+			if (last && last.group === d.group) last.days.push(d);
+			else out.push({ group: d.group, title: d.group_title || d.group, days: [d] });
+		}
+		return out;
+	});
+
+	function listenedIn(days: Day[]): number {
+		return days.filter(d => dayState(d.day) === 'listened').length;
+	}
+
 	async function handleClick(day: number) {
 		if (loadingDay !== null) return;
 		loadingDay = day;
@@ -52,8 +71,16 @@
 	}
 </script>
 
+{#each blocks as block, i (i)}
+<section class="block">
+	{#if block.group}
+		<h3 class="block-head">
+			<span>{block.title}</span>
+			<span class="block-progress">{t('curriculum.blockProgress', { done: listenedIn(block.days), total: block.days.length })}</span>
+		</h3>
+	{/if}
 <div class="days">
-	{#each curriculum.days as d (d.day)}
+	{#each block.days as d (d.day)}
 		{@const state = dayState(d.day)}
 		{@const pClass = pipelineClass(d.day)}
 		<button
@@ -78,8 +105,25 @@
 		</button>
 	{/each}
 </div>
+</section>
+{/each}
 
 <style>
+	.block-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 0.75rem;
+		margin: 1.25rem 0 0;
+		font-size: 1rem;
+		font-weight: 700;
+	}
+	.block-progress {
+		color: var(--color-muted);
+		font-size: 0.85rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
 	.due-badge {
 		display: inline-block;
 		margin-left: 0.5rem;

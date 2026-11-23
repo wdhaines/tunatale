@@ -647,6 +647,7 @@ export const en = {
   "curriculum.backToLessons": "Lessons",
   "curriculum.dayCount": { one: "{count} day", other: "{count} days" },
   "curriculum.planLink": "Plan next days",
+  "curriculum.blockProgress": "{done} of {total}",
   "curriculum.dueBadge": { one: "{count} card due", other: "{count} cards due" },
   "curriculum.delete": "Delete",
   "curriculum.confirmDelete": "Confirm delete",

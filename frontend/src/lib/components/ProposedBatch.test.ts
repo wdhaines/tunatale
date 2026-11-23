@@ -19,6 +19,8 @@ const proposed: Batch = {
       story_guidance: "haggling scene",
       kind: "thematic",
       pattern: "",
+      group: "",
+      group_title: "",
     },
     {
       day: 4,
@@ -30,6 +32,8 @@ const proposed: Batch = {
       story_guidance: "",
       kind: "thematic",
       pattern: "",
+      group: "",
+      group_title: "",
     },
   ],
 };

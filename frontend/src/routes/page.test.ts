@@ -56,6 +56,8 @@ const plan = (id: string, titles: Record<number, string>) => ({
     story_guidance: "",
     kind: "thematic",
     pattern: "",
+    group: "",
+    group_title: "",
   })),
 });
 

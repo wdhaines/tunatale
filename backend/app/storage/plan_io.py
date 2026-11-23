@@ -49,7 +49,19 @@ def validate_plan_days(days: object, *, start_day: int | None = None) -> None:
 
 
 _DAY_FIELDS = frozenset(
-    {"day", "title", "focus", "collocations", "learning_objective", "story_guidance", "kind", "pattern"}
+    {
+        "day",
+        "title",
+        "focus",
+        "collocations",
+        "learning_objective",
+        "story_guidance",
+        "kind",
+        "pattern",
+        "group",
+        "group_title",
+        "order",
+    }
 )
 
 
@@ -83,6 +95,14 @@ def _validate_one_day(entry: object, index: int) -> None:
         raise ValueError(f"{path}.kind must be one of {', '.join(DAY_KINDS)}")
     if not isinstance(entry.get("pattern", ""), str):
         raise ValueError(f"{path}.pattern must be a string")
+    # The book grouping (tunatale-cs3p), optional. ``order: null`` is what an
+    # exported ungrouped day carries, so it must import back.
+    for key in ("group", "group_title"):
+        if not isinstance(entry.get(key, ""), str):
+            raise ValueError(f"{path}.{key} must be a string")
+    order = entry.get("order")
+    if order is not None and (not isinstance(order, int) or isinstance(order, bool) or order < 1):
+        raise ValueError(f"{path}.order must be an integer >= 1")
 
 
 def _validate_collocations(entry: dict, path: str) -> None:

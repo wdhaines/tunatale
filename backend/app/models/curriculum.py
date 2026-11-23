@@ -35,10 +35,19 @@ class CurriculumDay:
     # The affix pattern the day's lesson drills (``AffixPattern.key``). It lives
     # on the DAY so that regenerating a grammar lesson rebuilds the same drill.
     pattern: str = ""
+    # The book lesson a day belongs to, and its place in the book's order
+    # (tunatale-cs3p). ``day`` cannot carry that order: the Wolff days were
+    # added dialogues first, practice later, and every lesson, listen and
+    # pipeline job hangs off the key. Empty / ``None`` = ungrouped / key order.
+    group: str = ""
+    group_title: str = ""
+    order: int | None = None
 
     def __post_init__(self) -> None:
         if self.day < 1:
             raise ValueError(f"day must be ≥ 1, got {self.day}")
+        if self.order is not None and self.order < 1:
+            raise ValueError(f"order must be ≥ 1, got {self.order}")
         if self.kind not in DAY_KINDS:
             raise ValueError(f"kind must be one of {', '.join(DAY_KINDS)}, got {self.kind!r}")
         # Also normalizes titles already persisted with a stale prefix, since
@@ -106,13 +115,23 @@ class Curriculum:
         """
         return tuple(self.metadata.get("review_requests", {}).get(str(day), ()))
 
+    def ordered_days(self) -> list[CurriculumDay]:
+        """The days in display order: by ``order`` where set, then the rest by key.
+
+        Days without an order go after the ordered ones, so a planner batch
+        committed after a book's hand-ordered days lands at the end. Ties (and
+        a curriculum with no orders at all) fall back to the ``day`` key.
+        """
+        return sorted(self.days, key=lambda d: (d.order is None, d.order or 0, d.day))
+
     def day_positions(self) -> dict[int, int]:
         """Map each ``day`` key to its 1-based position in the ordered plan.
 
         Day keys go gappy as days are deleted; positions never do. Every
-        learner-facing "Day N" comes from here so the sequence stays contiguous.
+        learner-facing "Day N" comes from here so the sequence stays contiguous,
+        and it follows ``ordered_days`` so it matches what the page lists.
         """
-        return {d.day: i for i, d in enumerate(sorted(self.days, key=lambda d: d.day), start=1)}
+        return {d.day: i for i, d in enumerate(self.ordered_days(), start=1)}
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
