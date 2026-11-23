@@ -165,6 +165,40 @@ class TestFetchForvoPronunciation:
         assert result.outcome is ForvoOutcome.REQUEST_FAILED
         assert result.is_failure is True
 
+    def test_404_with_word_route_marker_is_no_pronunciation(self):
+        """Forvo's own 'no such word' 404 page is an answer, not a failed request."""
+        body = '<div id="displayer" class="displayer-word"><div class="mainpage fullpage page_error404">'
+        client = self._client([httpx.Response(404, text=body)])
+        result = fetch_forvo_pronunciation("vann", language_code="no", http_client=client)
+        assert result.outcome is ForvoOutcome.NO_PRONUNCIATION
+        assert result.detail == "Forvo has no page for this word (HTTP 404)"
+        assert result.is_failure is False
+        assert result.audio is None
+
+    def test_404_without_word_route_marker_is_request_failed(self):
+        """A 404 lacking the marker may be a changed URL scheme — stay loud."""
+        body = '<div id="displayer"><div class="mainpage fullpage page_error404">'
+        client = self._client([httpx.Response(404, text=body)])
+        result = fetch_forvo_pronunciation("vann", language_code="no", http_client=client)
+        assert result.outcome is ForvoOutcome.REQUEST_FAILED
+        assert result.is_failure is True
+
+    def test_500_with_word_route_marker_is_request_failed(self):
+        """Only a 404 is the 'no such word' answer; the marker alone proves nothing."""
+        body = '<div id="displayer" class="displayer-word"><div class="mainpage fullpage page_error404">'
+        client = self._client([httpx.Response(500, text=body)])
+        result = fetch_forvo_pronunciation("vann", language_code="no", http_client=client)
+        assert result.outcome is ForvoOutcome.REQUEST_FAILED
+        assert result.is_failure is True
+
+    def test_challenge_with_word_route_marker_is_blocked(self):
+        """The anti-bot check runs first, even if the body carries the 404 marker."""
+        body = _CLOUDFLARE_BODY + '<div id="displayer" class="displayer-word">'
+        client = self._client([httpx.Response(403, text=body)])
+        result = fetch_forvo_pronunciation("vann", language_code="no", http_client=client)
+        assert result.outcome is ForvoOutcome.BLOCKED
+        assert result.is_failure is True
+
     def test_403_without_challenge_body_is_request_failed(self):
         """Only the challenge body earns BLOCKED; a bare 403 could be anything."""
         client = self._client([httpx.Response(403, text="<html>go away</html>")])

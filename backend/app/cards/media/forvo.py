@@ -139,12 +139,19 @@ class ForvoResult:
 # header because the challenge is served as an ordinary 403 body.
 _CHALLENGE_MARKERS = ("Just a moment...", "cf-browser-verification", "cf_chl_opt")
 
+# Only the /word/ route renders this class, so a 404 carrying it is Forvo
+# answering "no such word". A changed URL scheme (whose 404 lacks the class) or
+# the class disappearing stays REQUEST_FAILED and loud rather than going quiet.
+_WORD_ROUTE_MARKER = 'class="displayer-word"'
+
 
 def _classify_page(status: int, html: str, language_code: str) -> tuple[ForvoOutcome, str]:
     """Map a word-page response onto an outcome. Never raises."""
     if status != 200:
         if any(marker in html for marker in _CHALLENGE_MARKERS):
             return ForvoOutcome.BLOCKED, f"HTTP {status} with an anti-bot challenge page"
+        if status == 404 and _WORD_ROUTE_MARKER in html:
+            return ForvoOutcome.NO_PRONUNCIATION, "Forvo has no page for this word (HTTP 404)"
         return ForvoOutcome.REQUEST_FAILED, f"HTTP {status}"
     if f"language-container-{language_code}" in html:
         # Present but unparseable is handled by the caller via _extract_mp3_url.
