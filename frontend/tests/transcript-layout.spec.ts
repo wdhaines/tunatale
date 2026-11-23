@@ -113,7 +113,7 @@ test("transcript: the speaker chip sits beside its line on a phone, not above it
 	await page.setViewportSize(PHONE);
 
 	await page.goto(`/c/${await curriculumId(request)}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByTestId("day-1").click();
 	await page.getByRole("button", { name: "Read", exact: true }).click();
 
 	const line = page.locator(".dialogue-line").first();
@@ -196,7 +196,7 @@ test("transcript: the key-phrase play button sits beside its text on a phone", a
 	await stubAudio(page, "any");
 
 	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByTestId("day-1").click();
 	await page.getByRole("button", { name: "Read", exact: true }).click();
 
 	const row = page.locator(".key-phrases-list li").first();
@@ -234,7 +234,7 @@ test("transcript: the desktop key-phrase button keeps its full-height target", a
 	await stubAudio(page, "any");
 
 	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByTestId("day-1").click();
 	await page.getByRole("button", { name: "Read", exact: true }).click();
 
 	const row = page.locator(".key-phrases-list li").first();

@@ -95,7 +95,7 @@ async function curriculumId(
 
 async function openLesson(page: import("@playwright/test").Page, cid: string) {
 	await page.goto(`/c/${cid}`);
-	await page.getByRole("button", { name: "Day 1" }).click();
+	await page.getByTestId("day-1").click();
 	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
 	const card = page.locator(".player-card");
 	await expect(card.locator(".mastery-line")).toBeVisible({ timeout: 10000 });
@@ -238,7 +238,7 @@ for (const { width, fourAcross } of [
 		const cid = await curriculumId(request);
 		await stubFullAudio(page);
 		await page.goto(`/c/${cid}`);
-		await page.getByRole("button", { name: "Day 1" }).click();
+		await page.getByTestId("day-1").click();
 
 		const row = page.locator(".player-card .controls-row");
 		const speed = row.locator(".enunciation-btn");
@@ -302,7 +302,7 @@ for (const width of [412, 360, 320]) {
 		const cid = await curriculumId(request);
 		await stubFullAudio(page);
 		await page.goto(`/c/${cid}`);
-		await page.getByRole("button", { name: "Day 1" }).click();
+		await page.getByTestId("day-1").click();
 
 		const row = page.locator(".player-card .sentence-row");
 		// If this times out the stub stopped working — do NOT relax it, or the
@@ -427,7 +427,7 @@ test.describe("Repeat on a touch screen", () => {
 			await route.continue();
 		});
 		await page.goto(`/c/${cid}`);
-		await page.getByRole("button", { name: "Day 1" }).click();
+		await page.getByTestId("day-1").click();
 
 		const repeat = page.locator(".player-card .sentence-row button[aria-pressed]");
 		await expect(repeat).toBeVisible({ timeout: 15000 });
@@ -450,7 +450,7 @@ test.describe("Repeat on a touch screen", () => {
 		// Proves the emulation took: with a real hover device there is no sticky
 		// hover, and this test would pass on the unfixed CSS.
 		expect(await page.evaluate(() => matchMedia("(hover: hover)").matches)).toBe(false);
-		await page.getByRole("button", { name: "Day 1" }).click();
+		await page.getByTestId("day-1").click();
 
 		const repeat = page.locator(".player-card .sentence-row button[aria-pressed]");
 		await expect(repeat).toBeVisible({ timeout: 15000 });

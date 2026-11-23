@@ -159,7 +159,7 @@ for (const [name, width, height] of [
     await page.setViewportSize({ width, height });
     await stubAudio(page);
     await page.goto(`/c/${await curriculumId(request)}`);
-    await page.getByRole("button", { name: "Day 1" }).click();
+    await page.getByTestId("day-1").click();
     await page.getByRole("button", { name: "Read", exact: true }).click();
 
     const card = page.locator(".player-card");

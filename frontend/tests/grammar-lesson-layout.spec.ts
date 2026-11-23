@@ -214,7 +214,7 @@ for (const [name, width, height] of [
     await page.setViewportSize({ width, height });
     await stubGrammar(page);
     await page.goto(`/c/${await curriculumId(request)}`);
-    await page.getByRole("button", { name: "Day 1" }).click();
+    await page.getByTestId("day-1").click();
 
     const rows = page.locator(".drill-root");
     await expect(rows).toHaveCount(2, { timeout: 15000 });
@@ -279,7 +279,7 @@ for (const [name, width, height] of [
       });
     });
     await page.goto(`/c/${await curriculumId(request)}`);
-    await page.getByRole("button", { name: "Day 1" }).click();
+    await page.getByTestId("day-1").click();
     await page.getByRole("button", { name: /^Read$/ }).click();
 
     const rows = page.locator(".drill-root");
@@ -321,7 +321,7 @@ for (const [name, width, height] of [
       }),
     );
     await page.goto(`/c/${await curriculumId(request)}`);
-    await page.getByRole("button", { name: "Day 1" }).click();
+    await page.getByTestId("day-1").click();
     await page.getByRole("button", { name: "Mark as Listened" }).click();
 
     const group = page.locator(".affix-group");

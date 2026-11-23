@@ -4083,13 +4083,13 @@ for t, n in sorted(c.items()): print(f'{n:3d}  {t}')
 ```
 
 ```output
-112 operations
+113 operations
   9  (untagged)
   3  admin
   3  anki
   6  audio
   1  client-log
- 16  curriculum
+ 17  curriculum
   6  generation
   4  llm
   3  pipeline
@@ -4181,6 +4181,7 @@ curr GET/DELETE  /c/{curriculum_id}
 curr DELETE      /c/{curriculum_id}/days/{day}
 curr GET         /c/{curriculum_id}/days/{day}/lesson
 curr POST        /c/{curriculum_id}/generation-mode
+curr GET         /c/{curriculum_id}/outline
 curr POST        /c/{curriculum_id}/plan/commit
 curr POST        /c/{curriculum_id}/plan/feedback
 curr POST        /c/{curriculum_id}/plan/reset
@@ -5093,7 +5094,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts grade-page-layout.spec.ts grade-say-english-hidden.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts read-cloze.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts curriculum-page-layout.spec.ts grade-page-layout.spec.ts grade-say-english-hidden.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts read-cloze.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;

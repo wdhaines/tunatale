@@ -82,7 +82,7 @@ test.describe('Read › Cloze…, real touch', () => {
 		const linesUrl = `${BACKEND}/api/srs/content/${lessonId}/sentence-lines`;
 
 		await page.goto(`/c/${curriculumId}`);
-		await page.getByRole('button', { name: 'Day 1' }).click();
+		await page.getByTestId('day-1').click();
 		await expect(page.getByRole('button', { name: 'Render Audio' })).toBeVisible({ timeout: 15000 });
 		await page.getByRole('button', { name: 'Read', exact: true }).click();
 

@@ -590,6 +590,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/curriculum/{curriculum_id}/outline": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Curriculum Outline
+     * @description What each day's lesson holds, in display order, for rows that open in place.
+     *
+     *     Separate from ``/progress`` because it reads every lesson's body, and the
+     *     home page's Continue card polls progress for a single lesson id.
+     */
+    get: operations["get_curriculum_outline_api_curriculum__curriculum_id__outline_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/curriculum/{curriculum_id}/pipeline": {
     parameters: {
       query?: never;
@@ -2766,6 +2789,21 @@ export interface components {
       translation: string;
     };
     /**
+     * CurriculumDayOutline
+     * @description One element of the response of GET /api/curriculum/{curriculum_id}/outline.
+     *
+     *     What the day's latest lesson holds (``app.models.lesson.lesson_outline``):
+     *     ``parts`` from ``key_phrases`` / ``dialogue`` / ``drill``, in lesson order.
+     */
+    CurriculumDayOutline: {
+      /** Day */
+      day: number;
+      /** Drills */
+      drills: components["schemas"]["DrillOutline"][];
+      /** Parts */
+      parts: string[];
+    };
+    /**
      * CurriculumDayWithPosition
      * @description One element of GetCurriculumResponse.days / .proposed.days.
      *
@@ -2968,6 +3006,24 @@ export interface components {
       new_state: string;
       /** Status */
       status: string;
+    };
+    /**
+     * DrillOutline
+     * @description One drill a story authored, and how many steps it runs.
+     *
+     *     ``kind`` is ``substitution`` / ``transformation`` / ``question_answer``.
+     *     Only a substitution has a ``model`` sentence; a transformation has an
+     *     ``instruction``; either may be "".
+     */
+    DrillOutline: {
+      /** Instruction */
+      instruction: string;
+      /** Kind */
+      kind: string;
+      /** Model */
+      model: string;
+      /** Steps */
+      steps: number;
     };
     /** DrillRequest */
     DrillRequest: {
@@ -6427,6 +6483,37 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SetGenerationModeResponse"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  get_curriculum_outline_api_curriculum__curriculum_id__outline_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        curriculum_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CurriculumDayOutline"][];
         };
       };
       /** @description Validation Error */

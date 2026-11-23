@@ -570,6 +570,36 @@
         "title": "CreateSenseCardRequest",
         "type": "object"
       },
+      "CurriculumDayOutline": {
+        "description": "One element of the response of GET /api/curriculum/{curriculum_id}/outline.\n\nWhat the day's latest lesson holds (``app.models.lesson.lesson_outline``):\n``parts`` from ``key_phrases`` / ``dialogue`` / ``drill``, in lesson order.",
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "drills": {
+            "items": {
+              "$ref": "#/components/schemas/DrillOutline"
+            },
+            "title": "Drills",
+            "type": "array"
+          },
+          "parts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Parts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "day",
+          "parts",
+          "drills"
+        ],
+        "title": "CurriculumDayOutline",
+        "type": "object"
+      },
       "CurriculumDayWithPosition": {
         "description": "One element of GetCurriculumResponse.days / .proposed.days.\n\nMirrors ``CurriculumDay`` (``app/models/curriculum.py``) plus ``position``,\nthe handler-computed contiguous display ordinal (``Curriculum.day_positions()``)\n\u2014 as opposed to ``day``, a stable but possibly-gappy key.",
         "properties": {
@@ -964,6 +994,35 @@
           "new_state"
         ],
         "title": "DrillFeedbackResponse",
+        "type": "object"
+      },
+      "DrillOutline": {
+        "description": "One drill a story authored, and how many steps it runs.\n\n``kind`` is ``substitution`` / ``transformation`` / ``question_answer``.\nOnly a substitution has a ``model`` sentence; a transformation has an\n``instruction``; either may be \"\".",
+        "properties": {
+          "instruction": {
+            "title": "Instruction",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "steps": {
+            "title": "Steps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "model",
+          "instruction",
+          "steps"
+        ],
+        "title": "DrillOutline",
         "type": "object"
       },
       "DrillRequest": {
@@ -8425,6 +8484,53 @@
           }
         },
         "summary": "Set Generation Mode",
+        "tags": [
+          "curriculum"
+        ]
+      }
+    },
+    "/api/curriculum/{curriculum_id}/outline": {
+      "get": {
+        "description": "What each day's lesson holds, in display order, for rows that open in place.\n\nSeparate from ``/progress`` because it reads every lesson's body, and the\nhome page's Continue card polls progress for a single lesson id.",
+        "operationId": "get_curriculum_outline_api_curriculum__curriculum_id__outline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "curriculum_id",
+            "required": true,
+            "schema": {
+              "title": "Curriculum Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CurriculumDayOutline"
+                  },
+                  "title": "Response Get Curriculum Outline Api Curriculum  Curriculum Id  Outline Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Curriculum Outline",
         "tags": [
           "curriculum"
         ]
