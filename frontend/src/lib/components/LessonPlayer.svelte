@@ -15,6 +15,7 @@
 	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
 	import { captionBlurPref } from '#lib/stores/captionBlurPref.svelte.js';
 	import { splitCaption, activeChunkIndex } from '#lib/captionChunks.js';
+	import { sectionLine } from '#lib/playback/sectionLine.js';
 	import type { SectionType } from '#lib/sectionTypes.js';
 	import { createWakeLock } from '#lib/voice/wakeLock.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -202,6 +203,7 @@
 
 	// --- Chunked caption state ---
 	const captionChunks = $derived(ctrl.currentCue ? splitCaption(ctrl.currentCue.text) : []);
+	const sectionLineText = $derived(sectionLine(ctrl.activeCues, ctrl.currentCue, ctrl.currentSectionTitle));
 	const captionIdx = $derived(
 		ctrl.currentCue
 			? activeChunkIndex(captionChunks, ctrl.currentCue.start_ms, ctrl.currentCue.end_ms, ctrl.currentTime * 1000)
@@ -592,6 +594,13 @@
 		</div>
 	{/if}
 
+	<!-- What is playing, by name: "Drill 1 of 2 · Nia siya dinhi." (tunatale-cs3p
+	     slice 4, the owner's one approved change to Listen). Text only, never a
+	     control. Read omits it: the transcript says where you are there. -->
+	{#if hasCues && !compact && sectionLineText}
+		<div class="section-line">{sectionLineText}</div>
+	{/if}
+
 	{#if collapsed}
 		<!-- Collapsed: ONE row instead of two. transport (44px) + scrubber (38px)
 		     was the largest remaining block in the card, and a collapsed player
@@ -776,6 +785,12 @@
 		.player {
 			gap: 0.5rem;
 		}
+	}
+
+	.section-line {
+		font-size: 0.85rem;
+		color: var(--color-muted);
+		overflow-wrap: anywhere;
 	}
 
 	.current-line {
