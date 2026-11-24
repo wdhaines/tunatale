@@ -476,8 +476,13 @@
 
 	     Was a muted line under the title plus a button in the collapsed tools
 	     card, easy to miss for weeks (2026-09-29); now the shared Banner, like
-	     the LLM-failure and preset-change banners. -->
-	{#if data.lesson.gloss_entry_count === 0}
+	     the LLM-failure and preset-change banners.
+
+	     A drill-only lesson stores 0 too, and there it means "no dialogue to
+	     gloss" (ensure_dialogue_glosses returns before any call), not a loss: on
+	     2026-11-24 all 19 banners on the live Cebuano instance were practice
+	     lessons, with a Restore button offering an LLM call on nothing. -->
+	{#if data.lesson.gloss_entry_count === 0 && !isDrillOnly(data.lesson)}
 		<Banner
 			tone="warning"
 			actionLabel={t('lessonPage.restoreGlosses')}

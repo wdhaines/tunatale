@@ -816,6 +816,43 @@ describe("a lesson that lost its glosses says so", () => {
     expect(queryByText(/no hover translations/i)).toBeNull();
   });
 
+  // A drill-only lesson (a Wolff practice lesson, a grammar lesson) has no
+  // dialogue, so the gloss pass has nothing to gloss and the import stores a
+  // count of 0. That zero is "nothing to gloss", not "the pass came back empty":
+  // on 2026-11-24 every banner on the live Cebuano instance (19 lessons) was this
+  // case, and its "Restore glosses" button offered an LLM call with no input.
+  const drillSection = {
+    type: "affix_drill",
+    phrases: [{ text: "Nia siya dinhi.", role: "answer", language_code: "ceb", voice_id: "v1" }],
+  };
+
+  it("says nothing on a drill-only lesson, which has no dialogue to gloss", () => {
+    const drillOnly = {
+      ...lesson,
+      sections: [drillSection],
+      key_phrases: [],
+      gloss_entry_count: 0,
+    };
+    const { queryByText } = render(Page, {
+      props: { data: { curriculum, lesson: drillOnly, audio: null, transcript } },
+    });
+    expect(queryByText(/no hover translations/i)).toBeNull();
+  });
+
+  it("still warns on a story lesson that ends with a drill and lost its glosses", () => {
+    // The guard is "drill ONLY", not "has a drill": a story that ends in a drill
+    // has dialogue, so its measured zero is a real loss.
+    const storyWithDrill = {
+      ...lesson,
+      sections: [...lesson.sections, drillSection],
+      gloss_entry_count: 0,
+    };
+    const { getByText } = render(Page, {
+      props: { data: { curriculum, lesson: storyWithDrill, audio: null, transcript } },
+    });
+    expect(getByText(/no hover translations/i)).toBeTruthy();
+  });
+
   it("says nothing when the count field is absent entirely", () => {
     // A lesson stored before the count existed carries no field at all — the
     // page fixture's default. It must render exactly like null: no fabrication.
