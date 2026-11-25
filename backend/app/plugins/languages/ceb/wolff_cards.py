@@ -439,6 +439,25 @@ def _licenses(cls: str) -> set[tuple[str, str]]:
 _PLACEHOLDERS = {"s.t": "something", "s.o": "someone", "s.w": "somewhere", "k.o": "a kind of"}
 
 
+def _is_idiom(sentence: str) -> bool:
+    # Wolff's idiom: a Cebuano phrase with "—" standing for the head ("walay — illiterate"),
+    # or a form suffix ("-ng tabúnun the Philippines"). A dash inside a word is no idiom.
+    return sentence.startswith("-") or re.search(r"(?:^|\s)—(?=[\s,]|$)", sentence) is not None
+
+
+def sense_before_idiom(gloss: str) -> str:
+    """*gloss* up to an idiom Wolff runs on after the sense ('salt. walay — without substance'
+    -> 'salt'; tunatale-h0q3.77: such idioms stay in Details, not Meaning). A gloss that IS an
+    idiom ('sa — in former times') is its own sense and stays whole."""
+    sentences = re.split(r"(?<=\.)\s+", gloss)
+    cut = next((i for i, sentence in enumerate(sentences) if _is_idiom(sentence)), 0)
+    if not cut:
+        return gloss
+    sense = " ".join(sentences[:cut])
+    # the sentence's stop goes; an abbreviation's ('s.t.') stays
+    return sense if re.search(r"\b[a-z]\.[a-z]\.$", sense) else sense.removesuffix(".")
+
+
 def _plain(gloss: str) -> str:
     """Wolff's gloss with his placeholders said in words mid-phrase ('together with s.o. else'
     -> 'someone else') and dropped at the end of one ('write s.t.' -> 'write'), and no
@@ -1400,7 +1419,7 @@ class WolffLexicon:
         senses = self._led_senses(hit)
         if verb_shown and senses and senses[0]["pos"] != "v":
             senses = [s for s in senses if s["pos"] != "v"]  # the verb's own glosses lead its label
-        glosses = list(dict.fromkeys(s["gloss"] for s in senses if s["gloss"]))
+        glosses = list(dict.fromkeys(g for s in senses if (g := sense_before_idiom(s["gloss"] or ""))))
         more = "; …" if len(glosses) > _MEANING_SENSES else ""
         meaning = html.escape("; ".join(glosses[:_MEANING_SENSES])) + more
         row = hit.decoded
@@ -1611,6 +1630,8 @@ class WolffLexicon:
             (h.surface, gloss)
             for h in self._hits(cebuano.split(",")[0].strip())
             if (h.entry, h.form) != (hit.entry, hit.form)
+            # a † addendum adds senses to the same word, not another word (tunatale-h0q3.76)
+            and not self.entries[h.entry]["text"].startswith("†")
             # a pointer whose target gives no gloss has nothing to tell apart
             and (gloss := next((s["gloss"] for s in self._senses(h) if s["gloss"]), ""))
         ]

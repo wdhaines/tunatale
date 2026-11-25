@@ -36,6 +36,7 @@ from app.plugins.languages.ceb.wolff_cards import (
     load_lexicon,
     load_sense_lead,
     onto_card,
+    sense_before_idiom,
 )
 from app.plugins.languages.ceb.wolff_dictionary import parse_entry, strip_marks
 
@@ -1315,3 +1316,77 @@ def test_the_owners_new_glosses_keep_their_entries(committed):
 def test_D2_prefix_none_for_pronoun_linker_words(committed):
     assert committed.prefix("ilang") is None
     assert committed.prefix("kaming") is None
+
+
+# Wolff's † addenda (tunatale-h0q3.76, owner 2026-11-25: drop them). A † paragraph adds senses
+# to the SAME word ("† additions added to the entry on pp. 1140 ff."), so it is not another
+# word to tell the card apart from. The control: anak still lists ának, a main-dictionary entry.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "addendum", "kept"),
+    [
+        ("anak", "child", "<b>anák</b> — sa salà", "<b>ának</b> in prayers: Son of God"),
+        ("palit", "buy", "<b>palít</b> make a sale with a customer", "<b>pálit</b> sales"),
+    ],
+)
+def test_a_dagger_addendum_is_not_another_word(committed, word, english, addendum, kept):
+    f = committed.card_fields(word, english)
+    confused = f.details.split("Not to be confused with")[1]
+    assert addendum not in confused
+    assert kept in confused
+
+
+# Wolff's run-on idioms (tunatale-h0q3.77, owner 2026-11-25: cut them from Meaning). A sense
+# reads "salt. walay — without substance"; Meaning keeps "salt", and the idiom stays in the
+# Details sense list and the Dictionary entry.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "meaning", "idiom"),
+    [
+        ("salamat", "thanks", "thanks, thank you", "daghang — thanks a lot"),
+        ("asin", "salt", "salt", "walay — without substance, unbelievable"),
+        ("a", "letter A", "letter A", "walay — illiterate"),
+    ],
+)
+def test_meaning_stops_before_a_run_on_idiom(committed, word, english, meaning, idiom):
+    f = committed.card_fields(word, english)
+    assert f.meaning == meaning
+    assert idiom in f.details
+    assert idiom in f.dictionary_entry
+
+
+def test_meaning_keeps_the_senses_after_an_idiom(committed):
+    # iro's later senses are its own, not the idiom's
+    f = committed.card_fields("iro", "dog")
+    assert f.meaning.startswith("dog; greedy to the point of eating food")
+    assert "suul sa —" not in f.meaning
+
+
+def test_a_sense_that_is_only_an_idiom_stays(committed):
+    # the control: palit's '— ug áway, burúka ...' is a sense of its own (as una's, above)
+    assert committed.card_fields("palit", "buy").meaning.startswith("buy; — ug áway, burúka get into trouble")
+
+
+@pytest.mark.parametrize(
+    ("gloss", "kept"),
+    [
+        ("salt. walay — without substance", "salt"),
+        ("carry s.t. out. walay — x", "carry s.t. out"),
+        ("buy s.t. — ug áway", "buy s.t."),  # the abbreviation keeps its stop
+        ("k.o. love song in a minor key. míngaw pay (pa sa) — a lacking in noise", "k.o. love song in a minor key"),
+        ("Land of Promise (Mindanao). -ng tabúnun the Philippines", "Land of Promise (Mindanao)"),
+        # a gloss that is itself an idiom stays whole
+        ("walay — without restraint", "walay — without restraint"),
+        ("— ug áway get into trouble", "— ug áway get into trouble"),
+        # controls: no idiom, an abbreviation's period, a dash inside a word
+        ("go into a house; proceed to carry s.t. out", "go into a house; proceed to carry s.t. out"),
+        (
+            "saxophone (word play on supsup and saksupun—humorous)",
+            "saxophone (word play on supsup and saksupun—humorous)",
+        ),
+    ],
+)
+def test_sense_before_idiom(gloss, kept):
+    assert sense_before_idiom(gloss) == kept
