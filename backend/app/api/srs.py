@@ -815,7 +815,15 @@ def _resolve_gloss_translation(
     the same glosses to display them, but it creates nothing and re-runs every
     time the modal opens — warning there would repeat indefinitely and claim a
     card was created when none was.
+
+    A listed pronoun's gloss is the pronoun table's, whatever surface it came
+    from, under the same tag gate as ``POST /items``. Cebuano ``ila`` was minted
+    from the surface ``ilang`` as "their (ila + the linker -ng)": the lesson's
+    override runs over surfaces, and ``ila`` was never one (tunatale-v2tz).
     """
+    upos = _headword_upos(lemma, first_surface, surfaces, surface_upos) if surface_upos is not None else None
+    if upos in (None, "", "PRON") and (table := pronoun_gloss(lemma, language_code)):
+        return table
     for key in [lemma, first_surface.lower(), *sorted(s.lower() for s in surfaces)]:
         gloss = token_glosses.get(key)
         if gloss:
