@@ -6,6 +6,12 @@
 # Why: the owner's bay card (2026-11-16) is abáy's short form, the right entry, but Meaning led with
 # v 1 'move along together' and the form of address (n 3, n 3a) fell off the end.
 #
-# Columns: the card's word; the sense's part of speech; its number as Wolff prints it.
+# Columns: the card's word; the sense's part of speech, or - where Wolff prints none; its number as
+# Wolff prints it. A word written with Wolff's marks names that stress form alone: dayón leads the
+# 'come in' card (dáyun's (→) form) and leaves dáyon 'immediately' in Wolff's order.
 bay	n	3
 bay	n	3a
+# The owner's 'come in, go ahead' card (tunatale-tofg.6, approved 2026-11-25) led with (→) 1 'for s.t.
+# bad to come into being'. Its senses are 3a 'go into a house' (Dayun lang, Come on in!) and 2 'proceed'.
+dayón	-	3a
+dayón	-	2
