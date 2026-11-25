@@ -77,6 +77,16 @@ TAG="$1"
 # unanswerable later, and the workflow tags images with the full SHA anyway.
 [[ "$TAG" =~ ^[0-9a-f]{40}$ ]] || die "expected a full 40-character commit SHA, got '$TAG'"
 
+# The Wolff lexicon is a committed build artifact whose inputs live off-repo, so
+# CI cannot rebuild it; check freshness here on the laptop (owner option (c),
+# tunatale-h0q3.36). Only meaningful when deploying the exact tree we are in.
+if [ "$(git -C "$REPO_ROOT" rev-parse HEAD)" = "$TAG" ]; then
+  (cd "$REPO_ROOT/backend" && uv run python scripts/check_wolff_lexicon_fresh.py) \
+    || die "the Wolff lexicon is stale; rebuild it (command above), commit, and deploy that commit"
+else
+  echo "deploy: lexicon freshness NOT checked: HEAD is $(git -C "$REPO_ROOT" rev-parse --short HEAD), deploying $(git -C "$REPO_ROOT" rev-parse --short "$TAG")" >&2
+fi
+
 # Warn, don't refuse: an older SHA is a rollback, and the commit may legitimately
 # not be in this checkout (a colleague's build, a fetch you haven't done).
 if git -C "$REPO_ROOT" cat-file -e "${TAG}^{commit}" 2>/dev/null; then
