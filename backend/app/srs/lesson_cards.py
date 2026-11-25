@@ -114,14 +114,17 @@ def _cue(cue: dict | None) -> Cue | None:
     )
 
 
-def validate_cards(cards: object, *, line_texts: set[str], language: Language | None, drill_count: int = 0) -> None:
+def validate_cards(cards: object, *, scene_texts: list[str], language: Language | None, drill_count: int = 0) -> None:
     """Refuse a malformed ``cards`` block with a message naming the path (``cards.items[2].role ...``).
 
-    *line_texts* are the story's scene line texts (a card's ``spoken`` must be one);
+    *scene_texts* are the story's scene line texts in story order: position N is
+    ``scene_texts[N - 1]``. A card's ``spoken`` must be one of them, and a
+    sentence item's ``spoken`` must be the text at its ``line``.
     *drill_count* is how many ``drills`` the story has (a ``drill`` item names one);
     with a *language*, every ``role`` must be a key of its ``tts_voice_map``.
     Called by ``lesson_io.validate_story`` when the story has a ``cards`` key.
     """
+    line_texts = set(scene_texts)
     if not isinstance(cards, dict):
         raise ValueError("cards must be an object")
     card_set = cards.get("set")
@@ -145,7 +148,7 @@ def validate_cards(cards: object, *, line_texts: set[str], language: Language | 
         elif kind == "drill":
             _validate_drill(item, path, language, drill_count, seen_drills)
         else:
-            _validate_sentence(item, path, line_texts, language, seen_lines)
+            _validate_sentence(item, path, line_texts, scene_texts, language, seen_lines)
 
 
 def _non_empty_str(value: object) -> bool:
@@ -207,6 +210,7 @@ def _validate_sentence(
     item: dict,
     path: str,
     line_texts: set[str],
+    scene_texts: list[str],
     language: Language | None,
     seen_lines: set[int],
 ) -> None:
@@ -221,6 +225,12 @@ def _validate_sentence(
     _validate_strings(item, _SENTENCE_FIELDS, path)
     _validate_role(item["role"], f"{path}.role", language)
     _validate_spoken(item["spoken"], f"{path}.spoken", line_texts)
+    if line > len(scene_texts):
+        raise ValueError(f"{path}.line {line} is past the story's last line ({len(scene_texts)})")
+    if scene_texts[line - 1] != item["spoken"]:
+        raise ValueError(
+            f"{path}.line {line} is scene line {scene_texts[line - 1]!r}, not its spoken {item['spoken']!r}"
+        )
     _validate_glosses(item.get("glosses"), f"{path}.glosses")
     cue = item["cue"]
     if cue is not None and not isinstance(cue, dict):

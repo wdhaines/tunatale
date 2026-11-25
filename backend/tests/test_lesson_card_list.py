@@ -216,6 +216,25 @@ class TestValidateCards:
         with pytest.raises(ValueError, match=r"^cards\.items\[3\]\.line 2 is already listed"):
             validate_story(story)
 
+    def test_a_sentence_line_must_not_pass_the_storys_last_line(self, language_no):
+        story = _story()
+        story["cards"]["items"][3]["line"] = 4
+        with pytest.raises(ValueError, match=r"cards\.items\[3\]\.line 4 is past the story's last line \(3\)"):
+            validate_story(story, language=language_no)
+
+    def test_a_sentence_line_must_match_its_spoken_scene_line(self, language_no):
+        story = _story()
+        story["cards"]["items"][2]["line"] = 3
+        story["cards"]["items"][3]["line"] = 2
+        with pytest.raises(
+            ValueError,
+            match=r"cards\.items\[2\]\.line 3 is scene line 'Bra, takk, og du\?', not its spoken 'Hei, hvordan gar det\?'",
+        ):
+            validate_story(story, language=language_no)
+
+    def test_each_sentence_line_is_its_spoken_scene_line(self, language_no):
+        validate_story(_story(), language=language_no)
+
     def test_unknown_role_is_refused_when_language_given(self, language_no):
         story = _story()
         _item(story, 2)["role"] = "robot-8"
