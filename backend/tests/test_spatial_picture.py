@@ -80,6 +80,8 @@ class TestDataFiles:
             "of_this_mine": ["iri", "niari", "niiri"],
             "of_this_both": ["ani", "ini", "niani", "niini"],
             "of_that_yours": ["ana", "niana"],
+            # Wolff 1A: 'to' is the short form of kádto (tunatale-tofg.19, design R8).
+            "that_far": ["kadto", "to"],
         },
     }
 

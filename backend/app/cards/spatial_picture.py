@@ -132,6 +132,38 @@ def load_spatial_senses(language_code: str) -> dict[str, tuple[str, ...]]:
     return result
 
 
+@cache
+def load_spatial_second_senses(language_code: str) -> dict[tuple[str, str], str]:
+    """Each word's second senses, ``(word, disambig_key)`` to its concept (tunatale-tofg.19).
+
+    For a word whose main sense is NOT spatial, so it cannot be in ``words``
+    (listing it would veto its cloze): Cebuano ``ni`` is the name marker first and
+    the short form of ``kini`` second. Only a card carrying that key is drawn.
+    """
+    path = get_spatial_path(language_code)
+    if path is None or not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        (str(word).casefold(), str(key)): str(concept)
+        for word, senses in data.get("senses", {}).items()
+        for key, concept in senses.items()
+    }
+
+
+@cache
+def load_spatial_short_forms(language_code: str) -> tuple[tuple[str, str, str, str], ...]:
+    """The table's short demonstratives, ``(short, short_key, long, long_key)``, each with a card of its own."""
+    path = get_spatial_path(language_code)
+    if path is None or not path.exists():
+        return ()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(
+        (str(row["short"]), str(row.get("short_key", "")), str(row["long"]), str(row.get("long_key", "")))
+        for row in data.get("short_forms", [])
+    )
+
+
 def is_spatial_word(text: str, language_code: str) -> bool:
     """True if *text* is one of *language_code*'s drawn spatial words."""
     return text.strip().casefold() in load_spatial_words(language_code)
@@ -142,13 +174,16 @@ def gloss_matches(concept: str, gloss: str) -> bool:
     return bool(_CONCEPT_GLOSSES[concept] & {w.casefold() for w in _WORD.findall(gloss)})
 
 
-def spatial_picture(text: str, language_code: str, gloss: str) -> NumberPicture | None:
+def spatial_picture(text: str, language_code: str, gloss: str, disambig: str = "") -> NumberPicture | None:
     """The drawn picture for spatial word *text*, or ``None``.
 
     ``None`` means "take the route you were already on": not a spatial word, or
-    one whose *gloss* does not confirm the spatial sense.
+    one whose *gloss* does not confirm the spatial sense. A card keyed with a
+    second sense (:func:`load_spatial_second_senses`) is drawn as that sense.
     """
-    senses = load_spatial_senses(language_code).get(text.strip().casefold(), ())
+    key = text.strip().casefold()
+    second = load_spatial_second_senses(language_code).get((key, disambig.strip()))
+    senses = (second,) if second else load_spatial_senses(language_code).get(key, ())
     concept = next((c for c in senses if gloss_matches(c, gloss)), None)
     if concept is None:
         return None

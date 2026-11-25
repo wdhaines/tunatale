@@ -8,7 +8,8 @@ its own grammar has its own card (the pronoun clitics, Wolff, Beginning Cebuano
 back.
 
 The pairs come from two tables: ``spelling_variants.tsv`` (``kind`` short or long)
-and the pronoun table (``short_forms``). The marks are Wolff's: a pair spelled as
+the pronoun table's ``short_forms`` and the
+demonstratives' (``spatial.json``, tunatale-tofg.19). The marks are Wolff's: a pair spelled as
 one comma front comes back marked ('dili, di' -> 'dílì, dì').
 """
 
@@ -19,6 +20,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.cards.pronoun_picture import load_senses, load_short_forms
+from app.cards.spatial_picture import load_spatial_second_senses, load_spatial_short_forms
 from app.languages import ShortFormPair
 
 _CODE = "ceb"
@@ -39,7 +41,7 @@ def short_form_pairs() -> tuple[ShortFormPair, ...]:
     ]
     own = [
         ShortFormPair(short=short, long=long, shares_card=False, short_key=short_key, long_key=long_key)
-        for short, short_key, long, long_key in load_short_forms(_CODE)
+        for short, short_key, long, long_key in (*load_short_forms(_CODE), *load_spatial_short_forms(_CODE))
     ]
     return (*shared, *own)
 
@@ -62,7 +64,7 @@ def short_form_line(word: str, english: str, disambig: str = "") -> str | None:
     """
     text = word.split(",")[0].strip().casefold()
     key = disambig.strip()
-    if (text, key) not in load_senses(_CODE):
+    if (text, key) not in load_senses(_CODE) and (text, key) not in load_spatial_second_senses(_CODE):
         key = ""
     for pair in short_form_pairs():
         if (pair.long, pair.long_key) == (text, key):

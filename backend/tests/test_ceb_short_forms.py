@@ -115,7 +115,8 @@ def test_a_short_form_in_no_table_takes_wolffs_pointer(word, english, line):
     [
         ("maayo", "good"),  # 'maáyu see áyu' lands on a sub-entry spelled the same
         ("palihug", "please"),  # 'see *líhug' points at a root, not a fuller word
-        ("kadto", "that one"),  # the long word: Wolff's 'short form: tu' is not named back
+        ("karon", "now"),  # the long word: Wolff's 'short form: ron' is not named back
+        # (kadto left this list: the table pairs it with 'to', design R6, tunatale-tofg.19)
         ("kawhaan", "twenty"),  # 'see duha' points at the root, not a fuller word
         ("gilayon", "immediately"),  # 'see dáyun', the same
         ("lalawigan", "province"),  # 'see lawig'
@@ -182,7 +183,7 @@ class TestThePairs:
         words = {w for p in short_form_pairs() for w in (p.short, p.long)}
         assert not words & {"puwede", "pwede", "mesa", "lamesa", "igsoon", "sayis", "pod"}
 
-    def test_pronoun_pairs_carry_their_senses(self):
+    def test_own_card_pairs_carry_their_senses(self):
         own = {(p.short, p.short_key, p.long, p.long_key) for p in short_form_pairs() if not p.shares_card}
         assert own == {
             ("mo", "", "kamo", ""),
@@ -193,4 +194,9 @@ class TestThePairs:
             ("ta", "genitive", "nato", ""),
             ("ka", "", "ikaw", ""),
             ("mi", "", "kami", ""),
+            # The nominative demonstratives, own cards too (Wolff 3 B 4, tunatale-tofg.19).
+            ("ri", "", "kiri", ""),
+            ("ni", "demonstrative", "kini", ""),
+            ("na", "demonstrative", "kana", ""),
+            ("to", "", "kadto", ""),
         }
