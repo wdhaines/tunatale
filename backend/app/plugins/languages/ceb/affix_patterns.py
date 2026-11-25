@@ -151,6 +151,9 @@ _LINES: dict[str, tuple[tuple[str, str], ...]] = {
 # stand in its lines, ``{verb}`` the root's English. An aspect pair's is "will"
 # or, for a durative, "will be" and its -ing.
 _UNREAL_ENGLISH: dict[str, tuple[str, ...]] = {"maka-naka": ("can {verb}",)}
+# How a pattern's first form has to be worded in a gloss table: the chain's
+# "I can't {base}" / "I couldn't {base}" frames strip this prefix to say {base}.
+_UNREAL_PREFIX: dict[str, str] = {"maka-naka": "can "}
 _ASPECT_ENGLISH = ("will {verb}", "will be {verb}ing")
 PATTERN_AFFIXES: tuple[str, ...] = tuple(
     f.removeprefix("verb:") for p in PATTERNS if not p.sentences for f in p.features
@@ -207,6 +210,10 @@ def load_affix_glosses(path: Path) -> dict[tuple[str, str], tuple[str, tuple[str
         if len(forms) != cells.get(key):
             raise ValueError(
                 f"{path.name}:{number}: {root} {key} needs {cells.get(key)} English forms, has {len(forms)}"
+            )
+        if (prefix := _UNREAL_PREFIX.get(key)) is not None and not forms[0].startswith(prefix):
+            raise ValueError(
+                f"{path.name}:{number}: {root} {key} unreal English must start with {prefix!r}, has {forms[0]!r}"
             )
         glosses[(root, key)] = (root_english, tuple(forms))
     return glosses
@@ -327,11 +334,41 @@ _CHAINS: dict[str, tuple[tuple[str, str, str | None], ...]] = {
         ("{real} ko ganiha.", "I {real_english} earlier today.", "ganiha"),
         ("Wala ko {unreal} ganiha.", "I didn't {root} earlier today.", "wala"),
     ),
+    # The potential's own dili / wala frames are in _LINES; the time frames and
+    # the "{base}" English come from Bunye & Yap, Cebuano for Beginners, lesson
+    # 39 (the abilitative), substitution drill 2, which sets the two columns
+    # side by side: "Dili ako makalaba pero makahugas ako unya. / Wala ako
+    # makalaba pero nakahugas ako ganina"; "Dili siya makaluto pero makalimpyo
+    # siya ugma. / Wala siya makaluto pero nakalimpyo siya gahapon". Checked
+    # against that and Wolff's dictionary, NOT by a native speaker:
+    #   {Maka} ko ugma.          I {can} tomorrow.
+    #   {Naka} ko gahapon.       I {managed} yesterday.
+    #   {Naka} ko ganiha.        I {managed} earlier today. B&Y writes ganina; Wolff has ganíha.
+    #   {Maka} ko unya.          I {can} later.
+    #   Dili ko {maka} unya.     I can't {base} later. Wolff: "Dì ta makaulì kay way trák,
+    #                            We can not go home because there's no bus" (45 examples)
+    #   Wala ko {maka} gahapon.  I couldn't {base} yesterday. Wolff: "Wà ku makasakay dáyun"
+    #                            (29 examples). Control: wala + naka- across all three
+    #                            books found one hit, spanning two clauses.
+    "maka-naka": (
+        ("{unreal} ko ugma.", "I {unreal_english} tomorrow.", ""),
+        ("{real} ko gahapon.", "I {real_english} yesterday.", "gahapon"),
+        ("{real} ko gahapon.", "I {real_english} yesterday.", _ROOT_CUE),
+        ("{real} ko ganiha.", "I {real_english} earlier today.", "ganiha"),
+        ("{unreal} ko unya.", "I {unreal_english} later.", "unya"),
+        ("Dili ko {unreal} unya.", "I can't {base} later.", "dili"),
+        ("Wala ko {unreal} gahapon.", "I couldn't {base} yesterday.", "gahapon"),
+    ),
 }
 # Root A, in the order it is chosen: the gloss rows whose sentences stand without an object
 # or a place. adto wants a place, tan-aw and sulti an object, and sulod and uban are not
 # worded "will {root}" (the test ``pattern_lines`` applies).
-_CHAIN_ROOTS: dict[str, tuple[str, ...]] = {"mo-mi": ("lakaw", "balik", "anhi", "kaon", "inom")}
+_CHAIN_ROOTS: dict[str, tuple[str, ...]] = {
+    "mo-mi": ("lakaw", "balik", "anhi", "kaon", "inom"),
+    # The gloss rows that stand without an object or a place. kita and dala want an
+    # object, adto a place; they would make the chain's bare sentences ungrammatical.
+    "maka-naka": ("gawas", "sulod", "bayad", "inom"),
+}
 
 
 def chain_roots(pattern: AffixPattern) -> tuple[str, ...]:
@@ -350,9 +387,14 @@ def _worded(root: str, pattern: AffixPattern, path: Path) -> tuple[tuple[str, ..
 
 
 def _say(frame: str, english: str, worded: tuple[tuple[str, ...], tuple[str, tuple[str, ...]]]) -> tuple[str, str]:
-    (unreal, real), (root_english, (_, real_english)) = worded
+    (unreal, real), (root_english, (unreal_english, real_english)) = worded
     text = frame.format(unreal=unreal, real=real)
-    return text[0].upper() + text[1:], english.format(root=root_english, real_english=real_english)
+    return text[0].upper() + text[1:], english.format(
+        root=root_english,
+        unreal_english=unreal_english,
+        real_english=real_english,
+        base=unreal_english.removeprefix("can "),
+    )
 
 
 def pattern_chain(

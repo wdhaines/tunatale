@@ -11,5 +11,11 @@
 # Project Gutenberg #40074). NOT checked by a native speaker, like every table in this plugin.
 #   gawas [A2] "Migawas siya sa balay, He went out of the house" (news: mo- 587, mi- 665)
 #   abot  [A]  "arrive, reach a place" (news: mo- 2644, mi- 1140)
+#   balik [A2] "Dì na makabalik sa trabáhu ang nawilgista" (news: maka- 378, naka- 109)
+#   uli   [A2; a12] "Dì ta makaulì kay way trák" (news: maka- 169, naka- 121)
+#   sakay "Wà ku makasakay dáyun, I couldn't find transportation right away" (news: maka- 76, naka- 75)
 gawas	mo-mi	go out	will go out	went out
 abot	mo-mi	arrive	will arrive	arrived
+balik	maka-naka	return	can come back	managed to come back
+uli	maka-naka	go home	can go home	managed to go home
+sakay	maka-naka	ride	can get a ride	managed to get a ride

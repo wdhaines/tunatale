@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from app.languages import get_a1_morphology
 from app.plugins.languages.ceb.affix_patterns import (
     CARD_ROOTS_PATH,
@@ -29,6 +31,7 @@ from app.srs.a1_morphology import ChainStep, PatternChain
 
 _BY_KEY = {p.key: p for p in PATTERNS}
 _MO_MI = _BY_KEY["mo-mi"]
+_MAKA = _BY_KEY["maka-naka"]
 _DAY_3 = ("uban", "inom", "adto", "anhi", "lakaw")
 _DAY_5 = ("sulod", "adto", "inom", "anhi")
 
@@ -90,9 +93,66 @@ def test_c4_a_lesson_that_drilled_no_chain_root_has_no_chain(caplog):
     assert "DRILL_CARD_NO_ROOT pattern=mo-mi" in caplog.text
 
 
+# --- the maka- / naka- chain (brief-ve4p-maka-naka-chain-2026-11.md, K1-K4) --------
+
+
+def test_k1_the_maka_naka_chain_word_for_word():
+    chain = pattern_chain(_MAKA, ("gawas", "sulod"), _knows("balik"))
+
+    assert chain == PatternChain(
+        model="Makagawas ko ugma.",
+        english="I can get out tomorrow.",
+        steps=(
+            ChainStep("gahapon", "Nakagawas ko gahapon.", "I managed to get out yesterday."),
+            ChainStep("balik", "Nakabalik ko gahapon.", "I managed to come back yesterday."),
+            ChainStep("ganiha", "Nakabalik ko ganiha.", "I managed to come back earlier today."),
+            ChainStep("unya", "Makabalik ko unya.", "I can come back later."),
+            ChainStep("dili", "Dili ko makabalik unya.", "I can't come back later."),
+            ChainStep("gahapon", "Wala ko makabalik gahapon.", "I couldn't come back yesterday."),
+        ),
+    )
+
+
+def test_k2_root_a_is_the_first_maka_chain_root_the_lesson_drilled():
+    chain = pattern_chain(_MAKA, ("sulod", "kita", "adto"), _knows("balik"))
+
+    assert chain is not None
+    assert (chain.model, chain.english) == ("Makasulod ko ugma.", "I can get in tomorrow.")
+
+
+def test_k3_the_first_understood_card_only_root_wins_not_the_first_row():
+    chain = pattern_chain(_MAKA, ("gawas",), _knows("sakay"))  # uli is not understood
+
+    assert chain is not None
+    assert chain.steps[1].cue == "sakay"
+    assert chain.steps[-1] == ChainStep("gahapon", "Wala ko makasakay gahapon.", "I couldn't get a ride yesterday.")
+
+
+def test_k4_an_unreal_gloss_that_is_not_can_is_refused(tmp_path):
+    bad = tmp_path / "bad.tsv"
+    bad.write_text("# a row whose unreal English is not 'can ...'\nkita\tmaka-naka\tsee\tsaw\tsaw\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc:
+        load_affix_glosses(bad)
+
+    assert "bad.tsv:2: kita maka-naka" in str(exc.value)
+
+
+def test_k4_every_maka_naka_row_in_both_tables_is_worded_can():
+    counted = 0
+    for path in (GLOSSES_PATH, CARD_ROOTS_PATH):
+        rows = [(root, forms) for (root, key), (_, forms) in load_affix_glosses(path).items() if key == "maka-naka"]
+        assert rows, path.name
+        counted += len(rows)
+        for root, forms in rows:
+            assert forms[0].startswith("can "), f"{path.name}: {root}"
+
+    assert counted == 10  # seven gloss rows and three card-only rows
+
+
 def test_c6_every_other_pattern_has_no_chain():
     for pattern in PATTERNS:
-        if pattern.key != "mo-mi":
+        if pattern.key not in ("mo-mi", "maka-naka"):
             assert pattern_chain(pattern, _DAY_3, _knows("gawas")) is None, pattern.key
 
 
@@ -104,7 +164,7 @@ def test_c7_every_card_only_row_is_vouched_and_never_reaches_the_audio_drill():
     rows = load_affix_glosses(CARD_ROOTS_PATH)
     glosses = load_affix_glosses(GLOSSES_PATH)
 
-    assert [root for root, _ in rows] == ["gawas", "abot"]
+    assert [root for root, _ in rows] == ["gawas", "abot", "balik", "uli", "sakay"]
     for root, key in rows:
         pattern = _BY_KEY[key]
         assert pattern_forms(root, pattern) is not None, root
@@ -119,3 +179,12 @@ def test_every_chain_root_is_a_vouched_gloss_row_of_its_pattern():
     for root in roots:
         assert pattern_forms(root, _MO_MI) is not None, root
         assert root in pattern_roots(_MO_MI), root
+
+
+def test_every_maka_naka_chain_root_is_a_vouched_gloss_row_of_its_pattern():
+    roots = chain_roots(_MAKA)
+
+    assert roots == ("gawas", "sulod", "bayad", "inom")
+    for root in roots:
+        assert pattern_forms(root, _MAKA) is not None, root
+        assert root in pattern_roots(_MAKA), root

@@ -41,6 +41,7 @@ from tests.test_gemini_tts import SYNTHESIS_URL, _svc
 from tests.test_grammar_lesson import _card, owner  # noqa: F401
 
 KEY = "sent:affix-mo-mi:drill-1"
+_MAKA_KEY = "sent:affix-maka-naka:drill-1"
 _DAY_3 = ["uban", "inom", "adto", "anhi", "lakaw"]
 _DAY_5 = ["sulod", "adto", "inom", "anhi"]
 
@@ -60,11 +61,11 @@ def _learn(db, *roots: str) -> None:
         _card(db, root, recognition=SRSState.REVIEW)
 
 
-def _rows(db) -> list[tuple]:
+def _rows(db, key: str = KEY) -> list[tuple]:
     with db._get_conn() as conn:
         return conn.execute(
             "SELECT id, text, source, card_type, anki_note_id, sibling_group FROM collocations WHERE disambig_key = ?",
-            (KEY,),
+            (key,),
         ).fetchall()
 
 
@@ -104,8 +105,8 @@ def test_c5_control_an_unlistened_drill_that_records_it_does_not_skip_it(owner):
     _learn(db, "gawas", "abot")
     store.save_lesson("old-drill", "funeral", 3, _drill_lesson(["inom", "gawas"]))
     # A listen of another pattern's drill, and of a lesson that is gone, change nothing either.
-    store.save_lesson("maka-drill", "funeral", 4, _drill_lesson(["gawas"], pattern="maka-naka"))
-    db.record_listen("maka-drill")
+    store.save_lesson("mag-drill", "funeral", 4, _drill_lesson(["gawas"], pattern="mag-nag"))
+    db.record_listen("mag-drill")
     db.record_listen("deleted-lesson")
 
     assert affix_drill_card(db, store, _drill_lesson(_DAY_3)).steps[1].cue == "gawas"
@@ -121,7 +122,7 @@ def test_a_card_only_root_the_learner_has_not_learned_is_not_taken(owner):  # no
 @pytest.mark.parametrize(
     "lesson",
     [
-        _drill_lesson(_DAY_3, pattern="maka-naka"),  # a pattern with no chain
+        _drill_lesson(_DAY_3, pattern="mag-nag"),  # a pattern with no chain
         _drill_lesson(_DAY_3, pattern="no-such"),  # a pattern the language does not have
         _drill_lesson(["eta"], pattern="mo-mi", language_code="no"),  # a language with no hook
         Lesson(title="Story", language_code="ceb", sections=[]),  # no affix drill at all
@@ -155,6 +156,22 @@ def test_m1_one_new_row_no_anki_ids_not_a_course_card(owner):  # noqa: F811
 
     [(row_id, text, source, card_type, note_id, group)] = _rows(db)
     assert (row_id, text, card_type, note_id, group) == (cid, "Molakaw ko ugma.", "cloze", None, KEY)
+    assert source != COURSE_SOURCE
+    _, item, _ = db.get_collocation_by_id(cid)
+    assert list(item.directions) == [Direction.PRODUCTION]
+    prod = item.directions[Direction.PRODUCTION]
+    assert (prod.state, prod.anki_card_id, prod.last_review) == (SRSState.NEW, None, None)
+    assert drill_card(item.syntactic_unit) == card
+
+
+def test_k6_a_maka_naka_drill_lesson_mints_one_card(owner):  # noqa: F811
+    db, store = owner
+    _learn(db, "balik")
+
+    cid, card = mint_affix_drill_card(db, store, _drill_lesson(["gawas", "sulod"], pattern="maka-naka"))
+
+    [(row_id, text, source, card_type, note_id, group)] = _rows(db, _MAKA_KEY)
+    assert (row_id, text, card_type, note_id, group) == (cid, "Makagawas ko ugma.", "cloze", None, _MAKA_KEY)
     assert source != COURSE_SOURCE
     _, item, _ = db.get_collocation_by_id(cid)
     assert list(item.directions) == [Direction.PRODUCTION]
@@ -391,7 +408,7 @@ def test_a_pattern_with_no_chain_reads_no_listened_lesson(owner):  # noqa: F811
 
     db.record_listen("wake-1")
 
-    assert affix_drill_card(db, _CountingStore(), _drill_lesson(_DAY_3, pattern="maka-naka")) is None
+    assert affix_drill_card(db, _CountingStore(), _drill_lesson(_DAY_3, pattern="mag-nag")) is None
     assert reads == []
     # Control: a pattern with a chain does read it.
     _learn(db, "gawas")
