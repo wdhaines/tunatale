@@ -13,6 +13,8 @@ consonant is a glottal stop (``kan-a``), and a rule that loses one is wrong.
 
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 from app.plugins.languages.ceb.affixes import (
@@ -599,6 +601,7 @@ def test_a_linker_reading_never_carries_an_affix(lex_linker):
     assert analyse("ikawng", lex_linker) == analyse("ikawng", lexicon_without_hosts())
 
 
+@functools.cache  # a whole lexicon rebuild; the CPU budget's warm re-run must not pay it again
 def lexicon_without_hosts():
     from app.plugins.languages.ceb.affixes import lexicon
     from app.plugins.languages.ceb.wolff_cards import load_lexicon as load
