@@ -2,7 +2,7 @@
 
 Design: .beads-tasks/briefs/design-short-forms-and-linkers-2026-11.md § 3 R6, owner D3
 (2026-11-25): a short form's one blank is short (``__``), a long form's is split
-by a syllable dot (``___·___``), and a shared card keeps today's plain blank.
+by a syllable dot (``__·__``), and a shared card keeps today's plain blank.
 Wolff 3 B 4: a pronoun as predicate must be long, and so must a demonstrative
 unless màó is in the sentence; elsewhere short and long substitute freely. So
 only the nominative pairs, which keep two cards each, carry the cue. The cue is
@@ -37,15 +37,25 @@ def _band(word: str, gloss: str, key: str = "") -> str | None:
         ("mi", "", "we (not including you)", "Moadto __ sa merkado."),
         ("mo", "", "you (plural)", "Moadto __ sa merkado."),
         ("ta", "", "we (including you)", "Moadto __ sa merkado."),
-        ("ako", "", "I", "___·___ ra."),
-        ("ikaw", "", "you (one person)", "___·___ ra."),
-        ("kami", "", "we (not including you)", "___·___ ra."),
-        ("kamo", "", "you (plural)", "___·___ ra."),
-        ("kita", "pronoun", "we (including you)", "___·___ ra."),
+        ("ako", "", "I", "__·__ ra."),
+        ("ikaw", "", "you (one person)", "__·__ ra."),
+        ("kami", "", "we (not including you)", "__·__ ra."),
+        ("kamo", "", "you (plural)", "__·__ ra."),
+        ("kita", "pronoun", "we (including you)", "__·__ ra."),
     ],
 )
 def test_a_nominative_pronoun_card_shows_its_length(word, key, gloss, band):
     assert _band(word, gloss, key) == band
+
+
+def test_a_syllable_slot_is_shorter_than_the_word_blank():
+    """The owner, 2026-11-25: syllable blanks are shorter than word blanks."""
+    long_form = _band("ako", "I")
+    word = _band("ato", "our, ours (including you); by us")
+    syllables = long_form.split()[0].split("·")
+    assert len(syllables) == 2
+    assert all(len(s) < len("____") for s in syllables)
+    assert "____" in word
 
 
 @pytest.mark.parametrize(
@@ -71,10 +81,10 @@ def test_a_card_that_asks_for_no_particular_length_keeps_the_plain_blank(word, k
         ("ri", "", "this (near me)", "Mao __ ang bola."),
         ("ni", "demonstrative", "this (near you and me)", "Mao __ ang bola."),
         ("na", "demonstrative", "that (near you)", "Mao __ ang bola."),
-        ("kadto", "", "that (far from both of us)", "Mao ___·___ ang bola."),
-        ("kiri", "", "this (near me)", "Mao ___·___ ang bola."),
-        ("kini", "", "this (near you and me)", "Mao ___·___ ang bola."),
-        ("kana", "", "that (near you)", "Mao ___·___ ang bola."),
+        ("kadto", "", "that (far from both of us)", "Mao __·__ ang bola."),
+        ("kiri", "", "this (near me)", "Mao __·__ ang bola."),
+        ("kini", "", "this (near you and me)", "Mao __·__ ang bola."),
+        ("kana", "", "that (near you)", "Mao __·__ ang bola."),
     ],
 )
 def test_a_nominative_demonstrative_card_gets_a_band_with_its_length(word, key, gloss, band):

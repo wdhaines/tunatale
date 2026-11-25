@@ -19,12 +19,13 @@ _H = 220
 #: (the vocab notetype CSS), and the ink is the card's own black.
 FRAME_BLANK = "___"
 _BLANK_DRAWN = "____"
-#: Which form a card asks for (tunatale-avcl, the owner's D3, 2026-11-25): a short
-#: blank for the short form and one split by a syllable dot for the long one, the
-#: way a dictionary splits syllables. Every short form in Wolff's charts is one
+#: Which form a card asks for (tunatale-avcl, the owner's D3, 2026-11-25): every
+#: syllable is one short slot, so the short form is one slot and the long form two,
+#: split by a syllable dot the way a dictionary splits syllables. A syllable slot is
+#: shorter than the word blank (the owner, same day). Every short form in Wolff's charts is one
 #: syllable and every long form two, so the cue is exact, and it is language-free.
 #: A card that asks for neither keeps the plain blank.
-_BLANK_FOR_CUE = {None: _BLANK_DRAWN, "short": "__", "long": "___\u00b7___"}
+_BLANK_FOR_CUE = {None: _BLANK_DRAWN, "short": "__", "long": "__\u00b7__"}
 FRAME_BAND = 36
 _FRAME_BASELINE = 24
 _FRAME_SIZE = 18
