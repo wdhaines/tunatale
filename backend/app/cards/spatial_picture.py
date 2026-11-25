@@ -133,6 +133,30 @@ def load_spatial_senses(language_code: str) -> dict[str, tuple[str, ...]]:
 
 
 @cache
+def _load_data(language_code: str) -> dict:
+    path = get_spatial_path(language_code)
+    if path is None or not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def pair_cue(text: str, language_code: str, disambig: str = "") -> tuple[str, str] | None:
+    """``(sentence, "short" | "long")`` for a card in a demonstrative pair, else ``None`` (tunatale-avcl).
+
+    The pair's cards are drawn with the table's ``pair_frame`` under the scene,
+    its blank saying which form the card asks for.
+    """
+    card = (text.strip().casefold(), disambig.strip())
+    frame = _load_data(language_code).get("pair_frame")
+    for short, short_key, long, long_key in load_spatial_short_forms(language_code):
+        if frame and card == (short, short_key):
+            return frame, "short"
+        if frame and card == (long, long_key):
+            return frame, "long"
+    return None
+
+
+@cache
 def load_spatial_second_senses(language_code: str) -> dict[tuple[str, str], str]:
     """Each word's second senses, ``(word, disambig_key)`` to its concept (tunatale-tofg.19).
 
@@ -140,10 +164,7 @@ def load_spatial_second_senses(language_code: str) -> dict[tuple[str, str], str]
     (listing it would veto its cloze): Cebuano ``ni`` is the name marker first and
     the short form of ``kini`` second. Only a card carrying that key is drawn.
     """
-    path = get_spatial_path(language_code)
-    if path is None or not path.exists():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_data(language_code)
     return {
         (str(word).casefold(), str(key)): str(concept)
         for word, senses in data.get("senses", {}).items()
@@ -154,10 +175,7 @@ def load_spatial_second_senses(language_code: str) -> dict[tuple[str, str], str]
 @cache
 def load_spatial_short_forms(language_code: str) -> tuple[tuple[str, str, str, str], ...]:
     """The table's short demonstratives, ``(short, short_key, long, long_key)``, each with a card of its own."""
-    path = get_spatial_path(language_code)
-    if path is None or not path.exists():
-        return ()
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_data(language_code)
     return tuple(
         (str(row["short"]), str(row.get("short_key", "")), str(row["long"]), str(row.get("long_key", "")))
         for row in data.get("short_forms", [])
@@ -187,5 +205,6 @@ def spatial_picture(text: str, language_code: str, gloss: str, disambig: str = "
     concept = next((c for c in senses if gloss_matches(c, gloss)), None)
     if concept is None:
         return None
-    svg = render_spatial_svg(concept)
+    cue = pair_cue(key, language_code, disambig.strip() if second else "")
+    svg = render_spatial_svg(concept, *cue) if cue else render_spatial_svg(concept)
     return NumberPicture(f"spatial_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)

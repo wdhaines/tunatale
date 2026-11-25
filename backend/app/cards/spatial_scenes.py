@@ -49,6 +49,7 @@ import math
 from collections.abc import Callable
 
 from app.cards.number_image import _BG, _DOT_FILL, _ROD_FILL
+from app.cards.sentence_band import FRAME_BAND, frame_band
 
 #: The concepts this module knows how to draw, and the only ones: an id outside
 #: this list is refused rather than approximated, because a picture that is
@@ -1046,7 +1047,7 @@ def _genitive(d: str) -> list[str]:
     return parts
 
 
-def render_spatial_svg(concept: str) -> bytes:
+def render_spatial_svg(concept: str, frame: str | None = None, cue: str | None = None) -> bytes:
     """Draw the relation *concept* names, as SVG bytes.
 
     One box, one ball, one floor and — for the four directions — one arrow, in a
@@ -1065,9 +1066,14 @@ def render_spatial_svg(concept: str) -> bytes:
             f"{concept!r} is not a renderable spatial concept; expected one of {', '.join(SPATIAL_CONCEPTS)}"
         )
     parts = [_ground(), *_SCENES[concept]()]
+    # A demonstrative pair's card carries the pronouns' sentence band, drawn by the
+    # same code, with the blank that says which form it asks for (tunatale-avcl).
+    # No frame: byte for byte the picture it was, so no other card is renamed.
+    height = _H + FRAME_BAND if frame is not None else _H
+    band = frame_band(frame, cue) if frame is not None else ""
     svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_W} {_H}" width="{_W}" height="{_H}">'
-        f'<rect class="bg" x="0" y="0" width="{_W}" height="{_H}" fill="{_BG}"/>'
-        f"{''.join(parts)}</svg>"
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_W} {height}" width="{_W}" height="{height}">'
+        f'<rect class="bg" x="0" y="0" width="{_W}" height="{height}" fill="{_BG}"/>'
+        f"{''.join(parts)}{band}</svg>"
     )
     return svg.encode("utf-8")

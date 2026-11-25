@@ -17,7 +17,7 @@ import pytest
 
 from app.cards.drawn_picture import drawn_picture
 from app.cards.number_picture import number_picture
-from app.cards.spatial_picture import gloss_matches, is_spatial_word, load_spatial_words, spatial_picture
+from app.cards.spatial_picture import gloss_matches, is_spatial_word, load_spatial_words, pair_cue, spatial_picture
 from app.cards.spatial_scenes import SPATIAL_CONCEPTS, render_spatial_svg
 from app.languages import get_function_words_path, get_spatial_path, known_language_codes
 from app.srs.function_words import is_function_word
@@ -273,7 +273,8 @@ class TestDispatch:
     def test_a_spatial_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
         picture = spatial_picture(word, code, gloss)
         assert picture is not None
-        svg = render_spatial_svg(concept)
+        cue = pair_cue(word, code)  # a demonstrative pair's card carries its band (tunatale-avcl)
+        svg = render_spatial_svg(concept, *cue) if cue else render_spatial_svg(concept)
         assert picture.svg == svg
         assert picture.filename == f"spatial_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg"
 

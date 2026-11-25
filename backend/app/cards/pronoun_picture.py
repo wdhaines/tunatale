@@ -232,6 +232,25 @@ def load_short_forms(language_code: str) -> tuple[tuple[str, str, str, str], ...
     )
 
 
+def form_cue(text: str, language_code: str, disambig: str = "") -> str | None:
+    """``"short"`` or ``"long"`` if the card ``(text, disambig)`` asks for that form, else ``None`` (tunatale-avcl).
+
+    Only a pair whose two forms are not interchangeable asks: Wolff 3 B 4, a
+    pronoun used as predicate must be long. The genitive pairs (nákò / ko) are
+    interchangeable, so either form is right and their cards keep the plain blank
+    (design-short-forms-and-linkers R6; slice 4 makes each one card).
+    """
+    card = (text.strip().casefold(), disambig.strip())
+    for short, short_key, long, long_key in load_short_forms(language_code):
+        if short_key == "genitive":
+            continue
+        if card == (short, short_key):
+            return "short"
+        if card == (long, long_key):
+            return "long"
+    return None
+
+
 def has_short_form(text: str, language_code: str, disambig: str) -> bool:
     """True if the sense ``(text, disambig)`` is one side of a short pronoun pair."""
     card = (text.strip().casefold(), disambig.strip())
@@ -323,7 +342,8 @@ def pronoun_picture(text: str, language_code: str, gloss: str, disambig: str = "
     if concept is not None:
         if not gloss_matches(concept, gloss):
             return None
-        svg = render_pronoun_svg(concept, frame=frame)
+        cue = form_cue(key, language_code, disambig.strip() if sense is not None else "")
+        svg = render_pronoun_svg(concept, frame=frame, cue=cue)
         return NumberPicture(f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg", svg)
     for candidate, owned in load_picture_only(language_code).get(key, ()):
         if not gloss_matches(candidate, gloss):
