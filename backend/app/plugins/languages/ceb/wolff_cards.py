@@ -350,6 +350,56 @@ class Miss(NamedTuple):
 # label per affix chosen by what Wolff's class code makes the subject, and the root's own
 # meaning first, then the verb sense that licensed the affix. Silent rather than guessing.
 
+# Irregular English past forms whose WordNet base is missing (morphy picks a noun/name
+# first; measured 2026-11-25). tunatale-h0q3.37
+_IRREGULAR_PAST: dict[str, str] = {
+    "ate": "eat",
+    "bent": "bend",
+    "bit": "bite",
+    "bore": "bear",
+    "bound": "bind",
+    "chosen": "choose",
+    "drew": "draw",
+    "drove": "drive",
+    "drunk": "drink",
+    "dug": "dig",
+    "fed": "feed",
+    "fell": "fall",
+    "felt": "feel",
+    "found": "find",
+    "ground": "grind",
+    "lay": "lie",
+    "leant": "lean",
+    "led": "lead",
+    "left": "leave",
+    "lent": "lend",
+    "lit": "light",
+    "lost": "lose",
+    "rose": "rise",
+    "rung": "ring",
+    "sang": "sing",
+    "sat": "sit",
+    "saw": "see",
+    "sent": "send",
+    "shook": "shake",
+    "shot": "shoot",
+    "spat": "spit",
+    "spoke": "speak",
+    "stole": "steal",
+    "stunk": "stink",
+    "sung": "sing",
+    "swum": "swim",
+    "thought": "think",
+    "tore": "tear",
+    "won": "win",
+    "wound": "wind",
+}
+
+
+def _verb_base(english: str) -> str:
+    """*english* with each irregular past replaced by its verb ('ate' -> 'eat'); unchanged when it has none."""
+    return re.sub(r"[A-Za-z]+", lambda m: _IRREGULAR_PAST.get(m.group(0).lower(), m.group(0)), english)
+
 
 class Part(NamedTuple):
     text: str  # the affix as written (mo-, gi-…-an), or the root in Handbook spelling
@@ -1132,12 +1182,22 @@ class WolffLexicon:
     def _agreeing(self, senses: list[dict], english: str) -> list[tuple[dict, tuple[int, int, int]]]:
         """(sense, how the English names it) over *senses*: the same word, a related one, or
         one its definition holds (EnglishRelations, as a card's match uses). A lesson's 'see'
-        rules out kítà's 'earn'; no English, no filter, and every sense is strong."""
+        rules out kítà's 'earn'; no English, no filter, and every sense is strong.
+
+        An irregular past ('ate') falls back to its verb only when nothing agrees as written
+        by word or relation, and then only a sense that names the verb itself counts
+        (tunatale-h0q3.37)."""
         if not english.strip():
             return [(s, (1, 1, 1)) for s in senses]
         card = _words(english)
         scored = [(s, self.relations.score(english, card, s["gloss"])) for s in senses]
-        return [(s, t) for s, t in scored if any(t)]
+        out = [(s, t) for s, t in scored if any(t)]
+        base = _verb_base(english)
+        if base == english or any(t[0] or t[1] for _, t in out):
+            return out
+        card = _words(base)
+        retry = [(s, self.relations.score(base, card, s["gloss"])) for s in senses]
+        return [(s, t) for s, t in retry if t[0]] or out
 
     def _readings(
         self,
