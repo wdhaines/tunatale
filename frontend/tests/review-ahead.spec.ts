@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 import type { APIRequestContext } from '@playwright/test';
 import { backendAvailable, seedCurriculumWithLesson } from './helpers';
+import { openLessonsOn } from "./helpers";
 
 type TranscriptWord = {
 	surface: string;
@@ -91,6 +92,7 @@ test('review-ahead: reading a not-due recognition word records a review', async 
 	// Read mode is the lesson page default. Open the word's popover and review it.
 	// The word may occur several times; scope to the first occurrence's popover
 	// (all occurrences share the same card, so any one records the review).
+	await openLessonsOn(page);
 	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 	const wordButton = page.getByRole('button', { name: surface, exact: true }).first();
 	await expect(wordButton).toBeVisible({ timeout: 15000 });

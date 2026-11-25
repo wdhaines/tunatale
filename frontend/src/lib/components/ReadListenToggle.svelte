@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { lessonModePref } from '#lib/stores/lessonModePref.svelte.js';
+	import { lessonModePref, type LessonMode } from '#lib/stores/lessonModePref.svelte.js';
 	import { playerCollapsedPref } from '#lib/stores/playerCollapsedPref.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 
@@ -16,9 +16,21 @@
 	// costs nothing, and it sits where the eye already goes for card-level
 	// controls. Only the caller knows whether there is a player to collapse, so
 	// the flag comes in rather than being inferred here.
-	let { collapsible = false }: { collapsible?: boolean } = $props();
+	//
+	// A lesson remembers its own side (tunatale-cs3p slice 3): the lesson page
+	// passes `mode` and `onselect`, and the switch shows and reports that instead
+	// of the global preference, which the review-session reader keeps.
+	let {
+		collapsible = false,
+		mode: given = undefined,
+		onselect = undefined
+	}: { collapsible?: boolean; mode?: LessonMode; onselect?: (mode: LessonMode) => void } = $props();
 
-	const mode = $derived(lessonModePref.mode);
+	const mode = $derived(given ?? lessonModePref.mode);
+	function choose(next: LessonMode) {
+		if (onselect) onselect(next);
+		else lessonModePref.set(next);
+	}
 	// Read-only, matching the player's own gate: in Listen the player IS the
 	// content and there is nothing to get out of the way of.
 	const showCollapse = $derived(collapsible && mode === 'read');
@@ -30,8 +42,8 @@
 
 <div class="mode-row">
 	<div class="toggle-pill">
-		<button class:active={mode === 'read'} onclick={() => lessonModePref.set('read')}>{t('readListenToggle.read')}</button>
-		<button class:active={mode === 'listen'} onclick={() => lessonModePref.set('listen')}>
+		<button class:active={mode === 'read'} onclick={() => choose('read')}>{t('readListenToggle.read')}</button>
+		<button class:active={mode === 'listen'} onclick={() => choose('listen')}>
 			{t('readListenToggle.listen')}
 		</button>
 	</div>

@@ -1,6 +1,6 @@
 import { devices } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, readDialogue } from "./helpers";
 
 /**
  * bd tunatale-iofm — two tap journeys that only synthetic events had ever driven.
@@ -176,7 +176,7 @@ test.describe("real touch taps", () => {
 
 		await page.getByTestId("day-1").click();
 		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
-		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await readDialogue(page);
 		// Scoped to the transcript: mastery chips also render `.tt-wrap`, so the
 		// first `.tt-wrap` anywhere would not prove the dialogue is on screen.
 		await expect(page.locator(".dialogue-words .tt-wrap").first()).toBeVisible({ timeout: 15000 });

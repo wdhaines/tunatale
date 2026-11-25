@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Cue } from "#lib/api.js";
-import { sectionLine } from "../sectionLine.js";
+import { sectionLine, storyDrills } from "../sectionLine.js";
 
 // Cue shapes copied from the live manifests (2026-11-23): a story drill section
 // opens on the narrator's English title, then each drill on one narrator
@@ -102,5 +102,50 @@ describe("sectionLine", () => {
     const cues = storyDrill();
     const stray = cue(0, 3, "prompt", "ceb", "ako");
     expect(sectionLine(cues, stray, "Drill")).toBe("Drill");
+  });
+});
+
+// The boundary rule Listen's line and Read's drill tabs share (tunatale-cs3p slice 3):
+// one rule, so a tab can never seek to a drill the line would not name.
+describe("storyDrills", () => {
+  it("splits a story drill section at each narrator instruction after its title", () => {
+    const cues = storyDrill();
+    const drills = storyDrills(cues);
+    expect(drills).not.toBeNull();
+    expect(drills!.map((d) => d.opener)).toEqual([cues[1], cues[5]]);
+    expect(drills!.map((d) => d.instruction)).toEqual([
+      "Change the sentence.",
+      "Answer the question.",
+    ]);
+    expect(drills!.map((d) => d.model)).toEqual([cues[2], null]);
+    expect(drills!.map((d) => d.label)).toEqual(["Nia siya dinhi.", "Answer the question."]);
+  });
+
+  it("pairs each prompt with the answer after it", () => {
+    const cues = storyDrill();
+    const [first, second] = storyDrills(cues)!;
+    expect(first.steps).toEqual([{ prompt: cues[3], answer: cues[4] }]);
+    expect(second.steps).toEqual([{ prompt: cues[6], answer: cues[7] }]);
+  });
+
+  it("keeps a prompt whose answer was never rendered", () => {
+    const cues = storyDrill().slice(0, 4);
+    expect(storyDrills(cues)![0].steps).toEqual([{ prompt: cues[3], answer: null }]);
+  });
+
+  it("is null for a rule-built affix drill (its prompts are English)", () => {
+    const cues = [
+      cue(0, 0, "narrator", "en", "Affix Drill"),
+      cue(0, 1, "narrator", "en", "Listen and repeat."),
+      cue(0, 2, "model", "ceb", "katulog"),
+      cue(0, 3, "prompt", "en", "will sleep"),
+      cue(0, 4, "answer", "ceb", "matulog"),
+    ];
+    expect(storyDrills(cues)).toBeNull();
+  });
+
+  it("is null for a section that is not a drill, and for no cues", () => {
+    expect(storyDrills([cue(1, 0, "line", "ceb", "Maayong buntag.", "natural_speed")])).toBeNull();
+    expect(storyDrills([])).toBeNull();
   });
 });

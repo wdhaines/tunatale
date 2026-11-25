@@ -1,6 +1,6 @@
 import { devices } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND, trackApiRequests } from "./helpers";
+import { backendAvailable, BACKEND, trackApiRequests, openLessonsOn } from "./helpers";
 
 /**
  * The lesson page must not overflow horizontally in Read mode.
@@ -120,6 +120,9 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 
 test.describe.configure({ mode: "serial" });
 
+// These read the dialogue; a lesson's FIRST open is Read on Outline (tunatale-cs3p slice 3).
+test.beforeEach(async ({ page }) => openLessonsOn(page));
+
 test("lesson page: Read mode never overflows horizontally", async ({ page, request }) => {
 	test.skip(!(await backendAvailable(request)), "Backend not available");
 	const { curriculumId, lessonId } = await seed(request);
@@ -129,6 +132,7 @@ test("lesson page: Read mode never overflows horizontally", async ({ page, reque
 	const failures: string[] = [];
 	for (const width of [390, 412, 432]) {
 		await page.setViewportSize({ width, height: 844 });
+		await openLessonsOn(page);
 		await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 		// The transcript is fetched client-side; without this the measurement
 		// lands on an empty page and passes for the wrong reason.

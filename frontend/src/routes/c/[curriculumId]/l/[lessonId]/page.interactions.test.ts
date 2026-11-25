@@ -40,7 +40,15 @@ import { syncStore } from "#lib/stores/sync.svelte.js";
 import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
 import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
-import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
+import {
+  curriculum,
+  lesson,
+  audio,
+  transcript,
+  stubViewport,
+  openLessonsOnDialogue,
+  openLessonsAt,
+} from "./page-test-helpers";
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetListens = vi.mocked(api.getListens);
@@ -70,6 +78,7 @@ const mockRestoreKnown = vi.mocked(api.restoreKnown);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 beforeEach(() => {
+  openLessonsOnDialogue();
   vi.clearAllMocks();
   localStorage.clear();
   stubViewport(false); // desktop default → Read, unless a test overrides
@@ -117,10 +126,11 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(backLink!.closest("h1, h2, h3, h4, h5, h6")).toBeNull();
   });
 
-  it("defaults to Read mode with transcript visible and listen card in both modes", () => {
-    const { getByText } = render(Page, {
+  it("shows the key phrases on Read's Key phrases tab, with the listen card", async () => {
+    const { getByText, getByRole } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript } },
     });
+    await fireEvent.click(getByRole("tab", { name: "Key phrases" }));
     expect(getByText("a coffee please")).toBeTruthy();
     expect(getByText("Mark as Listened")).toBeTruthy();
   });
@@ -134,12 +144,14 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     expect(getByText("Mark as Listened")).toBeTruthy();
   });
 
-  it("toggles back to Read mode after switching to Listen", () => {
-    const { getByText } = render(Page, {
+  it("comes back to Read on the tab it was on after a trip to Listen", async () => {
+    const { getByText, getByRole, queryByText } = render(Page, {
       props: { data: { curriculum, lesson, audio: null, transcript } },
     });
-    fireEvent.click(getByText("Listen"));
-    fireEvent.click(getByText("Read"));
+    await fireEvent.click(getByRole("tab", { name: "Key phrases" }));
+    await fireEvent.click(getByText("Listen"));
+    expect(queryByText("a coffee please")).toBeNull();
+    await fireEvent.click(getByText("Read"));
     expect(getByText("a coffee please")).toBeTruthy();
   });
 
@@ -273,6 +285,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   it("renders audio on Render Audio click", async () => {
+    openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
     mockRenderAudio.mockResolvedValue(audio);
     mockGetTranscript.mockResolvedValue(transcript);
 
@@ -428,6 +441,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
 
   describe("client-side transcript fetch (no preload)", () => {
     it("fetches and renders the transcript when load supplies none", async () => {
+      openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
       mockGetTranscript.mockResolvedValue(transcript);
       const { findByText } = render(Page, {
         props: { data: { curriculum, lesson, audio, transcript: null } },
@@ -461,6 +475,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
     });
 
     it("ignores a stale transcript response after navigating to another lesson", async () => {
+      openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
       // The transcript endpoint can take many seconds on a cold backend (the
       // whole reason it's fetched client-side). Navigating lesson→lesson while
       // lesson A's fetch is in flight must not let A's late response clobber
@@ -521,6 +536,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   it("drops the post-render transcript when navigation happens between the two fetches", async () => {
+    openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
     // handleRenderAudio awaits renderAudio, then getTranscript. Navigating
     // in that window must not let lesson A's transcript land on lesson B.
     mockRenderAudio.mockResolvedValueOnce(audio);
@@ -577,6 +593,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   it("shows the transcript text before audio is rendered", () => {
+    openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
     // The transcript is extracted from the lesson and needs no audio — the dialogue
     // and key phrases should be readable as soon as the day is generated.
     const { getByText } = render(Page, {
@@ -587,6 +604,7 @@ describe("/c/[curriculumId]/l/[lessonId] page", () => {
   });
 
   it("re-syncs audio and transcript when navigating to a different lesson", async () => {
+    openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
     // SvelteKit reuses this component on same-route param changes (the Regenerate
     // button's goto). The mutable local audio/transcript copies must follow `data`
     // instead of staying frozen on the previous lesson.

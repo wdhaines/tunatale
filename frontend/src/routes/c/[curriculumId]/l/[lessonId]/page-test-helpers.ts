@@ -15,6 +15,7 @@
  * coverage-gate include list (`src/lib/**\/*.ts` + `**\/*.svelte`).
  */
 import { vi } from "vitest";
+import { FIRST_OPEN, lessonSidePref, type LessonSide } from "#lib/stores/lessonSidePref.svelte.js";
 
 /** Fresh `#lib/api.js` mock surface — the full method set `+page.svelte` may call. */
 export function createApiMock() {
@@ -124,3 +125,33 @@ export const transcript = {
   key_phrases: [{ phrase: "kavo prosim", translation: "a coffee please" }],
   dialogue_lines: [],
 };
+
+// Captured at import, before any test spies on it: re-spying in each beforeEach
+// must wrap the real store, never the previous spy.
+const realSideGet = lessonSidePref.get;
+
+/**
+ * Open every lesson on Read's Dialogue tab, as a learner who last used that tab
+ * on it, unless a test has stored another side (tunatale-cs3p slice 3).
+ *
+ * A lesson's FIRST open is Read on the Outline tab (R1). These page tests are
+ * about what Read does with the transcript (word taps, phrases, navigation),
+ * not about which tab opens first, so they start where the transcript is. The
+ * first-open rule itself is pinned by page.readTabs.test.ts and LessonReader's
+ * own tests, which do not call this. Stored choices still win, so a test that
+ * switches side or tab sees its switch.
+ */
+export function openLessonsOnDialogue() {
+  openLessonsAt({ mode: "read", tab: "dialogue" });
+}
+
+/** Open every lesson not yet given a side on *side* (see openLessonsOnDialogue). */
+export function openLessonsAt(side: LessonSide) {
+  // The store is a singleton: a side one test chose must not open the next.
+  localStorage.removeItem("lessonSide");
+  lessonSidePref.reset();
+  vi.spyOn(lessonSidePref, "get").mockImplementation((id: string) => {
+    const stored = realSideGet(id);
+    return stored === FIRST_OPEN ? side : stored;
+  });
+}

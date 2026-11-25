@@ -55,6 +55,8 @@
 		// popover's Cloze… edits, and what to refresh after a save. No id, no Cloze….
 		contentId?: string | null;
 		onLinesSaved?: () => void | Promise<void>;
+		// One part only, for a Read tab (tunatale-cs3p slice 3); null shows both.
+		part?: 'key_phrases' | 'dialogue' | null;
 	}
 
 	let {
@@ -68,7 +70,8 @@
 		tooltipActions,
 		controller = null,
 		contentId = null,
-		onLinesSaved
+		onLinesSaved,
+		part = null
 	}: Props = $props();
 
 	type WordSegment = { type: 'word'; word: WordToken } | { type: 'collocation'; words: WordToken[]; span_id: number };
@@ -499,8 +502,8 @@
 
 <svelte:window onkeydown={handleAltKeyDown} onkeyup={handleAltKeyUp} />
 
-<div class="transcript-wrapper">
-	{#if transcript.key_phrases.length > 0}
+<div class="transcript-wrapper" class:single={part !== null}>
+	{#if transcript.key_phrases.length > 0 && part !== 'dialogue'}
 		<div class="transcript-section">
 			<h3>{t('transcript.keyPhrases')}</h3>
 			<ul class="key-phrases-list">
@@ -520,7 +523,7 @@
 		</div>
 	{/if}
 
-	{#if transcript.dialogue_lines.length > 0}
+	{#if transcript.dialogue_lines.length > 0 && part !== 'key_phrases'}
 		<div class="transcript-section">
 			<div class="dialogue-head">
 				<h3>
@@ -778,6 +781,14 @@
 	}
 	.transcript-section {
 		margin-bottom: 1.25rem;
+	}
+	/* One part on its own Read tab (tunatale-cs3p slice 3) opens its panel: the
+	   space that separated it from the part above has nothing to separate. */
+	.transcript-wrapper.single {
+		margin-top: 0;
+	}
+	.transcript-wrapper.single .transcript-section:first-child h3 {
+		margin-top: 0;
 	}
 	.transcript-section h3 {
 		font-size: 0.8rem;

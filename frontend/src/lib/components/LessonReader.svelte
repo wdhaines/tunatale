@@ -4,11 +4,16 @@
 	import type { PlaybackController } from '#lib/playback/playbackController.svelte.js';
 	import type { createReadingActions } from '#lib/reading/readingActions.svelte.js';
 	import { isDrillOnly } from '#lib/lessonKind.js';
-	import { lessonModePref } from '#lib/stores/lessonModePref.svelte.js';
+	import { lessonDrills, readTabs, seekForTab, tabOrOutline, type ReadTab } from '#lib/reading/readTabs.js';
+	import { handsFreePref } from '#lib/stores/handsFreePref.svelte.js';
+	import { lessonModePref, type LessonMode } from '#lib/stores/lessonModePref.svelte.js';
+	import { lessonSidePref } from '#lib/stores/lessonSidePref.svelte.js';
 	import { playerCollapsedPref } from '#lib/stores/playerCollapsedPref.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import DrillForms from './DrillForms.svelte';
 	import LessonPlayer from './LessonPlayer.svelte';
+	import ReadDrillSteps from './ReadDrillSteps.svelte';
+	import ReadOutline from './ReadOutline.svelte';
 	import ReadListenToggle from './ReadListenToggle.svelte';
 	import ReaderChips from './ReaderChips.svelte';
 	import Transcript from './Transcript.svelte';
@@ -60,6 +65,14 @@
 		noAudio?: Snippet;
 		/** The action row at the foot of the sticky card. */
 		actions?: Snippet<[{ recallInline: boolean }]>;
+		/**
+		 * A lesson's id, which turns on the Read tab bar and the lesson's own
+		 * remembered side (tunatale-cs3p slice 3). The review-session reader
+		 * passes none: it keeps the global Read/Listen preference and one text.
+		 */
+		sideKey?: string | null;
+		/** The grade page, the tab bar's last tab. */
+		gradeHref?: string | null;
 	}
 
 	let {
@@ -76,7 +89,9 @@
 		header,
 		headerBelow,
 		noAudio,
-		actions
+		actions,
+		sideKey = null,
+		gradeHref = null
 	}: Props = $props();
 
 	// A lesson that is only an affix drill (a grammar lesson) has nothing to
@@ -84,7 +99,43 @@
 	// toggle is not offered, and the table of what it drills stands where the
 	// transcript would. The stored mode is left alone for the next lesson.
 	const drillOnly = $derived(isDrillOnly(content));
-	const mode = $derived(drillOnly ? 'listen' : lessonModePref.mode);
+
+	// --- A lesson's own side and Read tab (tunatale-cs3p slice 3) ---
+	// The first open of a lesson is Read on the Outline tab; afterwards the side
+	// and tab last used on it (R1). A hands-free hand-off always lands on
+	// Listen: Read suspends hands-free, so an Outline there would end a drive.
+	// The baton is looked at once per lesson, before the player consumes it,
+	// and that answer stands until the learner picks a side themselves.
+	// A plain record, not reactive state: it is an answer remembered, never a
+	// value the page re-renders on.
+	const handedOff: Record<string, boolean> = {};
+	function arrivedHandsFree(key: string): boolean {
+		handedOff[key] ??= handsFreePref.handoffArmed();
+		return handedOff[key];
+	}
+	const side = $derived(sideKey ? lessonSidePref.get(sideKey) : null);
+	const lessonMode = $derived<LessonMode | null>(
+		sideKey && side ? (arrivedHandsFree(sideKey) ? 'listen' : side.mode) : null
+	);
+	// Both choosers are reachable only from controls drawn when there is a
+	// lesson key, and so a side.
+	function chooseMode(next: LessonMode) {
+		handedOff[sideKey!] = false;
+		lessonSidePref.set(sideKey!, { ...side!, mode: next });
+	}
+
+	// Lazy: only read once there is a side to show tabs for.
+	const tabs = $derived(readTabs(content, lessonDrills(audio), gradeHref));
+	const tab = $derived<ReadTab | null>(side ? tabOrOutline(tabs, side.tab) : null);
+	function chooseTab(next: ReadTab) {
+		lessonSidePref.set(sideKey!, { ...side!, tab: next.id });
+		seekForTab(next, controller, audio);
+	}
+
+	// Without a lesson key, a drill-only lesson is Listen with no switch, as
+	// before; with one, it has a Read side of its own (R3).
+	const mode = $derived(lessonMode ?? (drillOnly ? 'listen' : lessonModePref.mode));
+	const tabbed = $derived(tab !== null && mode === 'read');
 	const recallInline = $derived(mode === 'read' && audio != null && playerCollapsedPref.collapsed);
 
 	// The player claims `controller` as it is built and cannot safely release
@@ -111,13 +162,34 @@
 			<div class="header-band">{@render headerAbove()}</div>
 		{/if}
 		{@render header()}
-		{#if !drillOnly}
+		{#if lessonMode}
+			<ReadListenToggle collapsible={audio != null} mode={lessonMode} onselect={chooseMode} />
+		{:else if !drillOnly}
 			<ReadListenToggle collapsible={audio != null} />
 		{/if}
-		{#if headerBelow}
+		<!-- On Read with tabs, what the header measured moves into the Outline tab. -->
+		{#if headerBelow && !tabbed}
 			<div class="header-band">{@render headerBelow()}</div>
 		{/if}
 	</div>
+	{#if tabbed && tab}
+		<div class="read-tabs" role="tablist" aria-label={t('readTabs.aria')}>
+			{#each tabs as item (item.id)}
+				{#if item.kind === 'grade'}
+					<a class="read-tab" href={item.href}>{item.label}</a>
+				{:else}
+					<button
+						type="button"
+						role="tab"
+						class="read-tab"
+						class:active={item.id === tab.id}
+						aria-selected={item.id === tab.id}
+						onclick={() => chooseTab(item)}
+					>{item.label}</button>
+				{/if}
+			{/each}
+		</div>
+	{/if}
 	{#if audio}
 		{#key audio.audio_id}
 			<!-- ONE persistent player across modes: only `compact` flips on
@@ -125,6 +197,7 @@
 			<LessonPlayer
 				{audio}
 				compact={mode !== 'listen'}
+				phaseRow={!tabbed}
 				lessonTitle={title}
 				bind:controller
 				{onSequenceEnd}
@@ -141,7 +214,36 @@
 	{/if}
 </section>
 
-{#if drillOnly && content.drill}
+{#if tabbed && tab}
+	<div class="card" role="tabpanel" aria-label={tab.label}>
+		{#if tab.kind === 'outline'}
+			<ReadOutline
+				{tabs}
+				keyPhraseCount={transcript ? transcript.key_phrases.length : null}
+				dialogueLineCount={transcript ? transcript.dialogue_lines.length : null}
+				ruleDrill={content.drill ?? null}
+				onopen={chooseTab}
+				below={headerBelow}
+			/>
+		{:else if tab.kind === 'story_drill'}
+			<ReadDrillSteps drill={tab.drill!} {controller} />
+		{:else if tab.kind === 'drill' && content.drill}
+			<DrillForms drill={content.drill} />
+		{:else if transcript}
+			<Transcript
+				{transcript}
+				lesson={content}
+				{controller}
+				part={tab.kind === 'key_phrases' ? 'key_phrases' : 'dialogue'}
+				{...reading.transcriptProps}
+			/>
+		{:else if transcriptLoading}
+			<TranscriptPlaceholder lesson={content} />
+		{:else}
+			<p class="muted">{t('lessonReader.noTranscript')}</p>
+		{/if}
+	</div>
+{:else if drillOnly && content.drill}
 	<section class="card">
 		<DrillForms drill={content.drill} />
 	</section>
@@ -214,5 +316,40 @@
 	}
 	.muted {
 		color: var(--color-muted);
+	}
+	/* One row of tabs; on a phone a long lesson's tabs scroll inside the row
+	   rather than widen the page. */
+	.read-tabs {
+		display: flex;
+		gap: 0.25rem;
+		padding: 0.2rem;
+		border-radius: var(--radius-md, 10px);
+		background: var(--color-surface-2);
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	.read-tab {
+		flex: 1 0 auto;
+		margin: 0;
+		padding: 0.4rem 0.7rem;
+		border: 0;
+		border-radius: calc(var(--radius-md, 10px) - 2px);
+		background: transparent;
+		color: var(--color-muted);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 600;
+		text-align: center;
+		text-decoration: none;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.read-tab.active {
+		background: var(--color-primary);
+		color: #fff;
+	}
+	.read-tab:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 1px;
 	}
 </style>

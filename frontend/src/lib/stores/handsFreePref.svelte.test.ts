@@ -94,6 +94,15 @@ describe("handsFreePref handoff baton", () => {
     expect(handsFreePref.enabled).toBe(false);
   });
 
+  it("can be looked at without being used up (the reader picks Listen for a hand-off)", () => {
+    expect(handsFreePref.handoffArmed()).toBe(false);
+    handsFreePref.armHandoff();
+    expect(handsFreePref.handoffArmed()).toBe(true);
+    expect(handsFreePref.handoffArmed()).toBe(true);
+    expect(handsFreePref.consumeHandoff()).toBe(true);
+    expect(handsFreePref.handoffArmed()).toBe(false);
+  });
+
   it("survives a blocked sessionStorage", () => {
     const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("blocked");
@@ -103,6 +112,7 @@ describe("handsFreePref handoff baton", () => {
     });
     expect(() => handsFreePref.armHandoff()).not.toThrow();
     expect(handsFreePref.consumeHandoff()).toBe(false);
+    expect(handsFreePref.handoffArmed()).toBe(false);
     get.mockRestore();
     put.mockRestore();
   });

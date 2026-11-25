@@ -1,6 +1,6 @@
 import { devices } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, readDialogue } from "./helpers";
 
 /**
  * F-17 and F-21 — two defects in the word popover, both reported from a phone on
@@ -164,7 +164,7 @@ test.describe("word popover (coarse pointer)", () => {
 		await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({
 			timeout: 15000,
 		});
-		await page.getByRole("button", { name: "Read", exact: true }).click();
+		await readDialogue(page);
 		await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 	}
 

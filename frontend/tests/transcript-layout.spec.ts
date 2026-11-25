@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, readDialogue } from "./helpers";
 
 /**
  * Layout guard for the Read transcript's speaker column, in a REAL browser.
@@ -114,7 +114,7 @@ test("transcript: the speaker chip sits beside its line on a phone, not above it
 
 	await page.goto(`/c/${await curriculumId(request)}`);
 	await page.getByTestId("day-1").click();
-	await page.getByRole("button", { name: "Read", exact: true }).click();
+	await readDialogue(page);
 
 	const line = page.locator(".dialogue-line").first();
 	await expect(line.locator(".dialogue-role-chip")).toBeVisible({ timeout: 15000 });
@@ -198,6 +198,7 @@ test("transcript: the key-phrase play button sits beside its text on a phone", a
 	await page.goto(`/c/${cid}`);
 	await page.getByTestId("day-1").click();
 	await page.getByRole("button", { name: "Read", exact: true }).click();
+	await page.getByRole("tab", { name: "Key phrases" }).click();
 
 	const row = page.locator(".key-phrases-list li").first();
 	const btn = row.locator(".seek-btn");
@@ -236,6 +237,7 @@ test("transcript: the desktop key-phrase button keeps its full-height target", a
 	await page.goto(`/c/${cid}`);
 	await page.getByTestId("day-1").click();
 	await page.getByRole("button", { name: "Read", exact: true }).click();
+	await page.getByRole("tab", { name: "Key phrases" }).click();
 
 	const row = page.locator(".key-phrases-list li").first();
 	const btn = row.locator(".seek-btn");

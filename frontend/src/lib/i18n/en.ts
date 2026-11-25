@@ -247,6 +247,26 @@ export const en = {
   "readListenToggle.showControls": "Show controls",
   "readListenToggle.hideControls": "Hide controls",
 
+  // ReadTabs.svelte, ReadOutline.svelte, ReadDrillSteps.svelte (tunatale-cs3p slice 3)
+  "readTabs.aria": "Parts of this lesson",
+  "readTabs.outline": "Outline",
+  "readTabs.keyPhrases": "Key phrases",
+  "readTabs.dialogue": "Dialogue",
+  "readTabs.drill": "Drill",
+  "readTabs.drillN": "Drill {n}",
+  "readTabs.grade": "Grade",
+  "readOutline.keyPhrases": { one: "{count} key phrase", other: "{count} key phrases" },
+  "readOutline.dialogue": { one: "{count} line", other: "{count} lines" },
+  "readOutline.drillHead": { one: "Drill {n} · {count} step", other: "Drill {n} · {count} steps" },
+  "readOutline.ruleDrill": {
+    one: "{count} word and its forms",
+    other: "{count} words and their forms",
+  },
+  "readDrill.play": "Play this step",
+  "readDrill.playModel": "Play the model sentence",
+  "readDrill.reveal": "Show the answer",
+  "readDrill.model": "Model",
+
   // LlmActivityLog.svelte
   "llmActivity.heading": "LLM Activity",
   "llmActivity.mockMode": "Mock mode — LLM activity unavailable",

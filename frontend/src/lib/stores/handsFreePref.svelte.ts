@@ -54,6 +54,18 @@ export const handsFreePref = {
     }
   },
 
+  // Read WITHOUT clearing: the lesson reader asks before the player mounts, so a
+  // hand-off into a lesson never opened lands on Listen (which plays) rather
+  // than on Read's Outline (where hands-free is suspended). The player still
+  // consumes it.
+  handoffArmed(): boolean {
+    try {
+      return sessionStorage.getItem(HANDOFF_KEY) === "1";
+    } catch {
+      return false;
+    }
+  },
+
   // Read-and-clear. One-shot by construction: a reload of the arrival page must
   // not start playing a second time.
   consumeHandoff(): boolean {

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, openLessonsOn } from "./helpers";
 
 /**
  * Twin-rail density (bd tunatale-yh47, stage 3) in a REAL browser: the rails
@@ -136,6 +136,9 @@ async function seed(request: import("@playwright/test").APIRequestContext) {
 
 test.describe.configure({ mode: "serial" });
 
+// These read the dialogue; a lesson's FIRST open is Read on Outline (tunatale-cs3p slice 3).
+test.beforeEach(async ({ page }) => openLessonsOn(page));
+
 test("rails are painted: dense wrapped rows, clear of the next row, and non-vacuous", async ({
 	page,
 	request,
@@ -145,6 +148,7 @@ test("rails are painted: dense wrapped rows, clear of the next row, and non-vacu
 
 	await page.addInitScript(() => localStorage.setItem("lessonMode", "read"));
 	await page.setViewportSize({ width: 390, height: 844 });
+	await openLessonsOn(page);
 	await page.goto(`/c/${curriculumId}/l/${lessonId}`);
 	await expect(page.locator(".tt-wrap").first()).toBeVisible({ timeout: 15000 });
 

@@ -14,7 +14,7 @@
  * for that reason; with the defaults, "Read forces natural" and "Read changes
  * nothing" are the same observation.
  */
-import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterAll, beforeAll, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 
@@ -328,5 +328,78 @@ describe("the screen wake lock follows hands-free, not a Mic setting", () => {
     mount(false);
     await tick();
     expect(lastWake()).toBe(false);
+  });
+});
+
+// A drill-only lesson plays ONE recording on both sides (tunatale-cs3p slice 3
+// gave it a Read side). Switching keeps the exact place in it: a reselect would
+// reload the file and land on the current cue's start, and a tap during that
+// reload would act on a stale position (L3 of the curriculum-page design).
+// Observed on the element itself: a spy on the bound controller does not see
+// the player's own calls (measured: it records none on a story switch either).
+describe("switching sides on a lesson with one recording", () => {
+  const srcSets: string[] = [];
+  const srcDesc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src")!;
+  beforeAll(() => {
+    Object.defineProperty(HTMLAudioElement.prototype, "src", {
+      get() {
+        return srcDesc.get!.call(this);
+      },
+      set(v: string) {
+        srcSets.push(v);
+        srcDesc.set!.call(this, v);
+      },
+      configurable: true,
+    });
+  });
+  afterAll(() => {
+    delete (HTMLAudioElement.prototype as unknown as Record<string, unknown>).src;
+  });
+
+  const drillCue: Cue = {
+    ...cue(0, "affix_drill", "line"),
+    ref: { kind: "drill", target_index: 0 },
+  };
+  const drillAudio: LessonAudio = {
+    audio_id: "d1",
+    lesson_id: "l1",
+    sections: [
+      {
+        audio_id: "sd",
+        section_index: 0,
+        section_type: "affix_drill",
+        title: "Drill",
+        cues: [drillCue],
+      },
+    ],
+    cues: [drillCue],
+  };
+
+  it("does not reload the recording, either way", async () => {
+    const onController = () => {};
+    const r = render(PillSyncHarness, {
+      props: { audio: drillAudio, compact: true, onController },
+    });
+    await tick();
+    expect(srcSets.at(-1)).toBe("/api/audio/sd"); // the drill is what loaded
+    srcSets.length = 0;
+
+    await r.rerender({ audio: drillAudio, compact: false, onController });
+    await tick();
+    await r.rerender({ audio: drillAudio, compact: true, onController });
+    await tick();
+
+    expect(srcSets).toEqual([]);
+  });
+
+  it("still reloads when the other side plays another recording (the control)", async () => {
+    seedListenChoice();
+    const m = mount(true);
+    await tick();
+    srcSets.length = 0;
+
+    await m.setCompact(false);
+
+    expect(srcSets).toEqual(["/api/audio/s5"]); // slow_translated
   });
 });
