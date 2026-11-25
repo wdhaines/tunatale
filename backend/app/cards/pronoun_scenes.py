@@ -80,9 +80,9 @@ from __future__ import annotations
 
 import math
 from typing import NamedTuple
-from xml.sax.saxutils import escape
 
 from app.cards.number_image import _BG, _DOT_FILL, _ROD_FILL
+from app.cards.sentence_band import FRAME_BAND, frame_band
 from app.cards.spatial_scenes import _ACCENT, _BOX_STROKE
 
 #: The concepts this module knows how to draw, and the only ones: an id outside
@@ -169,21 +169,6 @@ _W = 260
 _H = 220
 _G = 198
 
-#: The sentence band under a framed scene (tunatale-37c1). The blank is written
-#: ``___`` in the data and drawn as a longer run of underscores, which every font
-#: draws as one rule: a drawn ``<line>`` would have to know where the text before
-#: it ends, and an SVG cannot measure its own text. Arial is the card's own face
-#: (the vocab notetype CSS), and the ink is the card's own black.
-FRAME_BLANK = "___"
-_BLANK_DRAWN = "____"
-_FRAME_BAND = 36
-_FRAME_BASELINE = 24
-_FRAME_SIZE = 18
-_FRAME_FONT = "Arial, Helvetica, sans-serif"
-_FRAME_INK = "#000000"
-#: About 0.5em a character in Arial at this size leaves 26 characters inside the
-#: frame's 8-unit margins with room to spare.
-_FRAME_MAX_CHARS = 26
 
 #: A person: a head of this radius, a body twice as wide, and three units of
 #: air between them — the gap is what reads as a neck rather than a blob.
@@ -570,25 +555,9 @@ _SCENES: dict[str, _Scene] = {
 }
 
 
-def _frame_text(frame: str) -> str:
-    """*frame*'s one blank widened to a drawn line of underscores, or ``ValueError``.
-
-    Refused rather than drawn badly: a sentence with no blank shows the slot
-    already filled, two blanks leave the card asking which one is the word, and a
-    sentence wider than the card is cut off by the frame's own edge. The width
-    check is an estimate — an SVG cannot measure its text before a font renders
-    it — so the budget sits well inside the frame.
-    """
-    pieces = frame.split(FRAME_BLANK)
-    if len(pieces) != 2:
-        raise ValueError(f"frame {frame!r} must hold exactly one {FRAME_BLANK!r} blank")
-    text = _BLANK_DRAWN.join(pieces)
-    if len(text) > _FRAME_MAX_CHARS:
-        raise ValueError(f"frame {frame!r} is {len(text)} characters drawn; at most {_FRAME_MAX_CHARS} fit the card")
-    return text
-
-
-def render_pronoun_svg(concept: str, owned: str | None = None, frame: str | None = None) -> bytes:
+def render_pronoun_svg(
+    concept: str, owned: str | None = None, frame: str | None = None, cue: str | None = None
+) -> bytes:
     """Draw the pronoun *concept* names, as SVG bytes.
 
     The relation is carried by who stands inside the dashed outline, who stands
@@ -624,7 +593,8 @@ def render_pronoun_svg(concept: str, owned: str | None = None, frame: str | None
     (Cebuano ``ko``, said inside a clause) from its long form (``ako``) when both
     point at the same referent. ``None`` draws no band, and the render is then
     byte for byte what it was before frames existed, so no existing picture is
-    renamed. The sentence is part of the picture rather than of the Image field's
+    renamed. *cue* draws the blank of the form the card asks for (``frame_band``).
+    The sentence is part of the picture rather than of the Image field's
     HTML because every sync path writes and reads that field as a bare
     ``<img src>``.
     """
@@ -691,12 +661,8 @@ def render_pronoun_svg(concept: str, owned: str | None = None, frame: str | None
     sentence = ""
     height = _H
     if frame is not None:
-        height = _H + _FRAME_BAND
-        sentence = (
-            f'<text x="{_n(_W / 2)}" y="{_H + _FRAME_BASELINE}" text-anchor="middle" '
-            f'font-family="{_FRAME_FONT}" font-size="{_FRAME_SIZE}" fill="{_FRAME_INK}">'
-            f"{escape(_frame_text(frame))}</text>"
-        )
+        height = _H + FRAME_BAND
+        sentence = frame_band(frame, cue)
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_W} {height}" width="{_W}" height="{height}">'
         f'<rect x="0" y="0" width="{_W}" height="{height}" fill="{_BG}"/>'

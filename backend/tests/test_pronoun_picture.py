@@ -43,6 +43,7 @@ from app.cards.number_picture import number_picture
 from app.cards.pronoun_picture import (
     _CONCEPT_GLOSSES,
     _spec,
+    form_cue,
     gloss_matches,
     is_pronoun_word,
     is_second_sense,
@@ -557,7 +558,8 @@ class TestDispatch:
     def test_a_pronoun_word_is_drawn_as_its_concept(self, word, code, gloss, concept) -> None:
         picture = pronoun_picture(word, code, gloss)
         assert picture is not None
-        svg = render_pronoun_svg(concept, frame=_FRAMES.get(code, {}).get(word.casefold()))
+        frame = _FRAMES.get(code, {}).get(word.casefold())
+        svg = render_pronoun_svg(concept, frame=frame, cue=form_cue(word, code))
         assert picture.svg == svg
         assert picture.filename == f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg"
 
@@ -949,7 +951,7 @@ class TestFrames:
         word, disambig = key
         concept, frame, gloss = sense
         picture = pronoun_picture(word, "ceb", gloss, disambig)
-        svg = render_pronoun_svg(concept, frame=frame)
+        svg = render_pronoun_svg(concept, frame=frame, cue=form_cue(word, "ceb", disambig))
         assert picture is not None
         assert picture.svg == svg
         assert picture.filename == f"pronoun_{concept}_{hashlib.sha256(svg).hexdigest()[:8]}.svg"
@@ -969,7 +971,7 @@ class TestFrames:
         field, or nothing, draws the word's own picture."""
         picture = pronoun_picture("ko", "ceb", "I", disambig)
         assert picture is not None
-        assert picture.svg == render_pronoun_svg("i", frame=_SUBJECT)
+        assert picture.svg == render_pronoun_svg("i", frame=_SUBJECT, cue="short")
         assert pronoun_gloss("ko", "ceb", disambig) == "I"
 
     def test_the_key_is_stripped_like_the_word(self) -> None:
