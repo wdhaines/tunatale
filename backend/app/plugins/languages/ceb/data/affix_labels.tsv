@@ -16,6 +16,9 @@
 # it relabels a piece the root's class code already licenses, where the approved label is one no
 # root kind selects (a motion verb's mu-, ma- 'want to', the accidental potential, -un 2, hearsay).
 # It never licenses a piece by itself.
+# A root kind 'noun, made an adjective' is Wolff's -an 4, sense 2, 'having [so-and-so]' (kúsgan,
+# kusóg strength + -an). Read only by WolffLexicon._having, never the verb path: -an is not a verb's
+# piece there. Owner: the label 'having' (2026-11-14), Wolff's whole noun sense (2026-11-25).
 mu-	the one doing it	will	mu- 1, 2
 mi-	the one doing it	did	mu- 1, 2
 ni-	the one doing it	did	mu- 1, 2
@@ -78,3 +81,4 @@ ma-	root putól	get, by accident	ma- 1
 na-	root putól	got, by accident	ma- 1
 gi-	root túgnaw	feels it	-un 2
 gi-	root ingón	is said to	-un 1
+-an	noun, made an adjective	having	-an 4, sense 2

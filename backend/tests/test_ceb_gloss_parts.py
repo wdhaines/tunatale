@@ -134,6 +134,69 @@ def test_a_verb_card_still_reads(lexicon, word, english, line):
     assert lexicon.parts_line(word, english) == line
 
 
+# ── -an 'having' on a noun root (tunatale-h0q3.53; owner 2026-11-14 and 2026-11-25) ─────────
+# Wolff's -an 4, sense 2: "added to nouns to form adjectives which mean 'having [so-and-so]'.
+# Utúkan, Brainy. Kwartáhan, Moneyed." NARROW, so the 30-of-36 class stays silent: only a word
+# Wolff prints as its own sub-entry of the root, built root + -an, an adjective, on a root with
+# a noun sense, stress not on the last syllable (that is sense 1, 'characterized by being').
+# The root is glossed by its noun sense (kúsgan builds on kusóg 'strength', not 'fast').
+# Measured 2026-11-25: 1 of the owner's 804 vocab cards (kúsgan); 25 words in all of Wolff.
+
+
+@pytest.mark.parametrize("english", ["strong", ""])
+def test_kusgan_reads_as_its_noun_root_plus_having(lexicon, english):
+    assert lexicon.parts_line("kusgan", english) == "kusóg dynamic strength, force + -an having"
+
+
+@pytest.mark.parametrize(
+    ("word", "line"),
+    [
+        ("kwartahan", "kwárta money + -an having"),
+        # the root's noun sense stops before Wolff's idiom ('seed. makaagpas sa — get the …')
+        ("lisohan", "líso seed + -an having"),
+        ("kukhan", "kokó fingernails, toenails + -an having"),
+    ],
+)
+def test_a_having_word_wolff_lists_reads(lexicon, word, line):
+    assert lexicon.parts_line(word) == line
+
+
+@pytest.mark.parametrize(
+    ("word", "english"),
+    [
+        # the owner's noun -an sub-entries: place nouns, kinship, a body part, a metal
+        ("tindahan", "store"),
+        ("simbahan", "church"),
+        ("amahan", "father"),
+        ("dunggan", "ear"),
+        ("bulawan", "gold"),
+        # final stress: Wolff's -an 4, sense 1 'characterized by being', ruled out (owner 11-14)
+        ("langasan", "of a noisy type"),
+        # read wrong as 'having', skipped by name (owner 2026-11-25)
+        ("adlawan", "for it to be daylight"),
+        ("kulangan", "lacking a lot"),
+        # the root's own card
+        ("kusog", "strength; energy"),
+    ],
+)
+def test_no_having_line_where_the_rule_does_not_hold(lexicon, word, english):
+    assert lexicon.parts_line(word, english) is None
+
+
+def test_a_having_card_leads_its_meaning_and_cites_wolffs_sense(lexicon):
+    f = lexicon.card_fields("kusgan", "strong")
+    assert f.meaning == '<div class="wolff-parts">kusóg dynamic strength, force + -an having</div>strong'
+    assert f.details.startswith("<div>From the root <b>kusóg</b> dynamic strength, force</div>")
+    assert f.details.endswith('<div class="wolff-parts-cite">Wolff’s senses: -an = -an 4, sense 2</div>')
+
+
+def test_the_root_line_of_any_other_sub_entry_keeps_the_first_sense(lexicon):
+    # the control: hingúsog is kusóg's too, but no 'having' word, so its root line is unchanged
+    assert lexicon.card_fields("hingusog", "do as quickly as one can").details.startswith(
+        "<div>From the root <b>kusóg</b> fast, rapid</div>"
+    )
+
+
 # ── on the card: the line leads the Meaning field (owner, 2026-10-28: "Into meaning is fine") ──
 # A field change is data-only (no new notetype field, no full upload). Wolff's sense numbers
 # go to Details, as the approved wording says.

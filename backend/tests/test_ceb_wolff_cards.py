@@ -34,6 +34,7 @@ from app.plugins.languages.ceb.wolff_cards import (
     letters_key,
     load_decoded,
     load_lexicon,
+    load_sense_lead,
     onto_card,
 )
 from app.plugins.languages.ceb.wolff_dictionary import parse_entry, strip_marks
@@ -1238,6 +1239,68 @@ def test_abay_itself_keeps_wolffs_order(committed):
 def test_a_sense_lead_naming_no_sense_raises(committed):
     with pytest.raises(ValueError, match="names no sense"):
         committed.variant(sense_lead={"bay": (("n", 99),)})
+
+
+# ── the owner's two dayon cards (tunatale-tofg.6, approved 2026-11-25) ──
+#
+# Wolff has ONE entry, dáyun 'immediately, at once'; 'go into a house' is sense 3a of its
+# stress form (→) dayún, inside that entry (Wolff prints no part of speech there, only
+# class codes, so those senses carry pos None). #913 'come in, go ahead' is that form and
+# led with (→) 1 'for s.t. bad to come into being'. #615 'immediately' is the root and
+# carried 2a 'sa — [gen.] nga …' with Wolff's example run into its gloss.
+
+
+def test_dayon_come_in_leads_with_its_own_senses(committed):
+    f = committed.card_fields("dayon", "come in, go ahead")
+    assert f.spelling == "dayón"
+    assert f.meaning == (
+        "go into a house; proceed to carry s.t. out; "
+        "for s.t. bad to come into being, be pushed through to reality; stay at a house"
+    )
+
+
+def test_dayon_immediately_keeps_wolffs_order(committed):
+    # the control: the lead row names the stress form dayón, so the root's card is untouched
+    f = committed.card_fields("dayon", "immediately")
+    assert f.spelling == "dáyon"
+    assert f.meaning.startswith("immediately, at once; do as the next thing")
+
+
+@pytest.mark.parametrize(("word", "english"), [("dayon", "immediately"), ("gilayon", "immediately")])
+def test_a_phrase_with_its_example_run_in_is_not_a_meaning(committed, word, english):
+    meaning = committed.card_fields(word, english).meaning
+    assert meaning == "immediately, at once; do as the next thing; eternity"
+    assert "As I was about to eat" not in meaning
+
+
+def test_a_phrase_wolff_glosses_on_its_own_stays(committed):
+    # the control: only the run-in example marks the misread phrase; una's 'sa — in former
+    # times' is an idiom in its own sense and is left where Wolff put it
+    assert "sa — in former times" in committed.card_fields("una", "first").meaning
+
+
+def test_a_sense_lead_can_name_a_sense_with_no_part_of_speech(committed):
+    lead = committed.variant(sense_lead={"dayón": ((None, "3b"),)})
+    assert lead.card_fields("dayon", "come in, go ahead").meaning.startswith("stay at a house; ")
+
+
+def test_a_marked_sense_lead_reaches_only_its_own_stress_form(committed):
+    # dáyon's own 2 'do as the next thing' must not move for a row keyed on dayón
+    lead = committed.variant(sense_lead={"dayón": ((None, "2"),)})
+    assert lead.card_fields("dayon", "immediately").meaning.startswith("immediately, at once")
+    assert lead.card_fields("dayon", "come in, go ahead").meaning.startswith("proceed to carry s.t. out")
+
+
+def test_a_marked_sense_lead_naming_no_sense_of_its_form_raises(committed):
+    # 'eternity' is dáyon's sense 3, not one of dayón's
+    with pytest.raises(ValueError, match="names no sense"):
+        committed.variant(sense_lead={"dayón": ((None, "3"),)})
+
+
+def test_the_sense_lead_file_reads_a_dash_as_no_part_of_speech(tmp_path):
+    path = tmp_path / "lead.tsv"
+    path.write_text("# comment\ndayón\t-\t3a\nbay\tn\t3\n", encoding="utf-8")
+    assert load_sense_lead(path) == {"dayón": ((None, "3a"),), "bay": (("n", "3"),)}
 
 
 def test_the_owners_new_glosses_keep_their_entries(committed):

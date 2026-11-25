@@ -404,6 +404,25 @@ _VERBAL = frozenset(
 )  # fmt: skip
 _ROOT_FORMS = ("(←)", "(→)")  # a root's stress forms: other words with its letters
 
+# ── -an 'having' on a noun root (tunatale-h0q3.53) ──────────────────────────────────────────
+# Wolff's -an 4, sense 2: "added to nouns to form adjectives which mean 'having [so-and-so]'.
+# Utúkan, Brainy. Kwartáhan, Moneyed." The decoder alone never triggers it (that was the
+# 30-of-36 class above): the word must be Wolff's own sub-entry of the root. Measured
+# 2026-11-25: 25 words in all of Wolff, 1 of the owner's 804 vocab cards (kúsgan).
+_HAVING_KIND = "noun, made an adjective"  # affix_labels.tsv's root kind for this row
+_HAVING_AFFIXES = ("-an", "-an(←)", "-an(→)")
+# Wolff lists these as root + -an adjectives on a noun root, but 'having' reads them wrong:
+# adláwan 'for it to be daylight' (ádlaw 'sun'), kulángan 'lacking a lot' (kúlang
+# 'balance'). Skipped by name (owner, 2026-11-25).
+_NOT_HAVING = frozenset({"adlawan", "kulangan"})
+
+
+def _final_stress(spelling: str) -> bool:
+    """Whether *spelling* is stressed on its last syllable: an acute or circumflex on its last
+    vowel. That is Wolff's -an 4, sense 1, 'characterized by being' (talawan, gahian)."""
+    vowels = [marks for ch, marks in _marked_letters(spelling) if ch in "aiu"]
+    return bool(vowels) and bool(vowels[-1] & {"́", "̂"})
+
 
 def _licenses(cls: str) -> set[tuple[str, str]]:
     """The (chart pair, subject) a sense's class code licenses, and the potential ma-/na- that
@@ -525,13 +544,14 @@ class Decoded(NamedTuple):
     reading: str = ""  # the card word's own meaning, which the Meaning field leads with
 
 
-def load_sense_lead(path: Path = SENSE_LEAD_PATH) -> dict[str, tuple[tuple[str, str], ...]]:
-    """Card word -> the ``(pos, n)`` senses that lead its Meaning (``wolff_sense_lead.tsv``)."""
-    lead: dict[str, tuple[tuple[str, str], ...]] = {}
+def load_sense_lead(path: Path = SENSE_LEAD_PATH) -> dict[str, tuple[tuple[str | None, str], ...]]:
+    """Card word -> the ``(pos, n)`` senses that lead its Meaning (``wolff_sense_lead.tsv``).
+    A ``-`` part of speech is a sense Wolff prints none for (a stress form's '(→) {3a} [A2; b6]')."""
+    lead: dict[str, tuple[tuple[str | None, str], ...]] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line and not line.startswith("#"):
             word, pos, n = line.split("\t")
-            lead[word] = (*lead.get(word, ()), (pos, n))
+            lead[word] = (*lead.get(word, ()), (None if pos == "-" else pos, n))
     return lead
 
 
@@ -661,6 +681,27 @@ class Attested(NamedTuple):
     via: None = None
 
 
+# A phrase that opens with a word before the root's dash ('{2a} sa — [gen.] nga …') is not
+# read as one (wolff_dictionary.parse_entry knows only a dash that opens a sense), and Wolff's
+# example then runs on into its gloss ('… about to [do]. (Sa) dáyun ku …, As I was …'). Such a
+# sense is a phrase, which a card's Meaning leaves out. Only the run-in example marks it: una's
+# 'sa — in former times' is an idiom glossed in its own right and stays. Measured 2026-11-25:
+# one sense in all of Wolff, dáyun 2a (the owner's dayon and gilayon cards, tunatale-tofg.6).
+_MISREAD_PHRASE = re.compile(r"[^\W\d_]+(?: [^\W\d_]+)? — .*?[.?!] \(?[A-ZÁÉÍÓÚ][^,]*, [A-Z]")
+
+
+def _marked(word: str) -> str:
+    """*word* as written, marks and all: one stress form (dayón), not its letters (dáyon too)."""
+    return unicodedata.normalize("NFC", word.lower())
+
+
+def _lead_key(word: str) -> str:
+    """A sense-lead row's key: a word written with Wolff's marks names that stress form alone
+    (dayón 'come in', not dáyon 'immediately'); one written without reaches every form with its
+    letters (bay)."""
+    return _marked(word) if _marked(word) != strip_marks(word).lower() else letters_key(word)
+
+
 def _meanings(form: dict) -> list[dict]:
     """*form*'s senses without the two kinds that are not meanings: the affix a
     run of senses belongs to ('*lihug pa- {1} please'), and a pointer to another
@@ -717,13 +758,15 @@ class WolffLexicon:
     def _index_sense_lead(
         self, lead: Mapping[str, Sequence[tuple[str, str]]]
     ) -> dict[str, tuple[tuple[str, str], ...]]:
-        """The lead table by the card word's letters; a row naming no sense of the entries it reaches raises."""
+        """The lead table by :func:`_lead_key`; a row naming no sense of the forms it reaches raises."""
         for word, keys in lead.items():
-            have = {(s["pos"], str(s["n"])) for h in self._hits(word) for s in self._senses(h)}
+            key = _lead_key(word)
+            reached = [h for h in self._hits(word) if key in (letters_key(word), _marked(h.surface))]
+            have = {(s["pos"], str(s["n"])) for h in reached for s in self._senses(h)}
             for pos, n in keys:
                 if (pos, n) not in have:
                     raise ValueError(f"wolff_sense_lead: {word} {pos} {n} names no sense of the entries it reaches")
-        return {letters_key(word): tuple(keys) for word, keys in lead.items()}
+        return {_lead_key(word): tuple(keys) for word, keys in lead.items()}
 
     def _index_decoded(self, decoded: Sequence[Decoded]) -> dict[str, _Hit]:
         """The hand rows by the card word's letters; a row naming no single sub-entry raises."""
@@ -821,7 +864,11 @@ class WolffLexicon:
         return [h.surface for h in self._hits(word)]
 
     def _senses(self, hit: _Hit) -> list[dict]:
-        senses = [s for s in _meanings(self.entries[hit.entry]["forms"][hit.form]) if not s["phrase"]]
+        senses = [
+            s
+            for s in _meanings(self.entries[hit.entry]["forms"][hit.form])
+            if not s["phrase"] and not _MISREAD_PHRASE.match(s["gloss"])
+        ]
         genitive = self._genitive(hit.entry)
         if genitive is None:
             return senses
@@ -981,7 +1028,12 @@ class WolffLexicon:
         *root_rows* False reads with the (piece, root kind) labels alone."""
         settled = self._settled(word, english, root_rows=root_rows)
         if settled is None:
-            return None
+            having = self._having(word)
+            if having is None:
+                return None
+            root, _, gloss = having
+            label = _labels()[("-an", _HAVING_KIND)]
+            return [Part(root["hb"] or root["wolff"], gloss, False), Part("-an", label, True, _cites()[("-an", label)])]
         found, pieces, inflections, (form, sense, shown, labels) = settled
         affix = found[0].affix
         by_piece = dict(zip(inflections, labels[: len(inflections)], strict=True))
@@ -1218,6 +1270,40 @@ class WolffLexicon:
             verb = ""
         return " · ".join(filter(None, [own, verb])) or (_plain(first["gloss"]) if first else "")
 
+    def _having(self, word: str) -> tuple[dict, dict, str] | None:
+        """(the root's form, the word's sub-entry, the root's noun gloss) when *word* is Wolff's
+        -an 4, sense 2 adjective, 'having [noun]': kúsgan = kusóg 'strength' + -an. Every part
+        of the rule must hold, so the line stays silent rather than guess:
+
+        * Wolff prints the word as its own sub-entry of the root, labelled with the word itself
+          or with -an (kúsgan under kusug), and no other form has its letters;
+        * the word is the root plus -an by Wolff's sound rules (kusug -> kusg-an);
+        * the sub-entry is an adjective, and the root has a noun sense to build on;
+        * the stress is not on the last syllable (that is -an 4, sense 1).
+
+        The gloss is the root's first noun sense, stopped before any idiom Wolff runs on after it
+        ('seed. makaagpas sa — …'), not its first sense: kúsgan is not 'fast'."""
+        if letters_key(word) in _NOT_HAVING:
+            return None
+        hits = self._hits(word)
+        # reached directly or by Wolff's own pointer ('kúkhan see kuku'); a short form never
+        # passes the label test below, its letters being another word's
+        if len(hits) != 1 or hits[0].form == 0:
+            return None
+        rec = self.entries[hits[0].entry]
+        root, form = rec["forms"][0], rec["forms"][hits[0].form]
+        label = form["label"].split(",")[0].strip()
+        if not root["wolff"] or not (label in _HAVING_AFFIXES or letters_key(label) == letters_key(word)):
+            return None
+        pos = [s["pos"] for s in form["senses"] if s["pos"]]
+        nouns = [s["gloss"] for s in root["senses"] if s["pos"] == "n" and s["gloss"]]
+        if not pos or pos[0] != "a" or not nouns or _final_stress(form["hb"] or form["wolff"]):
+            return None
+        letters = affixes.wolff_letters(word)
+        if all(affixes.letter_map(letters, root["wolff"], affix) is None for affix in _HAVING_AFFIXES):
+            return None
+        return root, form, _plain(re.split(r"\.\s", nouns[0])[0])
+
     def parts_line(self, word: str, english: str = "", *, root_rows: bool = True) -> str | None:
         """*word* glossed by its parts, as the card and the reader show it: 'mo- will + ádto …'."""
         parts = self.parts(word, english, root_rows=root_rows)
@@ -1305,7 +1391,7 @@ class WolffLexicon:
     def _led_senses(self, hit: _Hit) -> list[dict]:
         """*hit*'s senses, the card word's lead senses first (``wolff_sense_lead.tsv``), else Wolff's order."""
         senses = self._senses(hit)
-        if lead := self._sense_lead.get(letters_key(hit.surface)):
+        if lead := self._sense_lead.get(_marked(hit.surface)) or self._sense_lead.get(letters_key(hit.surface)):
             first = [s for key in lead for s in senses if (s["pos"], str(s["n"])) == key]
             senses = first + [s for s in senses if s not in first]
         return senses
@@ -1503,6 +1589,10 @@ class WolffLexicon:
         if (hit.form != 0 or to_root) and rec["forms"][0]["hb"]:
             root = rec["forms"][0]
             gloss = next((s["gloss"] for s in _meanings(root) if s["gloss"]), "")
+            # a 'having' word builds on the root's noun sense, and says so here as in its line
+            having = self._having(cebuano.split(",")[0].strip())
+            if having is not None and having[1] is form:
+                gloss = having[2]
             out.append(f"<div>From the root <b>{html.escape(root['hb'])}</b> {html.escape(gloss)}</div>")
         out.append(self._sense_list(form))
         # The verb's rows name each affix's subject; a card with no verb line keeps the list.
