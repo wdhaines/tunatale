@@ -29,7 +29,14 @@ import { syncStore } from "#lib/stores/sync.svelte.js";
 import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
 import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
-import { curriculum, lesson, audio, stubViewport } from "./page-test-helpers";
+import {
+  curriculum,
+  lesson,
+  audio,
+  stubViewport,
+  openLessonsOnDialogue,
+  openLessonsAt,
+} from "./page-test-helpers";
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetTranscript = vi.mocked(api.getTranscript);
@@ -38,6 +45,7 @@ const mockUndoGrade = vi.mocked(api.undoGrade);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 beforeEach(() => {
+  openLessonsOnDialogue();
   vi.clearAllMocks();
   localStorage.clear();
   stubViewport(false); // desktop default → Read, unless a test overrides
@@ -98,6 +106,7 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
     };
 
     it("refreshes the transcript and shows a summary after a successful sync", async () => {
+      openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
       const before = {
         lesson_id: "l1",
         key_phrases: [{ phrase: "kavo prosim", translation: "BEFORE sync" }],
@@ -124,6 +133,7 @@ describe("load function for /c/[curriculumId]/l/[lessonId]", () => {
     });
 
     it("does not re-announce a sync that happened before this lesson mounted", async () => {
+      openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
       // syncStore.lastResult is a session-lifetime singleton, so its PRESENCE is
       // not an event. The effect treated it as one, so every lesson opened after
       // a single sync re-showed "Synced with AnkiWeb" under the title and fired

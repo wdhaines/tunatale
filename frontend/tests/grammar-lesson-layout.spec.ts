@@ -215,6 +215,9 @@ for (const [name, width, height] of [
     await stubGrammar(page);
     await page.goto(`/c/${await curriculumId(request)}`);
     await page.getByTestId("day-1").click();
+    // A drill-only lesson opens on Read's Outline the first time (tunatale-cs3p
+    // slice 3); this measures the table Listen shows under its player.
+    await page.getByRole("button", { name: /^Listen$/ }).click();
 
     const rows = page.locator(".drill-root");
     await expect(rows).toHaveCount(2, { timeout: 15000 });
@@ -281,11 +284,13 @@ for (const [name, width, height] of [
     await page.goto(`/c/${await curriculumId(request)}`);
     await page.getByTestId("day-1").click();
     await page.getByRole("button", { name: /^Read$/ }).click();
+    // On Read the table has its own tab after the story's (tunatale-cs3p slice 3).
+    await page.getByRole("tab", { name: "Drill" }).click();
 
     const rows = page.locator(".drill-root");
     await expect(rows).toHaveCount(2, { timeout: 15000 });
-    // The story is still there above it: this is not the drill-only page.
-    await expect(page.locator(".transcript-wrapper")).toBeAttached();
+    // The story is still there beside it: this is not the drill-only page.
+    await expect(page.getByRole("tab", { name: "Dialogue" })).toBeVisible();
 
     const measured = await rows.evaluateAll((els) =>
       els.map((el) =>

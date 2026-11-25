@@ -4481,7 +4481,7 @@ The auth store has three states for "does this deployment need a login": on, off
 Everything under `frontend/src/lib/stores/` is a Svelte 5 rune store. Two families:
 
 - **Server-backed state** polled or hydrated through `api`: `listened.svelte.ts` (which lessons have been listened to, backed by `GET /api/srs/listens`; it also migrates the pre-server localStorage keys once), `queueStats`, `pipeline` (polls the generation pipeline every 2 s while active, 10 s otherwise, with a generation counter so a stale poll cannot write after `stop()`), `llmActivity`, `llmHealth`, `rateLimit`, `language`, `auth`, `parked`, `sync`.
-- **Per-device preferences**, all built on `localPref.svelte.ts::createLocalPref`: hands-free mode, player collapsed, English-order mode, caption blur, listen countdown, wifi prefetch, and the reader's two chips (English and Recall).
+- **Per-device preferences**, all built on `localPref.svelte.ts::createLocalPref`: hands-free mode, player collapsed, English-order mode, caption blur, listen countdown, wifi prefetch, the reader's two chips (English and Recall), and each lesson's own Read/Listen side and Read tab (`lessonSidePref`, curriculum page slice 3).
 
 ```bash
 cd frontend/src/lib && sed -n '/^export function createLocalPref/,/^}/p' stores/localPref.svelte.ts | head -30; ls stores | grep -c Pref
@@ -4518,7 +4518,7 @@ export function createLocalPref<T>(key: string, opts: LocalPrefOptions<T>): Loca
     value = next;
     if (typeof localStorage === "undefined") return;
     try {
-22
+24
 ```
 
 `createLocalPref` exists because each preference store had separately re-spelled three needs: a self-init on first read (a deep component like `LessonPlayer` mounts before the layout's `onMount` seeds anything), tolerance of blocked localStorage (private mode throws on get *and* set; a preference must never break the thing it is attached to), and a safe no-window default. The key and stored string format stay the caller's, because users already have those values on disk. Theme and language are deliberately not built on it: they act on the value, so they need to know when it is applied.
@@ -5094,7 +5094,7 @@ ls frontend/tests/*.spec.ts | xargs -n1 basename | tr '\n' ' '; echo; grep -n "W
 ```
 
 ```output
-admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts curriculum-page-layout.spec.ts grade-page-layout.spec.ts grade-say-english-hidden.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts read-cloze.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
+admin-srs.spec.ts auth-login.spec.ts card-image.spec.ts cors-lockdown.spec.ts curriculum-page-layout.spec.ts grade-page-layout.spec.ts grade-say-english-hidden.spec.ts grade-sentence-mining.spec.ts grammar-lesson-layout.spec.ts invite-redeem.spec.ts language-switch.spec.ts lesson-due-badge.spec.ts lesson-header-layout.spec.ts lesson-navigation.spec.ts lesson-source.spec.ts listen-preview-layout.spec.ts offline-audio.spec.ts phrase-drag.spec.ts pipeline-card.spec.ts planner-chat.spec.ts read-cloze.spec.ts read-tabs.spec.ts reader-chips-layout.spec.ts reader-phrases.spec.ts real-tap.spec.ts reference-layout.spec.ts review-again-rating.spec.ts review-ahead.spec.ts review-drill-card.spec.ts review-flow.spec.ts review-grade-buttons.spec.ts review-pressure.spec.ts smoke.spec.ts tooltip-popover.spec.ts transcript-layout.spec.ts transcript-overflow.spec.ts transcript-rails.spec.ts 
 export const WORKER_COUNT = Number(process.env.E2E_WORKERS ?? 2);
 	const port = 8001 + 2 * i;
 	const frontendPort = 5174 + i;

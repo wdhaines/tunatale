@@ -1,6 +1,7 @@
 import { devices } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { BACKEND, CANNED_STORY, backendAvailable, resetSRSItems } from './helpers';
+import { BACKEND, CANNED_STORY, backendAvailable, resetSRSItems, readDialogue } from "./helpers";
+import { openLessonsOn } from "./helpers";
 
 // Core journey (test-tiers.md door 1), oracle row E2 of
 // design-sentence-mining-2026-11.md (tunatale-h0q3.69): Read › tap a word › More… ›
@@ -84,7 +85,7 @@ test.describe('Read › Cloze…, real touch', () => {
 		await page.goto(`/c/${curriculumId}`);
 		await page.getByTestId('day-1').click();
 		await expect(page.getByRole('button', { name: 'Render Audio' })).toBeVisible({ timeout: 15000 });
-		await page.getByRole('button', { name: 'Read', exact: true }).click();
+		await readDialogue(page);
 
 		// 1. Open "Prosim"'s popover; Cloze… is a utility, behind More… when the popover has a primary action.
 		const prosim = page

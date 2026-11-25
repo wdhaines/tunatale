@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, readDialogue } from "./helpers";
 
 /**
  * Geometry of the reader's chips in the sticky card (bd tunatale-685k), in a
@@ -160,7 +160,7 @@ for (const [name, width, height] of [
     await stubAudio(page);
     await page.goto(`/c/${await curriculumId(request)}`);
     await page.getByTestId("day-1").click();
-    await page.getByRole("button", { name: "Read", exact: true }).click();
+    await readDialogue(page);
 
     const card = page.locator(".player-card");
     const english = card.getByTestId("reader-english-chip");

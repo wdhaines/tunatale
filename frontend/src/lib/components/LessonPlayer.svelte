@@ -25,6 +25,9 @@
 	interface Props {
 		audio: LessonAudio;
 		compact?: boolean;
+		// Read's tab bar picks the part instead (tunatale-cs3p slice 3), so the
+		// reader drops this row on Read; Listen always keeps it.
+		phaseRow?: boolean;
 		lessonTitle?: string;
 		controller?: PlaybackController | null;
 		/**
@@ -40,6 +43,7 @@
 	let {
 		audio,
 		compact = false,
+		phaseRow = true,
 		lessonTitle = '',
 		controller = $bindable(null),
 		onSequenceEnd
@@ -273,13 +277,18 @@
 		// section from the ones the lesson HAS (nextPassAfter / findLast /
 		// findCueInSection). A fallback inside selectTrack would silently
 		// re-point those at the first section, which is a different bug.
-		const type = firstSectionType();
-		if (selectedSectionType && type) {
-			ctrl.selectTrack(init.audio.sections.some((s) => s.section_type === selectedSectionType)
-				? selectedSectionType
-				: type);
+		const type = targetTrack();
+		if (type) {
+			ctrl.selectTrack(type);
 			ctrl.setEnunciationRate(resolveRate(effectiveEnun));
 		}
+	}
+
+	/** The section applyTrack selects: the chosen one, or the first the lesson has (null: none). */
+	function targetTrack(): string | null {
+		return init.audio.sections.some((s) => s.section_type === selectedSectionType)
+			? selectedSectionType
+			: firstSectionType();
 	}
 
 	// The drill is never REMEMBERED as where to open. Most lessons have none, so
@@ -434,7 +443,15 @@
 		if (next === appliedCompact) return;
 		appliedCompact = next;
 		if (!mounted || !trackMode) return;
-		untrack(() => applyTrack());
+		// A switch that keeps the same recording keeps the exact place in it: a
+		// reselect reloads the file and lands on the current cue's START, and a
+		// tap during that reload acts on a stale position. A drill-only lesson
+		// plays one recording on both sides (tunatale-cs3p slice 3, L3). The
+		// controller's Speed is still set as applyTrack would set it.
+		untrack(() => {
+			if (ctrl.activeSectionType === targetTrack()) ctrl.setEnunciationRate(resolveRate(effectiveEnun));
+			else applyTrack();
+		});
 		untrack(() => syncEffectiveHandsFree());
 	});
 
@@ -572,7 +589,7 @@
 	     Phrases and Dialogue, so collapsing it would strand the reader in
 	     whichever half they were already in. Space is never worth removing the
 	     only route somewhere. -->
-	{#if trackMode && !drillOnly}
+	{#if trackMode && !drillOnly && (phaseRow || !compact)}
 		<div class="phase-row">
 			<button
 				class="phase-btn"

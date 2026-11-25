@@ -333,6 +333,31 @@ describe("the reader", () => {
     expect(await findByText(/Toget/)).toBeTruthy();
   });
 
+  it("keeps the one Read text with a drill's table under it: tabs are the lesson page's", async () => {
+    // The Read tab bar (tunatale-cs3p slice 3) is turned on by a lesson id; a
+    // session passes none, so it reads as before, a drill table after its story.
+    const drill = {
+      pattern: "mo-mi",
+      title: "Affix drill: mo- / mi-",
+      labels: ["not begun", "begun"],
+      roots: [
+        {
+          root: "inom",
+          english: "drink",
+          new: false,
+          forms: [{ form: "moinom", english: "will drink" }],
+        },
+      ],
+    };
+    const { findByText, container, queryByRole } = render(Page, {
+      props: { data: data({ session: { ...data().session, drill } }) },
+    });
+
+    expect(await findByText(/Toget/)).toBeTruthy();
+    expect(queryByRole("tablist")).toBeNull();
+    expect(container.querySelector(".drill-root")).toBeTruthy();
+  });
+
   it("grading a word goes through the same actions the lesson page uses", async () => {
     // The user's ask: "as much like the lesson page as possible, just with a
     // different source". The word popover's grade button is the SAME control the

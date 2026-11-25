@@ -504,6 +504,8 @@
 		{navHeight}
 		bind:controller={playbackController}
 		{onSequenceEnd}
+		sideKey={data.lesson.id}
+		gradeHref={gradeHref(data.lesson.id, `/c/${data.curriculum.id}/l/${data.lesson.id}`, data.lesson.title)}
 	>
 		{#snippet headerAbove()}
 				<a class="breadcrumb" href="/c/{data.curriculum.id}">← {data.curriculum.topic}</a>

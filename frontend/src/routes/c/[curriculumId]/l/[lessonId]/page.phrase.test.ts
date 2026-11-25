@@ -28,7 +28,13 @@ import { syncStore } from "#lib/stores/sync.svelte.js";
 import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
 import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
-import { curriculum, lesson, audio, stubViewport } from "./page-test-helpers";
+import {
+  curriculum,
+  lesson,
+  audio,
+  stubViewport,
+  openLessonsOnDialogue,
+} from "./page-test-helpers";
 
 const mockMarkAsListened = vi.mocked(api.markAsListened);
 const mockGetTranscript = vi.mocked(api.getTranscript);
@@ -36,6 +42,7 @@ const mockCreateSRSItem = vi.mocked(api.createSRSItem);
 const mockFetchLessonReviewQueue = vi.mocked(api.fetchLessonReviewQueue);
 
 beforeEach(() => {
+  openLessonsOnDialogue();
   vi.clearAllMocks();
   localStorage.clear();
   stubViewport(false); // desktop default → Read, unless a test overrides

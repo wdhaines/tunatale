@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { backendAvailable, BACKEND } from "./helpers";
+import { backendAvailable, BACKEND, readDialogue, resetSRSItems } from "./helpers";
 
 /**
  * Making a phrase card by dragging across words in the dialogue, with a REAL
@@ -110,6 +110,11 @@ test("dragging across three words offers a phrase card, and Create sends it with
   request,
 }) => {
   test.skip(!(await backendAvailable(request)), "Backend not available");
+  // No cards from an earlier spec on this worker's backend: the canned story's
+  // key phrase 'dober dan', once a card, is a phrase over line 0's words 0-1,
+  // and a drag across 1-3 then overlaps it and offers nothing. It passed only
+  // by running before whichever spec makes that card.
+  await resetSRSItems(request);
   await page.setViewportSize({ width: 1100, height: 900 });
   // The bar's translate button asks the backend for a translation, which is
   // an LLM call, and creating a card with NO translation makes the backend
@@ -125,7 +130,7 @@ test("dragging across three words offers a phrase card, and Create sends it with
   });
   await page.goto(`/c/${await curriculumId(request)}`);
   await page.getByTestId("day-1").click();
-  await page.getByRole("button", { name: "Read", exact: true }).click();
+  await readDialogue(page);
 
   const word = (i: number) => page.locator(`[data-line-index="0"][data-word-index="${i}"]`).first();
   await expect(word(3)).toBeVisible({ timeout: 15000 });

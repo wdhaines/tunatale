@@ -197,3 +197,35 @@ export function trackApiRequests(page: Page) {
 		}
 	};
 }
+
+/**
+ * Open the lesson a test navigates to on *side* unless one is stored for it
+ * (tunatale-cs3p slice 3). A lesson's FIRST open is Read on the Outline tab;
+ * specs about the transcript start on its Dialogue tab instead, and specs about
+ * Listen's layout on Listen. Runs before the app on every document, reading the
+ * lesson id from the URL, so it needs no id up front.
+ */
+export async function openLessonsOn(
+	page: Page,
+	side: { mode: "read" | "listen"; tab: string } = { mode: "read", tab: "dialogue" },
+): Promise<void> {
+	await page.addInitScript((s) => {
+		const m = location.pathname.match(/\/l\/([^/]+)/);
+		if (!m) return;
+		const sides = JSON.parse(localStorage.getItem("lessonSide") || "{}");
+		if (!sides[m[1]]) {
+			sides[m[1]] = s;
+			localStorage.setItem("lessonSide", JSON.stringify(sides));
+		}
+	}, side);
+}
+
+/**
+ * Switch an open lesson to Read and its Dialogue tab, for specs that click
+ * through from the curriculum page (where openLessonsOn's init script never
+ * sees a lesson URL). Read opens on the Outline tab the first time.
+ */
+export async function readDialogue(page: Page): Promise<void> {
+	await page.getByRole("button", { name: "Read", exact: true }).click();
+	await page.getByRole("tab", { name: "Dialogue" }).click();
+}

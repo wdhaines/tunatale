@@ -97,6 +97,9 @@ async function openLesson(page: import("@playwright/test").Page, cid: string) {
 	await page.goto(`/c/${cid}`);
 	await page.getByTestId("day-1").click();
 	await expect(page.getByRole("button", { name: "Render Audio" })).toBeVisible({ timeout: 15000 });
+	// The card's stats band is Listen's: on Read it moves into the Outline tab
+	// (tunatale-cs3p slice 3), and a lesson's first open is Read.
+	await page.getByRole("button", { name: "Listen", exact: true }).click();
 	const card = page.locator(".player-card");
 	await expect(card.locator(".mastery-line")).toBeVisible({ timeout: 10000 });
 	return card;
@@ -239,6 +242,8 @@ for (const { width, fourAcross } of [
 		await stubFullAudio(page);
 		await page.goto(`/c/${cid}`);
 		await page.getByTestId("day-1").click();
+		// The setting chips are Listen's; a lesson's first open is Read (tunatale-cs3p slice 3).
+		await page.getByRole("button", { name: "Listen", exact: true }).click();
 
 		const row = page.locator(".player-card .controls-row");
 		const speed = row.locator(".enunciation-btn");

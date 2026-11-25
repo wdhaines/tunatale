@@ -27,12 +27,21 @@ import { syncStore } from "#lib/stores/sync.svelte.js";
 import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
 import { pipelineStore } from "#lib/stores/pipeline.svelte.js";
 import Page from "./+page.svelte";
-import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
+import {
+  curriculum,
+  lesson,
+  audio,
+  transcript,
+  stubViewport,
+  openLessonsOnDialogue,
+  openLessonsAt,
+} from "./page-test-helpers";
 
 const mockGetProgress = vi.mocked(api.getCurriculumProgress);
 const mockGetTranscript = vi.mocked(api.getTranscript);
 
 beforeEach(() => {
+  openLessonsOnDialogue();
   vi.clearAllMocks();
   localStorage.clear();
   sessionStorage.clear();
@@ -143,7 +152,8 @@ function captureAudio(): { els: HTMLAudioElement[]; restore: () => void } {
 describe("hands-free carries on into the next day", () => {
   // Hands-free runs in Listen only; Read ignores it and keeps the setting
   // (bd tunatale-685k). The file-level reset above leaves the page in Read.
-  beforeEach(() => lessonModePref.set("listen"));
+  // Listen: hands-free runs there only. The lesson keeps its own side now (slice 3).
+  beforeEach(() => openLessonsAt({ mode: "listen", tab: "outline" }));
 
   // Seeded so the player opens ON the last pass of the sequence: ending that
   // track is what completes the run.
@@ -359,6 +369,7 @@ describe("the transcript's ▶ buttons across a lesson-to-lesson navigation", ()
   }
 
   it("keeps the ▶ on the lesson navigated to", async () => {
+    openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
     mockGetProgress.mockResolvedValue([d(1, 1, "l1"), d(2, 2, "l2")]);
     const cap = captureAudio();
     try {
@@ -391,6 +402,7 @@ describe("the transcript's ▶ buttons across a lesson-to-lesson navigation", ()
   // one goes away with nothing replacing it the reader must, or the transcript
   // keeps offering ▶ against a destroyed controller.
   it("drops the ▶ when the lesson navigated to has no audio", async () => {
+    openLessonsAt({ mode: "read", tab: "key_phrases" }); // these read the key phrases
     mockGetProgress.mockResolvedValue([d(1, 1, "l1"), d(2, 2, "l2")]);
     const { container, rerender } = render(Page, {
       props: { data: { curriculum, lesson, audio: audioFor(1), transcript } },
@@ -506,6 +518,7 @@ describe("prev/next lesson links in the player header", () => {
   });
 
   it("keeps the Read/Listen toggle level with the title, below the day pager", async () => {
+    openLessonsAt({ mode: "listen", tab: "outline" }); // Listen keeps all four bands; on Read the stats move into Outline (slice 3)
     mockGetProgress.mockResolvedValue([d(1, 1, "lid-1"), d(2, 2, "lid-2")]);
     const word = {
       lemma: "zdravo",

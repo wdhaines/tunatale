@@ -9,7 +9,7 @@
  * mode, because under Listen "forced to Listen" and "left alone" look alike.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, waitFor } from "@testing-library/svelte";
 
 vi.mock("$app/navigation", () => ({ goto: vi.fn() }));
 
@@ -29,7 +29,15 @@ import { captionBlurPref } from "#lib/stores/captionBlurPref.svelte.js";
 import { lessonModePref } from "#lib/stores/lessonModePref.svelte.js";
 import { listenedStore } from "#lib/stores/listened.svelte.js";
 import Page from "./+page.svelte";
-import { curriculum, lesson, audio, transcript, stubViewport } from "./page-test-helpers";
+import {
+  curriculum,
+  lesson,
+  audio,
+  transcript,
+  stubViewport,
+  openLessonsOnDialogue,
+  openLessonsAt,
+} from "./page-test-helpers";
 
 const drill = {
   pattern: "mo-mi",
@@ -71,6 +79,7 @@ function renderPage(lessonData: typeof lesson, withTranscript: TranscriptData | 
 }
 
 beforeEach(() => {
+  openLessonsOnDialogue();
   vi.clearAllMocks();
   localStorage.clear();
   stubViewport(false);
@@ -81,7 +90,8 @@ beforeEach(() => {
 });
 
 describe("a grammar lesson", () => {
-  it("shows the table of what it drills where the transcript would be", () => {
+  it("shows the table of what it drills where the transcript would be, on Listen", () => {
+    openLessonsAt({ mode: "listen", tab: "outline" });
     const { container, getByText } = renderPage(grammarLesson);
 
     expect(getByText("will drink")).toBeTruthy();
@@ -90,19 +100,32 @@ describe("a grammar lesson", () => {
     ]);
   });
 
-  it("offers no Read / Listen toggle, and leaves the stored mode for the next lesson", () => {
-    const { queryByRole } = renderPage(grammarLesson);
+  // A lesson that is only a drill had no Read side until slice 3 of the
+  // curriculum page (tunatale-cs3p, R3): it now has the switch, and Read opens
+  // on its Outline like any lesson.
+  it("offers the Read / Listen switch, and leaves the global mode for the next lesson", () => {
+    const { getByRole } = renderPage(grammarLesson);
 
-    expect(queryByRole("button", { name: /^Read$/ })).toBeNull();
-    expect(queryByRole("button", { name: /^Listen$/ })).toBeNull();
+    expect(getByRole("button", { name: /^Read$/ })).toBeTruthy();
+    expect(getByRole("button", { name: /^Listen$/ })).toBeTruthy();
     expect(lessonModePref.mode).toBe("read");
   });
 
-  it("is laid out as Listen even though Read is the stored mode", () => {
-    const { container } = renderPage(grammarLesson);
+  it("is laid out as Read, on an Outline that lists its drill", () => {
+    const { container, getByRole } = renderPage(grammarLesson);
 
     // Listen's player is the full one; Read's is `.compact`, with the reader
     // chips under it.
+    expect(container.querySelector(".player.compact")).toBeTruthy();
+    expect(getByRole("tab", { name: "Outline" }).getAttribute("aria-selected")).toBe("true");
+    expect(getByRole("button", { name: /^Drill/ })).toBeTruthy();
+    expect(container.querySelector(".drill-root")).toBeNull();
+  });
+
+  it("is laid out as Listen once Listen is its side", () => {
+    openLessonsAt({ mode: "listen", tab: "outline" });
+    const { container } = renderPage(grammarLesson);
+
     expect(container.querySelector(".player.compact")).toBeNull();
     expect(container.querySelector(".player")).toBeTruthy();
     expect(container.querySelector(".reader-chips")).toBeNull();
@@ -117,9 +140,14 @@ describe("a grammar lesson", () => {
     expect(container.querySelector(".mastery-line")).toBeNull();
   });
 
-  it("shows no transcript, loading or otherwise", async () => {
-    const { container, queryByText } = renderPage(grammarLesson, transcript as TranscriptData);
+  it("shows its table on Read's Drill tab and no transcript, loading or otherwise", async () => {
+    const { container, queryByText, getByRole } = renderPage(
+      grammarLesson,
+      transcript as TranscriptData,
+    );
 
+    expect(() => getByRole("tab", { name: "Dialogue" })).toThrow();
+    await fireEvent.click(getByRole("tab", { name: "Drill" }));
     await waitFor(() => expect(container.querySelector(".drill-root")).toBeTruthy());
     expect(queryByText("kavo prosim")).toBeNull();
     expect(queryByText("No transcript available.")).toBeNull();
@@ -127,37 +155,46 @@ describe("a grammar lesson", () => {
 });
 
 describe("a story lesson that ends with a drill", () => {
-  it("keeps its mastery line", () => {
+  it("keeps its mastery line, which on Read sits in the Outline tab", () => {
+    openLessonsAt({ mode: "read", tab: "outline" });
     const { container } = renderPage(storyWithDrill);
 
+    expect(container.querySelector(".player-header .mastery-placeholder")).toBeNull();
+    expect(container.querySelector("[role=tabpanel] .mastery-placeholder")).toBeTruthy();
     expect(container.querySelector(".mastery-placeholder")).toBeTruthy();
   });
 
-  it("is still read like any other lesson, with what its drill covers under the story", () => {
-    const { container, getByText, getByRole } = renderPage(
+  it("is still read like any other lesson, with what its drill covers on a tab after the story", async () => {
+    const { container, getByText, getByRole, getAllByRole } = renderPage(
       storyWithDrill,
       transcript as TranscriptData,
     );
 
-    // The control for the grammar-lesson tests above: these two buttons are
-    // what "no toggle" there means.
     expect(getByRole("button", { name: /^Read$/ })).toBeTruthy();
     expect(getByRole("button", { name: /^Listen$/ })).toBeTruthy();
     expect(container.querySelector(".player.compact")).toBeTruthy();
-    // The table of forms follows the story. No new grammar lessons are made
-    // (the owner, 2026-10-13), so this is the page where a learner can see what
-    // a drill covered, and where "not begun / begun" is read.
-    const story = getByText("kavo prosim");
-    const table = container.querySelector(".drill-root")!;
-    expect(table).toBeTruthy();
-    expect(story.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // One tab per part, the drill after the story (tunatale-cs3p slice 3, R2).
+    // No new grammar lessons are made (the owner, 2026-10-13), so this is the
+    // page where a learner can see what a drill covered, and where
+    // "not begun / begun" is read.
+    expect(getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Outline",
+      "Key phrases",
+      "Dialogue",
+      "Drill",
+    ]);
+    await fireEvent.click(getByRole("tab", { name: "Key phrases" }));
+    expect(getByText("kavo prosim")).toBeTruthy();
+    expect(container.querySelector(".drill-root")).toBeNull();
+    await fireEvent.click(getByRole("tab", { name: "Drill" }));
+    expect(container.querySelector(".drill-root")).toBeTruthy();
     expect(
       [...container.querySelectorAll(".drill-labels .label")].map((e) => e.textContent),
     ).toEqual(["not begun", "begun"]);
   });
 
   it("shows no table while it is being listened to: that page has nothing to read", () => {
-    lessonModePref.set("listen");
+    openLessonsAt({ mode: "listen", tab: "outline" });
     const { container } = renderPage(storyWithDrill, transcript as TranscriptData);
 
     expect(container.querySelector(".drill-root")).toBeNull();
