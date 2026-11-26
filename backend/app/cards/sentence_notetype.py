@@ -67,7 +67,7 @@ AFMT = (
     '<div class="tt-focus">{{BlankGlosses}}</div>'
     '<div class="tt-en">{{English}}</div>'
     '<div class="tt-folds">'
-    '{{#Glosses}}<details class="tt-fold"><summary>Word by word</summary>'
+    '{{#Glosses}}<details class="tt-fold" open><summary>Word by word</summary>'
     '<div class="tt-glosses">{{Glosses}}</div>' + _SOURCE + "</details>{{/Glosses}}"
     '{{#CueMeans}}<details class="tt-fold"><summary>What {{CueSpeaker}} said</summary>{{CueMeans}}'
     "{{^Glosses}}" + _SOURCE + "{{/Glosses}}</details>{{/CueMeans}}"

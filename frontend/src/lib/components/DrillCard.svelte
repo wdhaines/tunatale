@@ -371,7 +371,7 @@
 				<p class="answer-text english">{item.sentence.english}</p>
 				<!-- A line with no build-up rows (Wolff's "Màáyo.") would open onto nothing. -->
 				{#if item.sentence.glosses.length}
-					<details class="sentence-words">
+					<details class="sentence-words" open>
 						<summary>{t('drillCard.wordByWord')}</summary>
 						{#each item.sentence.glosses as g, i (i)}
 							<div class="sentence-gloss"><b>{g.word}</b> {@html g.gloss_html}</div>

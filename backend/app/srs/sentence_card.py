@@ -13,8 +13,9 @@ here knows a language. The owner's rules (2026-11-05, on the bead):
 * A **blank card** asks for one word of the sentence instead of all of it (a
   particle, a linker, anything an English speaker would not predict). A linker
   suffix stays attached to its stem: ``Godt{{c1::ng}} dag``.
-* **The back** shows the blanked word's own gloss and the sentence's English
-  openly; its word-by-word glosses and "What the cue means" start closed.
+* **The back** shows the blanked word's own gloss, the sentence's English and
+  its word-by-word glosses openly; "What the cue means" starts closed (the
+  owner, 2026-11-26, h0q3.64).
 
 Its content is not computed from a language table: it is the course's text,
 which lives only in the learner's database and deck, never in this repo. So the
@@ -147,7 +148,7 @@ class SentenceCard:
         return f'{top}<div class="tt-say"><span class="tt-who">{_esc(self.speaker)}:</span> {say}</div>'
 
     def back_extra(self, answer_audio: str | None = None) -> str:
-        """Back Extra: the blank's gloss and the English openly; glosses and the cue's meaning closed."""
+        """Back Extra: the blank's gloss, the English and the word-by-word glosses openly; the cue's meaning closed."""
         parts = []
         if self.blank is not None:
             s, e = self.blank
@@ -157,7 +158,7 @@ class SentenceCard:
         parts.append(f'<div class="tt-en">{_esc(self.english)}</div>')
         if self.glosses:  # a line with no build-up rows would open onto nothing
             parts.append(
-                f'<details class="tt-words"><summary>Word by word</summary>{_gloss_rows(self.glosses)}</details>'
+                f'<details class="tt-words" open><summary>Word by word</summary>{_gloss_rows(self.glosses)}</details>'
             )
         if self.cue is not None:
             parts.append(
