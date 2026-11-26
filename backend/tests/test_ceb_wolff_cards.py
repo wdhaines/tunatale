@@ -501,6 +501,94 @@ def test_a_bare_case_label_reads_as_the_pronouns_possessive(committed, word, eng
     assert meaning in committed.card_fields(word, english).meaning.split("; ")
 
 
+# Wolff has no form for a dative pronoun: 'kanákù see aku' lands on akó's
+# root, so kanako's card read "I, me" (tunatale-h0q3.78). His own dative glosses
+# ('kaníya dat.: him, her', 'kaníla dat.: them') are the pronoun's object form,
+# so a kan- pointer onto a personal pronoun's root reads as that.
+
+
+@pytest.mark.parametrize(
+    ("word", "english", "meaning"),
+    [
+        ("kanako", "to me, for me; me", "dat.: me"),
+        ("kanimo", "to you, for you (one person); you", "dat.: you"),
+        ("kaniya", "to him / her, for him / her; him, her", "dat.: him, her"),
+        ("kanato", "to us, for us (including you); us", "dat.: us"),
+        ("kanamo", "to us, for us (not including you); us", "dat.: us"),
+        ("kaninyo", "to you, for you (plural); you", "dat.: you"),
+        ("kanila", "to them, for them; them", "dat.: them"),
+    ],
+)
+def test_a_dative_pronoun_reads_as_its_object_form(committed, word, english, meaning):
+    assert committed.card_fields(word, english).meaning == meaning
+
+
+def test_a_pointer_onto_a_pronoun_that_is_not_a_dative_keeps_the_roots_senses(committed):
+    # 'nákù see aku' has a form of its own under aku; 'ako' is the root itself
+    assert committed.card_fields("ako", "I").meaning.startswith("I, me")
+
+
+def test_a_preposed_genitive_named_from_its_pronoun_reads_as_that_possessive(committed):
+    # íya is its own entry, 'preposed gen. form from siya': no 'his / her' until siya's is read
+    meaning = committed.card_fields("iya", "his, her, hers; by him / her").meaning
+    assert meaning.split("; ")[0] == "preposed gen. form: his, her, by him or her"
+
+
+def test_a_genitive_named_from_a_word_that_is_not_a_pronoun_is_left_alone():
+    lex = WolffLexicon(
+        [
+            {
+                "id": "balay",
+                "heads": ["balay"],
+                "forms": [_form("balay", "baláy", glosses=("house",))],
+                "text": "balay house.",
+            },
+            {
+                "id": "ila",
+                "heads": ["íla"],
+                "forms": [_form("íla", "íla", glosses=("preposed gen. form from balay",))],
+                "text": "íla preposed gen. form from balay.",
+            },
+            {
+                "id": "ula",
+                "heads": ["úla"],
+                "forms": [_form("úla", "úla", glosses=("preposed gen. form from zzz",))],
+                "text": "úla preposed gen. form from zzz.",
+            },
+        ]
+    )
+    assert lex.card_fields("ila", "of the house").meaning == "preposed gen. form from balay"
+    assert lex.card_fields("ula", "of zzz").meaning == "preposed gen. form from zzz"
+
+
+def test_a_kan_pointer_onto_a_word_that_is_not_a_pronoun_keeps_its_senses():
+    lex = WolffLexicon(
+        [
+            {
+                "id": "balay",
+                "heads": ["balay"],
+                "forms": [_form("balay", "baláy", glosses=("house",))],
+                "text": "balay house.",
+            },
+            {
+                "id": "kanubalay",
+                "heads": ["kanubalay"],
+                "forms": [_form("kanubalay", "kanubaláy", xref=["see", "balay"])],
+                "text": "kanubalay see balay.",
+            },
+            {
+                "id": "bbalay",
+                "heads": ["bbalay"],
+                "forms": [_form("bbalay", "bbaláy", xref=["see", "balay"])],
+                "text": "bbalay see balay.",
+            },
+        ]
+    )
+    # kan- onto a root that is no pronoun, and a pointer that is no kan- at all
+    assert lex.card_fields("kanubalay", "house").meaning == "house"
+    assert lex.card_fields("bbalay", "house").meaning == "house"
+
+
 def test_a_case_label_on_a_word_that_is_not_a_pronoun_is_left_alone():
     entries = [
         {

@@ -226,6 +226,12 @@ _POINTER_HOPS = 2
 #: 'gen.: = nákù'), which :meth:`WolffLexicon._senses` reads as the pronoun's
 #: possessive. Group 1 is the label, group 2 the word it points at.
 _CASE_LABEL = re.compile(r"((?:preposed )?gen\.(?: form)?)(?::\s*=\s*(\S+?))?\.?")
+#: A genitive Wolff names by its pronoun instead ('íya preposed gen. form from
+#: siya'), which reads as that pronoun's possessive. Group 2 is the pronoun.
+_CASE_FROM = re.compile(r"((?:preposed )?gen\.(?: form)?) from (\S+?)\.?")
+#: A dative pronoun is kan- + the pronoun (kanákù, kaníla), and Wolff gives it no
+#: form of its own: 'kanákù see aku' lands on the pronoun's root.
+_DATIVE = re.compile(r"kan[aeiou]")
 #: An English personal pronoun's possessive and the agent Wolff pairs with it.
 _PRONOUN_CASES = {
     "i": ("my", "me"),
@@ -938,17 +944,36 @@ class WolffLexicon:
             for s in _meanings(self.entries[hit.entry]["forms"][hit.form])
             if not s["phrase"] and not _MISREAD_PHRASE.match(s["gloss"])
         ]
+        if (dative := self._dative(hit)) is not None:
+            return [{"pos": None, "n": None, "cls": None, "gloss": f"dat.: {dative}", "phrase": None, "ex": None}]
         genitive = self._genitive(hit.entry)
-        if genitive is None:
-            return senses
         out = []
         for s in senses:
-            m = _CASE_LABEL.fullmatch(s["gloss"])
-            if m:
+            if genitive is not None and (m := _CASE_LABEL.fullmatch(s["gloss"])):
                 pointer = f" (= {m.group(2)})" if m.group(2) else ""
                 s = {**s, "gloss": f"{m.group(1)}: {genitive}{pointer}"}
+            elif (m := _CASE_FROM.fullmatch(s["gloss"])) and (owner := self._genitive_of(m.group(2))) is not None:
+                s = {**s, "gloss": f"{m.group(1)}: {owner}"}
             out.append(s)
         return out
+
+    def _dative(self, hit: _Hit) -> str | None:
+        """'him, her' for a kan- pointer onto a personal pronoun's root (kaníya see siya), else None.
+
+        Wolff's datives are the pronoun's object form: 'kaníya dat.: him, her'.
+        """
+        if hit.via is None or hit.form != 0:
+            return None
+        pointer = self.entries[hit.via[0]]["forms"][hit.via[1]]["wolff"] or ""
+        if not _DATIVE.match(strip_marks(pointer).lower()):
+            return None
+        cases = self._pronoun_cases(hit.entry)
+        return ", ".join(dict.fromkeys(a for _, a in cases)) if cases else None
+
+    def _genitive_of(self, word: str) -> str | None:
+        """*word*'s possessive and agent, read off the first entry headed *word* that is a pronoun."""
+        heads = self._heads.get(strip_marks(word).lower(), [])
+        return next((g for ei in heads if (g := self._genitive(ei)) is not None), None)
 
     def _genitive(self, ei: int) -> str | None:
         """'our, by us' for an entry whose root is a personal pronoun ('we, us'), else None.
@@ -956,6 +981,15 @@ class WolffLexicon:
         Wolff glosses a possessive with its case label alone ('átù {1} gen.'),
         and his genitive is the possessive and the agent: nákù "gen.: my, by me".
         """
+        cases = self._pronoun_cases(ei)
+        if not cases:
+            return None
+        owners = list(dict.fromkeys(o for o, _ in cases))
+        agents = list(dict.fromkeys(a for _, a in cases))
+        return f"{', '.join(owners)}, by {' or '.join(agents)}"
+
+    def _pronoun_cases(self, ei: int) -> list[tuple[str, str]]:
+        """The (possessive, object) pairs of the English pronouns leading *ei*'s root gloss, else []."""
         root = self.entries[ei]["forms"][0]
         first = next((s["gloss"] for s in root["senses"] if s["gloss"]), "")
         cases = []
@@ -963,11 +997,7 @@ class WolffLexicon:
             if word not in _PRONOUN_CASES:
                 break
             cases.append(_PRONOUN_CASES[word])
-        if not cases:
-            return None
-        owners = list(dict.fromkeys(o for o, _ in cases))
-        agents = list(dict.fromkeys(a for _, a in cases))
-        return f"{', '.join(owners)}, by {' or '.join(agents)}"
+        return cases
 
     def _printed(self, word: str) -> Attested | Miss:
         """The spelling Wolff prints, when at least nine in ten of his printings agree."""
