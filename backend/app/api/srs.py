@@ -1188,7 +1188,34 @@ class _LessonWords(NamedTuple):
     phrase_cards: dict[int, None]
 
 
-def _analyze_lesson_words(lesson, db) -> _LessonWords:
+class _DeckIndexes:
+    """The deck-wide indexes a lesson's read builds, memoised per language (tunatale-5i1p.11).
+
+    One per read-only request that reads several lessons (``GET /api/srs/due-counts``),
+    so N lessons read the deck once rather than N times. Valid only while no card
+    is written: never hold one across a write.
+    """
+
+    def __init__(self, db) -> None:
+        self._db = db
+        self._memo: dict[tuple[str, str], object] = {}
+
+    def _get(self, kind: str, code: str, build):
+        if (kind, code) not in self._memo:
+            self._memo[kind, code] = build()
+        return self._memo[kind, code]
+
+    def phrases(self, lemmatizer, code: str):
+        return self._get("phrase", code, lambda: build_phrase_index(self._db, lemmatizer, code))
+
+    def variants(self, code: str):
+        return self._get("variant", code, lambda: _build_variant_index(self._db, code))
+
+    def inflections(self, code: str):
+        return self._get("inflection", code, lambda: _build_inflection_index(self._db, code))
+
+
+def _analyze_lesson_words(lesson, db, indexes: _DeckIndexes | None = None) -> _LessonWords:
     """Run the lemmatizer over the lesson's L2 NATURAL_SPEED phrases.
 
     Blocking (classla under the hood) — callers offload via
@@ -1213,7 +1240,7 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
     # The reader's own span index, so a listen and the reader agree on where a
     # phrase card is. `match_spans` is greedy longest-first: nested phrases
     # yield the OUTERMOST card only.
-    phrase_index, exact_form = build_phrase_index(db, lemmatizer, lesson.language_code)
+    phrase_index, exact_form = (indexes or _DeckIndexes(db)).phrases(lemmatizer, lesson.language_code)
     # A course word's host, from the book's build-up rows: the reader reads it the same way.
     hosts = story_hosts(lesson_story(lesson))
     for phrase in natural_speed.phrases:
@@ -2520,7 +2547,9 @@ class _ListenPlan(NamedTuple):
     sentence_budget: int = 0
 
 
-def _build_listen_plan(db, store, lesson, content_id: str, words: _LessonWords) -> _ListenPlan:
+def _build_listen_plan(
+    db, store, lesson, content_id: str, words: _LessonWords, indexes: _DeckIndexes | None = None
+) -> _ListenPlan:
     """The listen preview's read, shared by the preview, the Grade plan and the Grade Save.
 
     One computation for all three is what keeps a suggestion's ``will_create``
@@ -2546,8 +2575,9 @@ def _build_listen_plan(db, store, lesson, content_id: str, words: _LessonWords) 
     today = anki_today()
     today_start, today_end, end_of_day_utc = _listen_day_window()
 
-    variant_index = _build_variant_index(db, lesson.language_code)
-    inflection_index = _build_inflection_index(db, lesson.language_code)
+    indexes = indexes or _DeckIndexes(db)
+    variant_index = indexes.variants(lesson.language_code)
+    inflection_index = indexes.inflections(lesson.language_code)
 
     # Same call, same arguments as mark_lesson_listened — a single-word key
     # phrase owns its card and the word pass below stands down for it.

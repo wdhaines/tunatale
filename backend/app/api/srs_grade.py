@@ -50,6 +50,7 @@ from app.api.srs import (
     _apply_grade_now,
     _build_listen_plan,
     _create_ranked_words,
+    _DeckIndexes,
     _drill_dict,
     _listen_day_window,
     _ListenPlan,
@@ -281,18 +282,27 @@ async def get_due_counts(
     Same reads and the same row rule as ``get_grade_plan``, so the badge and
     the page cannot disagree. An id with no readable lesson is left out.
     It writes what opening each Grade page would: the day's unbury, and the
-    lemma cache of a lesson not analysed before. It reads the whole deck once
-    per lesson: 12 lessons measured 0.6-0.8 s (tunatale-5i1p.11).
+    lemma cache of a lesson not analysed before. The deck-wide indexes are built
+    once for all the lessons, in a worker thread (tunatale-5i1p.11): per lesson,
+    12 lessons measured 0.6-0.8 s on the event loop.
     """
+    store, db = request.state.content_store, request.state.srs_db
     window = _Window.read()
-    counts: dict[str, int] = {}
-    for cid in content_id or []:
-        try:
-            db, lesson, _words, plan = await _read_plan(request, cid)
-        except HTTPException:
-            continue
-        counts[cid] = len(_plan_rows(db, lesson, plan, window, range_days, cid)[0])
-    return {"counts": counts}
+
+    def count_all() -> dict[str, int]:
+        indexes = _DeckIndexes(db)
+        counts: dict[str, int] = {}
+        for cid in content_id or []:
+            lesson = store.get_readable_content(cid)
+            if lesson is None:
+                continue
+            db.unbury_if_needed(anki_today())  # as _read_plan does
+            words = _analyze_lesson_words(lesson, db, indexes)
+            plan = _build_listen_plan(db, store, lesson, cid, words, indexes)
+            counts[cid] = len(_plan_rows(db, lesson, plan, window, range_days, cid)[0])
+        return counts
+
+    return {"counts": await anyio.to_thread.run_sync(count_all)}
 
 
 def _plan_rows(db, lesson, plan: _ListenPlan, window: _Window, range_days: int | None, content_id: str):
