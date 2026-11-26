@@ -2324,6 +2324,38 @@ class TestAdminMutations:
         srs_db.update_collocation_fields(row_id, text="god kveld", translation="good evening")
         assert self._lemma_columns(srs_db, row_id) == (None, None)
 
+    def test_relabel_moves_text_key_guid_and_derived_lemma_without_a_dirty_flag(self, srs_db):
+        """The note was renamed in the same envelope (tunatale-h0q3.71), so nothing waits to push."""
+        from app.common.guid import compute_guid
+
+        srs_db.add_collocation(
+            SyntacticUnit(
+                text="hund", translation="dog", word_count=1, difficulty=1, source="corpus", disambig_key="noun"
+            ),
+            language_code="no",
+        )
+        row_id = _id_for_text(srs_db, "hund")
+        srs_db.relabel_collocation(row_id, text="bikkje", disambig_key="")
+        with srs_db._get_conn() as conn:
+            row = conn.execute(
+                "SELECT text, disambig_key, guid, lemma, dirty_fields FROM collocations WHERE id = ?", (row_id,)
+            ).fetchone()
+        assert tuple(row) == ("bikkje", "", compute_guid("bikkje", "no", ""), "bikkje", "")
+
+    def test_relabel_keeps_a_lemma_that_was_set_apart_from_the_text(self, srs_db):
+        srs_db.add_collocation(self._word("nagdala", "brought", lemma="dala"), language_code="no")
+        row_id = _id_for_text(srs_db, "nagdala")
+        srs_db.relabel_collocation(row_id, text="nagdalag", disambig_key="")
+        assert self._lemma_columns(srs_db, row_id)[0] == "dala"
+
+    def test_relabel_onto_another_rows_guid_raises(self, srs_db):
+        import pytest
+
+        srs_db.add_collocation(self._word("hund", "dog"), language_code="no")
+        srs_db.add_collocation(self._word("katt", "cat"), language_code="no")
+        with pytest.raises(ValueError, match="already exists"):
+            srs_db.relabel_collocation(_id_for_text(srs_db, "katt"), text="hund", disambig_key="")
+
     def test_delete_collocation_removes_row(self, srs_db):
         srs_db.add_collocation(_unit("nasvidenje", "goodbye"), language_code="sl")
         rows, _ = srs_db.list_collocations()

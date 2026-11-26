@@ -646,6 +646,57 @@ class TestPeerSyncSelfHost:
         )
         assert present["present"], f"sentence audio did NOT reach peer2 through peer_sync — {present}"
 
+    def test_a_merged_pair_reaches_the_peer_incrementally(self, tmp_path: Path):
+        """tunatale-h0q3.71: 'ko' is renamed 'nako' and takes the guid of the 'nako' note
+        graved in the same sync. The server must take the graves and the renamed note
+        incrementally, and the peer must end with one note under the new guid, the
+        survivor's card and review intact."""
+        import sqlite3
+        from contextlib import closing
+
+        from app.common.guid import compute_guid
+        from app.plugins.anki_sync.merge_pair_cards import MergeStep, apply_anki
+        from app.plugins.anki_sync.safety import safe_open
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        deck = settings.anki_deck_name
+        auth = _login()
+
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        survivor = _driver({"op": "add_note", "collection_path": str(tt_col), "deck": deck, "fields": ["ko", "my"]})
+        loser = _driver({"op": "add_note", "collection_path": str(tt_col), "deck": deck, "fields": ["nako", "my"]})
+        survivor_card = survivor["card_ids"][0]
+        _driver(
+            {"op": "answer_card", "collection_path": str(tt_col), "deck": deck, "card_id": survivor_card, "rating": 4}
+        )
+        nid = {"loser": loser["note_id"], "survivor": survivor["note_id"]}
+        # TT's own notes carry text-derived guids; the driver's add_note gives Anki's.
+        with safe_open(tt_col, backup_dir=tmp_path / "backups", mode="rw") as ctx:
+            for key, text in (("loser", "nako"), ("survivor", "ko")):
+                ctx.conn.execute("UPDATE notes SET guid = ? WHERE id = ?", (compute_guid(text, "ceb", ""), nid[key]))
+            ctx.conn.commit()
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        step = MergeStep(1, nid["survivor"], 2, nid["loser"], "nako", "", "my", renamed=True)
+        with safe_open(tt_col, backup_dir=tmp_path / "backups", mode="rw") as ctx:
+            apply_anki(ctx.conn, [step], "ceb")
+
+        _assert_incremental(_driver({"op": "sync", "collection_path": str(tt_col), "auth": auth})["required"], "tt")
+        _assert_incremental(
+            _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth})["required"], "peer2"
+        )
+
+        with closing(sqlite3.connect(peer2_col)) as conn:  # closed: Anki opens the file exclusively next
+            notes = conn.execute("SELECT id, guid, sfld FROM notes ORDER BY id").fetchall()
+            card = conn.execute("SELECT nid, reps FROM cards WHERE id = ?", (survivor_card,)).fetchone()
+            loser_cards = conn.execute("SELECT COUNT(*) FROM cards WHERE nid = ?", (nid["loser"],)).fetchone()[0]
+        assert notes == [(nid["survivor"], compute_guid("nako", "ceb", ""), "nako")]
+        assert card == (nid["survivor"], 1)
+        assert loser_cards == 0
+
 
 @pytest.mark.peer_sync
 class TestPeerSyncMediaDriver:

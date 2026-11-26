@@ -337,29 +337,34 @@ class OfflineWriter:
             return False
         field_names = self._field_names_for_mid(row["mid"])
         parts = row["flds"].split("\x1f")
-        old_first = _strip_markup(parts[0])
         name_to_idx = {name: i for i, name in enumerate(field_names)}
+        disambig_idx = name_to_idx.get("DisambigKey")
+
+        def _disambig() -> str:
+            return parts[disambig_idx] if disambig_idx is not None else ""
+
+        old_first, old_disambig = _strip_markup(parts[0]), _disambig()
         for name, value in fields.items():
             idx = name_to_idx.get(name)
             if idx is None:
                 raise ValueError(f"Unknown field name {name!r} for note {note_id}")
             parts[idx] = value
-        new_first = _strip_markup(parts[0])
+        new_first, new_disambig = _strip_markup(parts[0]), _disambig()
         sfld, guid = row["sfld"], row["guid"]
         csum = None
         if new_first != old_first:
             csum = int(hashlib.sha1(new_first.encode()).hexdigest()[:8], 16)
             if str(sfld) == old_first:
                 sfld = new_first
-            disambig_idx = name_to_idx.get("DisambigKey")
-            disambig = parts[disambig_idx] if disambig_idx is not None else ""
-            if guid == compute_guid(old_first, language_code, disambig):
-                guid = compute_guid(new_first, language_code, disambig)
-                clash = self._conn.execute(
-                    "SELECT id FROM notes WHERE guid = ? AND id != ?", (guid, note_id)
-                ).fetchone()
-                if clash is not None:
-                    raise DuplicateNoteError(clash[0])
+        # The key is folded into a text-derived guid, so an edit to either moves it.
+        # The old guid is checked against the OLD key (tunatale-h0q3.71: ko[genitive] -> nako).
+        if (new_first, new_disambig) != (old_first, old_disambig) and guid == compute_guid(
+            old_first, language_code, old_disambig
+        ):
+            guid = compute_guid(new_first, language_code, new_disambig)
+            clash = self._conn.execute("SELECT id FROM notes WHERE guid = ? AND id != ?", (guid, note_id)).fetchone()
+            if clash is not None:
+                raise DuplicateNoteError(clash[0])
         ts = int(_time.time())
         self._conn.execute(
             "UPDATE notes SET flds = ?, sfld = ?, csum = COALESCE(?, csum), guid = ?, mod = ?, usn = -1 WHERE id = ?",

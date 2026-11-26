@@ -408,6 +408,32 @@ class DbCollocationsMixin:
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"text already exists: {text!r}") from exc
 
+    def relabel_collocation(self, row_id: int, *, text: str, disambig_key: str) -> None:
+        """Give a row the text and key its Anki note was ALREADY renamed to. No dirty flag.
+
+        For a writer that renamed the note itself in the same envelope
+        (``merge_pair_cards``): the guid follows both, and the lemma follows the
+        text as in :meth:`update_collocation_fields`. Raises ``ValueError`` if the
+        new guid belongs to another row.
+        """
+        try:
+            with self._get_conn() as conn:
+                cur = conn.execute(
+                    "SELECT language_code, text, lemma, word_count FROM collocations WHERE id = ?", (row_id,)
+                ).fetchone()
+                language, word_count = cur["language_code"], cur["word_count"]
+                lemma = cur["lemma"]
+                if not lemma or lemma == _derived_lemma(language, cur["text"], word_count):
+                    lemma = _derived_lemma(language, text, word_count)
+                conn.execute(
+                    "UPDATE collocations SET text = ?, disambig_key = ?, guid = ?, lemma = ?, lemma_key = NULL, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (text, disambig_key, compute_guid(text, language, disambig_key), lemma, row_id),
+                )
+                self._commit(conn)
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"text already exists: {text!r}") from exc
+
     def set_cloze_sentence(self, row_id: int, sentence: str, translation: str) -> None:
         """Replace a cloze collocation's sentence AND its translation, flagged for sync.
 
