@@ -3682,6 +3682,7 @@ add_vocab_notetype.py
 backfill_dictionary_fields.py
 convert_pronoun_clozes.py
 import_seed.py
+merge_pair_cards.py
 migrate_number_clozes.py
 normalize_usns.py
 refresh_dictionary_css.py

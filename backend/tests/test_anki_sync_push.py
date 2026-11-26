@@ -4657,6 +4657,43 @@ class TestUpdateNoteFieldsKeepsDerivedColumns:
 
         assert conn.execute("SELECT guid FROM notes").fetchone()["guid"] == compute_guid("banke", "sl", "noun")
 
+    def test_a_rename_that_drops_the_disambig_key_moves_the_guid_to_the_new_key(self):
+        """Cebuano 'ko' keyed genitive becomes the shared card 'nako' (tunatale-h0q3.71).
+
+        The old guid was derived with the OLD key; checking it against the new
+        key read it as an Anki-made guid and left it describing 'ko[genitive]'.
+        """
+        from app.common.guid import compute_guid
+
+        conn = self._conn(flds=("banka", "bank", "", "", "", "", "genitive"))
+        OfflineWriter(conn).update_note_fields(9001, {"Slovene": "banke", "DisambigKey": ""}, language_code="sl")
+
+        assert conn.execute("SELECT guid FROM notes").fetchone()["guid"] == compute_guid("banke", "sl", "")
+
+    def test_a_disambig_edit_alone_moves_the_guid(self):
+        from app.common.guid import compute_guid
+
+        conn = self._conn(flds=("banka", "bank", "", "", "", "", "genitive"))
+        OfflineWriter(conn).update_note_fields(9001, {"DisambigKey": "noun"}, language_code="sl")
+
+        row = conn.execute("SELECT guid, sfld, csum FROM notes").fetchone()
+        assert row["guid"] == compute_guid("banka", "sl", "noun")
+        assert row["sfld"] == "banka"
+
+    def test_a_disambig_edit_onto_another_notes_guid_is_refused(self):
+        from app.common.guid import compute_guid
+
+        conn = self._conn(flds=("banka", "bank", "", "", "", "", "genitive"))
+        conn.execute(
+            "INSERT INTO notes (id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data) "
+            "VALUES (9002, ?, 1, 100, 0, '', 'banka', 'banka', 0, 0, '')",
+            (compute_guid("banka", "sl", ""),),
+        )
+        conn.commit()
+
+        with pytest.raises(DuplicateNoteError):
+            OfflineWriter(conn).update_note_fields(9001, {"DisambigKey": ""}, language_code="sl")
+
     def test_markup_is_stripped_from_the_sort_field_and_its_checksum(self):
         conn = self._conn()
         OfflineWriter(conn).update_note_fields(9001, {"Slovene": "<b>banke</b>"}, language_code="sl")

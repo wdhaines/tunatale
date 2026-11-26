@@ -141,4 +141,6 @@ def test_public_method_count_pinned() -> None:
     # +add_sentence_card_mark, +remove_sentence_card_mark, +sentence_card_marks (a list card
     #  the learner turned off is never minted again), +list_sibling_groups (the Grade page
     #  reads every line of a lesson, mined ones too — h0q3.66)
-    assert count == 161
+    # +relabel_collocation (a merged pair's survivor takes the text and key its note was
+    #  already renamed to, with no dirty flag — h0q3.71)
+    assert count == 162
