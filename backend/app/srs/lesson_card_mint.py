@@ -34,6 +34,7 @@ from pathlib import Path
 
 from app.audio.sentence_card_audio import attach_drill_card_audio, attach_sentence_card_audio
 from app.common.guid import compute_guid
+from app.languages import short_form_pairs
 from app.models.lesson import Lesson
 from app.srs.drill_card import DrillCard, drill_card
 from app.srs.lesson_cards import COURSE_SOURCE, LessonCard, lesson_cards
@@ -47,10 +48,19 @@ def _in_deck(db, card: LessonCard, language_code: str) -> bool:
     if is_sentence_key(unit.disambig_key):
         return bool(db.get_collocation_ids_by_disambig_key(unit.disambig_key))
     # Every other lesson card is a word (``lesson_cards`` builds sentences, drills and words only).
-    return (
-        db.get_collocation_id_by_guid(compute_guid(unit.text, language_code, unit.disambig_key)) is not None
-        or db.get_collocation_by_lemma_with_id(unit.lemma) is not None
-        or db.get_collocation(unit.text) is not None
+    # A form whose shared-card partner is in the deck is in it too (Cebuano day / inday): the
+    # pair is one card (the owner, 2026-11-21), so minting it would split the card again.
+    word = unit.text.strip().casefold()
+    partners = [
+        p.long if p.short == word else p.short
+        for p in short_form_pairs(language_code)
+        if p.shares_card and word in (p.short, p.long)
+    ]
+    return any(
+        db.get_collocation_id_by_guid(compute_guid(text, language_code, unit.disambig_key)) is not None
+        or db.get_collocation_by_lemma_with_id(lemma) is not None
+        or db.get_collocation(text) is not None
+        for text, lemma in [(unit.text, unit.lemma), *((p, p) for p in partners)]
     )
 
 
