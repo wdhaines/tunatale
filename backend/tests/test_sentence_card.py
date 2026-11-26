@@ -135,17 +135,17 @@ class TestNoteText:
 
 
 class TestBackExtra:
-    def test_english_always_visible_glosses_and_cue_closed(self):
+    def test_english_and_word_by_word_open_the_cue_closed(self):
+        # The owner, 2026-11-26 (h0q3.64): Word by word shows openly; the cue's meaning stays folded.
         back = CARD.back_extra(answer_audio="ans_1.mp3")
         assert back.index("[sound:ans_1.mp3]") < back.index('<div class="tt-en">I live in Oslo.</div>')
-        words = back[back.index('<details class="tt-words">') :]
-        assert words.startswith('<details class="tt-words"><summary>Word by word</summary>')
+        words = back[back.index('<details class="tt-words" open>') :]
+        assert words.startswith('<details class="tt-words" open><summary>Word by word</summary>')
         assert "<b>bor</b> live(s)" in words
         means = back[back.index('<details class="tt-cue-means">') :]
         assert "<b>hvor</b> where?" in means
         assert '<div class="tt-en">Where do you live?</div>' in means
-        # neither disclosure is open by default
-        assert "<details open" not in back
+        assert '<details class="tt-cue-means"><summary>' in back
 
     def test_blank_card_calls_out_the_blanked_words_gloss_first(self):
         card = CARD.with_blank(blank_span(CARD.text, "bor"), "live(s)")

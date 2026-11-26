@@ -697,6 +697,53 @@ class TestPeerSyncSelfHost:
         assert card == (nid["survivor"], 1)
         assert loser_cards == 0
 
+    def test_a_sentence_template_refresh_reaches_the_peer_incrementally(self, tmp_path: Path):
+        """tunatale-h0q3.64: refresh_sentence_notetype rewrites the TT Sentence back
+        (Word by word open). A template's text is no schema change, so both devices
+        must sync it incrementally, and the peer must end with the new back."""
+        import sqlite3
+        from contextlib import closing
+
+        from app.cards.sentence_notetype import AFMT, NAME, QFMT
+        from app.cards.vocab_notetype import build_template_config
+        from app.plugins.anki_sync.add_sentence_notetype import add_sentence_notetype
+        from app.plugins.anki_sync.refresh_sentence_notetype import refresh_sentence_notetype
+        from app.plugins.anki_sync.safety import _register_anki_collations, safe_open
+        from app.srs.anki_mirror.protobuf_wire import find_len_field
+
+        tt_col = tmp_path / "tt_collection.anki2"
+        peer2_col = tmp_path / "peer2.anki2"
+        auth = _login()
+        old_afmt = AFMT.replace('<details class="tt-fold" open>', '<details class="tt-fold">', 1)
+        assert old_afmt != AFMT
+
+        _driver({"op": "create_collection", "collection_path": str(tt_col)})
+        with safe_open(tt_col, backup_dir=tmp_path / "backups", mode="rw") as ctx:
+            assert add_sentence_notetype(ctx.conn) == "created"
+            ctx.conn.execute(
+                "UPDATE templates SET config = ? WHERE ntid = (SELECT id FROM notetypes WHERE name = ?)",
+                (build_template_config(QFMT, old_afmt), NAME),
+            )
+            ctx.conn.commit()
+        _driver({"op": "full_upload", "collection_path": str(tt_col), "auth": auth})
+        _driver({"op": "create_collection", "collection_path": str(peer2_col)})
+        _driver({"op": "full_download", "collection_path": str(peer2_col), "auth": auth})
+
+        with safe_open(tt_col, backup_dir=tmp_path / "backups", mode="rw") as ctx:
+            assert refresh_sentence_notetype(ctx.conn) == "updated"
+
+        _assert_incremental(_driver({"op": "sync", "collection_path": str(tt_col), "auth": auth})["required"], "tt")
+        _assert_incremental(
+            _driver({"op": "sync", "collection_path": str(peer2_col), "auth": auth})["required"], "peer2"
+        )
+
+        with closing(sqlite3.connect(peer2_col)) as conn:  # closed: Anki opens the file exclusively next
+            _register_anki_collations(conn)  # notetypes.name is unicase
+            config = conn.execute(
+                "SELECT t.config FROM templates t JOIN notetypes n ON n.id = t.ntid WHERE n.name = ?", (NAME,)
+            ).fetchone()[0]
+        assert find_len_field(bytes(config), 2) == AFMT.encode()
+
 
 @pytest.mark.peer_sync
 class TestPeerSyncMediaDriver:

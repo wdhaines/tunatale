@@ -1551,7 +1551,7 @@ describe("sentence card", () => {
     expect(answer.querySelector("details.sentence-cue-means")).not.toBeNull();
   });
 
-  it("back: the answer, its English openly, glosses and the cue's meaning closed", async () => {
+  it("back: the answer, its English and word by word openly, the cue's meaning closed", async () => {
     const { container, getByText } = render(DrillCard, {
       item: make(),
       direction: "production",
@@ -1564,8 +1564,9 @@ describe("sentence card", () => {
     );
     expect(answer.querySelector(".answer-text.english")!.textContent).toBe("I live in Oslo.");
     expect(answer.querySelectorAll(".answer-text.english")).toHaveLength(1);
+    // The owner, 2026-11-26 (h0q3.64): Word by word shows openly; the cue's meaning stays folded.
     const words = answer.querySelector("details.sentence-words")!;
-    expect(words.hasAttribute("open")).toBe(false);
+    expect(words.hasAttribute("open")).toBe(true);
     expect(words.querySelector("summary")!.textContent).toBe("Word by word");
     expect(words.innerHTML).toContain("<b>bor</b> live(s) <i>here</i>");
     const means = answer.querySelector("details.sentence-cue-means")!;
