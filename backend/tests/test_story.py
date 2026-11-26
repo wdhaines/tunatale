@@ -874,3 +874,33 @@ def test_curated_gloss_absent_from_dialogue_is_not_added():
     story["scenes"][0]["lines"][0]["text"] = "Kape ug pan."
     lesson = build_lesson_from_story(story, language=get_language("ceb"))
     assert "og" not in lesson.generation_metadata["token_glosses"]
+
+
+def test_a_course_words_gloss_falls_back_under_its_host_not_the_lemmatizers_guess():
+    """tunatale-h0q3.65 (design-short-forms-and-linkers F1): a gloss is also filed under
+    its word's lemma, and the lemmatizer's lemma for a joined word is a guess (2b's nang
+    read as manang, ilang's gloss landed on ila). A course gloss that names its host is
+    filed under the host. 'kap' stands in for a host no lemmatizer would produce."""
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    hosted = build_lesson_from_story(
+        _ceb_story([{"word": "kape", "translation": "coffee", "host": "kap"}]), language=get_language("ceb")
+    ).generation_metadata["token_glosses"]
+    plain = build_lesson_from_story(
+        _ceb_story([{"word": "kape", "translation": "coffee"}]), language=get_language("ceb")
+    ).generation_metadata["token_glosses"]
+    assert (hosted["kape"], hosted["kap"]) == ("coffee", "coffee")
+    assert "kap" not in plain  # the control
+
+
+def test_a_host_for_a_word_no_line_uses_adds_nothing():
+    from app.generation.story import build_lesson_from_story
+    from app.languages import get_language
+
+    glosses = build_lesson_from_story(
+        _ceb_story([{"word": "balay", "translation": "house", "host": "zz"}, {"word": "kape", "translation": "x"}]),
+        language=get_language("ceb"),
+    ).generation_metadata["token_glosses"]
+    assert glosses["balay"] == "house"  # the surface's own entry, as before
+    assert "zz" not in glosses  # balay is in no line, so its host files nothing

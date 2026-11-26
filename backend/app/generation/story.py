@@ -34,7 +34,7 @@ from app.languages import get_story_text_normalizer
 from app.llm.call_sites import CallSite
 from app.models.curriculum import CurriculumDay
 from app.models.language import NARRATOR_VOICE, Language
-from app.models.lesson import KeyPhraseInfo, Lesson, Section, SectionType, story_gloss_words
+from app.models.lesson import KeyPhraseInfo, Lesson, Section, SectionType, story_gloss_words, story_hosts
 from app.models.strategy import ContentStrategy, ReviewPressure
 from app.srs.database import SRSDatabase
 from app.srs.function_words import fixed_gloss
@@ -633,6 +633,9 @@ def build_lesson_from_story(data: dict, language: Language, *, review_words: Seq
                 continue
             dialogue_lines.append(text)
     surface_lemma = dialogue_surface_lemmas(dialogue_lines, language.code)
+    # A course word's host, from the book's build-up rows, beats the lemmatizer's guess
+    # (2b's nang is nà + -ng, not manang; tunatale-h0q3.65).
+    surface_lemma.update({k: v for k, v in story_hosts(data).items() if k in surface_lemma})
 
     token_glosses: dict[str, str] = {}
     for g in glosses:

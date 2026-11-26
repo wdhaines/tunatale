@@ -82,7 +82,7 @@ from app.languages import (
 from app.llm.call_sites import CallSite
 from app.llm.cloze_quality import ClozeVerdict, generate_cloze_sentence, judge_cloze
 from app.llm.translate import generate_word_gloss, translate_term
-from app.models.lesson import KeyPhraseInfo, project_key_phrases
+from app.models.lesson import KeyPhraseInfo, lesson_story, project_key_phrases, story_hosts
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import SyntacticUnit
 from app.srs.affix_drill_card import mint_affix_drill_card
@@ -1214,6 +1214,8 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
     # phrase card is. `match_spans` is greedy longest-first: nested phrases
     # yield the OUTERMOST card only.
     phrase_index, exact_form = build_phrase_index(db, lemmatizer, lesson.language_code)
+    # A course word's host, from the book's build-up rows: the reader reads it the same way.
+    hosts = story_hosts(lesson_story(lesson))
     for phrase in natural_speed.phrases:
         if phrase.language_code != lesson.language_code:
             continue
@@ -1221,6 +1223,7 @@ def _analyze_lesson_words(lesson, db) -> _LessonWords:
         phrase_lemmas = lemmatize_surfaces_in_context(
             surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
         )
+        phrase_lemmas = [hosts.get(s.casefold(), lem) for s, lem in zip(surfaces, phrase_lemmas, strict=True)]
         for ta in analyze_sentence_cached(db, lemmatizer, phrase.text, lesson.language_code, model_version):
             words.surface_upos.setdefault(ta.surface.casefold(), ta.upos)
         spans = match_spans(phrase_span_keys(surfaces, phrase_lemmas, exact_form), phrase_index)

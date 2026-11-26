@@ -651,16 +651,25 @@ def test_G3_root_ending_ng_not_a_host(lex_linker, word, root):
     assert got == [Analysis(root, "", ())]
 
 
-def test_G4_two_letter_hosts_unchanged(lex_linker):
+def test_G4_two_letter_hosts(lex_linker):
+    """A two-letter host + -ng gets no decoder reading (design-short-forms-and-linkers R7,
+    tunatale-12dl): mong was read mu- + ng and ning ni- + ng, the linker taken for a root.
+    Course text takes its reading from Wolff's build-up rows instead. A headword
+    keeps its own reading (the controls kang, kong, ming)."""
     cases = [
         ("kang", [("kang", "")]),
         ("kong", [("kung", ""), ("kúng", "")]),
         ("ming", [("míng", "")]),
-        ("mong", [("ng", "mu-")]),
-        ("ning", [("ng", "ni-")]),
+        ("mong", []),
+        ("ning", []),
     ]
     for word, expected in cases:
         assert [(a.root, a.affix) for a in analyse(word, lex_linker)] == expected
+
+
+@pytest.mark.parametrize("word", ["mong", "ning", "kanang", "dinhing", "mangaong"])
+def test_the_linker_is_never_read_as_a_root(lex_linker, word):
+    assert all(a.root != "ng" for a in analyse(word, lex_linker))
 
 
 def test_G5_name_headwords_stay_affixless(lex_linker):

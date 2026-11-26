@@ -752,5 +752,8 @@ def analyse(surface: str, lex: Lexicon, english: str = "") -> list[Analysis]:
             -chars,
         )
 
-    ranked = sorted(_nasal_is_prefix(decode(surface, lex.roots)), key=rank)
-    return ranked
+    # The linker is never a root: mong is no mu- + ng, ning no ni- + ng. A two-letter
+    # host + -ng gets no reading here; course text takes Wolff's build-up rows
+    # (design-short-forms-and-linkers R7, tunatale-12dl).
+    found = [a for a in _nasal_is_prefix(decode(surface, lex.roots)) if a.root != "ng"]
+    return sorted(found, key=rank)
