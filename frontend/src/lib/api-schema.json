@@ -10401,7 +10401,7 @@
     },
     "/api/srs/due-counts": {
       "get": {
-        "description": "Per lesson, how many rows its Grade page shows for *range_days* (the lesson list's badge).\n\nSame reads and the same row rule as ``get_grade_plan``, so the badge and\nthe page cannot disagree. An id with no readable lesson is left out.\nIt writes what opening each Grade page would: the day's unbury, and the\nlemma cache of a lesson not analysed before. It reads the whole deck once\nper lesson: 12 lessons measured 0.6-0.8 s (tunatale-5i1p.11).",
+        "description": "Per lesson, how many rows its Grade page shows for *range_days* (the lesson list's badge).\n\nSame reads and the same row rule as ``get_grade_plan``, so the badge and\nthe page cannot disagree. An id with no readable lesson is left out.\nIt writes what opening each Grade page would: the day's unbury, and the\nlemma cache of a lesson not analysed before. The deck-wide indexes are built\nonce for all the lessons, in a worker thread (tunatale-5i1p.11): per lesson,\n12 lessons measured 0.6-0.8 s on the event loop.",
         "operationId": "get_due_counts_api_srs_due_counts_get",
         "parameters": [
           {

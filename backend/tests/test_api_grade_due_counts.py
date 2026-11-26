@@ -85,3 +85,55 @@ class TestDueCounts:
         _install(srs_db)
         resp = await _get(COUNTS_URL, {"content_id": "lesson-1", "range_days": -1})
         assert resp.status_code == 422
+
+
+class TestDueCountsReadsTheDeckOnce:
+    """tunatale-5i1p.11: the deck-wide indexes are built once per request, not once per lesson."""
+
+    @staticmethod
+    def _spy(monkeypatch, names):
+        calls: dict[str, list] = {n: [] for n in names}
+        for name in names:
+            real = getattr(srs_mod, name)
+
+            def wrapper(*args, _real=real, _name=name, **kwargs):
+                import threading
+
+                calls[_name].append(threading.current_thread() is threading.main_thread())
+                return _real(*args, **kwargs)
+
+            monkeypatch.setattr(srs_mod, name, wrapper)
+        return calls
+
+    _BUILDERS = ("build_phrase_index", "_build_variant_index", "_build_inflection_index")
+
+    async def test_each_index_is_built_once_for_three_lessons(self, srs_db, monkeypatch):
+        db = _install(srs_db)
+        store = app.state.content_store
+        store.save_lesson("lesson-2", "curriculum-1", 2, _lesson("fisk"))
+        store.save_lesson("lesson-3", "curriculum-1", 3, _lesson("hus"))
+        _card(db, "hus")
+        _review(db, "hus", due_in=0)
+        calls = self._spy(monkeypatch, self._BUILDERS)
+
+        counts = await _counts({"content_id": ["lesson-1", "lesson-2", "lesson-3"], "range_days": 0})
+
+        assert counts == {"lesson-1": 1, "lesson-2": 0, "lesson-3": 1}
+        assert {n: len(c) for n, c in calls.items()} == dict.fromkeys(self._BUILDERS, 1)
+
+    async def test_the_indexes_are_built_off_the_event_loop(self, srs_db, monkeypatch):
+        _install(srs_db)
+        calls = self._spy(monkeypatch, self._BUILDERS)
+
+        await _counts({"content_id": "lesson-1"})
+
+        assert all(not on_main for c in calls.values() for on_main in c), calls
+
+    async def test_the_grade_page_still_builds_its_own_indexes(self, srs_db, monkeypatch):
+        """A control: the single-lesson path reads the deck once, as before."""
+        _install(srs_db)
+        calls = self._spy(monkeypatch, self._BUILDERS)
+
+        assert (await _get(PLAN_URL, {})).status_code == 200
+
+        assert {n: len(c) for n, c in calls.items()} == dict.fromkeys(self._BUILDERS, 1)
