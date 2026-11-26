@@ -84,6 +84,29 @@ class TestMint:
         minted = mint_lesson_cards(db, "no", _cards())
         assert [c.unit.card_type for _, c in minted] == ["cloze"] * 5
 
+    def test_a_word_whose_shared_card_partner_is_in_the_deck_is_not_minted(self):
+        """Cebuano day is inday's short form, and the pair shares one card (spelling_variants).
+        Re-importing Wolff 1 part 2 re-minted 'Day' the day it was merged into inday
+        (tunatale-h0q3.71 slice 4, then h0q3.65's re-import, 2026-11-26)."""
+        cards = {"set": "t-01", "items": [{"kind": "word", "form": "Day", "translation": "Miss"}]}
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(text="inday", translation="Inday", word_count=1, difficulty=1, source="user", lemma="inday"),
+            language_code="ceb",
+        )
+        assert mint_lesson_cards(db, "ceb", cards) == []
+        assert mint_lesson_cards(SRSDatabase(":memory:"), "ceb", copy.deepcopy(cards))  # the control: no inday
+
+    def test_a_pronoun_with_its_own_card_is_still_minted_beside_its_partner(self):
+        """ko and ako are a 3 B 4 pair, two cards: ako in the deck does not stand in for ko."""
+        cards = {"set": "t-01", "items": [{"kind": "word", "form": "ko", "translation": "I"}]}
+        db = SRSDatabase(":memory:")
+        db.add_collocation(
+            SyntacticUnit(text="ako", translation="I", word_count=1, difficulty=1, source="user", lemma="ako"),
+            language_code="ceb",
+        )
+        assert [c.unit.text for _, c in mint_lesson_cards(db, "ceb", cards)] == ["ko"]
+
     def test_a_sentence_card_carries_its_course_and_set(self):
         db = SRSDatabase(":memory:")
         minted = mint_lesson_cards(db, "no", _cards())
