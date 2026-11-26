@@ -16,7 +16,15 @@ from app.languages import (
     get_variant_separator,
     parts_line,
 )
-from app.models.lesson import KeyPhraseInfo, Lesson, SectionType, story_gloss_words
+from app.models.lesson import (
+    KeyPhraseInfo,
+    Lesson,
+    SectionType,
+    lesson_story,
+    story_gloss_words,
+    story_hosts,
+    story_parts,
+)
 from app.models.srs_item import Direction, DirectionState, SRSItem, SRSState
 from app.models.syntactic_unit import deserialize_extras
 from app.srs.anki_mirror.rollover import anki_today
@@ -605,7 +613,10 @@ def extract_transcript(
     gloss_map: dict[str, str] = (lesson.generation_metadata or {}).get("token_glosses", {})
     # A word the lesson marks as a name (Gamelo, Abaya) is no affixed word: the
     # dictionary is not asked for its parts (tunatale-tofg.18).
-    names = story_gloss_words((lesson.generation_metadata or {}).get("story") or {}, {"name"})
+    story = lesson_story(lesson)
+    names = story_gloss_words(story, {"name"})
+    # A course word's host and parts, from the book's own build-up rows (tunatale-h0q3.65).
+    hosts, course_parts = story_hosts(story), story_parts(story)
     # A name marker that is also a short form (Cebuano ni, kini's) — its gloss below.
     short_forms = name_marker_short_forms(lesson.language_code)
 
@@ -648,6 +659,7 @@ def extract_transcript(
             lemmas = lemmatize_surfaces_in_context(
                 surfaces, phrase.text, lemmatizer, lesson.language_code, db, model_version
             )
+            lemmas = [hosts.get(s.casefold(), lem) for s, lem in zip(surfaces, lemmas, strict=True)]
 
             # Extract punctuation around each surface for display (aligned to
             # surfaces, robust to standalone-punctuation tokens tokenize() drops).
@@ -886,7 +898,8 @@ def extract_transcript(
                 word_parts = (
                     None
                     if surface.casefold().replace("-", "") in names
-                    else parts_line(lesson.language_code, surface, gloss or translation or "")
+                    else course_parts.get(surface.casefold())
+                    or parts_line(lesson.language_code, surface, gloss or translation or "")
                 )
 
                 words.append(

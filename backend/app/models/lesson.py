@@ -120,6 +120,33 @@ def story_gloss_words(story: dict, kinds: Iterable[str]) -> frozenset[str]:
     return frozenset(words) - {""}
 
 
+def _story_reading(story: dict, field_name: str) -> dict[str, str]:
+    return {
+        str(g["word"]).casefold(): str(g[field_name])
+        for g in story.get("dialogue_glosses", [])
+        if isinstance(g, dict) and g.get("word") and g.get(field_name)
+    }
+
+
+def story_hosts(story: dict) -> dict[str, str]:
+    """A course word's host, by the casefolded word: its lemma in that lesson (tunatale-h0q3.65).
+
+    A course converter writes it from the book's own build-up rows (Wolff splits
+    'nang' into nà + the linker), so the lemmatizer's guess (manang) never picks the card.
+    """
+    return _story_reading(story, "host")
+
+
+def story_parts(story: dict) -> dict[str, str]:
+    """A course word's parts line, by the casefolded word ('nà that + -ng linker (nga)')."""
+    return _story_reading(story, "parts")
+
+
+def lesson_story(lesson: Lesson) -> dict:
+    """The Story JSON a lesson was built from, or ``{}``."""
+    return (lesson.generation_metadata or {}).get("story") or {}
+
+
 @dataclass
 class Lesson:
     """A complete TunaTale audio lesson."""
